@@ -1,0 +1,66 @@
+import type { ReactNode } from 'react';
+import { NavLink } from 'react-router-dom';
+import {
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Tooltip,
+} from '@mui/material';
+
+export interface NavItemProps {
+  to: string;
+  label: string;
+  icon: ReactNode;
+  navOpen: boolean;
+}
+
+const NavItem = ({ to, label, icon, navOpen }: NavItemProps) => {
+  return (
+    <Tooltip title={navOpen ? '' : label} placement="right" disableInteractive>
+      <ListItem disablePadding sx={{ px: 1.25, py: 0.3 }}>
+        <ListItemButton
+          component={NavLink}
+          to={to}
+          sx={(theme) => ({
+            borderRadius: '12px',
+            color: 'text.secondary',
+            py: 0.85,
+            px: navOpen ? 1.5 : 1,
+            justifyContent: navOpen ? 'flex-start' : 'center',
+            transition: theme.transitions.create(['background-color', 'color']),
+            '& .MuiListItemIcon-root': {
+              color: 'text.secondary',
+              minWidth: navOpen ? 34 : 0,
+              justifyContent: 'center',
+            },
+            '&:hover': {
+              bgcolor: 'action.hover',
+              color: 'text.primary',
+              '& .MuiListItemIcon-root': { color: 'text.primary' },
+            },
+            '&.active': {
+              background:
+                theme.palette.mode === 'dark'
+                  ? 'linear-gradient(90deg, rgba(139,92,255,0.22), rgba(139,92,255,0.05))'
+                  : 'linear-gradient(90deg, rgba(124,77,255,0.14), rgba(124,77,255,0.03))',
+              color: 'primary.main',
+              boxShadow: `inset 0 0 0 1px ${
+                theme.palette.mode === 'dark'
+                  ? 'rgba(139,92,255,0.30)'
+                  : 'rgba(124,77,255,0.22)'
+              }`,
+              '& .MuiListItemIcon-root': { color: 'primary.main' },
+              '& .MuiListItemText-primary': { fontWeight: 600 },
+            },
+          })}
+        >
+          <ListItemIcon>{icon}</ListItemIcon>
+          {navOpen && <ListItemText primary={label} />}
+        </ListItemButton>
+      </ListItem>
+    </Tooltip>
+  );
+};
+
+export default NavItem;

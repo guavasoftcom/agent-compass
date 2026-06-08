@@ -1,0 +1,1043 @@
+package com.guavasoft.agentcompass.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import com.guavasoft.agentcompass.entity.LogRecordEntity;
+
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+
+public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long> {
+
+  List<LogRecordEntity> findByTraceIdOrderByTimestampAsc(String traceId);
+
+  // Returns every log_records row whose attributes jsonb contains every entry in
+  // :filters
+  // (an AND set of "key=value" strings), optionally narrowed to a
+  // [startTimestamp, endTimestamp]
+  // window, sorted newest first. Empty filters array + null window bounds = all
+  // rows. The
+  // ":xxx IS NULL OR col {<=,>=} :xxx" pattern lets the same query power "all
+  // logs", "logs
+  // since X", "logs within [X,Y]", etc. without separate methods.
+  //
+  // Time-window correlation is used here (rather than trace_id/span_id) because
+  // this
+  // dataset's instrumentation does not propagate OTLP trace context onto log
+  // records: the
+  // trace_id and span_id columns are NULL for every row. Filtering by the
+  // timestamp window
+  // of a trace or span is the most precise cross-signal linkage available.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
+        AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY timestamp DESC
+      """, nativeQuery = true)
+  List<LogRecordEntity> findAllMatchingFilters(
+      @Param("filters") String[] filters,
+      @Param("startTimestamp") Instant startTimestamp,
+      @Param("endTimestamp") Instant endTimestamp);
+
+  // Returns every distinct "key=value" pair across log_records.attributes,
+  // narrowed to rows
+  // that contain every entry in :filters and (optionally) fall within a
+  // [startTimestamp,
+  // endTimestamp] window. Object- and array-valued attributes are excluded
+  // because their
+  // text serialization differs between Postgres' jsonb_each_text and the
+  // frontend's compact
+  // JSON.stringify (see MetricPointRepository for the full rationale).
+  @Query(value = """
+      SELECT DISTINCT attribute_entry.key || '=' || (attribute_entry.value #>> '{}')
+      FROM log_records,
+           jsonb_each(attributes) AS attribute_entry
+      WHERE attributes IS NOT NULL
+        AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
+        AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY 1
+      """, nativeQuery = true)
+  List<String> findDistinctAttributePairs(
+      @Param("filters") String[] filters,
+      @Param("startTimestamp") Instant startTimestamp,
+      @Param("endTimestamp") Instant endTimestamp);
+
+  // Distinct attribute keys across log_records.attributes, narrowed to the same
+  // filter/window
+  // contract used by findDistinctAttributePairs. Drives the autocomplete's "pick
+  // a key" stage.
+  // 'body' is excluded — the log body lives in its own column, and any stray
+  // attribute named
+  // 'body' carries large free-form text that pollutes suggestions.
+  @Query(value = """
+      SELECT DISTINCT attribute_entry.key
+      FROM log_records,
+           jsonb_each(attributes) AS attribute_entry
+      WHERE attributes IS NOT NULL
+        AND attribute_entry.key <> 'body'
+        AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
+        AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY 1
+      """, nativeQuery = true)
+  List<String> findDistinctAttributeKeys(
+      @Param("filters") String[] filters,
+      @Param("startTimestamp") Instant startTimestamp,
+      @Param("endTimestamp") Instant endTimestamp);
+
+  // Distinct values for a single attribute key, same filter/window contract as
+  // the keys query.
+  // Drives the autocomplete's "pick a value for this key" stage.
+  @Query(value = """
+      SELECT DISTINCT attribute_entry.value #>> '{}'
+      FROM log_records,
+           jsonb_each(attributes) AS attribute_entry
+      WHERE attributes IS NOT NULL
+        AND attribute_entry.key = :key
+        AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
+        AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY 1
+      """, nativeQuery = true)
+  List<String> findDistinctAttributeValuesForKey(
+      @Param("key") String key,
+      @Param("filters") String[] filters,
+      @Param("startTimestamp") Instant startTimestamp,
+      @Param("endTimestamp") Instant endTimestamp);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COUNT(*)                                            AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :since
+      GROUP BY tool
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolCalls(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COUNT(*)                                            AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolCallsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Same population as aggregateToolCalls, but bucketed by time. date_bin aligns
+  // buckets to
+  // :since so the first bucket starts exactly at the window's lower bound (no
+  // half-bucket on
+  // the left edge). Returned rows are sparse — a (bucket, tool) pair only appears
+  // when at
+  // least one call landed there — and the service fills missing buckets with
+  // zero.
+  // Per-tool latency + output-size aggregates over tool_result events.
+  // duration_ms and
+  // tool_result_size_bytes are stored inside the attributes jsonb as JSON
+  // numbers, so cast
+  // via ->>'...'::numeric. p95 uses percentile_cont for a continuous
+  // interpolation. Rounded
+  // to whole numbers to keep the report digest-friendly. tool_result_size_bytes
+  // is NULL on
+  // failed calls — AVG ignores NULL, so the column reflects successful calls
+  // only.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COUNT(*)                                           AS calls,
+        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                AS avg_ms,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
+        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                     AS avg_out
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :since
+      GROUP BY tool
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolPerformance(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COUNT(*)                                           AS calls,
+        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                AS avg_ms,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
+        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                     AS avg_out
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolPerformanceInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Per-(tool, error_type) failure counts over tool_result events. success is
+  // stored as a
+  // JSON boolean; ->>'success' returns text, so compare to the string 'false'.
+  // error_type is
+  // only present on failures — COALESCE keeps unlabeled failures grouped under
+  // 'unknown'.
+  // exampleScope and exampleMessage are picked via MIN(...) over the matching
+  // rows: any
+  // single failing call gives the reader enough context (the specific command or
+  // file path
+  // and the raw error string) without bloating the report with every variant.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
+        MIN(COALESCE(
+              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+              ''))                                          AS example_scope,
+        MIN(COALESCE(attributes ->> 'error', ''))           AS example_message,
+        COUNT(*)                                            AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'success' = 'false'
+        AND timestamp >= :since
+      GROUP BY tool, error_type
+      ORDER BY failures DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolFailures(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
+        MIN(COALESCE(
+              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+              ''))                                          AS example_scope,
+        MIN(COALESCE(attributes ->> 'error', ''))           AS example_message,
+        COUNT(*)                                            AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'success' = 'false'
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool, error_type
+      ORDER BY failures DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolFailuresInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Counts tool_result events for a single tool, grouped by an inner identifier
+  // attribute. The
+  // identifier is read from the flat attributes map first (attributes ->>
+  // :innerAttribute) and
+  // falls back to the same key under the tool_input JSON blob — Claude Code emits
+  // some tool
+  // arguments at the top level and some only inside tool_input depending on the
+  // tool, and
+  // skill/subagent dispatchers happen to land in the latter. Rows missing the
+  // identifier
+  // entirely bucket under 'unknown' so callers see them rather than silently
+  // dropping the count.
+  @Query(value = """
+      SELECT
+        COALESCE(
+          NULLIF(attributes ->> :innerAttribute, ''),
+          NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
+          'unknown')                                                   AS identifier,
+        COUNT(*)                                                       AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = :toolName
+        AND timestamp >= :since
+      GROUP BY identifier
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolInvocationsByInnerAttribute(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("toolName") String toolName,
+      @Param("innerAttribute") String innerAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(
+          NULLIF(attributes ->> :innerAttribute, ''),
+          NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
+          'unknown')                                                   AS identifier,
+        COUNT(*)                                                       AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = :toolName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY identifier
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolInvocationsByInnerAttributeInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("toolName") String toolName,
+      @Param("innerAttribute") String innerAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Counts skill invocations, grouped by the skill-name attribute. Skills are
+  // emitted as api_request events (not tool_result), so there is no tool_name
+  // filter here — only the event name and the presence of the skill attribute.
+  @Query(value = """
+      SELECT
+        COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown') AS identifier,
+        COUNT(*)                                                         AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND jsonb_exists(attributes, :skillAttribute)
+        AND timestamp >= :since
+      GROUP BY identifier
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateSkillInvocations(
+      @Param("eventName") String eventName,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown') AS identifier,
+        COUNT(*)                                                         AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND jsonb_exists(attributes, :skillAttribute)
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY identifier
+      ORDER BY calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateSkillInvocationsInRange(
+      @Param("eventName") String eventName,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Per-tool success / failure split. success is stored as a JSON boolean;
+  // ->>'success' returns
+  // text, so 'false' is a failure and anything else (including NULL on rare
+  // unlabeled rows) is
+  // counted as a success. Returned as one row per tool with both counts so the
+  // service can
+  // derive failure_rate without a second query.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown')              AS tool,
+        COUNT(*)                                                        AS calls,
+        COUNT(*) FILTER (WHERE attributes ->> 'success' = 'false')      AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :since
+      GROUP BY tool
+      ORDER BY failures DESC, calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolFailureRates(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown')              AS tool,
+        COUNT(*)                                                        AS calls,
+        COUNT(*) FILTER (WHERE attributes ->> 'success' = 'false')      AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool
+      ORDER BY failures DESC, calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolFailureRatesInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'tool_name', 'unknown') AS tool,
+        COALESCE(attributes ->> 'source', 'unknown')    AS source,
+        COUNT(*)                                         AS count
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'decision' = 'reject'
+        AND timestamp >= :since
+      GROUP BY tool, source
+      ORDER BY count DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolDenials(
+      @Param("eventName") String eventName,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'tool_name', 'unknown') AS tool,
+        COALESCE(attributes ->> 'source', 'unknown')    AS source,
+        COUNT(*)                                         AS count
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'decision' = 'reject'
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool, source
+      ORDER BY count DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolDenialsInRange(
+      @Param("eventName") String eventName,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'hook_event', 'unknown')                 AS hookEvent,
+        COALESCE(attributes ->> 'hook_name', 'unknown')                  AS hookName,
+        COUNT(*)                                                          AS total,
+        SUM(COALESCE((attributes ->> 'num_success')::int, 0))            AS successes,
+        SUM(COALESCE((attributes ->> 'num_blocking')::int, 0))           AS blockingErrors,
+        SUM(COALESCE((attributes ->> 'num_non_blocking_error')::int, 0)) AS nonBlockingErrors,
+        SUM(COALESCE((attributes ->> 'num_cancelled')::int, 0))          AS cancelled
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :since
+      GROUP BY hookEvent, hookName
+      ORDER BY blockingErrors DESC, total DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateHookExecutions(
+      @Param("eventName") String eventName,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'hook_event', 'unknown')                 AS hookEvent,
+        COALESCE(attributes ->> 'hook_name', 'unknown')                  AS hookName,
+        COUNT(*)                                                          AS total,
+        SUM(COALESCE((attributes ->> 'num_success')::int, 0))            AS successes,
+        SUM(COALESCE((attributes ->> 'num_blocking')::int, 0))           AS blockingErrors,
+        SUM(COALESCE((attributes ->> 'num_non_blocking_error')::int, 0)) AS nonBlockingErrors,
+        SUM(COALESCE((attributes ->> 'num_cancelled')::int, 0))          AS cancelled
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY hookEvent, hookName
+      ORDER BY blockingErrors DESC, total DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateHookExecutionsInRange(
+      @Param("eventName") String eventName,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  @Query(value = """
+      SELECT
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :since) AS bucket,
+        COALESCE(attributes ->> :toolAttribute, 'unknown')                 AS tool,
+        COUNT(*)                                                           AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :since
+      GROUP BY bucket, tool
+      ORDER BY bucket, tool
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolCallsTimeseries(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  @Query(value = """
+      SELECT
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+        COALESCE(attributes ->> :toolAttribute, 'unknown')                 AS tool,
+        COUNT(*)                                                           AS calls
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY bucket, tool
+      ORDER BY bucket, tool
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolCallsTimeseriesInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // Per-command-prefix Bash hotspots. Claude Code stores the actual command
+  // inside the
+  // tool_input attribute as a JSON-encoded string, so we NULLIF the empty-string
+  // case to
+  // avoid an invalid jsonb cast, then parse and split_part on the first space.
+  // Rows that
+  // didn't capture a tool_input bucket under 'unknown'.
+  @Query(value = """
+      SELECT
+        COALESCE(
+          NULLIF(
+            split_part(
+              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+              ' ',
+              1),
+            ''),
+          'unknown')                                                                       AS command_prefix,
+        COUNT(*)                                                                            AS calls,
+        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                 AS avg_ms,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
+        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                      AS avg_out
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Bash'
+        AND timestamp >= :since
+      GROUP BY command_prefix
+      ORDER BY calls DESC
+      LIMIT :hotspotLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateBashCommandHotspots(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("hotspotLimit") int hotspotLimit);
+
+  @Query(value = """
+      SELECT
+        COALESCE(
+          NULLIF(
+            split_part(
+              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+              ' ',
+              1),
+            ''),
+          'unknown')                                                                       AS command_prefix,
+        COUNT(*)                                                                            AS calls,
+        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                 AS avg_ms,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
+        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                      AS avg_out
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Bash'
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY command_prefix
+      ORDER BY calls DESC
+      LIMIT :hotspotLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateBashCommandHotspotsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("hotspotLimit") int hotspotLimit);
+
+  // Largest individual tool results in the window. file_path / command live under
+  // the
+  // tool_input JSON string; fall through to '' so callers can still see the byte
+  // count even
+  // when tool_input wasn't captured.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
+        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                 '')                                            AS scope,
+        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND timestamp >= :since
+      ORDER BY bytes DESC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateOversizedToolResults(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("resultLimit") int resultLimit);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
+        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                 '')                                            AS scope,
+        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND timestamp >= :start
+        AND timestamp <= :end
+      ORDER BY bytes DESC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateOversizedToolResultsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("resultLimit") int resultLimit);
+
+  // (session.id, file_path) pairs where Read was called more than once. file_path
+  // lives
+  // inside the tool_input JSON string; rows without tool_input are excluded since
+  // they have
+  // no scope to dedupe on. spanMinutes (first→last) and maxGapMinutes (largest
+  // interval
+  // between consecutive reads, computed via LAG) let the report distinguish
+  // hunting loops
+  // (many reads, small max-gap) from incidental spread-across-the-day re-reads.
+  @Query(value = """
+      WITH read_events AS (
+        SELECT
+          COALESCE(attributes ->> 'session.id', 'unknown')                AS session_id,
+          (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
+          timestamp                                                        AS read_timestamp,
+          LAG(timestamp) OVER (
+            PARTITION BY COALESCE(attributes ->> 'session.id', 'unknown'),
+                         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'
+            ORDER BY timestamp
+          )                                                                AS prev_timestamp
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND attributes ->> :toolAttribute = 'Read'
+          AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+          AND timestamp >= :since
+      )
+      SELECT
+        session_id,
+        file_path,
+        COUNT(*)                                                                                AS reads,
+        ROUND(EXTRACT(EPOCH FROM (MAX(read_timestamp) - MIN(read_timestamp))) / 60.0)            AS span_minutes,
+        ROUND(EXTRACT(EPOCH FROM COALESCE(MAX(read_timestamp - prev_timestamp), INTERVAL '0')) / 60.0) AS max_gap_minutes
+      FROM read_events
+      GROUP BY session_id, file_path
+      HAVING COUNT(*) > 1
+      ORDER BY reads DESC
+      LIMIT :readLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateRedundantFileReads(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("readLimit") int readLimit);
+
+  @Query(value = """
+      WITH read_events AS (
+        SELECT
+          COALESCE(attributes ->> 'session.id', 'unknown')                AS session_id,
+          (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
+          timestamp                                                        AS read_timestamp,
+          LAG(timestamp) OVER (
+            PARTITION BY COALESCE(attributes ->> 'session.id', 'unknown'),
+                         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'
+            ORDER BY timestamp
+          )                                                                AS prev_timestamp
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND attributes ->> :toolAttribute = 'Read'
+          AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
+      SELECT
+        session_id,
+        file_path,
+        COUNT(*)                                                                                AS reads,
+        ROUND(EXTRACT(EPOCH FROM (MAX(read_timestamp) - MIN(read_timestamp))) / 60.0)            AS span_minutes,
+        ROUND(EXTRACT(EPOCH FROM COALESCE(MAX(read_timestamp - prev_timestamp), INTERVAL '0')) / 60.0) AS max_gap_minutes
+      FROM read_events
+      GROUP BY session_id, file_path
+      HAVING COUNT(*) > 1
+      ORDER BY reads DESC
+      LIMIT :readLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateRedundantFileReadsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("readLimit") int readLimit);
+
+  // (session.id, file_path) pairs where Edit failed two or more times. Same
+  // tool_input
+  // unwrap as the redundant-read query.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'session.id', 'unknown')                          AS session_id,
+        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'           AS file_path,
+        COUNT(*)                                                                   AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Edit'
+        AND attributes ->> 'success' = 'false'
+        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND timestamp >= :since
+      GROUP BY session_id, file_path
+      HAVING COUNT(*) >= 2
+      ORDER BY failures DESC
+      LIMIT :loopLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateEditFailureLoops(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("loopLimit") int loopLimit);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'session.id', 'unknown')                          AS session_id,
+        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'           AS file_path,
+        COUNT(*)                                                                   AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Edit'
+        AND attributes ->> 'success' = 'false'
+        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY session_id, file_path
+      HAVING COUNT(*) >= 2
+      ORDER BY failures DESC
+      LIMIT :loopLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateEditFailureLoopsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("loopLimit") int loopLimit);
+
+  // Calls that are simultaneously in the slow tail AND have an oversized result.
+  // Filters
+  // each metric independently against a caller-supplied minimum (the service
+  // derives those
+  // from the report's existing performance/oversized thresholds), then ranks by
+  // the product
+  // duration_ms * tool_result_size_bytes so the very worst single calls float to
+  // the top.
+  // This is the cross-cut the per-tool summaries hide: a call can be average on
+  // each axis
+  // alone yet dominate context cost when both stack.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                 '')                                       AS scope,
+        ((attributes ->> 'duration_ms')::numeric)::bigint            AS duration_ms,
+        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'duration_ms' IS NOT NULL
+        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND (attributes ->> 'duration_ms')::numeric >= :minDurationMs
+        AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
+        AND timestamp >= :since
+      ORDER BY ((attributes ->> 'duration_ms')::numeric
+                * (attributes ->> 'tool_result_size_bytes')::numeric) DESC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateSlowAndLargeCalls(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("minDurationMs") long minDurationMs,
+      @Param("minBytes") long minBytes,
+      @Param("resultLimit") int resultLimit);
+
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                 '')                                       AS scope,
+        ((attributes ->> 'duration_ms')::numeric)::bigint            AS duration_ms,
+        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'duration_ms' IS NOT NULL
+        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND (attributes ->> 'duration_ms')::numeric >= :minDurationMs
+        AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
+        AND timestamp >= :start
+        AND timestamp <= :end
+      ORDER BY ((attributes ->> 'duration_ms')::numeric
+                * (attributes ->> 'tool_result_size_bytes')::numeric) DESC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateSlowAndLargeCallsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("minDurationMs") long minDurationMs,
+      @Param("minBytes") long minBytes,
+      @Param("resultLimit") int resultLimit);
+
+  // Coverage check used in the Bash command hotspots blurb: how many Bash
+  // tool_result rows
+  // actually carry a parseable tool_input (and therefore a command) versus the
+  // total. Lets
+  // the report state the denominator instead of silently lumping uninstrumented
+  // calls into
+  // 'unknown'.
+  @Query(value = """
+      SELECT
+        COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' IS NOT NULL) AS with_command,
+        COUNT(*)                                                                                          AS total
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Bash'
+        AND timestamp >= :since
+      """, nativeQuery = true)
+  List<Object[]> bashCommandCoverage(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since);
+
+  @Query(value = """
+      SELECT
+        COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' IS NOT NULL) AS with_command,
+        COUNT(*)                                                                                          AS total
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Bash'
+        AND timestamp >= :start
+        AND timestamp <= :end
+      """, nativeQuery = true)
+  List<Object[]> bashCommandCoverageInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Consecutive same-tool repeats per session, scoped by file_path / command /
+  // (no scope).
+  //
+  // Detect "islands" of consecutive rows with the same (tool, scope) inside each
+  // session by
+  // taking the difference between two row numbers ordered by timestamp: one
+  // partitioned by
+  // session alone, one partitioned by session+tool+scope. Rows that share both
+  // the (tool,
+  // scope) value and the same row-number delta are consecutive — the delta only
+  // stays
+  // constant while the tool/scope doesn't change, so it doubles as a run
+  // identifier.
+  //
+  // Per (session, tool, scope) we take MAX(run_length) as that session's longest
+  // run, then
+  // roll the per-session longest runs up into a median + max for the (tool,
+  // scope) pair. The
+  // HAVING MAX(...) >= 2 filter drops sessions whose only "runs" were single
+  // isolated calls;
+  // those aren't repeats and would only depress the median.
+  @Query(value = """
+      WITH events AS (
+        SELECT
+          COALESCE(attributes ->> 'session.id', 'unknown')               AS session_id,
+          COALESCE(attributes ->> :toolAttribute, 'unknown')             AS tool,
+          CASE
+            WHEN attributes ->> :toolAttribute IN ('Edit', 'Write', 'Read', 'MultiEdit')
+              THEN COALESCE(
+                NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', ''),
+                '(no scope)')
+            WHEN attributes ->> :toolAttribute = 'Bash'
+              THEN COALESCE(
+                NULLIF(
+                  split_part(
+                    (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                    ' ',
+                    1),
+                  ''),
+                '(no scope)')
+            ELSE '(no scope)'
+          END                                                            AS scope,
+          timestamp
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND timestamp >= :since
+      ),
+      numbered AS (
+        SELECT
+          session_id, tool, scope,
+          ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY timestamp)             AS rn_session,
+          ROW_NUMBER() OVER (PARTITION BY session_id, tool, scope ORDER BY timestamp) AS rn_group
+        FROM events
+      ),
+      runs AS (
+        SELECT session_id, tool, scope, COUNT(*) AS run_length
+        FROM numbered
+        GROUP BY session_id, tool, scope, (rn_session - rn_group)
+      ),
+      longest_per_session AS (
+        SELECT session_id, tool, scope, MAX(run_length) AS longest_run
+        FROM runs
+        GROUP BY session_id, tool, scope
+        HAVING MAX(run_length) >= 2
+      )
+      SELECT
+        tool,
+        scope,
+        CAST(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY longest_run)) AS bigint) AS median_run,
+        MAX(longest_run)                                                                 AS max_run,
+        COUNT(*)                                                                         AS sessions
+      FROM longest_per_session
+      GROUP BY tool, scope
+      ORDER BY max_run DESC, median_run DESC, sessions DESC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolRepeats(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("since") Instant since,
+      @Param("resultLimit") int resultLimit);
+
+  @Query(value = """
+      WITH events AS (
+        SELECT
+          COALESCE(attributes ->> 'session.id', 'unknown')               AS session_id,
+          COALESCE(attributes ->> :toolAttribute, 'unknown')             AS tool,
+          CASE
+            WHEN attributes ->> :toolAttribute IN ('Edit', 'Write', 'Read', 'MultiEdit')
+              THEN COALESCE(
+                NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', ''),
+                '(no scope)')
+            WHEN attributes ->> :toolAttribute = 'Bash'
+              THEN COALESCE(
+                NULLIF(
+                  split_part(
+                    (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                    ' ',
+                    1),
+                  ''),
+                '(no scope)')
+            ELSE '(no scope)'
+          END                                                            AS scope,
+          timestamp
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND timestamp >= :start
+          AND timestamp <= :end
+      ),
+      numbered AS (
+        SELECT
+          session_id, tool, scope,
+          ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY timestamp)             AS rn_session,
+          ROW_NUMBER() OVER (PARTITION BY session_id, tool, scope ORDER BY timestamp) AS rn_group
+        FROM events
+      ),
+      runs AS (
+        SELECT session_id, tool, scope, COUNT(*) AS run_length
+        FROM numbered
+        GROUP BY session_id, tool, scope, (rn_session - rn_group)
+      ),
+      longest_per_session AS (
+        SELECT session_id, tool, scope, MAX(run_length) AS longest_run
+        FROM runs
+        GROUP BY session_id, tool, scope
+        HAVING MAX(run_length) >= 2
+      )
+      SELECT
+        tool,
+        scope,
+        CAST(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY longest_run)) AS bigint) AS median_run,
+        MAX(longest_run)                                                                 AS max_run,
+        COUNT(*)                                                                         AS sessions
+      FROM longest_per_session
+      GROUP BY tool, scope
+      ORDER BY max_run DESC, median_run DESC, sessions DESC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolRepeatsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("resultLimit") int resultLimit);
+
+  // Returns tool call count and denial count per session for the given session IDs.
+  // Tool calls are log records whose event.name = :toolEventName.
+  // Denials are tool_decision records whose decision attribute = 'reject'.
+  // Sessions with no matching log records are omitted; the service defaults missing entries to 0.
+  @Query(value = """
+      SELECT
+          lr.attributes ->> 'session.id'                                           AS session_id,
+          COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :toolEventName)  AS tool_call_count,
+          COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :toolDecisionEventName
+                             AND lr.attributes ->> 'decision' = 'reject')           AS denial_count
+      FROM log_records lr
+      WHERE lr.attributes ->> 'session.id' IN :sessionIds
+      GROUP BY lr.attributes ->> 'session.id'
+      """, nativeQuery = true)
+  List<Object[]> aggregateSessionCounts(
+      @Param("sessionIds") Collection<String> sessionIds,
+      @Param("toolEventName") String toolEventName,
+      @Param("toolDecisionEventName") String toolDecisionEventName);
+}

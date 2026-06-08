@@ -1,0 +1,33 @@
+server:
+  port: 8080
+spring:
+  jackson:
+    serialization:
+      WRITE_DATES_AS_TIMESTAMPS: false
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/coding_agent_tuning}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  devtools:
+    livereload:
+      enabled: true
+    restart:
+      enabled: true
+      poll-interval: 1000ms
+      quiet-period: 400ms
+tuning:
+  bash-antipattern-prefixes:
+    - cat
+    - head
+    - tail
+    - find
+    - sed
+    - awk
+    - echo
+logging:
+  level:
+    org.apache.tomcat.util.net: DEBUG

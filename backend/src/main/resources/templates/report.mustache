@@ -1,0 +1,134 @@
+# Agent Compass Report
+
+Window: last {{minutes}} minute(s) (since {{since}}).
+Event name: `{{eventName}}`.
+
+{{^hasRows}}
+_No `event.name = {{eventName}}` log records received in this window._
+
+If your agent is running, check that OTLP is pointed at this backend:
+
+```
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
+```
+
+{{/hasRows}}
+{{#hasRows}}
+---
+
+> **How to use this report**
+> Review each section in priority order and apply fixes to `AGENTS.md`, subagent prompts, or skills as appropriate:
+>
+> 1. **Failures** — add an `AGENTS.md` rule for each `(tool, error_type)` pair. Quote the exact command or scope in the rule.
+> 2. **Redundant reads — hunting loops only** — add a rule to read the full file once before editing. Skip rows where pattern is *spread across session*.
+> 3. **Suggestions** — apply each unless already covered by a rule above.
+> 4. **Bash antipatterns** — replace with the named dedicated tool.
+>
+> Skip: *spread across session* redundant reads, tools with p95 < 2× avg latency, and oversized results from external sources (WebSearch, WebFetch, Agent).
+
+---
+
+{{#hasFailures}}
+## Failures
+
+Total failed tool calls: **{{totalFailures}}**.
+
+| Tool | Error type | Example scope | Example message | Count |
+|---|---|---|---|---:|
+{{#failures}}
+| `{{tool}}` | `{{errorType}}` | `{{exampleScope}}` | {{exampleMessage}} | {{count}} |
+{{/failures}}
+
+Repeated failures of the same `(tool, error_type)` pair are the highest-signal tuning input — they usually indicate the agent is misusing a tool, hitting a missing dependency, or fighting a permission. Address them in `AGENTS.md` or a skill before chasing usage-mix issues.
+
+{{/hasFailures}}
+{{#hasRedundantReads}}
+## Redundant file reads
+
+Files read more than once in the same session. Re-reading after an `Edit` is usually wasted — `Edit` already errors loudly on failure, so the harness state is trustworthy.
+
+| Session | File | Reads | Span (min) | Max gap (min) | Pattern |
+|---|---|---:|---:|---:|---|
+{{#redundantReads}}
+| `{{sessionId}}` | `{{filePath}}` | {{reads}} | {{spanMinutes}} | {{maxGapMinutes}} | {{pattern}} |
+{{/redundantReads}}
+
+`Pattern` distinguishes a tight **hunting loop** (≥ 3 reads, max gap ≤ 5 min — the agent is retrying) from a **spread across session** (max gap ≥ 30 min — incidental re-reads, often benign) and a **tight cluster** in between. Hunting loops are the high-priority targets; *spread across session* rows usually don't need an `AGENTS.md` rule.
+
+{{/hasRedundantReads}}
+{{#hasEditLoops}}
+## Edit failure loops
+
+Sessions where `Edit` failed two or more times against the same file — typically the agent hunting for the right `old_string` and retrying with tweaks.
+
+| Session | File | Failures |
+|---|---|---:|
+{{#editLoops}}
+| `{{sessionId}}` | `{{filePath}}` | {{failures}} |
+{{/editLoops}}
+
+Mitigations: provide more context in `old_string` (full lines including indentation), or use `replace_all` when renaming.
+
+{{/hasEditLoops}}
+{{#hasSuggestions}}
+## Suggestions
+
+Concrete tuning candidates, derived from the sections below.
+
+{{#suggestions}}
+- {{.}}
+{{/suggestions}}
+
+{{/hasSuggestions}}
+{{#hasBashHotspots}}
+## Bash command hotspots
+
+Bash calls grouped by leading command. Use this to spot shell patterns that could be replaced by a dedicated tool, narrowed in scope, or removed entirely.
+
+Coverage: **{{bashCoverageWithCommand}} of {{bashCoverageTotal}}** Bash calls in this window had a captured `tool_input.command`. Calls without one bucket under `unknown` and aren't tunable from this report.
+
+| Command | Calls | Avg ms | p95 ms | Avg result bytes |
+|---|---:|---:|---:|---:|
+{{#bashHotspots}}
+| `{{commandPrefix}}` | {{calls}} | {{avgMs}} | {{p95Ms}} | {{avgOut}} |
+{{/bashHotspots}}
+
+{{/hasBashHotspots}}
+{{#hasPerformance}}
+## Tool performance
+
+| Tool | Calls | Avg ms | p95 ms | Avg result bytes |
+|---|---:|---:|---:|---:|
+{{#performance}}
+| `{{tool}}` | {{calls}} | {{avgMs}} | {{p95Ms}} | {{avgOut}} |
+{{/performance}}
+
+Latency tails (p95) tend to surface tools that occasionally do heavy work — long shell commands, slow MCP servers, large file reads. If a tool's p95 is much higher than its average, consider whether the agent could narrow its inputs (smaller globs, shorter shell pipelines, paged reads).
+
+{{/hasPerformance}}
+## Tool call mix
+
+| Tool | Calls | Share |
+|---|---:|---:|
+{{#rows}}
+| `{{tool}}` | {{calls}} | {{share}} |
+{{/rows}}
+
+Total tool calls: **{{total}}**.
+
+{{#hasOversized}}
+## Oversized tool results
+
+The largest individual tool results in the window. Each row is one call — payloads this size dominate context cost and often indicate an unscoped read or shell dump.
+
+| Tool | Scope | Bytes |
+|---|---|---:|
+{{#oversized}}
+| `{{tool}}` | `{{scope}}` | {{bytes}} |
+{{/oversized}}
+
+Suggestions: pipe long command output through a summarizer, skip lockfiles, paginate `Read`, or replace dump-style commands with targeted queries. Results from `WebSearch`, `WebFetch`, and `Agent` are externally determined — ignore those rows.
+
+{{/hasOversized}}
+{{/hasRows}}

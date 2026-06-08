@@ -1,0 +1,35 @@
+# Maven
+/target/
+**/target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Node
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+*.iml
+.idea/
+
+# OS
+.DS_Store
+
+# Env files (keep .env.example tracked)
+.env
+*.env
+!*.env.example
+!.env.example
+
+# Local Claude config (personal; shared settings.json stays tracked)
+.claude/settings.local.json
+
+# Playwright MCP scratch output (snapshots, console logs)
+.playwright-mcp/
+
+# Ad-hoc dev screenshots
+/*.png
