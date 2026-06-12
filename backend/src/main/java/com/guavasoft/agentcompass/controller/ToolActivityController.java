@@ -25,8 +25,8 @@ import com.guavasoft.agentcompass.model.ToolDenialCount;
 import com.guavasoft.agentcompass.model.ToolFailureRate;
 import com.guavasoft.agentcompass.model.ToolLatency;
 import com.guavasoft.agentcompass.model.ToolRepeatStat;
-import com.guavasoft.agentcompass.service.LogQueryService;
-import com.guavasoft.agentcompass.service.TraceQueryService;
+import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceService;
 
 import java.util.List;
 
@@ -38,8 +38,8 @@ import java.util.List;
         description = "Tool call counts, latency, failure rates, denials, repeats, skill and subagent usage, and hook executions")
 public class ToolActivityController {
 
-    private final LogQueryService logQueryService;
-    private final TraceQueryService traceQueryService;
+    private final LogService logService;
+    private final TraceService traceService;
 
     @GetMapping("/calls")
     @Operation(
@@ -56,11 +56,11 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolCallCount.class)))))
     public List<ToolCallCount> toolCalls(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateToolCallsInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateToolCallsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateToolCalls(minutes);
+        return logService.aggregateToolCalls(minutes);
     }
 
     @GetMapping("/calls/timeseries")
@@ -80,12 +80,12 @@ public class ToolActivityController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Parameter(description = "Maximum number of distinct tool series before overflow folds "
                     + "into 'Other'", example = "8") @RequestParam(defaultValue = "8") int topN,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateToolCallsTimeseriesInRange(
-                    timeWindow.startTimestamp(), timeWindow.endTimestamp(), topN);
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateToolCallsTimeseriesInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), topN);
         }
-        return logQueryService.aggregateToolCallsTimeseries(minutes, topN);
+        return logService.aggregateToolCallsTimeseries(minutes, topN);
     }
 
     @GetMapping("/calls/latency")
@@ -102,12 +102,12 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolLatency.class)))))
     public List<ToolLatency> toolCallLatency(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return traceQueryService.aggregateToolLatencyInRange(timeWindow.startTimestamp(),
-                    timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return traceService.aggregateToolLatencyInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
         }
-        return traceQueryService.aggregateToolLatency(minutes);
+        return traceService.aggregateToolLatency(minutes);
     }
 
     @GetMapping("/failure-rates")
@@ -126,12 +126,12 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolFailureRate.class)))))
     public List<ToolFailureRate> toolFailureRates(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateToolFailureRatesInRange(timeWindow.startTimestamp(),
-                    timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateToolFailureRatesInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateToolFailureRates(minutes);
+        return logService.aggregateToolFailureRates(minutes);
     }
 
     @GetMapping("/denials")
@@ -150,11 +150,11 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolDenialCount.class)))))
     public List<ToolDenialCount> toolDenials(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateToolDenialsInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateToolDenialsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateToolDenials(minutes);
+        return logService.aggregateToolDenials(minutes);
     }
 
     @GetMapping("/repeats")
@@ -176,11 +176,11 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolRepeatStat.class)))))
     public List<ToolRepeatStat> toolRepeats(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateToolRepeatsInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateToolRepeatsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateToolRepeats(minutes);
+        return logService.aggregateToolRepeats(minutes);
     }
 
     @GetMapping("/skill-usage")
@@ -199,11 +199,11 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolCallCount.class)))))
     public List<ToolCallCount> skillUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateSkillUsageInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateSkillUsageInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateSkillUsage(minutes);
+        return logService.aggregateSkillUsage(minutes);
     }
 
     @GetMapping("/subagent-usage")
@@ -222,12 +222,12 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = ToolCallCount.class)))))
     public List<ToolCallCount> subagentUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateSubagentUsageInRange(timeWindow.startTimestamp(),
-                    timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateSubagentUsageInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateSubagentUsage(minutes);
+        return logService.aggregateSubagentUsage(minutes);
     }
 
     @GetMapping("/hook-executions")
@@ -245,11 +245,11 @@ public class ToolActivityController {
                     array = @ArraySchema(schema = @Schema(implementation = HookExecutionSummary.class)))))
     public List<HookExecutionSummary> hookExecutions(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return logQueryService.aggregateHookExecutionsInRange(timeWindow.startTimestamp(),
-                    timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateHookExecutionsInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
         }
-        return logQueryService.aggregateHookExecutions(minutes);
+        return logService.aggregateHookExecutions(minutes);
     }
 }

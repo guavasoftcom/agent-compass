@@ -3,7 +3,11 @@ import type { ParsedJson } from './types';
 
 export type { ParsedJson };
 
-const TRUNCATION_MARKER_PATTERN = /\s*\[[^\]]*truncat[^\]]*\]\s*$/i;
+// Match a trailing "[…truncated…]" marker WITHOUT letting the character classes
+// cross a JSON bracket — `[^\[\]]` (not `[^\]]`) stops the match from greedily
+// swallowing an unclosed array (e.g. `"content":[ … `) along with the marker,
+// which would otherwise destroy the partial payload before repair.
+const TRUNCATION_MARKER_PATTERN = /\s*\[[^\[\]]*truncat[^\[\]]*\]\s*$/i;
 
 export const formatAttrValue = (value: unknown): string => {
   if (value == null) {

@@ -1,6 +1,6 @@
 ---
 name: expert-java-spring-boot-engineer
-description: Use proactively for non-trivial work in backend/ — new REST endpoints on DashboardController, new aggregations in LogQueryService / MetricQueryService / TraceQueryService, native-SQL queries on the jsonb attribute payload, MapStruct mappers, Testcontainers / @WebMvcTest tests, OTLP ingest changes, TuningProperties additions. Skip for one-line config tweaks, single-import edits, or frontend work.
+description: Use proactively for non-trivial work in backend/ — new REST endpoints on DashboardController, new aggregations in LogService / MetricService / TraceService, native-SQL queries on the jsonb attribute payload, MapStruct mappers, Testcontainers / @WebMvcTest tests, OTLP ingest changes, TuningProperties additions. Skip for one-line config tweaks, single-import edits, or frontend work.
 tools: Read, Edit, Write, Glob, Grep, Bash, WebFetch
 model: sonnet
 ---

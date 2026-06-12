@@ -5,8 +5,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.guavasoft.agentcompass.config.TuningProperties;
-import com.guavasoft.agentcompass.mapper.MetricPointMapper;
+import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.mapper.MetricPointMapper;
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
@@ -40,7 +41,7 @@ import java.util.Objects;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class MetricQueryService {
+public class MetricService {
 
   private static final String INPUT_TYPE = "input";
   private static final String OUTPUT_TYPE = "output";
@@ -123,8 +124,8 @@ public class MetricQueryService {
       "costPerActiveMinuteUsd", "costPerMinute",
       "startTimestamp", "started");
 
-  private final MetricPointRepository repository;
-  private final MetricPointMapper mapper;
+  private final MetricPointRepository metricPointRepository;
+  private final MetricPointMapper metricPointMapper;
   private final TuningProperties tuningProperties;
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
@@ -133,13 +134,14 @@ public class MetricQueryService {
 
   public List<EventRow> recentEvents(
       List<String> activeFilters, Instant startTimestamp, Instant endTimestamp) {
-    return mapper.toEventRows(repository.findAllMatchingFilters(
-        toFilterArray(activeFilters), startTimestamp, endTimestamp));
+    List<MetricPointEntity> metricPointEntities = metricPointRepository.findAllMatchingFilters(
+        toFilterArray(activeFilters), startTimestamp, endTimestamp);
+    return metricPointMapper.toEventRows(metricPointEntities);
   }
 
   public List<String> availableAttributePairs(
       List<String> activeFilters, Instant startTimestamp, Instant endTimestamp) {
-    return repository.findDistinctAttributePairs(
+    return metricPointRepository.findDistinctAttributePairs(
         toFilterArray(activeFilters), startTimestamp, endTimestamp);
   }
 
@@ -147,7 +149,7 @@ public class MetricQueryService {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
-    List<Object[]> rawRows = repository.aggregateTokenUsageTimeseries(
+    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseries(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
         start,
@@ -160,7 +162,7 @@ public class MetricQueryService {
   public TokenUsageSummary aggregateTokenUsageInRange(Instant start, Instant end) {
     long windowSeconds = Math.max(1L, Duration.between(start, end).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / TARGET_BUCKETS_PER_WINDOW);
-    List<Object[]> rawRows = repository.aggregateTokenUsageTimeseriesInRange(
+    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseriesInRange(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
         start,
@@ -172,7 +174,7 @@ public class MetricQueryService {
   }
 
   private List<ModelTokenShare> buildTokensByModel(Instant start, Instant end) {
-    List<Object[]> modelRows = repository.aggregateTokensByModel(
+    List<Object[]> modelRows = metricPointRepository.aggregateTokensByModel(
         tuningProperties.getTokenUsageMetric(),
         MODEL_ATTRIBUTE,
         start,
@@ -276,7 +278,7 @@ public class MetricQueryService {
   }
 
   private SessionKpis buildSessionKpis(Instant start, Instant end) {
-    List<Object[]> kpiRows = repository.aggregateSessionKpis(
+    List<Object[]> kpiRows = metricPointRepository.aggregateSessionKpis(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
         start,
@@ -298,7 +300,7 @@ public class MetricQueryService {
       Instant start, Instant end, long windowSeconds, long bucketSeconds) {
     int bucketCount = (int) Math.max(1L, (windowSeconds + bucketSeconds - 1) / bucketSeconds);
     long[] dense = new long[bucketCount];
-    List<Object[]> trendRows = repository.aggregateNewSessionsTrend(
+    List<Object[]> trendRows = metricPointRepository.aggregateNewSessionsTrend(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
         start,
@@ -322,7 +324,7 @@ public class MetricQueryService {
       Instant start, Instant end, String sortField, String sortDirection, int page, int size) {
     int pageSize = clampPageSize(size);
     int pageOffset = Math.max(0, page) * pageSize;
-    List<Object[]> rows = repository.aggregateSessionSummaries(
+    List<Object[]> rows = metricPointRepository.aggregateSessionSummaries(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
         tuningProperties.getTokenUsageMetric(),
@@ -418,10 +420,10 @@ public class MetricQueryService {
   // ---------------------------------------------------------------------------
 
   public List<CatalogMetric> aggregateMetricCatalog(Instant from, Instant to) {
-    List<Object[]> summaryRows = repository.aggregateCatalogSummary(from, to);
+    List<Object[]> summaryRows = metricPointRepository.aggregateCatalogSummary(from, to);
     long windowSeconds = Math.max(1L, Duration.between(from, to).getSeconds());
     long bucketSeconds = Math.max(1L, windowSeconds / CATALOG_SPARK_BUCKETS);
-    List<Object[]> sparkRows = repository.aggregateCatalogSparklines(from, to, bucketSeconds);
+    List<Object[]> sparkRows = metricPointRepository.aggregateCatalogSparklines(from, to, bucketSeconds);
 
     Map<String, long[]> sparksByMetricName = buildSparkMap(sparkRows);
 
@@ -518,12 +520,12 @@ public class MetricQueryService {
   }
 
   private double queryCostTotal(String metricName, Instant start, Instant end) {
-    Number total = firstScalar(repository.aggregateCostTotal(metricName, start, end));
+    Number total = firstScalar(metricPointRepository.aggregateCostTotal(metricName, start, end));
     return total == null ? 0.0 : total.doubleValue();
   }
 
   private long queryTotalTokens(String metricName, Instant start, Instant end) {
-    Number total = firstScalar(repository.aggregateTotalTokens(metricName, start, end));
+    Number total = firstScalar(metricPointRepository.aggregateTotalTokens(metricName, start, end));
     return total == null ? 0L : total.longValue();
   }
 
@@ -543,7 +545,7 @@ public class MetricQueryService {
   }
 
   private List<Double> buildCostTrend(String metricName, Instant from, Instant to, long bucketSeconds) {
-    List<Object[]> trendRows = repository.aggregateCostTrend(metricName, from, to, bucketSeconds);
+    List<Object[]> trendRows = metricPointRepository.aggregateCostTrend(metricName, from, to, bucketSeconds);
     Map<Instant, Double> bucketValues = new LinkedHashMap<>();
     for (Object[] trendRow : trendRows) {
       Instant bucket = (Instant) trendRow[0];
@@ -559,7 +561,7 @@ public class MetricQueryService {
 
   private List<CostModelShare> buildCostByModel(
       String metricName, Instant from, Instant to, double totalSpend) {
-    List<Object[]> modelRows = repository.aggregateCostByModel(metricName, from, to);
+    List<Object[]> modelRows = metricPointRepository.aggregateCostByModel(metricName, from, to);
     List<CostModelShare> byModel = new ArrayList<>(modelRows.size());
     for (int colorIndex = 0; colorIndex < modelRows.size(); colorIndex++) {
       Object[] modelRow = modelRows.get(colorIndex);
@@ -612,7 +614,7 @@ public class MetricQueryService {
     long colWidthSeconds = Math.max(1L, (long) windowSeconds / DISTRIBUTION_COLUMNS);
     String tokenMetricName = tuningProperties.getTokenUsageMetric();
 
-    List<Object[]> tokenRows = repository.findTopTokenRows(
+    List<Object[]> tokenRows = metricPointRepository.findTopTokenRows(
         tokenMetricName, from, to, colWidthSeconds,
         SESSION_ID_ATTRIBUTE, MODEL_ATTRIBUTE,
         DISTRIBUTION_EXEMPLAR_LIMIT);

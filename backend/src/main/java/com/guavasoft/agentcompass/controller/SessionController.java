@@ -24,7 +24,7 @@ import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
-import com.guavasoft.agentcompass.service.MetricQueryService;
+import com.guavasoft.agentcompass.service.MetricService;
 
 import java.util.List;
 
@@ -35,7 +35,7 @@ import java.util.List;
 @Tag(name = "Sessions", description = "Per-session cost, token usage, and window-level KPIs")
 public class SessionController {
 
-    private final MetricQueryService metricQueryService;
+    private final MetricService metricService;
 
     @GetMapping("")
     @Operation(
@@ -62,13 +62,13 @@ public class SessionController {
             @Parameter(description = "Sort direction, asc or desc", example = "desc") @RequestParam(required = false) String direction,
             @Parameter(description = "Zero-based page index", example = "0") @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "Page size", example = "25") @RequestParam(defaultValue = "25") int size,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         SessionSummaryPage result;
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            result = metricQueryService.sessionsSummaryInRange(
-                    timeWindow.startTimestamp(), timeWindow.endTimestamp(), sort, direction, page, size);
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            result = metricService.sessionsSummaryInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), sort, direction, page, size);
         } else {
-            result = metricQueryService.sessionsSummary(minutes, sort, direction, page, size);
+            result = metricService.sessionsSummary(minutes, sort, direction, page, size);
         }
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Total-Count", String.valueOf(result.totalCount()));
@@ -90,11 +90,11 @@ public class SessionController {
                     schema = @Schema(implementation = SessionKpis.class))))
     public SessionKpis sessionsSummary(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return metricQueryService.sessionsKpisInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return metricService.sessionsKpisInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         }
-        return metricQueryService.sessionsKpis(minutes);
+        return metricService.sessionsKpis(minutes);
     }
 
     @GetMapping("/token-usage")
@@ -114,11 +114,11 @@ public class SessionController {
                     schema = @Schema(implementation = TokenUsageSummary.class))))
     public TokenUsageSummary tokenUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            return metricQueryService.aggregateTokenUsageInRange(timeWindow.startTimestamp(),
-                    timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return metricService.aggregateTokenUsageInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
         }
-        return metricQueryService.aggregateTokenUsage(minutes);
+        return metricService.aggregateTokenUsage(minutes);
     }
 }

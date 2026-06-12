@@ -14,7 +14,7 @@ import com.guavasoft.agentcompass.model.ExemplarPoint;
 import com.guavasoft.agentcompass.model.MetricSeries;
 import com.guavasoft.agentcompass.model.MetricSplitRow;
 import com.guavasoft.agentcompass.model.TokenDistribution;
-import com.guavasoft.agentcompass.service.MetricQueryService;
+import com.guavasoft.agentcompass.service.MetricService;
 import com.guavasoft.agentcompass.service.MetricSeriesService;
 
 import java.time.Instant;
@@ -36,14 +36,14 @@ class MetricsControllerTest {
     MockMvc mockMvc;
 
     @MockitoBean
-    MetricQueryService metricQueryService;
+    MetricService metricService;
 
     @MockitoBean
     MetricSeriesService metricSeriesService;
 
     @Test
     void metricsReturnsAllEventRowsWhenNoFilterApplied() throws Exception {
-        when(metricQueryService.recentEvents(List.of(), null, null)).thenReturn(List.of(
+        when(metricService.recentEvents(List.of(), null, null)).thenReturn(List.of(
                 EventRow.builder()
                         .id(1L)
                         .metricName("claude_code.code_edit_tool.decision")
@@ -69,12 +69,12 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[0].valueLong").value(3))
                 .andExpect(jsonPath("$[0].valueKind").value("long"));
 
-        verify(metricQueryService).recentEvents(List.of(), null, null);
+        verify(metricService).recentEvents(List.of(), null, null);
     }
 
     @Test
     void metricsNarrowsBySuppliedFiltersAndReturnsFilteredCount() throws Exception {
-        when(metricQueryService.recentEvents(List.of("method=GET", "status=200"), null, null)).thenReturn(List.of(
+        when(metricService.recentEvents(List.of("method=GET", "status=200"), null, null)).thenReturn(List.of(
                 EventRow.builder()
                         .id(7L)
                         .metricName("http.server.request.duration")
@@ -91,12 +91,12 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].metricName").value("http.server.request.duration"));
 
-        verify(metricQueryService).recentEvents(List.of("method=GET", "status=200"), null, null);
+        verify(metricService).recentEvents(List.of("method=GET", "status=200"), null, null);
     }
 
     @Test
     void metricAttributesReturnsDistinctKeyValuePairsWhenNoFilterApplied() throws Exception {
-        when(metricQueryService.availableAttributePairs(List.of(), null, null)).thenReturn(List.of(
+        when(metricService.availableAttributePairs(List.of(), null, null)).thenReturn(List.of(
                 "method=GET",
                 "route=/users",
                 "status=200"));
@@ -108,12 +108,12 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[1]").value("route=/users"))
                 .andExpect(jsonPath("$[2]").value("status=200"));
 
-        verify(metricQueryService).availableAttributePairs(List.of(), null, null);
+        verify(metricService).availableAttributePairs(List.of(), null, null);
     }
 
     @Test
     void metricAttributesNarrowsBySuppliedFilters() throws Exception {
-        when(metricQueryService.availableAttributePairs(List.of("method=GET", "status=200"), null, null))
+        when(metricService.availableAttributePairs(List.of("method=GET", "status=200"), null, null))
                 .thenReturn(List.of("method=GET", "route=/users", "status=200"));
 
         mockMvc.perform(get("/api/metrics/attributes")
@@ -121,14 +121,14 @@ class MetricsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(3)));
 
-        verify(metricQueryService).availableAttributePairs(List.of("method=GET", "status=200"), null, null);
+        verify(metricService).availableAttributePairs(List.of("method=GET", "status=200"), null, null);
     }
 
     @Test
     void metricCatalogDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricQueryService.aggregateMetricCatalog(from, to)).thenReturn(List.of(
+        when(metricService.aggregateMetricCatalog(from, to)).thenReturn(List.of(
                 new CatalogMetric(
                         "claude_code.token.usage",
                         "tokens",
@@ -148,14 +148,14 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[0].cardinality").value("1.2K"))
                 .andExpect(jsonPath("$[0].spark", hasSize(8)));
 
-        verify(metricQueryService).aggregateMetricCatalog(from, to);
+        verify(metricService).aggregateMetricCatalog(from, to);
     }
 
     @Test
     void metricCostDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricQueryService.aggregateCostSummary(from, to)).thenReturn(new CostSummary(
+        when(metricService.aggregateCostSummary(from, to)).thenReturn(new CostSummary(
                 "$1,284",
                 "+22.4%",
                 "$53/h",
@@ -179,14 +179,14 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.byModel[0].model").value("claude-sonnet-4"))
                 .andExpect(jsonPath("$.byModel[0].share").value(56));
 
-        verify(metricQueryService).aggregateCostSummary(from, to);
+        verify(metricService).aggregateCostSummary(from, to);
     }
 
     @Test
     void metricDistributionDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricQueryService.aggregateTokenDistribution(from, to)).thenReturn(new TokenDistribution(
+        when(metricService.aggregateTokenDistribution(from, to)).thenReturn(new TokenDistribution(
                 List.of("256K", "128K", "64K", "32K", "16K", "8K", "4K", "0"),
                 List.of(new ExemplarPoint(
                         3, 4,
@@ -207,7 +207,7 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.exemplars[0].status").value("ok"))
                 .andExpect(jsonPath("$.exemplars[0].worst").value(true));
 
-        verify(metricQueryService).aggregateTokenDistribution(from, to);
+        verify(metricService).aggregateTokenDistribution(from, to);
     }
 
     @Test

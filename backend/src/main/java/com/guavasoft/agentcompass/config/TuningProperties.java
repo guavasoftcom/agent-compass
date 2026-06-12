@@ -147,4 +147,66 @@ public class TuningProperties {
   private List<String> bashAntipatternPrefixes = List.of(
       "cat", "head", "tail", "find", "sed", "awk", "echo");
 
+  // -------------------------------------------------------------------------
+  // Derived-severity classification defaults
+  //
+  // These lists document the event.name values and signal attribute keys used
+  // by the derive_log_severity() Postgres function (V6__log_severity_function.sql).
+  // They are the canonical source of truth for what the defaults are; the
+  // function itself contains the literals because @Query native SQL cannot read
+  // Spring properties at query-parse time. If you change these lists, create a
+  // new Flyway migration to update the function accordingly.
+  // -------------------------------------------------------------------------
+
+  /**
+   * event.name values that map to ERROR severity in the event-based fallback.
+   * Mirrors the IN-list in {@code derive_log_severity()}.
+   */
+  private List<String> errorEventNames = List.of(
+      "api_error", "internal_error", "api_retries_exhausted");
+
+  /**
+   * event.name values that map to WARN severity in the event-based fallback.
+   * Mirrors the IN-list in {@code derive_log_severity()}.
+   */
+  private List<String> warnEventNames = List.of("compaction");
+
+  /**
+   * event.name values that map to DEBUG severity in the event-based fallback
+   * (unconditionally, regardless of other attributes).
+   * Mirrors the IN-list in {@code derive_log_severity()}.
+   */
+  private List<String> debugEventNames = List.of(
+      "hook_execution_start", "hook_execution_complete", "hook_registered",
+      "api_request_body", "api_response_body");
+
+  /**
+   * Attribute key whose value {@code 'false'} signals an ERROR outcome.
+   * Checked in the event-based severity fallback.
+   */
+  private String successAttribute = "success";
+
+  /**
+   * Attribute key whose value {@code 'reject'} signals an ERROR outcome, and
+   * whose value {@code 'accept'} signals DEBUG (for tool_decision events).
+   */
+  private String decisionAttribute = "decision";
+
+  /**
+   * Attribute key whose value {@code 'disconnected'} signals a WARN outcome.
+   */
+  private String statusAttribute = "status";
+
+  /**
+   * Attribute key whose non-zero value signals a WARN outcome (non-blocking
+   * hook errors). The function checks {@code <> '0'} on the text representation.
+   */
+  private String numNonBlockingErrorAttribute = "num_non_blocking_error";
+
+  /**
+   * Attribute key on log records that identifies the instrumentation scope (library).
+   * Kept here in case a future query needs to filter on scope at the attribute level.
+   */
+  private String eventNameAttribute = "event.name";
+
 }

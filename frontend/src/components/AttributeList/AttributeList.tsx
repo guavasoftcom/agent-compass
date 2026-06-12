@@ -7,6 +7,9 @@ export interface AttributeListProps {
   fontSize?: string;
   truncate?: boolean;
   disableBackground?: boolean;
+  // When true, long values expand inline instead of opening the value dialog.
+  // The dialog passes this so nested long strings grow in place — no stacking.
+  inlineExpand?: boolean;
 }
 
 export const AttributeList = ({
@@ -14,6 +17,7 @@ export const AttributeList = ({
   fontSize = '0.75rem',
   truncate = true,
   disableBackground = false,
+  inlineExpand = false,
 }: AttributeListProps): React.ReactElement => {
   const [expanded, setExpanded] = useState<ValueDialogState | null>(null);
   return (
@@ -22,11 +26,12 @@ export const AttributeList = ({
       fontSize={fontSize}
       truncate={truncate}
       disableBackground={disableBackground}
+      inlineExpand={inlineExpand}
       expanded={expanded}
       onExpand={setExpanded}
       onClose={() => setExpanded(null)}
       renderAttributeList={(attrs) => (
-        <AttributeList attributes={attrs} truncate={false} />
+        <AttributeList attributes={attrs} truncate inlineExpand />
       )}
     />
   );

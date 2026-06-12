@@ -11,7 +11,7 @@ import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
-import com.guavasoft.agentcompass.service.MetricQueryService;
+import com.guavasoft.agentcompass.service.MetricService;
 
 import java.time.Instant;
 import java.util.List;
@@ -34,11 +34,11 @@ class SessionControllerTest {
     MockMvc mockMvc;
 
     @MockitoBean
-    MetricQueryService metricQueryService;
+    MetricService metricService;
 
     @Test
     void tokenUsageReturnsAggregatedTotalsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(metricQueryService.aggregateTokenUsage(anyInt())).thenReturn(new TokenUsageSummary(
+        when(metricService.aggregateTokenUsage(anyInt())).thenReturn(new TokenUsageSummary(
                 12_000L,
                 8_000L,
                 4_000L,
@@ -61,12 +61,12 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.points", hasSize(1)))
                 .andExpect(jsonPath("$.points[0].cacheRead").value(9600));
 
-        verify(metricQueryService).aggregateTokenUsage(1440);
+        verify(metricService).aggregateTokenUsage(1440);
     }
 
     @Test
     void sessionsReturnsPaginatedRowsWithTotalCountHeaderAndDefaults() throws Exception {
-        when(metricQueryService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt()))
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new SessionSummaryPage(List.of(
                         new SessionSummary(
                                 "7b3fc524-7f3c-4db5-9bb4-da27b77df56b",
@@ -108,12 +108,12 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[1].sessionId").value("025a8c32-26ff-409d-b704-dc19dcecbb47"))
                 .andExpect(jsonPath("$[1].startType").value("fresh"));
 
-        verify(metricQueryService).sessionsSummary(1440, null, null, 0, 25);
+        verify(metricService).sessionsSummary(1440, null, null, 0, 25);
     }
 
     @Test
     void sessionsForwardsSortAndPaginationParams() throws Exception {
-        when(metricQueryService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt()))
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new SessionSummaryPage(List.of(), 0L));
 
         mockMvc.perform(get("/api/sessions")
@@ -124,12 +124,12 @@ class SessionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Total-Count", "0"));
 
-        verify(metricQueryService).sessionsSummary(1440, "wallSeconds", "asc", 2, 50);
+        verify(metricService).sessionsSummary(1440, "wallSeconds", "asc", 2, 50);
     }
 
     @Test
     void sessionsSummaryReturnsWindowKpisAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(metricQueryService.sessionsKpis(anyInt()))
+        when(metricService.sessionsKpis(anyInt()))
                 .thenReturn(new SessionKpis(128L, 1.42, 9.87, 0.123, List.of(0L, 1L, 3L)));
 
         mockMvc.perform(get("/api/sessions/summary"))
@@ -140,6 +140,6 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.medianCostPerActiveMinuteUsd").value(0.123))
                 .andExpect(jsonPath("$.sessionsTrend").value(contains(0, 1, 3)));
 
-        verify(metricQueryService).sessionsKpis(1440);
+        verify(metricService).sessionsKpis(1440);
     }
 }

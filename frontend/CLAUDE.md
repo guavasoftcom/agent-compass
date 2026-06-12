@@ -4,7 +4,7 @@ Project-wide conventions for `frontend/` (React 19, Vite 5, MUI 9, TypeScript). 
 
 ## Module layout
 
-- `api.ts` — single source of every `fetch` call, the matching TypeScript types, and the `WindowSelection` discriminated union. New backend endpoints add a new `fetchXxx(selection)` function here; pages never call `fetch` directly.
+- `api.ts` — shared `fetch` calls, the matching TypeScript types, and the `WindowSelection` discriminated union. New backend endpoints add a new `fetchXxx(selection)` function here — unless they serve exactly one page, in which case they live in a page-local API module (`pages/LogsPage/logsApi.ts`, `pages/MetricsPage/metricsApi.ts`). Either way, pages never call `fetch` outside these modules.
 - `App/` — `App.tsx` wires the React Router routes, `AppShell.tsx` renders the app-bar + drawer chrome around `<Outlet />`, `navItems.tsx` is the nav model, `ColorModeToggle.tsx` flips the theme.
 - `components/` — cross-page primitives:
   - `PageLayout` — page chrome (title row, subtitle, actions slot, error Alert, body).
@@ -26,6 +26,8 @@ Every page is split into two files in the same folder:
 - `index.ts` re-exports the container as the default.
 
 Don't merge a container with its view, even for one-card pages — the split keeps the views easy to read and the data flow obvious in PR review.
+
+Documented deviation: `LogsPage` keeps its two page-level `useQuery` calls in the view because they depend on view-owned filter state — read [src/pages/LogsPage/CLAUDE.md](src/pages/LogsPage/CLAUDE.md) before touching that page.
 
 ## Data fetching
 
@@ -52,6 +54,7 @@ Don't merge a container with its view, even for one-card pages — the split kee
 - **TypeScript.** `tsconfig.json` runs with `strict: false` / `noImplicitAny: false`; don't tighten it without discussing — large parts of the dashboard rely on `Record<string, unknown>` attribute bags. Prefer explicit types on exports and `useState` initial values; let local inference take care of the rest. New props interfaces live in the file that exports the component.
 - **Quotes.** Single quotes in TS/TSX (`avoidEscape: true`, `allowTemplateLiterals: true`); double quotes in JSX attributes. ESLint enforces both.
 - **Braces always.** `curly: ['error', 'all']` — every `if` / `else` / `for` / `while` body wrapped, even one-liners. Same rule as the backend.
+- **Expressive names.** Spell names out — `formatGranularity` not `granLabel`, `stringBuilder` not `sb`. Variables, functions, props, hooks, and meaningful locals use full, intent-revealing names; no abbreviations or one/two-letter shorthand. Carve-outs (short names OK): standard index loops (`i`/`j`/`k`), generic type params (`T`/`K`/`V`), and single-expression lambda/callback params — including the idiomatic MUI `sx={{ color: (t) => t.palette… }}` theme arg and the `(e)` event arg — plus `e` in `catch`. Mirrors the backend's full-descriptive-names rule. Convention only (no ESLint rule backs it), so it's enforced in review.
 - **Components are functions, not classes.** `func-style: expression` + `allowArrowFunctions: true` means top-level component variables are arrow functions (`const FooView = (props) => { ... }`). `export default function FooPage() { ... }` declarations are allowed and idiomatic for the container default export. Don't use `function FooView() {}` assigned to a `const`.
 - **Callbacks.** `prefer-arrow-callback` — pass arrow functions to `map` / `filter` / event handlers, never `function (item) { ... }`.
 - **Path aliases.** None configured; use relative imports.
@@ -60,14 +63,14 @@ Don't merge a container with its view, even for one-card pages — the split kee
 ## Dev / build
 
 ```sh
-npm install                # one-time
-npm run dev                # Vite on :5173, proxies /api → :8080
-npm run build              # production build
-npm run typecheck          # tsc --noEmit
-npm run lint               # eslint .
+yarn install               # one-time
+yarn dev                   # Vite on :5173, proxies /api → :8080
+yarn build                 # production build
+yarn typecheck             # tsc --noEmit
+yarn lint                  # eslint .
 ```
 
-Package manager is npm. The legacy `yarn.lock` is unused — don't `yarn install` and don't add `yarn` scripts.
+Package manager is Yarn (Berry — Yarn 4). The stray `package-lock.json` is legacy — don't `npm install`.
 
 ## Skills
 

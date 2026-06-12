@@ -48,17 +48,17 @@ public class ReportService {
   private static final String SHARE_FORMAT = "%.1f%%";
   private static final String TRUNCATION_SUFFIX = "…";
 
-  private final LogQueryService logQueryService;
+  private final LogService logService;
   private final TuningProperties tuningProperties;
   private final Template template;
   private final Set<String> bashAntipatternPrefixes;
 
   public ReportService(
-      LogQueryService logQueryService,
+      LogService logService,
       TuningProperties tuningProperties,
       Mustache.Compiler compiler,
       @Value("classpath:templates/report.mustache") Resource templateResource) throws IOException {
-    this.logQueryService = logQueryService;
+    this.logService = logService;
     this.tuningProperties = tuningProperties;
     this.template = compiler.compile(templateResource.getContentAsString(StandardCharsets.UTF_8));
     this.bashAntipatternPrefixes = Set.copyOf(tuningProperties.getBashAntipatternPrefixes());
@@ -76,7 +76,7 @@ public class ReportService {
   }
 
   private String renderForWindow(Instant start, Instant end, int minutesForContext) {
-    List<ToolCallCount> rows = logQueryService.aggregateToolCallsInRange(start, end);
+    List<ToolCallCount> rows = logService.aggregateToolCallsInRange(start, end);
     long total = rows.stream().mapToLong(ToolCallCount::getCalls).sum();
 
     List<Map<String, Object>> rowsWithShare = rows.stream()
@@ -89,7 +89,7 @@ public class ReportService {
         })
         .toList();
 
-    List<ToolPerformance> performanceRows = logQueryService.aggregateToolPerformanceInRange(start, end);
+    List<ToolPerformance> performanceRows = logService.aggregateToolPerformanceInRange(start, end);
     List<Map<String, Object>> performanceContext = performanceRows.stream()
         .map(performance -> {
           Map<String, Object> performanceRow = new LinkedHashMap<>();
@@ -102,7 +102,7 @@ public class ReportService {
         })
         .toList();
 
-    List<ToolFailure> failureRows = logQueryService.aggregateToolFailuresInRange(start, end);
+    List<ToolFailure> failureRows = logService.aggregateToolFailuresInRange(start, end);
     long totalFailures = failureRows.stream().mapToLong(ToolFailure::count).sum();
     List<Map<String, Object>> failuresContext = failureRows.stream()
         .map(failure -> {
@@ -116,7 +116,7 @@ public class ReportService {
         })
         .toList();
 
-    List<BashCommandHotspot> bashHotspots = logQueryService.aggregateBashCommandHotspotsInRange(start, end);
+    List<BashCommandHotspot> bashHotspots = logService.aggregateBashCommandHotspotsInRange(start, end);
     List<Map<String, Object>> bashHotspotsContext = bashHotspots.stream()
         .map(hotspot -> {
           Map<String, Object> hotspotRow = new LinkedHashMap<>();
@@ -129,9 +129,9 @@ public class ReportService {
         })
         .toList();
 
-    BashCommandCoverage bashCoverage = logQueryService.bashCommandCoverageInRange(start, end);
+    BashCommandCoverage bashCoverage = logService.bashCommandCoverageInRange(start, end);
 
-    List<OversizedToolResult> oversized = logQueryService.aggregateOversizedToolResultsInRange(start, end);
+    List<OversizedToolResult> oversized = logService.aggregateOversizedToolResultsInRange(start, end);
     List<Map<String, Object>> oversizedContext = oversized.stream()
         .map(result -> {
           Map<String, Object> oversizedRow = new LinkedHashMap<>();
@@ -142,7 +142,7 @@ public class ReportService {
         })
         .toList();
 
-    List<RedundantFileRead> redundantReads = logQueryService.aggregateRedundantFileReadsInRange(start, end);
+    List<RedundantFileRead> redundantReads = logService.aggregateRedundantFileReadsInRange(start, end);
     List<Map<String, Object>> redundantReadsContext = redundantReads.stream()
         .map(redundantRead -> {
           Map<String, Object> readRow = new LinkedHashMap<>();
@@ -156,7 +156,7 @@ public class ReportService {
         })
         .toList();
 
-    List<EditFailureLoop> editLoops = logQueryService.aggregateEditFailureLoopsInRange(start, end);
+    List<EditFailureLoop> editLoops = logService.aggregateEditFailureLoopsInRange(start, end);
     List<Map<String, Object>> editLoopsContext = editLoops.stream()
         .map(loop -> {
           Map<String, Object> loopRow = new LinkedHashMap<>();
@@ -167,7 +167,7 @@ public class ReportService {
         })
         .toList();
 
-    List<SlowAndLargeCall> slowLarge = logQueryService.aggregateSlowAndLargeCallsInRange(start, end);
+    List<SlowAndLargeCall> slowLarge = logService.aggregateSlowAndLargeCallsInRange(start, end);
 
     List<String> suggestions = buildSuggestions(
         bashHotspots, oversized, redundantReads, editLoops, slowLarge);

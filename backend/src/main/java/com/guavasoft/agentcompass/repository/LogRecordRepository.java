@@ -1040,4 +1040,434 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionIds") Collection<String> sessionIds,
       @Param("toolEventName") String toolEventName,
       @Param("toolDecisionEventName") String toolDecisionEventName);
+
+  // =========================================================================
+  // Logs-page aggregation queries (histogram, facets, cursor paging, offset
+  // paging). All share the same WHERE macro expressed via cardinality guards
+  // and the existing NOT EXISTS filter idiom.
+  //
+  // Severity is read from the stored generated column derived_severity (added in
+  // V8__derived_severity_column.sql). The column is computed at write time by
+  // derive_log_severity() (defined in V6__log_severity_function.sql), which is the
+  // single source of truth: it prefers severity_text when canonical, falls back to
+  // numeric ranges, then to event-based heuristics. Reading from the stored column
+  // avoids detoasting the attributes jsonb on every call; the histogram went from
+  // ~4.0 s (per-row function evaluation) to ~14 ms after the column was added.
+  //
+  // The scope (scope_name) dimension has been dropped from all filter params:
+  // Claude Code emits exactly one scope name for all rows so the facet is
+  // uninformative.
+  //
+  // Tool dimension uses :toolAttribute (defaults to "tool_name") bound from
+  // TuningProperties so the key is not hardcoded.
+  // =========================================================================
+
+  // Histogram — conditional-aggregate over a date_bin series.
+  // Severity filter is intentionally omitted from the WHERE so all four series
+  // are always populated (legend mutes client-side).
+  @Query(value = """
+      SELECT
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :windowStart) AS bucket,
+        COUNT(*) FILTER (WHERE derived_severity = 'ERROR') AS error_count,
+        COUNT(*) FILTER (WHERE derived_severity = 'WARN')  AS warn_count,
+        COUNT(*) FILTER (WHERE derived_severity = 'INFO')  AS info_count,
+        COUNT(*) FILTER (WHERE derived_severity = 'DEBUG') AS debug_count
+      FROM log_records
+      WHERE timestamp >= :windowStart
+        AND timestamp <= :windowEnd
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      GROUP BY bucket
+      ORDER BY bucket
+      """, nativeQuery = true)
+  List<Object[]> histogramBuckets(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("filters") String[] filters,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery);
+
+  // Facet: severity counts (all other filters applied, severity excluded).
+  @Query(value = """
+      SELECT
+        derived_severity,
+        COUNT(*) AS row_count
+      FROM log_records
+      WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      GROUP BY derived_severity
+      """, nativeQuery = true)
+  List<Object[]> facetSeverity(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("filters") String[] filters,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery);
+
+  // Facet: event-name counts (all other filters applied, event excluded).
+  @Query(value = """
+      SELECT attributes ->> 'event.name' AS facet_value, COUNT(*) AS row_count
+      FROM log_records
+      WHERE attributes ->> 'event.name' IS NOT NULL
+        AND attributes ->> 'event.name' <> ''
+        AND (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      GROUP BY facet_value
+      ORDER BY row_count DESC
+      LIMIT :facetLimit
+      """, nativeQuery = true)
+  List<Object[]> facetEvent(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery,
+      @Param("facetLimit") int facetLimit);
+
+  // Facet: tool counts (all other filters applied, tool excluded).
+  // Tool attribute key is bound via :toolAttribute (defaults to "tool_name").
+  @Query(value = """
+      SELECT
+        attributes ->> :toolAttribute AS facet_value,
+        COUNT(*) AS row_count
+      FROM log_records
+      WHERE attributes ->> :toolAttribute IS NOT NULL
+        AND attributes ->> :toolAttribute <> ''
+        AND (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      GROUP BY facet_value
+      ORDER BY row_count DESC
+      LIMIT :facetLimit
+      """, nativeQuery = true)
+  List<Object[]> facetTool(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("events") String[] events,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery,
+      @Param("facetLimit") int facetLimit);
+
+  // Total count matching all filters — shared denominator for cursor and offset paging.
+  @Query(value = """
+      SELECT COUNT(*)
+      FROM log_records
+      WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      """, nativeQuery = true)
+  long countFiltered(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery);
+
+  // Cursor paging — rows strictly OLDER than (cursorTs, cursorId), newest first.
+  // Used for scroll-back (before= param). The row-constructor comparison
+  // (timestamp, id) < (ts, id) walks idx_log_records_ts_id directly instead of
+  // the OR-form boundary, which the planner cannot map onto a composite index.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (timestamp, id) < (CAST(:cursorTs AS timestamptz), :cursorId)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY timestamp DESC, id DESC
+      LIMIT :pageLimit
+      """, nativeQuery = true)
+  List<LogRecordEntity> cursorBefore(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("cursorTs") Instant cursorTs,
+      @Param("cursorId") long cursorId,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery,
+      @Param("pageLimit") int pageLimit);
+
+  // Cursor paging — rows strictly NEWER than (cursorTs, cursorId), newest first.
+  // Used for live tail (after= param). Returns [] when nothing new.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (timestamp, id) > (CAST(:cursorTs AS timestamptz), :cursorId)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY timestamp DESC, id DESC
+      LIMIT :pageLimit
+      """, nativeQuery = true)
+  List<LogRecordEntity> cursorAfter(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("cursorTs") Instant cursorTs,
+      @Param("cursorId") long cursorId,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery,
+      @Param("pageLimit") int pageLimit);
+
+  // Initial cursor page — no before/after boundary, newest first.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY timestamp DESC, id DESC
+      LIMIT :pageLimit
+      """, nativeQuery = true)
+  List<LogRecordEntity> cursorFirst(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery,
+      @Param("pageLimit") int pageLimit);
+
+  // Offset paging — fixed sort: timestamp DESC, id DESC.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
+        AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
+        AND (
+          cardinality(CAST(:severities AS text[])) = 0
+          OR derived_severity = ANY(CAST(:severities AS text[]))
+        )
+        AND (
+          cardinality(CAST(:events AS text[])) = 0
+          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+        )
+        AND (
+          cardinality(CAST(:tools AS text[])) = 0
+          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+        )
+        AND (
+          :fullTextQuery = ''
+          OR body ILIKE '%' || :fullTextQuery || '%'
+          OR attributes::text ILIKE '%' || :fullTextQuery || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unnest(CAST(:filters AS text[])) AS required_filter
+          WHERE required_filter NOT IN (
+            SELECT row_entry.key || '=' || row_entry.value
+            FROM jsonb_each_text(attributes) AS row_entry
+          )
+        )
+      ORDER BY timestamp DESC, id DESC
+      LIMIT :pageSize OFFSET :pageOffset
+      """, nativeQuery = true)
+  List<LogRecordEntity> offsetPage(
+      @Param("windowStart") Instant windowStart,
+      @Param("windowEnd") Instant windowEnd,
+      @Param("filters") String[] filters,
+      @Param("severities") String[] severities,
+      @Param("events") String[] events,
+      @Param("tools") String[] tools,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("fullTextQuery") String fullTextQuery,
+      @Param("pageSize") int pageSize,
+      @Param("pageOffset") int pageOffset);
 }

@@ -9,8 +9,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.TraceSummary;
-import com.guavasoft.agentcompass.service.LogQueryService;
-import com.guavasoft.agentcompass.service.TraceQueryService;
+import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceService;
 
 import java.time.Instant;
 import java.util.List;
@@ -30,14 +30,14 @@ class TracesControllerTest {
     MockMvc mockMvc;
 
     @MockitoBean
-    TraceQueryService traceQueryService;
+    TraceService traceService;
 
     @MockitoBean
-    LogQueryService logQueryService;
+    LogService logService;
 
     @Test
     void tracesReturnsTraceSummariesAndExposesTotalCountHeader() throws Exception {
-        when(traceQueryService.recentTraces(null)).thenReturn(List.of(
+        when(traceService.recentTraces(null)).thenReturn(List.of(
                 TraceSummary.builder()
                         .traceId("0102030405060708090a0b0c0d0e0f10")
                         .rootSpanName("Bash")
@@ -47,7 +47,7 @@ class TracesControllerTest {
                         .durationNanos(250_000_000L)
                         .errorCount(0L)
                         .build()));
-        when(traceQueryService.countTraces(null)).thenReturn(42L);
+        when(traceService.countTraces(null)).thenReturn(42L);
 
         mockMvc.perform(get("/api/traces"))
                 .andExpect(status().isOk())
@@ -58,13 +58,13 @@ class TracesControllerTest {
                 .andExpect(jsonPath("$[0].spanCount").value(3))
                 .andExpect(jsonPath("$[0].errorCount").value(0));
 
-        verify(traceQueryService).recentTraces(null);
-        verify(traceQueryService).countTraces(null);
+        verify(traceService).recentTraces(null);
+        verify(traceService).countTraces(null);
     }
 
     @Test
     void traceLogRecordsReturnsAllLogRecordsForTheGivenTraceId() throws Exception {
-        when(logQueryService.logsForTrace("0102030405060708090a0b0c0d0e0f10")).thenReturn(List.of(
+        when(logService.logsForTrace("0102030405060708090a0b0c0d0e0f10")).thenReturn(List.of(
                 LogRecord.builder()
                         .id(3L)
                         .traceId("0102030405060708090a0b0c0d0e0f10")
@@ -91,12 +91,12 @@ class TracesControllerTest {
                 .andExpect(jsonPath("$[0].body").value("tool_result"))
                 .andExpect(jsonPath("$[1].body").value("agent_turn_end"));
 
-        verify(logQueryService).logsForTrace("0102030405060708090a0b0c0d0e0f10");
+        verify(logService).logsForTrace("0102030405060708090a0b0c0d0e0f10");
     }
 
     @Test
     void traceSpansReturnsAllSpansForTheGivenTraceId() throws Exception {
-        when(traceQueryService.spansForTrace("0102030405060708090a0b0c0d0e0f10")).thenReturn(List.of(
+        when(traceService.spansForTrace("0102030405060708090a0b0c0d0e0f10")).thenReturn(List.of(
                 Span.builder()
                         .id(1L)
                         .traceId("0102030405060708090a0b0c0d0e0f10")
@@ -120,6 +120,6 @@ class TracesControllerTest {
                 .andExpect(jsonPath("$[0].spanId").value("1112131415161718"))
                 .andExpect(jsonPath("$[1].parentSpanId").value("1112131415161718"));
 
-        verify(traceQueryService).spansForTrace("0102030405060708090a0b0c0d0e0f10");
+        verify(traceService).spansForTrace("0102030405060708090a0b0c0d0e0f10");
     }
 }

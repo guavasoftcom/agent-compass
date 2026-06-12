@@ -11,8 +11,8 @@ import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolDenialCount;
 import com.guavasoft.agentcompass.model.ToolFailureRate;
 import com.guavasoft.agentcompass.model.ToolRepeatStat;
-import com.guavasoft.agentcompass.service.LogQueryService;
-import com.guavasoft.agentcompass.service.TraceQueryService;
+import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceService;
 
 import java.time.Instant;
 import java.util.List;
@@ -32,14 +32,14 @@ class ToolActivityControllerTest {
     MockMvc mockMvc;
 
     @MockitoBean
-    LogQueryService logQueryService;
+    LogService logService;
 
     @MockitoBean
-    TraceQueryService traceQueryService;
+    TraceService traceService;
 
     @Test
     void toolCallsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateToolCalls(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolCalls(anyInt())).thenReturn(List.of(
                 ToolCallCount.builder().tool("Read").calls(8L).build(),
                 ToolCallCount.builder().tool("Bash").calls(1L).build()));
 
@@ -50,12 +50,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].calls").value(8))
                 .andExpect(jsonPath("$[1].tool").value("Bash"));
 
-        verify(logQueryService).aggregateToolCalls(1440);
+        verify(logService).aggregateToolCalls(1440);
     }
 
     @Test
     void skillUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateSkillUsage(anyInt())).thenReturn(List.of(
+        when(logService.aggregateSkillUsage(anyInt())).thenReturn(List.of(
                 ToolCallCount.builder().tool("verify").calls(4L).build(),
                 ToolCallCount.builder().tool("ship").calls(1L).build()));
 
@@ -66,12 +66,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].calls").value(4))
                 .andExpect(jsonPath("$[1].tool").value("ship"));
 
-        verify(logQueryService).aggregateSkillUsage(1440);
+        verify(logService).aggregateSkillUsage(1440);
     }
 
     @Test
     void subagentUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateSubagentUsage(anyInt())).thenReturn(List.of(
+        when(logService.aggregateSubagentUsage(anyInt())).thenReturn(List.of(
                 ToolCallCount.builder().tool("Explore").calls(7L).build()));
 
         mockMvc.perform(get("/api/tool-activity/subagent-usage"))
@@ -80,12 +80,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].tool").value("Explore"))
                 .andExpect(jsonPath("$[0].calls").value(7));
 
-        verify(logQueryService).aggregateSubagentUsage(1440);
+        verify(logService).aggregateSubagentUsage(1440);
     }
 
     @Test
     void toolFailureRatesReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateToolFailureRates(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolFailureRates(anyInt())).thenReturn(List.of(
                 new ToolFailureRate("Bash", 20L, 5L, 0.25),
                 new ToolFailureRate("Read", 100L, 1L, 0.01)));
 
@@ -98,12 +98,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].failureRate").value(0.25))
                 .andExpect(jsonPath("$[1].tool").value("Read"));
 
-        verify(logQueryService).aggregateToolFailureRates(1440);
+        verify(logService).aggregateToolFailureRates(1440);
     }
 
     @Test
     void toolRepeatsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateToolRepeats(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolRepeats(anyInt())).thenReturn(List.of(
                 new ToolRepeatStat("Edit", "/repo/src/foo.ts", 4L, 8L, 3L),
                 new ToolRepeatStat("Bash", "grep", 2L, 3L, 1L)));
 
@@ -117,17 +117,17 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].sessions").value(3))
                 .andExpect(jsonPath("$[1].tool").value("Bash"));
 
-        verify(logQueryService).aggregateToolRepeats(1440);
+        verify(logService).aggregateToolRepeats(1440);
     }
 
     @Test
     void toolCallsPropagatesExplicitMinutesParam() throws Exception {
-        when(logQueryService.aggregateToolCalls(anyInt())).thenReturn(List.of());
+        when(logService.aggregateToolCalls(anyInt())).thenReturn(List.of());
 
         mockMvc.perform(get("/api/tool-activity/calls").param("minutes", "4320"))
                 .andExpect(status().isOk());
 
-        verify(logQueryService).aggregateToolCalls(4320);
+        verify(logService).aggregateToolCalls(4320);
     }
 
     @Test
@@ -142,7 +142,7 @@ class ToolActivityControllerTest {
     void toolCallsAcceptsDateRangeOfExactlyThirtyDays() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-31T00:00:00Z");
-        when(logQueryService.aggregateToolCallsInRange(rangeStart, rangeEnd)).thenReturn(List.of());
+        when(logService.aggregateToolCallsInRange(rangeStart, rangeEnd)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/tool-activity/calls")
                 .param("startTimestamp", rangeStart.toString())
@@ -152,7 +152,7 @@ class ToolActivityControllerTest {
 
     @Test
     void toolDenialsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateToolDenials(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolDenials(anyInt())).thenReturn(List.of(
                 new ToolDenialCount("Bash", "config", 12L),
                 new ToolDenialCount("Edit", "hook", 3L)));
 
@@ -164,12 +164,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].count").value(12))
                 .andExpect(jsonPath("$[1].tool").value("Edit"));
 
-        verify(logQueryService).aggregateToolDenials(1440);
+        verify(logService).aggregateToolDenials(1440);
     }
 
     @Test
     void hookExecutionsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logQueryService.aggregateHookExecutions(anyInt())).thenReturn(List.of(
+        when(logService.aggregateHookExecutions(anyInt())).thenReturn(List.of(
                 new HookExecutionSummary("PreToolUse", "PreToolUse:Write", 45L, 40L, 3L, 2L, 0L)));
 
         mockMvc.perform(get("/api/tool-activity/hook-executions"))
@@ -179,6 +179,6 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].hookName").value("PreToolUse:Write"))
                 .andExpect(jsonPath("$[0].blockingErrors").value(3));
 
-        verify(logQueryService).aggregateHookExecutions(1440);
+        verify(logService).aggregateHookExecutions(1440);
     }
 }

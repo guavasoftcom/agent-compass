@@ -14,6 +14,8 @@ export interface PageActionsProps {
   onAutoRefreshChange?: (next: boolean) => void;
   isPolling?: boolean;
   hideAutoRefresh?: boolean;
+  /** Force auto-refresh off + disabled regardless of preset state (e.g. Logs is zoomed into a bucket). */
+  autoRefreshDisabled?: boolean;
   extraActions?: ReactNode;
 }
 
@@ -29,12 +31,13 @@ const PageActions = ({
   onAutoRefreshChange,
   isPolling = false,
   hideAutoRefresh = false,
+  autoRefreshDisabled = false,
   extraActions,
 }: PageActionsProps) => {
   // Both Refresh and Auto-refresh are tied to "preset" mode: a custom range has a fixed
   // end, so re-fetching can't surface new data and polling would be wasted requests.
   const presetActive = selection.kind === 'preset';
-  const autoRefreshActive = autoRefresh && presetActive;
+  const autoRefreshActive = autoRefresh && presetActive && !autoRefreshDisabled;
 
   return (
     <PageActionsView
@@ -50,7 +53,7 @@ const PageActions = ({
       reloadDisabled={!presetActive || onReload == null}
       hideReload={hideReload}
       autoRefreshActive={autoRefreshActive}
-      autoRefreshDisabled={!presetActive || onAutoRefreshChange == null}
+      autoRefreshDisabled={!presetActive || onAutoRefreshChange == null || autoRefreshDisabled}
       isPolling={isPolling}
       onToggleAutoRefresh={() =>
         onAutoRefreshChange?.(!autoRefresh)

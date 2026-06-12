@@ -24,8 +24,8 @@ import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.TraceSummary;
-import com.guavasoft.agentcompass.service.LogQueryService;
-import com.guavasoft.agentcompass.service.TraceQueryService;
+import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceService;
 
 import java.util.List;
 
@@ -36,8 +36,8 @@ import java.util.List;
 @Tag(name = "Traces", description = "OTLP trace summaries, per-trace spans, and correlated log records")
 public class TracesController {
 
-    private final TraceQueryService traceQueryService;
-    private final LogQueryService logQueryService;
+    private final TraceService traceService;
+    private final LogService logService;
 
     @GetMapping("")
     @Operation(
@@ -56,15 +56,15 @@ public class TracesController {
     public ResponseEntity<List<TraceSummary>> traces(
             @Parameter(description = "Optional lookback window in minutes; omit for all traces", example = "1440")
             @RequestParam(required = false) Integer minutes,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         List<TraceSummary> items;
         long totalCount;
-        if (timeWindow.startTimestamp() != null && timeWindow.endTimestamp() != null) {
-            items = traceQueryService.recentTracesInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
-            totalCount = traceQueryService.countTracesInRange(timeWindow.startTimestamp(), timeWindow.endTimestamp());
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            items = traceService.recentTracesInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            totalCount = traceService.countTracesInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         } else {
-            items = traceQueryService.recentTraces(minutes);
-            totalCount = traceQueryService.countTraces(minutes);
+            items = traceService.recentTraces(minutes);
+            totalCount = traceService.countTraces(minutes);
         }
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Total-Count", String.valueOf(totalCount));
@@ -85,7 +85,7 @@ public class TracesController {
     public List<Span> traceSpans(
             @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)", example = "0102030405060708090a0b0c0d0e0f10")
             @PathVariable String traceId) {
-        return traceQueryService.spansForTrace(traceId);
+        return traceService.spansForTrace(traceId);
     }
 
     @GetMapping("/{traceId}/logs")
@@ -103,6 +103,6 @@ public class TracesController {
     public List<LogRecord> traceLogRecords(
             @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)", example = "0102030405060708090a0b0c0d0e0f10")
             @PathVariable String traceId) {
-        return logQueryService.logsForTrace(traceId);
+        return logService.logsForTrace(traceId);
     }
 }

@@ -14,7 +14,7 @@ import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
-import com.guavasoft.agentcompass.service.MetricQueryService;
+import com.guavasoft.agentcompass.service.MetricService;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -50,7 +50,7 @@ class SessionsQueryIntegrationTest {
   MetricPointRepository metricPointRepository;
 
   @Autowired
-  MetricQueryService metricQueryService;
+  MetricService metricService;
 
   @BeforeEach
   void seedSessions() {
@@ -89,7 +89,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void defaultSortRanksSessionsByCostDescendingWithTotalCount() {
-    SessionSummaryPage page = metricQueryService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
 
     assertThat(page.totalCount()).isEqualTo(3);
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C", "B");
@@ -100,15 +100,15 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void ascendingActiveTimeSortPutsTheIdleOnlySessionFirst() {
-    SessionSummaryPage page = metricQueryService.sessionsSummary(WINDOW_MINUTES, "activeTimeSeconds", "asc", 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "activeTimeSeconds", "asc", 0, 25);
 
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("C", "B", "A");
   }
 
   @Test
   void paginationReturnsRequestedSliceWhileTotalCountStaysWholeWindow() {
-    SessionSummaryPage firstPage = metricQueryService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2);
-    SessionSummaryPage secondPage = metricQueryService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2);
+    SessionSummaryPage firstPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2);
+    SessionSummaryPage secondPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2);
 
     assertThat(firstPage.totalCount()).isEqualTo(3);
     assertThat(firstPage.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C");
@@ -118,7 +118,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void rowsCarryTokensTerminalAndStartTypeAndSortByTokens() {
-    SessionSummaryPage page = metricQueryService.sessionsSummary(WINDOW_MINUTES, "tokens", "desc", 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "tokens", "desc", 0, 25);
 
     // A is the only session with token rows, so it sorts first on tokens.
     SessionSummary sessionA = page.items().get(0);
@@ -139,7 +139,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void kpisComputePercentilesOverTheWholeWindow() {
-    SessionKpis kpis = metricQueryService.sessionsKpis(WINDOW_MINUTES);
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES);
 
     assertThat(kpis.totalSessions()).isEqualTo(3);
     // Costs sorted: [1.5, 8.0, 15.0] -> P50 = 8.0, P95 interpolates to 14.3.
