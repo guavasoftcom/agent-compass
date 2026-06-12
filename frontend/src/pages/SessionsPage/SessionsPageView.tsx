@@ -1,10 +1,10 @@
-import { Box, Paper, Tooltip, Typography, alpha } from '@mui/material';
+import { Box, Paper, Tooltip, alpha } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import StatCard from '../../components/StatCard';
-import type { WindowOption } from '../../constants';
+import { PAGE_SIZES, type WindowOption } from '../../constants';
 import type { SessionSummaryRow, SessionsSortModel, WindowSelection } from '../../api';
 
 export interface SessionsKpis {
@@ -40,8 +40,6 @@ export interface SessionsPageViewProps {
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
 }
-
-const PAGE_SIZES = [25, 50, 100] as const;
 
 const USD_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',

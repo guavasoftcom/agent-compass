@@ -1,4 +1,5 @@
 import { Box, Paper, Typography, useTheme } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
 import type { MetricSeries } from './metricsSampleData';
 
 export interface MetricKpiStripProps {
@@ -7,14 +8,14 @@ export interface MetricKpiStripProps {
   onSelect: (id: string) => void;
 }
 
-const typeColor = (type: MetricSeries['type']): string => {
+const typeColor = (type: MetricSeries['type'], t: Theme): string => {
   if (type === 'gauge') {
-    return 'primary.main';
+    return t.palette.primary.main;
   }
   if (type === 'histogram') {
-    return 'secondary.main';
+    return t.palette.secondary?.main ?? '#e84bc0';
   }
-  return 'info.main';
+  return t.palette.info?.main ?? '#1aa7dd';
 };
 
 /** Tiny area sparkline for a KPI card. */
@@ -112,7 +113,7 @@ const MetricKpiStrip = ({ metrics, selectedId, onSelect }: MetricKpiStripProps) 
               }}
             >
               <Box
-                sx={{ position: 'absolute', top: 13, right: 13, width: 7, height: 7, borderRadius: '50%', bgcolor: typeColor(metric.type) }}
+                sx={{ position: 'absolute', top: 13, right: 13, width: 7, height: 7, borderRadius: '50%', bgcolor: typeColor(metric.type, theme) }}
               />
               <Typography
                 sx={{

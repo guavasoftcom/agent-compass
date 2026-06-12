@@ -1408,6 +1408,39 @@ __metadata:
   languageName: node
   linkType: hard
 
+"agent-compass-frontend@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "agent-compass-frontend@workspace:."
+  dependencies:
+    "@emotion/react": "npm:11.14.0"
+    "@emotion/styled": "npm:11.14.1"
+    "@eslint/js": "npm:10.0.1"
+    "@fontsource/sora": "npm:^5.2.8"
+    "@fontsource/space-grotesk": "npm:^5.2.10"
+    "@mui/icons-material": "npm:9.0.1"
+    "@mui/material": "npm:9.0.1"
+    "@mui/system": "npm:9.0.1"
+    "@mui/x-charts": "npm:9.3.0"
+    "@mui/x-data-grid": "npm:9.3.0"
+    "@mui/x-tree-view": "npm:9.1.0"
+    "@tanstack/react-query": "npm:5.101.0"
+    "@types/react": "npm:19.2.16"
+    "@types/react-dom": "npm:19.2.3"
+    "@vitejs/plugin-react": "npm:6.0.2"
+    eslint: "npm:10.4.1"
+    eslint-plugin-react-hooks: "npm:7.1.1"
+    eslint-plugin-react-refresh: "npm:0.5.2"
+    globals: "npm:17.6.0"
+    jsonrepair: "npm:3.14.0"
+    react: "npm:19.2.7"
+    react-dom: "npm:19.2.7"
+    react-router-dom: "npm:7.16.0"
+    typescript: "npm:6.0.3"
+    typescript-eslint: "npm:8.60.1"
+    vite: "npm:8.0.16"
+  languageName: unknown
+  linkType: soft
+
 "ajv@npm:^6.14.0":
   version: 6.15.0
   resolution: "ajv@npm:6.15.0"
@@ -1505,39 +1538,6 @@ __metadata:
   checksum: 10c0/c4c8eb865f8c82baab07e71bfa8897c73454881c4f99d6bc81585aecd7c441746c1399d08363dc096c550cceaf97bd4ce1e8854e1771e9998d9f94c4fe075839
   languageName: node
   linkType: hard
-
-"coding-agent-tuning-frontend@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "coding-agent-tuning-frontend@workspace:."
-  dependencies:
-    "@emotion/react": "npm:11.14.0"
-    "@emotion/styled": "npm:11.14.1"
-    "@eslint/js": "npm:10.0.1"
-    "@fontsource/sora": "npm:^5.2.8"
-    "@fontsource/space-grotesk": "npm:^5.2.10"
-    "@mui/icons-material": "npm:9.0.1"
-    "@mui/material": "npm:9.0.1"
-    "@mui/system": "npm:9.0.1"
-    "@mui/x-charts": "npm:9.3.0"
-    "@mui/x-data-grid": "npm:9.3.0"
-    "@mui/x-tree-view": "npm:9.1.0"
-    "@tanstack/react-query": "npm:5.101.0"
-    "@types/react": "npm:19.2.16"
-    "@types/react-dom": "npm:19.2.3"
-    "@vitejs/plugin-react": "npm:6.0.2"
-    eslint: "npm:10.4.1"
-    eslint-plugin-react-hooks: "npm:7.1.1"
-    eslint-plugin-react-refresh: "npm:0.5.2"
-    globals: "npm:17.6.0"
-    jsonrepair: "npm:3.14.0"
-    react: "npm:19.2.7"
-    react-dom: "npm:19.2.7"
-    react-router-dom: "npm:7.16.0"
-    typescript: "npm:6.0.3"
-    typescript-eslint: "npm:8.60.1"
-    vite: "npm:8.0.16"
-  languageName: unknown
-  linkType: soft
 
 "convert-source-map@npm:^1.5.0":
   version: 1.9.0

@@ -9,6 +9,7 @@ export interface AttributeListViewProps {
   fontSize: string;
   truncate: boolean;
   disableBackground: boolean;
+  inlineExpand: boolean;
   expanded: ValueDialogState | null;
   onExpand: (state: ValueDialogState) => void;
   onClose: () => void;
@@ -20,6 +21,7 @@ export const AttributeListView = ({
   fontSize,
   truncate,
   disableBackground,
+  inlineExpand,
   expanded,
   onExpand,
   onClose,
@@ -46,6 +48,7 @@ export const AttributeListView = ({
             attrKey={key}
             value={value}
             truncate={truncate}
+            inlineExpand={inlineExpand}
             onExpand={onExpand}
           />
         </Box>

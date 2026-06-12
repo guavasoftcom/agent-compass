@@ -16,17 +16,26 @@ frontend/src/
   api.ts
   colorMode.tsx
   constants.ts
+  fonts.ts
   theme.ts
   windowContext.tsx
   main.tsx                       // entry; not a component
   App/
     App.tsx
     AppShell.tsx
+    AuroraMark.tsx
     ColorModeToggle.tsx
+    CompassIcon.tsx
+    NavIcons.tsx
     NavItem.tsx
     navItems.tsx
     index.ts
   components/
+    AreaTrendChart/
+      AreaTrendChart.tsx
+      AreaTrendLegend.tsx
+      useSeriesVisibility.ts
+      index.ts
     AttributeList/
       AttributeList.tsx
       AttributeListView.tsx
@@ -34,6 +43,9 @@ frontend/src/
       ExpandedValueDialog.tsx
       types.ts
       utils.ts
+      index.ts
+    DonutCard/
+      DonutCard.tsx
       index.ts
     PageActions/
       PageActions.tsx
@@ -46,25 +58,58 @@ frontend/src/
       SectionLayout.tsx
       SectionLayoutView.tsx
       index.ts
+    Sparkline/
+      Sparkline.tsx
+      index.ts
     StatCard/
       StatCard.tsx
       index.ts
     WindowSelector/
+      AuroraCalendar.tsx
       WindowSelector.tsx
       WindowSelectorView.tsx
       index.ts
   pages/
     LogsPage/
+      CLAUDE.md                   // page-local conventions and data-flow notes
       LogsPage.tsx                // container
       LogsPageView.tsx            // presentational
+      logsApi.ts                  // page-local API module (fetchers, types, query serialization)
+      resolveWindow.ts            // page-internal helper; no barrel needed
       index.ts
+      components/
+        LogFacetRail/
+          LogFacetRail.tsx
+          index.ts
+        LogHistogramChart/
+          LogHistogramChart.tsx
+          LogHistogramChartView.tsx
+          index.ts
+        LogStream/
+          LogStream.tsx
+          LogStreamView.tsx
+          index.ts
+        LogTable/
+          LogTable.tsx
+          LogTableView.tsx
+          index.ts
+        severity.ts               // helper shared by the sub-components
     MetricsPage/
       MetricsPage.tsx
       MetricsPageView.tsx
+      metricsApi.ts               // page-local API module
       index.ts
+      components/                 // flat leaf sub-components + barrel (see below)
+        MetricBreakdown.tsx
+        MetricHeader.tsx
+        MetricKpiStrip.tsx
+        metricsSampleData.ts
+        index.ts
     PermissionDenialsPage/
       PermissionDenialsPage.tsx
       PermissionDenialsPageView.tsx
+      HookExecutionsCard.tsx      // flat leaf sub-components
+      ToolDenialsCard.tsx
       index.ts
     ReportPage/
       ReportPage.tsx
@@ -82,6 +127,12 @@ frontend/src/
       TokensPage.tsx
       TokensPageView.tsx
       index.ts
+      components/                 // flat leaf sub-components
+        CostPanel.tsx
+        TokenByModelCard.tsx
+        TokenCompositionCard.tsx
+        TokenSummaryCards.tsx
+        tokensSampleData.ts
     ToolActivitySection/          // SectionLayout wrapper; renders child pages via <Outlet>
       ToolActivitySection.tsx
       index.ts
@@ -147,9 +198,9 @@ export { default } from './LogsPage';
 
 ### Where page-internal helpers go
 
-**Flat helper files** (e.g. `TracesPage/timeFormat.ts`, `TraceDetailPage/traceDetailHelpers.ts`) live as flat `.ts` files inside the page folder. They are implementation details, not a public surface, and do NOT need their own folder + `index.ts`.
+**Flat helper files** (e.g. `TracesPage/timeFormat.ts`, `LogsPage/resolveWindow.ts`, `TraceDetailPage/traceDetailHelpers.ts`) live as flat `.ts` files inside the page folder. They are implementation details, not a public surface, and do NOT need their own folder + `index.ts`. Page-local API modules (`LogsPage/logsApi.ts`, `MetricsPage/metricsApi.ts`) follow the same rule — they hold fetchers and types for endpoints only that page consumes.
 
-**Page-internal sub-components** go in a `components/` sub-folder inside the page folder (e.g. `ToolCallsPage/components/ToolLatencyCard/`). Apply the same container/view split and barrel rule as top-level components. Use this pattern when a page grows enough sub-components that the page folder would otherwise become cluttered.
+**Page-internal sub-components** go in a `components/` sub-folder inside the page folder (e.g. `ToolCallsPage/components/ToolLatencyCard/`, `LogsPage/components/LogStream/`). Apply the same container/view split and barrel rule as top-level components. Use this pattern when a page grows enough sub-components that the page folder would otherwise become cluttered. Small leaf sub-components that have no container/view split may stay as flat `.tsx` files inside `components/` (e.g. `MetricsPage/components/`, `TokensPage/components/`); give them a folder + barrel once they grow one.
 
 Promote a sub-component from `PageName/components/` to `src/components/` only when a second page needs it.
 
@@ -186,8 +237,8 @@ Never reach past the folder boundary (`import X from './pages/LogsPage/LogsPage'
 
 ## TypeScript config
 
-`tsconfig.json` is intentionally permissive (no `strict`, `noImplicitAny: false`). Vite transpiles TS via esbuild and does NOT type-check the build; the config exists for editor/IDE support and to let us tighten types incrementally. Run `npm run typecheck` (`tsc --noEmit`) manually if a stricter pass is needed.
+`tsconfig.json` is intentionally permissive (no `strict`, `noImplicitAny: false`). Vite transpiles TS via esbuild and does NOT type-check the build; the config exists for editor/IDE support and to let us tighten types incrementally. Run `yarn typecheck` (`tsc --noEmit`) manually if a stricter pass is needed.
 
 ### Known typecheck noise
 
-`npm run typecheck` currently reports a handful of errors against `@mui/material@9.0.0` + React 19 — Stack typings missing `alignItems`/`direction`, `Dialog.PaperProps` deprecated in favor of `slotProps`, `highlightScope.faded` vs `fade`, etc. These are pre-existing API/typing mismatches inherited from the JS version, not regressions introduced by adding TS. The Vite build (`npm run build`) is unaffected. Resolving them is a separate MUI API-migration task.
+`yarn typecheck` currently reports a handful of errors against `@mui/material@9.0.0` + React 19 — Stack typings missing `alignItems`/`direction`, `Dialog.PaperProps` deprecated in favor of `slotProps`, `highlightScope.faded` vs `fade`, etc. These are pre-existing API/typing mismatches inherited from the JS version, not regressions introduced by adding TS. The Vite build (`yarn build`) is unaffected. Resolving them is a separate MUI API-migration task.

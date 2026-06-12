@@ -5,7 +5,7 @@ OTLP/HTTP telemetry sink + Postgres store + markdown tuning report + React/MUI d
 End-to-end flow:
 
 1. Coding agents (Claude Code, GitHub Copilot, etc.) push **OTLP/HTTP protobuf** directly to this backend.
-2. Backend persists each metric data point to Postgres (`jsonb` for attribute maps).
+2. Backend persists every log record, metric data point, and span to Postgres (`jsonb` for attribute maps).
 3. Backend aggregates the stored telemetry and exposes:
    - A **markdown report** (`GET /api/report`) for paste-into-agent self-tuning.
    - **JSON endpoints** that power a React + Material UI dashboard.
@@ -13,7 +13,7 @@ End-to-end flow:
 
 ## Repository layout
 
-- `backend/` — Spring Boot 3.2 (Java 17), Spring Data JPA, `opentelemetry-proto`, Postgres.
+- `backend/` — Spring Boot 3.5 (Java 21), Spring Data JPA, `opentelemetry-proto`, Postgres.
 - `frontend/` — React + Vite + Material UI (`@mui/x-data-grid`, `@mui/x-charts`), TanStack Query, React Router.
 
 ## Prerequisites
@@ -40,7 +40,7 @@ yarn dev
 
 Open <http://localhost:5173> for the dashboard, or <http://localhost:8080/swagger-ui.html> for the OpenAPI / Swagger UI.
 
-Hibernate creates the schema on first run (`ddl-auto=update`).
+Flyway creates and migrates the schema on startup (`backend/src/main/resources/db/migration/`); Hibernate runs with `ddl-auto=validate` and fails fast if the entity model and DB drift.
 
 If you'd rather use an existing Postgres (no Docker), set `SPRING_DATASOURCE_URL` / `SPRING_DATASOURCE_USERNAME` / `SPRING_DATASOURCE_PASSWORD` env vars before starting the backend — see [backend/.env.example](backend/.env.example). The compose support backs off when explicit datasource properties are present.
 
@@ -66,16 +66,21 @@ tuning.tool-attribute=tool_name
 
 ### OTLP ingest
 
-- `POST /v1/metrics` — accepts `application/x-protobuf` (OTLP `ExportMetricsServiceRequest`). Persists every `Sum` / `Gauge` data point into `metric_points`.
+- `POST /v1/logs`, `POST /v1/metrics`, `POST /v1/traces` — accept `application/x-protobuf` OTLP export requests and persist log records, metric data points, and spans into `log_records` / `metric_points` / `spans`.
 
 ### Dashboard JSON
 
-- `GET /api/metrics/tool-calls?hours=24` → `[{ tool, calls }]` shaped for `@mui/x-charts` + `DataGrid`.
-- `GET /api/events?limit=200` → recent rows for the events grid.
+All under `/api`, consumed by the React dashboard. Most accept a time window as either `?minutes=` or `?startTimestamp=&endTimestamp=` — see the Swagger UI for full parameter lists.
+
+- `GET /api/logs` — log records, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/logs/histogram` (severity histogram), `/api/logs/facets` (filter-rail counts), and `/api/logs/attributes` / `/attribute-keys` / `/attribute-values` autocomplete.
+- `GET /api/metrics` — metric explorer, with `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
+- `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`.
+- `GET /api/traces` — trace list; `/api/traces/{traceId}` span detail and `/api/traces/{traceId}/logs` cross-signal log linkage.
+- `GET /api/sessions` — session list, with `/summary` and `/token-usage`.
 
 ### Report
 
-- `GET /api/report?hours=24` → `text/markdown`. Paste straight into a coding-agent chat.
+- `GET /api/report?minutes=1440` → `text/markdown`. Paste straight into a coding-agent chat.
 
 ### OpenAPI / Swagger
 
@@ -84,13 +89,17 @@ tuning.tool-attribute=tool_name
 
 ## Frontend pages
 
-- **Tool Calls** — bar chart of tool mix + DataGrid with calls and share %.
-- **Recent Events** — DataGrid over raw `metric_points` rows including the jsonb attribute payload.
-- **Markdown Report** — renders the report as monospace text with a one-click "Copy markdown" button.
+- **Tool Usage** — tabbed section: call mix and latency, reliability (failure rates, denials, repeats), skills & subagents.
+- **Token Usage** — token composition, per-model breakdown, and cost.
+- **Sessions** — session list with summary KPIs and per-session token usage.
+- **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
+- **Metrics** — metric catalog and series explorer over raw `metric_points`.
+- **Traces** — trace list with per-trace span detail and inline logs.
+- **Report** — renders the report as monospace text with a one-click "Copy markdown" button.
 
 ## Tests
 
-The backend ships with a Testcontainers-backed integration test that spins up a real Postgres, pushes a hand-built OTLP `ExportMetricsServiceRequest` to `/v1/metrics`, and asserts that `/api/metrics/tool-calls` returns the expected aggregation. Requires Docker running.
+The backend ships with Testcontainers-backed integration tests that spin up a real Postgres, push hand-built OTLP export requests to the `/v1/*` ingest endpoints, and assert the `/api/*` aggregations. Requires Docker running.
 
 ```sh
 cd backend

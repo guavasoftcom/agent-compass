@@ -25,7 +25,7 @@ import com.guavasoft.agentcompass.model.EventRow;
 import com.guavasoft.agentcompass.model.MetricSeries;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.TokenDistribution;
-import com.guavasoft.agentcompass.service.MetricQueryService;
+import com.guavasoft.agentcompass.service.MetricService;
 import com.guavasoft.agentcompass.service.MetricSeriesService;
 
 import java.time.Instant;
@@ -38,7 +38,7 @@ import java.util.List;
 @Tag(name = "Metrics", description = "OTLP metric data points and attribute autocomplete for the Metrics DataGrid")
 public class MetricsController {
 
-    private final MetricQueryService metricQueryService;
+    private final MetricService metricService;
     private final MetricSeriesService metricSeriesService;
 
     @GetMapping("/series")
@@ -79,9 +79,9 @@ public class MetricsController {
     public ResponseEntity<List<EventRow>> metrics(
             @Parameter(description = "Active key=value filters; rows must contain all of them", example = "method=GET")
             @RequestParam(required = false) List<String> filter,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        List<EventRow> items = metricQueryService.recentEvents(
-                filter == null ? List.of() : filter, timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        List<EventRow> items = metricService.recentEvents(
+                filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Total-Count", String.valueOf(items.size()));
         return ResponseEntity.ok().headers(headers).body(items);
@@ -105,7 +105,7 @@ public class MetricsController {
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
             @RequestParam Instant to) {
-        return metricQueryService.aggregateMetricCatalog(from, to);
+        return metricService.aggregateMetricCatalog(from, to);
     }
 
     @GetMapping("/cost")
@@ -126,7 +126,7 @@ public class MetricsController {
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
             @RequestParam Instant to) {
-        return metricQueryService.aggregateCostSummary(from, to);
+        return metricService.aggregateCostSummary(from, to);
     }
 
     @GetMapping("/distribution")
@@ -147,7 +147,7 @@ public class MetricsController {
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
             @RequestParam Instant to) {
-        return metricQueryService.aggregateTokenDistribution(from, to);
+        return metricService.aggregateTokenDistribution(from, to);
     }
 
     @GetMapping("/attributes")
@@ -166,8 +166,8 @@ public class MetricsController {
     public List<String> metricAttributes(
             @Parameter(description = "Active key=value filters; rows must contain all of them", example = "method=GET")
             @RequestParam(required = false) List<String> filter,
-            @Valid @ModelAttribute TimeWindowParams timeWindow) {
-        return metricQueryService.availableAttributePairs(
-                filter == null ? List.of() : filter, timeWindow.startTimestamp(), timeWindow.endTimestamp());
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        return metricService.availableAttributePairs(
+                filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
     }
 }

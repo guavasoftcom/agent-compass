@@ -4,6 +4,17 @@ services:
   postgres:
     image: postgres:16
     container_name: coding-agent-tuning-postgres
+    # Stock Postgres defaults (shared_buffers=128MB, work_mem=4MB) are sized for
+    # tiny shared hosts. The dashboard's histogram/facet/autocomplete queries
+    # rescan the recent log_records window + GIN indexes and sort/aggregate
+    # heavily, so keep that working set resident and let sorts finish in memory.
+    # work_mem is per-sort: 16MB is safe here because this DB has one client.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}

@@ -5,6 +5,7 @@ import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import type { TraceRow, WindowSelection } from '../../api';
+import { PAGE_SIZES } from '../../constants';
 import { formatDuration } from './timeFormat';
 
 export interface PaginationModel {
@@ -159,7 +160,7 @@ export default function TracesPageView({
           sx={{ '& .MuiDataGrid-row': { cursor: 'pointer' } }}
           paginationModel={paginationModel}
           onPaginationModelChange={onPaginationModelChange}
-          pageSizeOptions={[25, 50, 100]}
+          pageSizeOptions={PAGE_SIZES}
         />
       </Paper>
     </PageLayout>

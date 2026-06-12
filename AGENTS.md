@@ -8,39 +8,39 @@ OTLP/HTTP telemetry sink → Postgres (`jsonb`) → markdown tuning report + Rea
 
 ## Repository layout
 
-- `backend/` — Spring Boot 3.5 on Java 21. Package root: `com.guavasoft.telemetry`. See [backend/CLAUDE.md](backend/CLAUDE.md) for naming, web-layer, and data conventions.
-  - `ingest/` — OTLP protobuf mappers for all three signals; controllers expose `POST /v1/logs`, `/v1/metrics`, `/v1/traces`.
+- `backend/` — Spring Boot 3.5 on Java 21. Package root: `com.guavasoft.agentcompass`. See [backend/CLAUDE.md](backend/CLAUDE.md) for naming, web-layer, and data conventions.
+  - `otlp/` — the OTLP ingest slice (own `controller` / `mapper` / `service` sub-packages); controllers expose `POST /v1/logs`, `/v1/metrics`, `/v1/traces`.
   - `entity/`, `repository/` — JPA + `jsonb` storage in `log_records`, `metric_points`, `spans`.
-  - `service/`, `controller/` — aggregation, dashboard JSON, markdown report. `DashboardController` is the single REST surface for the React app.
-  - `model/` — record DTOs (Lombok `@Data @Builder` on older shapes); MapStruct (`spring` component model) handles entity → DTO.
+  - `service/`, `controller/` — aggregation, dashboard JSON, markdown report. Per-domain controllers (`LogsController`, `MetricsController`, `SessionController`, `ToolActivityController`, `TracesController`, `ReportController`) serve the React app under `/api`.
+  - `model/` — record DTOs (Lombok `@Data @Builder` on older shapes); MapStruct mappers in `mapper/` (`spring` component model) handle entity → DTO.
   - `config/` — `TuningProperties` (overridable event/attribute/metric names), `OpenApiConfig`, etc.
-- `frontend/` — React 19 + Vite 5 + MUI 9 (`@mui/x-data-grid` / `@mui/x-charts` / `@mui/x-tree-view`), TanStack Query v5, React Router 6. Package manager is npm (a legacy `yarn.lock` exists but scripts and CI use npm).
+- `frontend/` — React 19 + Vite 5 + MUI 9 (`@mui/x-data-grid` / `@mui/x-charts` / `@mui/x-tree-view`), TanStack Query v5, React Router 6. Package manager is Yarn (Berry — Yarn 4); a stray `package-lock.json` is legacy — don't `npm install`.
 
 ## Run / build / test
 
-Use the Maven wrapper and npm — do not invoke a system `mvn` or `yarn`.
+Use the Maven wrapper and Yarn — do not invoke a system `mvn` or `npm`.
 
 ```sh
 # Backend (port 8080). spring-boot-docker-compose auto-starts Postgres from backend/docker-compose.yml.
 cd backend && ./mvnw spring-boot:run
 
-# Backend tests (includes a Testcontainers integration test — Docker must be running).
+# Backend tests (includes Testcontainers integration tests — Docker must be running).
 cd backend && ./mvnw verify
 
 # Frontend dev (port 5173, /api and /v1 proxied to :8080).
-cd frontend && npm install && npm run dev
+cd frontend && yarn install && yarn dev
 
 # Frontend production build / typecheck / lint.
-cd frontend && npm run build
-cd frontend && npm run typecheck
-cd frontend && npm run lint
+cd frontend && yarn build
+cd frontend && yarn typecheck
+cd frontend && yarn lint
 ```
 
 ## Conventions
 
 - **Java 21**, `--release 21`. Don't lower the source level.
 - **Lombok + MapStruct** are both on the annotation processor path; `lombok-mapstruct-binding` keeps them compatible. When adding a new mapper, use `@Mapper(componentModel = "spring")`.
-- **Schema is Hibernate-managed** (`ddl-auto=update`). Don't add Flyway/Liquibase without discussion.
+- **Schema lives in Flyway migrations** (`backend/src/main/resources/db/migration/`); Hibernate runs with `ddl-auto=validate`. Every schema change is a new `V{n}__*.sql` migration.
 - **Attribute payloads are `jsonb`** — use the existing converter pattern in `entity/` rather than flattening into columns.
 - **OpenAPI** is auto-derived. Annotate new endpoints with `@Tag` / `@Operation` so Swagger UI stays useful.
 - **Frontend data fetching** goes through TanStack Query; don't introduce a second data layer (Redux, SWR, etc.).
@@ -58,6 +58,7 @@ shape; override for other agents.
 - `tuning.token-usage-metric` (default `claude_code.token.usage`) and `tuning.token-type-attribute` (default `type`) — drive the Tokens & cache page.
 - `tuning.skill-tool-name` / `tuning.skill-name-attribute` and `tuning.subagent-tool-name` / `tuning.subagent-type-attribute` — drive the Skills & agents page (the inner attribute is looked up flat first, then under `tool_input`).
 - `tuning.cost-usage-metric` (default `claude_code.cost.usage`) and `tuning.active-time-metric` (default `claude_code.active_time.total`) — drive the Sessions page; both are aggregated as `SUM over streams of MAX per (session, model, query_source)` because Claude Code emits them as cumulative gauges split by stream.
+- Derived log severity (`tuning.error-event-names` / `warn-event-names` / `debug-event-names` and the signal attribute keys) — documents the classification rules baked into the `derive_log_severity()` SQL function; the function holds the literals, so changing these lists means a new Flyway migration that redefines it.
 
 To bypass the bundled compose Postgres, set `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` — see [backend/.env.example](backend/.env.example).
 

@@ -13,3 +13,10 @@ export const WINDOWS: readonly WindowOption[] = [
   { value: 60 * 24 * 7, label: '7 days' },
   { value: 60 * 24 * 30, label: '30 days' },
 ];
+
+// Shared rows-per-page options for every paged table/grid (Logs, Sessions, Traces).
+// The per-page *default* stays local to each page (it differs — Sessions defaults to
+// 25, others to 50); only the offered options are shared. Type a page's default as
+// `PageSize` so it can't drift outside this list.
+export const PAGE_SIZES = [25, 50, 100] as const;
+export type PageSize = (typeof PAGE_SIZES)[number];
