@@ -61,6 +61,7 @@ const WindowSelectorView = ({
   // presets list. Re-runs each time the menu opens (anchor flips to non-null).
   useEffect(() => {
     if (anchor != null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPanel(isCustomActive ? 'custom' : 'presets');
     }
   }, [anchor, isCustomActive]);

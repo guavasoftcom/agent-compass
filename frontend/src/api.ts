@@ -38,6 +38,9 @@ export interface TraceRow {
   spanCount: number;
   durationNanos: number;
   errorCount: number;
+  // Sum of token usage across the trace's spans (input + output + cache-read +
+  // cache-creation); 0 when no span carries token attributes.
+  totalTokens: number;
 }
 
 export interface SpanEvent {

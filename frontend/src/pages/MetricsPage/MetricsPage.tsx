@@ -16,11 +16,14 @@ export default function MetricsPage() {
   const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
 
   const params = useMemo<MetricsQueryParams>(() => {
-    const now = new Date().toISOString();
+    // The metrics window is anchored to current wall-clock time at fetch time.
+    // eslint-disable-next-line react-hooks/purity
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
     const from =
       selection.kind === 'custom'
         ? selection.startTimestamp
-        : new Date(Date.now() - selection.minutes * 60_000).toISOString();
+        : new Date(nowMs - selection.minutes * 60_000).toISOString();
     const to = selection.kind === 'custom' ? selection.endTimestamp : now;
     return { from, to };
   }, [selection]);

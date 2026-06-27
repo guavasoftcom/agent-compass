@@ -10,6 +10,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.LogCursor;
 import com.guavasoft.agentcompass.model.LogCursorPage;
@@ -19,6 +20,7 @@ import com.guavasoft.agentcompass.model.LogPage;
 import com.guavasoft.agentcompass.model.LogQueryCriteria;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
+import com.guavasoft.agentcompass.repository.SpanRepository;
 import com.guavasoft.agentcompass.service.LogService;
 
 import java.time.Instant;
@@ -53,6 +55,9 @@ class LogsQueryIntegrationTest {
 
     @Autowired
     LogService service;
+
+    @Autowired
+    SpanRepository spanRepository;
 
     /** Window spanning 60 minutes; rows are seeded at 5-minute intervals inside it. */
     private Instant windowStart;
@@ -576,6 +581,87 @@ class LogsQueryIntegrationTest {
         Map<String, Object> attributes = new HashMap<>(extraAttributes);
         entity.setAttributes(attributes);
         entity.setResourceAttributes(Map.of("service.name", "claude-code"));
+        repository.save(entity);
+    }
+
+    // -------------------------------------------------------------------------
+    // logsForTrace — leaf-span re-pointing
+    // -------------------------------------------------------------------------
+
+    private static final String TRACE_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private static final String SPAN_ROOT = "r000000000000000";
+    private static final String SPAN_TOOL_WRAPPER = "t000000000000000";
+    private static final String SPAN_TOOL_EXEC = "e000000000000000";
+    private static final String SPAN_BLOCKED = "b000000000000000";
+    private static final String SPAN_LLM = "l000000000000000";
+    private static final String TOOL_USE_ID = "toolu_abc";
+    private static final String REQUEST_ID = "req_xyz";
+    private static final String PROMPT_ID = "prompt_1";
+    private static final String EVENT_API_REQUEST_BODY = "api_request_body";
+
+    @Test
+    void logsForTraceRepointsCoarseLogsToTheirLeafSpans() {
+        spanRepository.deleteAll();
+        saveSpan(SPAN_ROOT, null, "claude_code.interaction", Map.of());
+        saveSpan(SPAN_TOOL_WRAPPER, SPAN_ROOT, "claude_code.tool",
+                Map.of("tool_use_id", TOOL_USE_ID));
+        saveSpan(SPAN_TOOL_EXEC, SPAN_TOOL_WRAPPER, "claude_code.tool.execution",
+                Map.of("tool_use_id", TOOL_USE_ID));
+        saveSpan(SPAN_BLOCKED, SPAN_TOOL_WRAPPER, "claude_code.tool.blocked_on_user", Map.of());
+        saveSpan(SPAN_LLM, SPAN_ROOT, "claude_code.llm_request",
+                Map.of("request_id", REQUEST_ID));
+
+        // tool_result stamped on the coarse root → expect re-point to the execution leaf
+        // (not the tool wrapper, which shares the same tool_use_id).
+        saveTraceLog(SPAN_ROOT, EVENT_TOOL_RESULT, Map.of("tool_use_id", TOOL_USE_ID));
+        // api_request stamped on the coarse root → expect re-point to the llm_request span.
+        // Carries prompt.id + event.sequence so it also anchors the api_request_body pairing.
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST,
+                Map.of("request_id", REQUEST_ID, "prompt.id", PROMPT_ID, "event.sequence", 20));
+        // api_request_body has no request_id; it precedes its api_request in sequence within
+        // the same prompt → expect re-point to the same llm_request span via the pairing.
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST_BODY,
+                Map.of("prompt.id", PROMPT_ID, "event.sequence", 19));
+        // tool_decision already on its blocked_on_user leaf → expect preserved, even
+        // though it also carries a tool_use_id.
+        saveTraceLog(SPAN_BLOCKED, EVENT_TOOL_DECISION, Map.of("tool_use_id", TOOL_USE_ID));
+        // hook on the coarse root with no correlation key → expect preserved on the root.
+        saveTraceLog(SPAN_ROOT, EVENT_HOOK_EXECUTION_START, Map.of());
+
+        Map<String, String> spanIdByEvent = service.logsForTrace(TRACE_ID).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        logRecord -> (String) logRecord.getAttributes().get(ATTR_EVENT_NAME),
+                        LogRecord::getSpanId));
+
+        assertThat(spanIdByEvent.get(EVENT_TOOL_RESULT)).isEqualTo(SPAN_TOOL_EXEC);
+        assertThat(spanIdByEvent.get(EVENT_API_REQUEST)).isEqualTo(SPAN_LLM);
+        assertThat(spanIdByEvent.get(EVENT_API_REQUEST_BODY)).isEqualTo(SPAN_LLM);
+        assertThat(spanIdByEvent.get(EVENT_TOOL_DECISION)).isEqualTo(SPAN_BLOCKED);
+        assertThat(spanIdByEvent.get(EVENT_HOOK_EXECUTION_START)).isEqualTo(SPAN_ROOT);
+    }
+
+    private void saveSpan(String spanId, String parentSpanId, String name, Map<String, Object> attributes) {
+        SpanEntity entity = new SpanEntity();
+        entity.setTraceId(TRACE_ID);
+        entity.setSpanId(spanId);
+        entity.setParentSpanId(parentSpanId);
+        entity.setName(name);
+        entity.setStartTimestamp(windowStart);
+        entity.setEndTimestamp(windowStart.plusSeconds(1));
+        entity.setReceivedAt(Instant.now());
+        entity.setAttributes(new HashMap<>(attributes));
+        spanRepository.save(entity);
+    }
+
+    private void saveTraceLog(String spanId, String eventName, Map<String, Object> extraAttributes) {
+        LogRecordEntity entity = new LogRecordEntity();
+        entity.setTimestamp(windowStart);
+        entity.setReceivedAt(Instant.now());
+        entity.setTraceId(TRACE_ID);
+        entity.setSpanId(spanId);
+        Map<String, Object> attributes = new HashMap<>(extraAttributes);
+        attributes.put(ATTR_EVENT_NAME, eventName);
+        entity.setAttributes(attributes);
         repository.save(entity);
     }
 }

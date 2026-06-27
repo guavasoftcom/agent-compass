@@ -51,17 +51,17 @@ const TokenCompositionCard = ({
   const sum = slices.reduce((acc, s) => acc + s.value, 0);
   const trackColor = theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.07)' : 'rgba(28,24,48,0.07)';
 
-  let cumulative = 0;
-  const arcs = slices
-    .filter((s) => s.value > 0)
-    .map((s) => {
-      const fraction = s.value / sum;
-      const startAngle = -90 + cumulative * 360;
-      cumulative += fraction;
-      const rawLen = fraction * CIRC;
-      const dash = Math.max(rawLen - (slices.length > 1 ? GAP_PX : 0), 2);
-      return { color: s.color, dash, startAngle };
-    });
+  const positiveSlices = slices.filter((s) => s.value > 0);
+  const arcs = positiveSlices.map((s, index) => {
+    const precedingValue = positiveSlices
+      .slice(0, index)
+      .reduce((acc, preceding) => acc + preceding.value, 0);
+    const fraction = s.value / sum;
+    const startAngle = -90 + (precedingValue / sum) * 360;
+    const rawLen = fraction * CIRC;
+    const dash = Math.max(rawLen - (slices.length > 1 ? GAP_PX : 0), 2);
+    return { color: s.color, dash, startAngle };
+  });
 
   const formatPercent = (ratio: number): string => `${(ratio * 100).toFixed(1)}%`;
 

@@ -4,7 +4,8 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import StatCard from '../../components/StatCard';
-import { PAGE_SIZES, type WindowOption } from '../../constants';
+import SegmentedToggle from '../../components/SegmentedToggle';
+import type { WindowOption } from '../../constants';
 import type { SessionSummaryRow, SessionsSortModel, WindowSelection } from '../../api';
 
 export interface SessionsKpis {
@@ -40,6 +41,8 @@ export interface SessionsPageViewProps {
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
 }
+
+const PAGE_SIZES = [25, 50, 100] as const;
 
 const USD_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -538,34 +541,11 @@ const SessionsPageView = ({
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: 12.5, color: 'text.secondary' }}>
             Rows per page
-            <Box sx={{ display: 'inline-flex', bgcolor: 'action.hover', borderRadius: 1.25, p: '3px', gap: '2px' }}>
-              {PAGE_SIZES.map((size) => {
-                const on = size === pageSize;
-                return (
-                  <Box
-                    key={size}
-                    component="button"
-                    onClick={() => onPaginationModelChange({ page: 0, pageSize: size })}
-                    sx={{
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontFamily: "'Sora', sans-serif",
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      px: 1.4,
-                      py: 0.5,
-                      borderRadius: 1,
-                      color: on ? 'primary.main' : 'text.secondary',
-                      bgcolor: on ? 'background.paper' : 'transparent',
-                      boxShadow: on ? 1 : 'none',
-                      '&:hover': { color: 'text.primary' },
-                    }}
-                  >
-                    {size}
-                  </Box>
-                );
-              })}
-            </Box>
+            <SegmentedToggle
+              options={PAGE_SIZES.map((size) => ({ value: size, label: size }))}
+              value={pageSize}
+              onChange={(size) => onPaginationModelChange({ page: 0, pageSize: size })}
+            />
           </Box>
           <Box sx={{ fontSize: 12.5, color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
             <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>

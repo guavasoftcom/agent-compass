@@ -75,7 +75,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - `GET /api/logs` — log records, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/logs/histogram` (severity histogram), `/api/logs/facets` (filter-rail counts), and `/api/logs/attributes` / `/attribute-keys` / `/attribute-values` autocomplete.
 - `GET /api/metrics` — metric explorer, with `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
 - `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`.
-- `GET /api/traces` — trace list; `/api/traces/{traceId}` span detail and `/api/traces/{traceId}/logs` cross-signal log linkage.
+- `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, and `/api/traces/{traceId}/logs` cross-signal log linkage.
 - `GET /api/sessions` — session list, with `/summary` and `/token-usage`.
 
 ### Report
@@ -94,7 +94,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - **Sessions** — session list with summary KPIs and per-session token usage.
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
-- **Traces** — trace list with per-trace span detail and inline logs.
+- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body; rows expand to an inline span summary/waterfall, with a full per-trace span detail and cross-signal logs.
 - **Report** — renders the report as monospace text with a one-click "Copy markdown" button.
 
 ## Tests

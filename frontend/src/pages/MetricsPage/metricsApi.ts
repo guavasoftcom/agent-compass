@@ -22,18 +22,18 @@ export interface MetricsQueryParams {
 const toQuery = (params: MetricsQueryParams): string =>
   new URLSearchParams({ from: params.from, to: params.to }).toString();
 
-async function getJSON<T>(url: string): Promise<T> {
+const getJSON = async <T>(url: string): Promise<T> => {
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText} — ${url}`);
   }
   return (await res.json()) as T;
-}
+};
 
 /** GET /api/metrics/series — the claude_code.* metrics with trend + splits. */
-export async function fetchMetrics(params: MetricsQueryParams): Promise<MetricSeries[]> {
+export const fetchMetrics = async (params: MetricsQueryParams): Promise<MetricSeries[]> => {
   if (USE_SAMPLE_DATA) {
     return METRICS;
   }
   return getJSON<MetricSeries[]>(`/api/metrics/series?${toQuery(params)}`);
-}
+};

@@ -53,18 +53,18 @@ const DonutCard = ({
     theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.07)' : 'rgba(28,24,48,0.07)';
 
   // Build one arc per slice, positioned by rotating from -90° (12 o'clock).
-  let cumulative = 0;
-  const arcs = slices
-    .filter((slice) => slice.value > 0)
-    .map((slice) => {
-      const fraction = slice.value / sum;
-      const startAngle = -90 + cumulative * 360;
-      cumulative += fraction;
-      const rawLen = fraction * CIRC;
-      // Subtract a gap so rounded caps don't overlap; keep a minimum sliver.
-      const dash = Math.max(rawLen - (slices.length > 1 ? GAP_PX : 0), 2);
-      return { color: slice.color, dash, startAngle };
-    });
+  const positiveSlices = slices.filter((slice) => slice.value > 0);
+  const arcs = positiveSlices.map((slice, index) => {
+    const precedingValue = positiveSlices
+      .slice(0, index)
+      .reduce((acc, preceding) => acc + preceding.value, 0);
+    const fraction = slice.value / sum;
+    const startAngle = -90 + (precedingValue / sum) * 360;
+    const rawLen = fraction * CIRC;
+    // Subtract a gap so rounded caps don't overlap; keep a minimum sliver.
+    const dash = Math.max(rawLen - (slices.length > 1 ? GAP_PX : 0), 2);
+    return { color: slice.color, dash, startAngle };
+  });
 
   return (
     <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>

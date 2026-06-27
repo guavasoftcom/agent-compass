@@ -3,6 +3,7 @@ import { Box, Paper, Stack, Typography } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import AreaTrendChart from '../../components/AreaTrendChart';
+import SegmentedToggle from '../../components/SegmentedToggle';
 import { colorForIndex } from '../../theme';
 import type { WindowOption } from '../../constants';
 import type { WindowSelection } from '../../api';
@@ -75,6 +76,8 @@ const MetricsPageView = ({
   // x-axis: one bucket per trend point across the window, ending now.
   const axisDates = useMemo(() => {
     const n = selected?.trend.length ?? 0;
+    // x-axis is anchored to current wall-clock time.
+    // eslint-disable-next-line react-hooks/purity
     const end = Date.now();
     const stepMs = (24 * 60 * 60 * 1000) / Math.max(1, n - 1);
     return Array.from({ length: n }, (_, i) => new Date(end - (n - 1 - i) * stepMs));
@@ -145,36 +148,11 @@ const MetricsPageView = ({
                       <Box sx={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: 'text.disabled', fontFamily: "'Sora', sans-serif" }}>
                         Split by
                       </Box>
-                      <Box sx={{ display: 'inline-flex', bgcolor: 'action.hover', borderRadius: '9px', p: '3px', gap: '2px' }}>
-                        {splitKeys.map((key) => {
-                          const on = key === split;
-                          return (
-                            <Box
-                              key={key}
-                              component="button"
-                              type="button"
-                              onClick={() => setSplit(key)}
-                              sx={{
-                                border: 'none',
-                                cursor: 'pointer',
-                                fontFamily: "'Sora', sans-serif",
-                                fontSize: 12.5,
-                                fontWeight: 600,
-                                px: 1.625,
-                                py: 0.625,
-                                borderRadius: '7px',
-                                transition: '.12s',
-                                color: on ? 'primary.main' : 'text.secondary',
-                                bgcolor: on ? 'background.paper' : 'transparent',
-                                boxShadow: on ? 2 : 'none',
-                                '&:hover': { color: on ? 'primary.main' : 'text.primary' },
-                              }}
-                            >
-                              {key}
-                            </Box>
-                          );
-                        })}
-                      </Box>
+                      <SegmentedToggle
+                        options={splitKeys.map((key) => ({ value: key, label: key }))}
+                        value={split}
+                        onChange={setSplit}
+                      />
                     </Box>
                   )}
                 </Box>

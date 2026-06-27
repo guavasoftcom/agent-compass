@@ -26,7 +26,9 @@ export interface LogsFilters {
   event?: string[];
   tool?: string[];
   /** full-text over body + serialized attributes */
-  query?: string;
+  q?: string;
+  /** legend-muted severities — applied to histogram + stream, never to facet counts */
+  hiddenSeverity?: Severity[];
 }
 
 export interface HistogramBucket {
@@ -73,17 +75,6 @@ const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? 
 // fixtures (useful for offline UI work). The fetchers below hit /api/logs/*.
 export const USE_SAMPLE_DATA = env.VITE_LOGS_SAMPLE === '1';
 
-// Reject non-2xx responses instead of parsing the error body as data. Without this a
-// 400/500 (e.g. the window exceeding the backend's date-range cap) would be JSON-parsed
-// into a shape with no `items`/`buckets`, silently feeding `undefined` downstream and
-// white-screening the page. Throwing routes the failure into TanStack Query's error state.
-const jsonOrThrow = async <T,>(response: Response): Promise<T> => {
-  if (!response.ok) {
-    throw new Error(`Request to ${response.url} failed: ${response.status} ${response.statusText}`);
-  }
-  return response.json() as Promise<T>;
-};
-
 // serialize filters → query string (the real fetchers would use this verbatim)
 export const buildLogsQuery = (f: LogsFilters): URLSearchParams => {
   const p = new URLSearchParams();
@@ -93,8 +84,8 @@ export const buildLogsQuery = (f: LogsFilters): URLSearchParams => {
   (f.severity ?? []).forEach((v) => p.append('severity', v));
   (f.event ?? []).forEach((v) => p.append('event', v));
   (f.tool ?? []).forEach((v) => p.append('tool', v));
-  if (f.query) {
-    p.set('query', f.query);
+  if (f.q) {
+    p.set('q', f.q);
   }
   return p;
 };
@@ -108,13 +99,6 @@ export const buildLogsQuery = (f: LogsFilters): URLSearchParams => {
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
-
-/**
- * Default bucket-count target sent to GET /api/logs/histogram.
- * The backend snaps span/target UP to the nearest rung on its "nice"
- * ladder, so this is an upper bound, not an exact count.
- */
-export const HISTOGRAM_DEFAULT_TARGET = 50;
 
 interface SampleRow extends LogRow {
   _ts: number;
@@ -342,13 +326,16 @@ const inWindow = (r: SampleRow, f: LogsFilters) => {
   return t >= Date.parse(f.startTimestamp) && t <= Date.parse(f.endTimestamp);
 };
 
-const matches = (r: SampleRow, f: LogsFilters, exclude: FacetKey | 'query' | null): boolean => {
+const matches = (r: SampleRow, f: LogsFilters, exclude: FacetKey | 'q' | null): boolean => {
   if (!inWindow(r, f)) {
     return false;
   }
-  if (exclude !== 'query' && f.query) {
+  if (f.hiddenSeverity && f.hiddenSeverity.includes(r._sev)) {
+    return false;
+  }
+  if (exclude !== 'q' && f.q) {
     const hay = `${r.body} ${JSON.stringify(r.attributes)}`.toLowerCase();
-    if (!hay.includes(f.query.toLowerCase())) {
+    if (!hay.includes(f.q.toLowerCase())) {
       return false;
     }
   }
@@ -387,8 +374,8 @@ const sampleHistogram = async (f: LogsFilters, target: number): Promise<LogHisto
     INFO: 0,
     DEBUG: 0,
   }));
-  // histogram applies all filters except severity (all four series always rendered)
-  const hf: LogsFilters = { ...f, severity: [] };
+  // histogram applies all filters except severity (legend toggles client-side)
+  const hf: LogsFilters = { ...f, severity: [], hiddenSeverity: [] };
   STORE.forEach((r) => {
     if (!matches(r, hf, 'severity')) {
       return;
@@ -500,19 +487,18 @@ export const fetchLogHistogram = (f: LogsFilters, buckets = 50): Promise<LogHist
   if (USE_SAMPLE_DATA) {
     return sampleHistogram(f, buckets);
   }
-  // histogram always returns all four severity series; severity is never sent as
-  // a filter so the chart always has complete data — unselected severities are
-  // dimmed client-side from the derived `hidden` prop.
+  // histogram always returns all four severity series (legend mutes client-side),
+  // so severity is never sent as a filter — matches GET /api/logs/histogram.
   const p = buildLogsQuery({ ...f, severity: [] });
   p.set('buckets', String(buckets));
-  return fetch(`/api/logs/histogram?${p.toString()}`).then((r) => jsonOrThrow<LogHistogram>(r));
+  return fetch(`/api/logs/histogram?${p.toString()}`).then((r) => r.json() as Promise<LogHistogram>);
 };
 
 export const fetchLogFacets = (f: LogsFilters): Promise<LogFacets> => {
   if (USE_SAMPLE_DATA) {
     return sampleFacets(f);
   }
-  return fetch(`/api/logs/facets?${buildLogsQuery(f).toString()}`).then((r) => jsonOrThrow<LogFacets>(r));
+  return fetch(`/api/logs/facets?${buildLogsQuery(f).toString()}`).then((r) => r.json() as Promise<LogFacets>);
 };
 
 export const fetchLogsCursor = (
@@ -534,7 +520,7 @@ export const fetchLogsCursor = (
   if (opts.after) {
     p.set('after', `${opts.after.ts},${opts.after.id}`);
   }
-  return fetch(`/api/logs?${p.toString()}`).then((r) => jsonOrThrow<LogCursorPage>(r));
+  return fetch(`/api/logs?${p.toString()}`).then((r) => r.json() as Promise<LogCursorPage>);
 };
 
 export const fetchLogsPage = (f: LogsFilters, page: number, size: number): Promise<LogsListResult> => {
@@ -544,7 +530,7 @@ export const fetchLogsPage = (f: LogsFilters, page: number, size: number): Promi
   const p = buildLogsQuery(f);
   p.set('page', String(page));
   p.set('size', String(size));
-  return fetch(`/api/logs?${p.toString()}`).then((r) => jsonOrThrow<LogsListResult>(r));
+  return fetch(`/api/logs?${p.toString()}`).then((r) => r.json() as Promise<LogsListResult>);
 };
 
 // ---- shared presentation helpers (used by the view components) ----

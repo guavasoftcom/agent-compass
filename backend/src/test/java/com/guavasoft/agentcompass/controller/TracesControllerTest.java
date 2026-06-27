@@ -8,18 +8,23 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
-import com.guavasoft.agentcompass.model.TraceSummary;
+import com.guavasoft.agentcompass.model.TraceCursorPage;
+import com.guavasoft.agentcompass.model.TraceQueryCriteria;
 import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceExplorerService;
 import com.guavasoft.agentcompass.service.TraceService;
 
 import java.time.Instant;
 import java.util.List;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,33 +38,27 @@ class TracesControllerTest {
     TraceService traceService;
 
     @MockitoBean
+    TraceExplorerService traceExplorerService;
+
+    @MockitoBean
     LogService logService;
 
     @Test
-    void tracesReturnsTraceSummariesAndExposesTotalCountHeader() throws Exception {
-        when(traceService.recentTraces(null)).thenReturn(List.of(
-                TraceSummary.builder()
-                        .traceId("0102030405060708090a0b0c0d0e0f10")
-                        .rootSpanName("Bash")
-                        .spanCount(3L)
-                        .startTimestamp(Instant.parse("2026-05-21T12:00:00Z"))
-                        .endTimestamp(Instant.parse("2026-05-21T12:00:00.250Z"))
-                        .durationNanos(250_000_000L)
-                        .errorCount(0L)
-                        .build()));
-        when(traceService.countTraces(null)).thenReturn(42L);
+    void tracesListReturnsCursorPageWithTotalCount() throws Exception {
+        when(traceExplorerService.cursorPage(
+                any(TraceQueryCriteria.class), eq("new"), isNull(), isNull(), anyInt()))
+                .thenReturn(new TraceCursorPage(List.of(), null, false, 0L));
 
-        mockMvc.perform(get("/api/traces"))
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z")
+                        .param("endTimestamp", "2026-06-12T00:00:00Z"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("X-Total-Count", "42"))
-                .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].traceId").value("0102030405060708090a0b0c0d0e0f10"))
-                .andExpect(jsonPath("$[0].rootSpanName").value("Bash"))
-                .andExpect(jsonPath("$[0].spanCount").value(3))
-                .andExpect(jsonPath("$[0].errorCount").value(0));
+                .andExpect(jsonPath("$.items", hasSize(0)))
+                .andExpect(jsonPath("$.totalCount").value(0))
+                .andExpect(jsonPath("$.hasMore").value(false));
 
-        verify(traceService).recentTraces(null);
-        verify(traceService).countTraces(null);
+        verify(traceExplorerService)
+                .cursorPage(any(TraceQueryCriteria.class), eq("new"), isNull(), isNull(), anyInt());
     }
 
     @Test
