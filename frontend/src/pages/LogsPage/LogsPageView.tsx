@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Box, Paper, alpha } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ZoomInRoundedIcon from '@mui/icons-material/ZoomInRounded';
@@ -8,19 +8,19 @@ import TableRowsIcon from '@mui/icons-material/TableRows';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import type { WindowOption } from '../../constants';
-import type { WindowSelection } from '../../api';
+import type { LogRow, WindowSelection } from '../../api';
 import {
   fetchLogFacets,
   fetchLogHistogram,
-  HISTOGRAM_DEFAULT_TARGET,
-  SEVERITIES,
+  fetchLogsCursor,
+  fetchLogsPage,
   type FacetKey,
   type HistogramBucket,
+  type LogCursor,
   type LogsFilters,
   type Severity,
 } from './logsApi';
-import { resolveWindow } from './resolveWindow';
-import LogHistogramChart from './components/LogHistogramChart';
+import LogHistogram from './components/LogHistogram';
 import LogFacetRail, { type FacetSelections } from './components/LogFacetRail';
 import LogStream from './components/LogStream';
 import LogTable from './components/LogTable';
@@ -29,6 +29,8 @@ export interface LogsPageViewProps {
   selection: WindowSelection;
   onSelectionChange: (next: WindowSelection) => void;
   windows: readonly WindowOption[];
+  startTimestamp: string;
+  endTimestamp: string;
   windowLabel: string;
   error: Error | null;
   onReload: () => void;
@@ -36,6 +38,9 @@ export interface LogsPageViewProps {
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
 }
+
+const TAIL_INTERVAL_MS = 1500;
+const STREAM_PAGE = 60;
 
 const emptySelections = (): FacetSelections => ({
   severity: new Set(),
@@ -56,43 +61,12 @@ const zoomLabel = (startIso: string, endIso: string): string => {
   return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${t(s)}–${t(e)}`;
 };
 
-// Height reserved above the Stream/Table body — header + histogram + toolbar + the <main>
-// padding. The body wrapper fills the rest of the viewport at a fixed height; the
-// active-filter band lives inside it (flex), so any number of chips shrinks the table, not
-// the page — it never scrolls, however many filters wrap.
-const BODY_CHROME_PX = 460;
-
-// Auto-refresh poll interval — 60 s for preset windows, never for custom or zoomed ranges.
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
-
-// The narrowest zoom window we allow. Clicking a bar whose span is smaller than this
-// centers a MINIMUM_ZOOM_SPAN_MS window on the bucket midpoint instead of zooming to
-// the bare bucket range. Zoom is unavailable when the current window is already at or
-// below this span (clicking would produce no useful narrowing).
-const MINIMUM_ZOOM_SPAN_MS = 30 * 60_000; // 1 800 000 ms
-
-/**
- * Build a stable window key from a WindowSelection.
- *
- * This key is baked into every TanStack Query key so cache entries split cleanly per
- * selection without encoding ephemeral resolved timestamps. A preset "last 24 hours"
- * always maps to the same key string regardless of when it was last resolved; the fresh
- * timestamps are produced at fetch time by `resolveFilters()` in the queryFn closure.
- */
-const buildWindowKey = (selection: WindowSelection, zoom: ZoomRange | null): string => {
-  if (zoom != null) {
-    return `zoom:${zoom.startTimestamp}:${zoom.endTimestamp}`;
-  }
-  if (selection.kind === 'custom') {
-    return `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
-  }
-  return `preset:${selection.minutes}`;
-};
-
 const LogsPageView = ({
   selection,
   onSelectionChange,
   windows,
+  startTimestamp,
+  endTimestamp,
   windowLabel,
   error,
   onReload,
@@ -102,97 +76,140 @@ const LogsPageView = ({
 }: LogsPageViewProps) => {
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState<FacetSelections>(emptySelections);
+  const [hidden, setHidden] = useState<Set<Severity>>(new Set());
   const [view, setView] = useState<'stream' | 'table'>('stream');
   // local drill-down: click a histogram bar to zoom the Logs time window into that
   // bucket's range (kept local so it never touches the global window context).
   const [zoom, setZoom] = useState<ZoomRange | null>(null);
   // Live tail and Auto-refresh are one linked switch — toggling either drives both.
-  // Both are Stream-only: the Table is offset-paged, so it never tails, and in Table
-  // view the top-right auto-refresh toggle is disabled too (its state is preserved
-  // and resumes when switching back to Stream).
-  const tail = autoRefresh && view === 'stream';
-  // Matching-row total for the toolbar counter — reported up by whichever of the
-  // Stream / Table containers is currently mounted.
-  const [matchingTotal, setMatchingTotal] = useState(0);
+  const tail = autoRefresh;
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
-  // Stable window key — does NOT change on every auto-refresh tick. Preset windows
-  // always produce the same key; resolved timestamps are deferred to fetch time.
-  const windowKey = buildWindowKey(selection, zoom);
+  // stream cursor-paging state
+  const [loaded, setLoaded] = useState<LogRow[]>([]);
+  const [cursor, setCursor] = useState<LogCursor | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [streamLoading, setStreamLoading] = useState(false);
+  const [streamTotal, setStreamTotal] = useState(0);
 
-  // The non-window filter parts (severity/event/tool/search) as a stable string.
-  // Changing any of these produces a new filterPartsKey which updates the query key
-  // and triggers a fresh fetch; the window timestamp never causes spurious cache misses.
-  const filterPartsKey = useMemo(
-    () => JSON.stringify({ severity: [...sel.severity], event: [...sel.event], tool: [...sel.tool], query: search || undefined }),
-    [sel, search],
-  );
+  // table offset state
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
-  // Full query key segment for histogram/facets/stream/table queries.
-  const filtersKey = `${filterPartsKey}|${windowKey}`;
-
-  /**
-   * Resolve the current window + facet selections into a concrete LogsFilters object.
-   * Called at fetch time (inside queryFn / tail tick) — NOT at render time — so preset
-   * windows always resolve to a fresh end timestamp without changing the query key.
-   */
-  const resolveFilters = (): LogsFilters => {
-    const { startTimestamp, endTimestamp } = zoom
-      ? { startTimestamp: zoom.startTimestamp, endTimestamp: zoom.endTimestamp }
-      : resolveWindow(selection);
-    return {
-      startTimestamp,
-      endTimestamp,
+  const filters = useMemo<LogsFilters>(
+    () => ({
+      startTimestamp: zoom ? zoom.startTimestamp : startTimestamp,
+      endTimestamp: zoom ? zoom.endTimestamp : endTimestamp,
       severity: [...sel.severity] as Severity[],
       event: [...sel.event],
       tool: [...sel.tool],
-      query: search || undefined,
-    };
-  };
+      q: search || undefined,
+      hiddenSeverity: [...hidden],
+    }),
+    [zoom, startTimestamp, endTimestamp, sel, search, hidden],
+  );
+  const filtersKey = JSON.stringify(filters);
 
-  // When a severity selection is active, dim the unselected series in the histogram
-  // client-side. The histogram never sends severity to the server — all four series
-  // are always present. An empty selection means all series are visible (empty hidden set).
-  const hiddenSeverities = useMemo<Set<Severity>>(() => {
-    if (sel.severity.size === 0) {
-      return new Set<Severity>();
-    }
-    return new Set(SEVERITIES.filter((s) => !sel.severity.has(s)));
-  }, [sel.severity]);
-
-  // Poll only in Stream view, for preset windows without an active zoom — custom ranges
-  // have a fixed end so re-fetching would return identical data; zoom is always a past
-  // fixed slice; Table view has auto-refresh disabled entirely.
-  const shouldPoll = autoRefresh && view === 'stream' && selection.kind === 'preset' && zoom == null;
-  const histogramRefetchInterval = shouldPoll ? AUTO_REFRESH_INTERVAL_MS : false;
+  // facets ignore the legend mute so severity totals stay stable
+  const facetFilters = useMemo<LogsFilters>(() => ({ ...filters, hiddenSeverity: [] }), [filters]);
 
   const histogramQuery = useQuery({
-    queryKey: ['log-histogram', filterPartsKey, windowKey],
-    queryFn: () => fetchLogHistogram(resolveFilters(), HISTOGRAM_DEFAULT_TARGET),
-    refetchInterval: histogramRefetchInterval,
-    placeholderData: keepPreviousData,
+    queryKey: ['log-histogram', filtersKey],
+    queryFn: () => fetchLogHistogram(facetFilters, 50),
   });
   const facetsQuery = useQuery({
-    queryKey: ['log-facets', filterPartsKey, windowKey],
-    queryFn: () => fetchLogFacets(resolveFilters()),
-    refetchInterval: histogramRefetchInterval,
-    placeholderData: keepPreviousData,
+    queryKey: ['log-facets', filtersKey],
+    queryFn: () => fetchLogFacets(facetFilters),
+  });
+  const tableQuery = useQuery({
+    queryKey: ['log-table', filtersKey, page, pageSize],
+    queryFn: () => fetchLogsPage(filters, page, pageSize),
+    enabled: view === 'table',
   });
 
-  // Clear the local zoom whenever the underlying selection changes (preset/custom switch or
-  // custom range update). Done in render rather than an effect to avoid a cascading
-  // re-render — same idiom as LogTable's page reset. handleSelectionChange covers
-  // user-driven changes; this covers any other path.
-  //
-  // We key on the selection-derived part of the window key only (ignoring zoom itself),
-  // so the guard fires on real window changes, not on zoom set/clear cycles.
-  const selectionKey = selection.kind === 'custom'
-    ? `custom:${selection.startTimestamp}:${selection.endTimestamp}`
-    : `preset:${selection.minutes}`;
-  const [prevSelectionKey, setPrevSelectionKey] = useState(selectionKey);
-  if (prevSelectionKey !== selectionKey) {
-    setPrevSelectionKey(selectionKey);
+  // refs so async stream callbacks read fresh values without re-binding;
+  // synced in an effect (not during render) to stay pure
+  const filtersRef = useRef(filters);
+  const cursorRef = useRef(cursor);
+  const hasMoreRef = useRef(hasMore);
+  const loadingRef = useRef(streamLoading);
+  const reqId = useRef(0);
+  const newestRef = useRef<LogCursor | null>(null);
+  useEffect(() => {
+    filtersRef.current = filters;
+    cursorRef.current = cursor;
+    hasMoreRef.current = hasMore;
+    loadingRef.current = streamLoading;
+    newestRef.current = loaded[0] ? { ts: loaded[0].timestamp, id: loaded[0].id } : null;
+  });
+
+  const resetStream = useCallback(async () => {
+    const id = (reqId.current += 1);
+    setStreamLoading(true);
+    setLoaded([]);
+    setCursor(null);
+    setHasMore(true);
+    const res = await fetchLogsCursor(filtersRef.current, { cursor: null, limit: STREAM_PAGE });
+    if (id !== reqId.current) {
+      return;
+    }
+    setLoaded(res.items);
+    setCursor(res.nextCursor);
+    setHasMore(res.hasMore);
+    setStreamTotal(res.totalCount);
+    setStreamLoading(false);
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingRef.current || !hasMoreRef.current) {
+      return;
+    }
+    const id = reqId.current;
+    setStreamLoading(true);
+    const res = await fetchLogsCursor(filtersRef.current, { cursor: cursorRef.current, limit: STREAM_PAGE });
+    if (id !== reqId.current) {
+      return;
+    }
+    setLoaded((prev) => prev.concat(res.items));
+    setCursor(res.nextCursor);
+    setHasMore(res.hasMore);
+    setStreamTotal(res.totalCount);
+    setStreamLoading(false);
+  }, []);
+
+  // reset stream + collapse rows whenever the filters or window change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpanded(new Set());
+    setPage(0);
+    if (view === 'stream') {
+      void resetStream();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey, view]);
+
+  // clear the local zoom whenever the underlying window changes (preset/custom)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZoom(null);
-  }
+  }, [startTimestamp, endTimestamp]);
+
+  // live tail — poll newest-after-cursor and prepend (driven by the shared auto-refresh switch)
+  useEffect(() => {
+    if (!autoRefresh || view !== 'stream') {
+      return undefined;
+    }
+    const iv = window.setInterval(async () => {
+      const after = newestRef.current;
+      const res = await fetchLogsCursor(filtersRef.current, { after, limit: 20 });
+      if (res.items.length) {
+        setLoaded((prev) => [...res.items, ...prev]);
+        setStreamTotal((t) => t + res.items.length);
+        void histogramQuery.refetch();
+      }
+    }, TAIL_INTERVAL_MS);
+    return () => window.clearInterval(iv);
+  }, [autoRefresh, view, histogramQuery]);
 
   const toggleFacet = (key: FacetKey, value: string) => {
     setSel((prev) => {
@@ -206,17 +223,37 @@ const LogsPageView = ({
     });
   };
   const clearFacet = (key: FacetKey) => setSel((prev) => ({ ...prev, [key]: new Set() }));
+  const toggleSeverity = (s: Severity) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) {
+        next.delete(s);
+      } else {
+        next.add(s);
+      }
+      return next;
+    });
+  const toggleExpand = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
 
   // active filter chips
-  const chips: Array<{ key: FacetKey | 'query'; value: string; label: string }> = [];
+  const chips: Array<{ key: FacetKey | 'q'; value: string; label: string }> = [];
   if (search) {
-    chips.push({ key: 'query', value: search, label: `"${search}"` });
+    chips.push({ key: 'q', value: search, label: `"${search}"` });
   }
   (['severity', 'event', 'tool'] as FacetKey[]).forEach((k) => {
     sel[k].forEach((v) => chips.push({ key: k, value: v, label: v }));
   });
-  const removeChip = (key: FacetKey | 'query', value: string) => {
-    if (key === 'query') {
+  const removeChip = (key: FacetKey | 'q', value: string) => {
+    if (key === 'q') {
       setSearch('');
     } else {
       toggleFacet(key, value);
@@ -233,65 +270,15 @@ const LogsPageView = ({
     onSelectionChange(next);
   };
   // Drill into a histogram bar's bucket; live tail can't run on a fixed past slice.
-  // If the bucket span is already >= the floor, zoom to the exact bucket range.
-  // Otherwise build a MINIMUM_ZOOM_SPAN_MS window centered on the bucket midpoint,
-  // then slide it to fit inside the containing window without shrinking — the
-  // containing window is always wider than the floor (enforced by the onBarClick gate),
-  // so the slide always has room.
   const handleBarZoom = (b: HistogramBucket) => {
-    const bucketStartMs = Date.parse(b.t0);
-    const bucketEndMs = Date.parse(b.t1);
-    const bucketSpanMs = bucketEndMs - bucketStartMs;
-
-    let zoomStartMs: number;
-    let zoomEndMs: number;
-
-    if (bucketSpanMs >= MINIMUM_ZOOM_SPAN_MS) {
-      zoomStartMs = bucketStartMs;
-      zoomEndMs = bucketEndMs;
-    } else {
-      // Determine the containing window: active zoom if already zoomed, else the
-      // current selection resolved against the clock at click time.
-      const containingWindow = zoom != null
-        ? { startMs: Date.parse(zoom.startTimestamp), endMs: Date.parse(zoom.endTimestamp) }
-        : (() => {
-            const resolved = resolveWindow(selection);
-            return { startMs: Date.parse(resolved.startTimestamp), endMs: Date.parse(resolved.endTimestamp) };
-          })();
-
-      const midpointMs = bucketStartMs + bucketSpanMs / 2;
-      const halfFloor = MINIMUM_ZOOM_SPAN_MS / 2;
-
-      // Center the floor-sized window on the midpoint, then slide to stay inside the
-      // containing window — never shrink below MINIMUM_ZOOM_SPAN_MS.
-      zoomStartMs = midpointMs - halfFloor;
-      zoomEndMs = midpointMs + halfFloor;
-
-      if (zoomEndMs > containingWindow.endMs) {
-        const overshoot = zoomEndMs - containingWindow.endMs;
-        zoomStartMs -= overshoot;
-        zoomEndMs = containingWindow.endMs;
-      }
-      if (zoomStartMs < containingWindow.startMs) {
-        zoomStartMs = containingWindow.startMs;
-      }
-    }
-
-    const startIso = new Date(zoomStartMs).toISOString();
-    const endIso = new Date(zoomEndMs).toISOString();
-    setZoom({ startTimestamp: startIso, endTimestamp: endIso, label: zoomLabel(startIso, endIso) });
+    setZoom({ startTimestamp: b.t0, endTimestamp: b.t1, label: zoomLabel(b.t0, b.t1) });
     if (autoRefresh) {
       onAutoRefreshChange(false);
     }
   };
 
-  const tailDisabledReason = zoom != null
-    ? 'Live tail is unavailable while zoomed into a time range'
-    : view === 'table'
-      ? 'Live tail is available in the Stream view only'
-      : null;
-  const tailLocked = tailDisabledReason != null;
-  const bodyHeight = `calc(100vh - ${BODY_CHROME_PX}px)`;
+  const totalCount = view === 'stream' ? streamTotal : tableQuery.data?.totalCount ?? 0;
+  const tailLocked = zoom != null;
 
   return (
     <PageLayout
@@ -312,29 +299,18 @@ const LogsPageView = ({
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}
           isPolling={isPolling}
-          autoRefreshDisabled={zoom != null || view === 'table'}
+          autoRefreshDisabled={zoom != null}
         />
       }
     >
       <Paper variant="outlined" sx={{ p: 2.25, mb: 2 }}>
-        <LogHistogramChart
+        <LogHistogram
           data={histogramQuery.data}
-          hidden={hiddenSeverities}
+          hidden={hidden}
           facetSeverity={facetsQuery.data?.severity ?? []}
           windowLabel={zoom ? zoom.label : windowLabel}
-          onToggleSeverity={(s) => toggleFacet('severity', s)}
-          onBarClick={
-            (() => {
-              // Gate on the CURRENT WINDOW SPAN, not bucket width. Zoom is
-              // pointless once the window is already at or below the floor.
-              const currentSpanMs = zoom != null
-                ? Date.parse(zoom.endTimestamp) - Date.parse(zoom.startTimestamp)
-                : selection.kind === 'custom'
-                  ? Date.parse(selection.endTimestamp) - Date.parse(selection.startTimestamp)
-                  : selection.minutes * 60_000;
-              return currentSpanMs <= MINIMUM_ZOOM_SPAN_MS ? undefined : handleBarZoom;
-            })()
-          }
+          onToggleSeverity={toggleSeverity}
+          onBarClick={handleBarZoom}
         />
       </Paper>
 
@@ -376,7 +352,7 @@ const LogsPageView = ({
           </Box>
           <Box
             component="button"
-            title={tailDisabledReason ?? undefined}
+            title={tailLocked ? 'Live tail is unavailable while zoomed into a time range' : undefined}
             onClick={() => {
               if (!tailLocked) {
                 onAutoRefreshChange(!autoRefresh);
@@ -417,7 +393,7 @@ const LogsPageView = ({
         </Box>
         <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.6, height: 40, px: 1.9, borderRadius: 1.5, border: 1, borderColor: 'divider', bgcolor: 'background.paper', boxShadow: 1, whiteSpace: 'nowrap', flexShrink: 0 }}>
           <Box component="b" sx={{ color: 'text.primary', fontWeight: 700, fontFamily: "'Sora', sans-serif", fontSize: 13 }}>
-            {matchingTotal.toLocaleString()}
+            {totalCount.toLocaleString()}
           </Box>
           <Box component="span" sx={{ color: 'text.secondary', fontFamily: "'Sora', sans-serif", fontWeight: 600, fontSize: 13 }}>
             events
@@ -425,9 +401,6 @@ const LogsPageView = ({
         </Box>
       </Box>
 
-      {/* Fixed-height body: the active-filter band and the Stream/Table share this box, so a
-          varying number of filter chips shrinks the table — not the page — and it won't scroll. */}
-      <Box sx={{ height: bodyHeight, minHeight: 420, display: 'flex', flexDirection: 'column' }}>
       {/* active-filter band — its own row so the zoom chip + many filters wrap cleanly below the controls */}
       {zoom || chips.length ? (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1.75 }}>
@@ -501,7 +474,7 @@ const LogsPageView = ({
       ) : null}
 
       {view === 'stream' ? (
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '236px 1fr' }, gap: 2, flex: 1, minHeight: 0 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '236px 1fr' }, gap: 2, height: 'calc(100vh - 430px)', minHeight: 420 }}>
           <Paper variant="outlined" sx={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <LogFacetRail
               facets={facetsQuery.data}
@@ -514,26 +487,32 @@ const LogsPageView = ({
           </Paper>
           <Paper variant="outlined" sx={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <LogStream
-              resolveFilters={resolveFilters}
-              filtersKey={filtersKey}
-              autoRefresh={autoRefresh}
-              onTotalChange={setMatchingTotal}
-              onTailRows={() => {
-                void histogramQuery.refetch();
-              }}
+              rows={loaded}
+              total={streamTotal}
+              loading={streamLoading}
+              hasMore={hasMore}
+              expanded={expanded}
+              onToggleExpand={toggleExpand}
+              onLoadMore={loadMore}
             />
           </Paper>
         </Box>
       ) : (
-        <Paper variant="outlined" sx={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        <Paper variant="outlined" sx={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 430px)', minHeight: 420 }}>
           <LogTable
-            resolveFilters={resolveFilters}
-            filtersKey={filtersKey}
-            onTotalChange={setMatchingTotal}
+            rows={tableQuery.data?.items ?? []}
+            total={tableQuery.data?.totalCount ?? 0}
+            page={page}
+            pageSize={pageSize}
+            loading={tableQuery.isLoading}
+            onPageChange={setPage}
+            onPageSizeChange={(s) => {
+              setPageSize(s);
+              setPage(0);
+            }}
           />
         </Paper>
       )}
-      </Box>
     </PageLayout>
   );
 };

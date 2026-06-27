@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class TraceService {
 
-  static final int DEFAULT_PAGE_SIZE = 100;
+  private static final int DEFAULT_PAGE_SIZE = 100;
   private static final double NANOS_PER_MILLI = 1_000_000.0d;
 
   private final SpanRepository spanRepository;
@@ -44,8 +44,8 @@ public class TraceService {
 
   public List<TraceSummary> recentTracesInRange(Instant start, Instant end) {
     PageRequest pageRequest = PageRequest.of(0, DEFAULT_PAGE_SIZE);
-    List<TraceSummaryProjection> traceSummaryProjections =
-        spanRepository.findTraceSummariesInRange(start, end, pageRequest);
+    List<TraceSummaryProjection> traceSummaryProjections = spanRepository.findTraceSummariesInRange(start, end,
+        pageRequest);
     return hydrateTraceSummaries(traceSummaryProjections);
   }
 

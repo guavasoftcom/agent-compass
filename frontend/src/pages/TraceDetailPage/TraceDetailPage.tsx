@@ -1,20 +1,23 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { fetchTraceLogs, fetchTraceSpans } from '../../api';
+import { fetchTraceLogs } from '../../api';
+import type { LogRow } from '../../api';
+import { fetchSpansForTrace } from '../TracesPage/tracesApi';
+import { NANOS_PER_MILLI } from '../TracesPage/tracesApi';
 import {
+  buildSpanDepths,
   buildSpanIndices,
   buildSpanTree,
   computeTraceWindow,
-  NANOS_PER_MILLI,
   type SpanTree,
   type TraceWindow,
-} from './traceDetailHelpers';
+} from './spanTree';
+import { bucketLogsBySpan } from './logBuckets';
 import TraceDetailPageView from './TraceDetailPageView';
 
 export default function TraceDetailPage() {
   const { traceId } = useParams<{ traceId: string }>();
-  const [showLogs, setShowLogs] = useState(false);
 
   const {
     data: spans,
@@ -22,14 +25,16 @@ export default function TraceDetailPage() {
     error,
   } = useQuery({
     queryKey: ['trace-spans', traceId],
-    queryFn: () => fetchTraceSpans(traceId!),
+    queryFn: () => fetchSpansForTrace(traceId!),
     enabled: Boolean(traceId),
   });
 
+  // Logs load eagerly (not gated on the drawer) so the per-span "Logs" section in
+  // the detail dock has data the moment you select a span.
   const { data: logsData } = useQuery({
     queryKey: ['trace-logs', traceId],
     queryFn: () => fetchTraceLogs(traceId!),
-    enabled: showLogs && Boolean(traceId),
+    enabled: Boolean(traceId),
   });
 
   const tree = useMemo<SpanTree>(() => {
@@ -41,6 +46,11 @@ export default function TraceDetailPage() {
 
   const spanIndices = useMemo(
     () => buildSpanIndices(tree.roots, tree.childrenByParentId),
+    [tree],
+  );
+
+  const depthBySpanId = useMemo(
+    () => buildSpanDepths(tree.roots, tree.childrenByParentId),
     [tree],
   );
 
@@ -113,23 +123,29 @@ export default function TraceDetailPage() {
       if (currentEnd > currentStart) {
         unionMs += currentEnd - currentStart;
       }
-      const selfNanos = Math.max(0, totalNanos - unionMs * NANOS_PER_MILLI);
-      map.set(span.spanId, selfNanos);
+      map.set(span.spanId, Math.max(0, totalNanos - unionMs * NANOS_PER_MILLI));
     }
     return map;
   }, [spans, tree]);
+
+  const rootSpanId = tree.roots[0]?.spanId ?? '';
+  const logsBySpanId = useMemo<Map<string, LogRow[]>>(() => {
+    if (!spans || spans.length === 0 || !logsData || logsData.length === 0) {
+      return new Map();
+    }
+    return bucketLogsBySpan(logsData, tree, rootSpanId);
+  }, [logsData, spans, rootSpanId, tree]);
 
   const sessionId = useMemo<string | null>(() => {
     if (!spans || spans.length === 0) {
       return null;
     }
-    const rootSpan =
-      spans.find((candidate) => !candidate.parentSpanId) ?? spans[0];
-    const fromAttrs = rootSpan.attributes?.['session.id'];
+    const root = spans.find((s) => !s.parentSpanId) ?? spans[0];
+    const fromAttrs = root.attributes?.['session.id'];
     if (typeof fromAttrs === 'string') {
       return fromAttrs;
     }
-    const fromResource = rootSpan.resourceAttributes?.['session.id'];
+    const fromResource = root.resourceAttributes?.['session.id'];
     return typeof fromResource === 'string' ? fromResource : null;
   }, [spans]);
 
@@ -142,14 +158,13 @@ export default function TraceDetailPage() {
       error={error as Error | null}
       tree={tree}
       spanIndices={spanIndices}
+      depthBySpanId={depthBySpanId}
       traceWindow={traceWindow}
       parentSpanIds={parentSpanIds}
       descendantErrorCounts={descendantErrorCounts}
       selfTimeNanosBySpanId={selfTimeNanosBySpanId}
+      logsBySpanId={logsBySpanId}
       sessionId={sessionId}
-      showLogs={showLogs}
-      onShowLogsChange={setShowLogs}
-      logs={logsData ?? []}
     />
   );
 }

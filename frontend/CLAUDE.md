@@ -4,7 +4,7 @@ Project-wide conventions for `frontend/` (React 19, Vite 5, MUI 9, TypeScript). 
 
 ## Module layout
 
-- `api.ts` — shared `fetch` calls, the matching TypeScript types, and the `WindowSelection` discriminated union. New backend endpoints add a new `fetchXxx(selection)` function here — unless they serve exactly one page, in which case they live in a page-local API module (`pages/LogsPage/logsApi.ts`, `pages/MetricsPage/metricsApi.ts`). Either way, pages never call `fetch` outside these modules.
+- `api.ts` — shared `fetch` calls, the matching TypeScript types, and the `WindowSelection` discriminated union. New backend endpoints add a new `fetchXxx(selection)` function here — unless they serve exactly one page, in which case they live in a page-local API module (`pages/LogsPage/logsApi.ts`, `pages/MetricsPage/metricsApi.ts`, `pages/TracesPage/tracesApi.ts`). Either way, pages never call `fetch` outside these modules.
 - `App/` — `App.tsx` wires the React Router routes, `AppShell.tsx` renders the app-bar + drawer chrome around `<Outlet />`, `navItems.tsx` is the nav model, `ColorModeToggle.tsx` flips the theme.
 - `components/` — cross-page primitives:
   - `PageLayout` — page chrome (title row, subtitle, actions slot, error Alert, body).
@@ -28,6 +28,8 @@ Every page is split into two files in the same folder:
 Don't merge a container with its view, even for one-card pages — the split keeps the views easy to read and the data flow obvious in PR review.
 
 Documented deviation: `LogsPage` keeps its two page-level `useQuery` calls in the view because they depend on view-owned filter state — read [src/pages/LogsPage/CLAUDE.md](src/pages/LogsPage/CLAUDE.md) before touching that page.
+
+Documented deviation: `TracesPage` is data-dense enough that prop-drilling produced a ~47-prop view, so it uses a page-scoped context instead — all behavior lives in `useTracesExplorer`, the `TracesExplorerContext` provider wires it to the global window context, and `TracesPageView` reads context and takes zero props. Read [src/pages/TracesPage/CLAUDE.md](src/pages/TracesPage/CLAUDE.md) before touching that page.
 
 ## Data fetching
 

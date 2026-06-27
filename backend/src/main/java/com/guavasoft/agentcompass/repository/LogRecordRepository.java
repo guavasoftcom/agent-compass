@@ -12,6 +12,10 @@ import java.util.List;
 
 public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long> {
 
+  // Logs correlated to a trace by OTLP trace context. Claude Code >= 2.1.152 stamps
+  // trace_id + span_id onto every event log emitted inside an active span, so a
+  // trace's logs are exactly the rows carrying its trace_id. The frontend then
+  // attaches each log to its emitting span by span_id.
   List<LogRecordEntity> findByTraceIdOrderByTimestampAsc(String traceId);
 
   // Returns every log_records row whose attributes jsonb contains every entry in

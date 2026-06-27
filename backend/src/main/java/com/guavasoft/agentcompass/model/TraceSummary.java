@@ -46,4 +46,9 @@ public class TraceSummary {
 
     @Schema(description = "Number of spans in the trace whose statusCode is \"error\"", example = "0")
     private long errorCount;
+
+    @Schema(description = "Total token usage summed across all spans in the trace "
+            + "(input + output + cache-read + cache-creation, first-present key per category). "
+            + "0 when no span carries token attributes.", example = "5400000")
+    private long totalTokens;
 }

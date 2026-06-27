@@ -35,6 +35,66 @@ public class TuningProperties {
   private String toolSpanName = "claude_code.tool";
 
   /**
+   * Span name for the leaf span that times a single tool execution. Distinct from
+   * {@link #toolSpanName}: the {@code claude_code.tool} wrapper and this execution
+   * child share a {@link #toolCallIdAttribute}, so trace-detail log correlation
+   * indexes only this leaf to avoid attaching tool logs to the wrapper span.
+   */
+  private String toolExecutionSpanName = "claude_code.tool.execution";
+
+  /**
+   * Span name for the leaf span that times a single LLM request. Carries
+   * {@link #requestIdAttribute}, which {@code api_request*} logs share for
+   * trace-detail correlation.
+   */
+  private String llmRequestSpanName = "claude_code.llm_request";
+
+  /**
+   * Attribute key shared by tool logs ({@code tool_result} / {@code tool_decision})
+   * and the {@link #toolExecutionSpanName} span. Claude Code stamps most tool logs
+   * with the coarse interaction-root span id; trace-detail correlation re-points
+   * them onto the exact execution span by matching this key.
+   */
+  private String toolCallIdAttribute = "tool_use_id";
+
+  /**
+   * Attribute key shared by {@code api_request*} logs and the
+   * {@link #llmRequestSpanName} span. Used the same way as
+   * {@link #toolCallIdAttribute} to re-point LLM logs onto the exact request span.
+   */
+  private String requestIdAttribute = "request_id";
+
+  /**
+   * Value of {@code event.name} for the LLM-request log that carries
+   * {@link #requestIdAttribute}. Used to pair an {@link #apiRequestBodyEventName}
+   * log (which lacks its own request id) to its request via event ordering.
+   */
+  private String apiRequestEventName = "api_request";
+
+  /**
+   * Value of {@code event.name} for the LLM request-payload log. It carries only
+   * {@link #promptIdAttribute} (turn-level, not request-level) and no request id,
+   * so trace-detail correlation recovers its request id from the
+   * {@link #apiRequestEventName} that immediately follows it in
+   * {@link #eventSequenceAttribute} order within the same prompt.
+   */
+  private String apiRequestBodyEventName = "api_request_body";
+
+  /**
+   * Attribute key carrying the per-turn prompt identifier. One prompt spans many
+   * LLM requests, so this scopes the body-to-request pairing but cannot identify a
+   * single request on its own.
+   */
+  private String promptIdAttribute = "prompt.id";
+
+  /**
+   * Attribute key carrying Claude Code's monotonic per-session event counter. Gives
+   * the authoritative ordering used to pair an {@link #apiRequestBodyEventName} log
+   * with the {@link #apiRequestEventName} that follows it.
+   */
+  private String eventSequenceAttribute = "event.sequence";
+
+  /**
    * OTLP metric name carrying per-turn token counts. Claude Code emits one data
    * point per
    * (session, type) on every turn — {@link #tokenTypeAttribute} carries the type.

@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.mapper.LogRecordMapper;
 import com.guavasoft.agentcompass.model.BashCommandCoverage;
 import com.guavasoft.agentcompass.model.BashCommandHotspot;
@@ -31,6 +32,7 @@ import com.guavasoft.agentcompass.model.ToolFailureRate;
 import com.guavasoft.agentcompass.model.ToolPerformance;
 import com.guavasoft.agentcompass.model.ToolRepeatStat;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
+import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -40,6 +42,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -61,6 +66,7 @@ public class LogService {
   private static final long SLOW_AND_LARGE_MIN_BYTES = 4_000L;
 
   private final LogRecordRepository logRecordRepository;
+  private final SpanRepository spanRepository;
   private final LogRecordMapper logRecordMapper;
   private final TuningProperties tuningProperties;
 
@@ -71,9 +77,153 @@ public class LogService {
     return logRecordMapper.toLogRecords(logRecordEntities);
   }
 
+  // Claude Code >= 2.1.152 stamps OTLP trace context onto its event logs, so every
+  // log belonging to a trace carries that trace's trace_id. We fetch by trace_id,
+  // then re-point each log onto the fine-grained span that actually did the work
+  // (see resolveLeafSpans); the frontend attaches each log to its span by span_id.
   public List<LogRecord> logsForTrace(String traceId) {
     List<LogRecordEntity> logRecordEntities = logRecordRepository.findByTraceIdOrderByTimestampAsc(traceId);
-    return logRecordMapper.toLogRecords(logRecordEntities);
+    List<LogRecord> logRecords = logRecordMapper.toLogRecords(logRecordEntities);
+    List<SpanEntity> traceSpans = spanRepository.findByTraceIdOrderByStartTimestampAsc(traceId);
+    resolveLeafSpans(logRecords, traceSpans);
+    return logRecords;
+  }
+
+  // Claude Code stamps most event logs with a coarse span id: tool_result and
+  // api_request* land on the interaction-root span rather than on the
+  // tool.execution / llm_request span that did the work (tool_decision is the
+  // exception — it correctly lands on its tool.blocked_on_user span). Both signals
+  // carry exact correlation keys, so we re-point each root-stranded log onto its
+  // true leaf span: tool logs via tool_use_id, LLM logs via request_id. Logs
+  // already on a non-root span (e.g. tool_decision) and logs with no matching key
+  // (hooks, user_prompt) keep their original span id.
+  private void resolveLeafSpans(List<LogRecord> logRecords, List<SpanEntity> traceSpans) {
+    Set<String> rootSpanIds = traceSpans.stream()
+        .filter(span -> span.getParentSpanId() == null)
+        .map(SpanEntity::getSpanId)
+        .collect(Collectors.toSet());
+
+    String toolCallIdAttribute = tuningProperties.getToolCallIdAttribute();
+    String requestIdAttribute = tuningProperties.getRequestIdAttribute();
+    Map<String, String> spanIdByToolCallId = indexSpanIdByAttribute(
+        traceSpans, tuningProperties.getToolExecutionSpanName(), toolCallIdAttribute);
+    Map<String, String> spanIdByRequestId = indexSpanIdByAttribute(
+        traceSpans, tuningProperties.getLlmRequestSpanName(), requestIdAttribute);
+    Map<String, TreeMap<Long, String>> requestIdBySequencePerPrompt = indexApiRequestsByPrompt(logRecords);
+
+    for (LogRecord logRecord : logRecords) {
+      if (logRecord.getSpanId() != null && !rootSpanIds.contains(logRecord.getSpanId())) {
+        continue;
+      }
+      Map<String, Object> attributes = logRecord.getAttributes();
+      if (attributes == null) {
+        continue;
+      }
+      String resolvedSpanId = spanIdByToolCallId.get(stringAttribute(attributes, toolCallIdAttribute));
+      if (resolvedSpanId == null) {
+        resolvedSpanId = spanIdByRequestId.get(stringAttribute(attributes, requestIdAttribute));
+      }
+      if (resolvedSpanId == null) {
+        resolvedSpanId = spanIdByRequestId.get(
+            pairedRequestIdForBody(attributes, requestIdBySequencePerPrompt));
+      }
+      if (resolvedSpanId != null) {
+        logRecord.setSpanId(resolvedSpanId);
+      }
+    }
+  }
+
+  // Indexes the request_id of every api_request log by prompt.id, keyed on its
+  // event.sequence. Drives the api_request_body pairing below: a body log carries no
+  // request_id of its own, so it borrows the request_id of the api_request that
+  // immediately follows it in sequence order within the same prompt.
+  private Map<String, TreeMap<Long, String>> indexApiRequestsByPrompt(List<LogRecord> logRecords) {
+    String eventNameAttribute = tuningProperties.getEventNameAttribute();
+    String apiRequestEventName = tuningProperties.getApiRequestEventName();
+    String promptIdAttribute = tuningProperties.getPromptIdAttribute();
+    String requestIdAttribute = tuningProperties.getRequestIdAttribute();
+    String eventSequenceAttribute = tuningProperties.getEventSequenceAttribute();
+
+    Map<String, TreeMap<Long, String>> requestIdBySequencePerPrompt = new HashMap<>();
+    for (LogRecord logRecord : logRecords) {
+      Map<String, Object> attributes = logRecord.getAttributes();
+      if (attributes == null || !apiRequestEventName.equals(attributes.get(eventNameAttribute))) {
+        continue;
+      }
+      String promptId = stringAttribute(attributes, promptIdAttribute);
+      String requestId = stringAttribute(attributes, requestIdAttribute);
+      Long sequence = longAttribute(attributes, eventSequenceAttribute);
+      if (promptId == null || requestId == null || sequence == null) {
+        continue;
+      }
+      requestIdBySequencePerPrompt
+          .computeIfAbsent(promptId, key -> new TreeMap<>())
+          .putIfAbsent(sequence, requestId);
+    }
+    return requestIdBySequencePerPrompt;
+  }
+
+  // Recovers the request_id for an api_request_body log by finding the api_request
+  // that immediately follows it in event.sequence order within the same prompt
+  // (Claude Code emits each LLM call as an ordered triplet: body, request, response).
+  // Returns null for any other event, or when no following request exists.
+  private String pairedRequestIdForBody(
+      Map<String, Object> attributes, Map<String, TreeMap<Long, String>> requestIdBySequencePerPrompt) {
+    if (!tuningProperties.getApiRequestBodyEventName().equals(
+        attributes.get(tuningProperties.getEventNameAttribute()))) {
+      return null;
+    }
+    String promptId = stringAttribute(attributes, tuningProperties.getPromptIdAttribute());
+    Long sequence = longAttribute(attributes, tuningProperties.getEventSequenceAttribute());
+    if (promptId == null || sequence == null) {
+      return null;
+    }
+    TreeMap<Long, String> requestIdBySequence = requestIdBySequencePerPrompt.get(promptId);
+    if (requestIdBySequence == null) {
+      return null;
+    }
+    Map.Entry<Long, String> followingRequest = requestIdBySequence.higherEntry(sequence);
+    return followingRequest == null ? null : followingRequest.getValue();
+  }
+
+  private static Long longAttribute(Map<String, Object> attributes, String key) {
+    Object value = attributes.get(key);
+    if (value instanceof Number number) {
+      return number.longValue();
+    }
+    if (value instanceof String text) {
+      try {
+        return Long.parseLong(text);
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Maps a correlation-key value to the span id of the named leaf span carrying it.
+  // Only spans of spanName are indexed: the tool_use_id key lives on both the
+  // claude_code.tool wrapper and its claude_code.tool.execution child, and we want
+  // logs to attach to the execution leaf, not the wrapper. First write wins on the
+  // rare duplicate key.
+  private static Map<String, String> indexSpanIdByAttribute(
+      List<SpanEntity> spans, String spanName, String attributeKey) {
+    Map<String, String> spanIdByAttributeValue = new HashMap<>();
+    for (SpanEntity span : spans) {
+      if (!spanName.equals(span.getName()) || span.getAttributes() == null) {
+        continue;
+      }
+      String attributeValue = stringAttribute(span.getAttributes(), attributeKey);
+      if (attributeValue != null) {
+        spanIdByAttributeValue.putIfAbsent(attributeValue, span.getSpanId());
+      }
+    }
+    return spanIdByAttributeValue;
+  }
+
+  private static String stringAttribute(Map<String, Object> attributes, String key) {
+    Object value = attributes.get(key);
+    return value instanceof String text && !text.isEmpty() ? text : null;
   }
 
   public List<String> availableAttributePairs(

@@ -47,6 +47,9 @@ frontend/src/
     DonutCard/
       DonutCard.tsx
       index.ts
+    GhostButton/
+      GhostButton.tsx
+      index.ts
     PageActions/
       PageActions.tsx
       PageActionsView.tsx
@@ -54,9 +57,15 @@ frontend/src/
     PageLayout/
       PageLayout.tsx
       index.ts
+    SearchInput/
+      SearchInput.tsx
+      index.ts
     SectionLayout/
       SectionLayout.tsx
       SectionLayoutView.tsx
+      index.ts
+    SegmentedToggle/
+      SegmentedToggle.tsx
       index.ts
     Sparkline/
       Sparkline.tsx
@@ -167,13 +176,90 @@ frontend/src/
     TraceDetailPage/
       TraceDetailPage.tsx
       TraceDetailPageView.tsx
-      traceDetailHelpers.ts       // page-internal helper; no barrel needed
+      attrFormat.ts               // page-internal helpers; no barrel needed
+      criticalPath.ts
+      logBuckets.ts
+      severity.ts
+      spanTree.ts
       index.ts
+      components/
+        SpanDetailDock/
+          SpanDetailDock.tsx
+          SpanAttributesColumn.tsx
+          SpanEventsList.tsx
+          TokensSection.tsx
+          LogEntry.tsx
+          dockParts.tsx           // shared leaf bits (SectionTitle/AttrRows/clock)
+          useResizableHeight.ts
+          index.ts
+        SpanWaterfallRow/
+          SpanWaterfallRow.tsx
+          index.ts
+        TraceDetailHeader/
+          TraceDetailHeader.tsx
+          TraceDetailHeaderView.tsx
+          IdChip.tsx
+          SummaryStrip.tsx
+          useCopyToClipboard.ts
+          index.ts
+        TraceMinimap/
+          TraceMinimap.tsx
+          index.ts
+        WaterfallToolbar/
+          WaterfallToolbar.tsx
+          index.ts
     TracesPage/
-      TracesPage.tsx
-      TracesPageView.tsx
-      timeFormat.ts               // page-internal helper; no barrel needed
+      CLAUDE.md                   // page-local conventions and data-flow notes
+      TracesPage.tsx              // container (provider wrapper only)
+      TracesPageView.tsx          // presentational; reads page-scoped context, takes no props
+      TracesExplorerContext.tsx   // provider + useTracesExplorerContext()
+      useTracesExplorer.ts        // the behavior hook (filters, queries, paging, handlers)
+      tracesApi.ts                // page-local API module (re-exports the modules below)
+      traceTypes.ts               // shared types; no runtime
+      traceDerivations.ts         // serviceOf/quantile/formatDuration helpers + buildTracesQuery
+      tokenBreakdown.ts           // per-span token-usage breakdown (also used by TraceDetailPage)
+      tracesSampleData.ts         // VITE_TRACES_SAMPLE synthetic store + query engine
       index.ts
+      components/
+        TraceFacetRail/
+          TraceFacetRail.tsx
+          TraceFacetRailView.tsx
+          index.ts
+        TraceFilterChips/
+          TraceFilterChips.tsx
+          TraceFilterChipsView.tsx
+          index.ts
+        TraceHistogram/
+          TraceHistogram.tsx
+          TraceHistogramView.tsx
+          index.ts
+        TraceSortDropdown/
+          TraceSortDropdown.tsx
+          TraceSortDropdownView.tsx
+          index.ts
+        TraceStream/
+          TraceStream.tsx
+          TraceStreamView.tsx
+          index.ts
+        TraceSummaryInline/
+          TraceSummaryInline.tsx
+          TraceSummaryInlineView.tsx
+          index.ts
+        TraceTable/
+          TraceTable.tsx
+          TraceTableView.tsx
+          index.ts
+        TraceTailToggle/
+          TraceTailToggle.tsx     // pure prop-driven leaf, single file
+          index.ts
+        TraceViewToggle/
+          TraceViewToggle.tsx     // pure prop-driven leaf, single file
+          index.ts
+        TraceWaterfallInline/
+          TraceWaterfallInline.tsx
+          TraceWaterfallInlineView.tsx
+          index.ts
+        traceColors.ts            // helper shared by the sub-components (and TraceDetailPage)
 ```
 
 ## Container / presentational split
@@ -198,7 +284,7 @@ export { default } from './LogsPage';
 
 ### Where page-internal helpers go
 
-**Flat helper files** (e.g. `TracesPage/timeFormat.ts`, `LogsPage/resolveWindow.ts`, `TraceDetailPage/traceDetailHelpers.ts`) live as flat `.ts` files inside the page folder. They are implementation details, not a public surface, and do NOT need their own folder + `index.ts`. Page-local API modules (`LogsPage/logsApi.ts`, `MetricsPage/metricsApi.ts`) follow the same rule — they hold fetchers and types for endpoints only that page consumes.
+**Flat helper files** (e.g. `TraceDetailPage/criticalPath.ts`, `LogsPage/resolveWindow.ts`, `TraceDetailPage/spanTree.ts`) live as flat `.ts` files inside the page folder. They are implementation details, not a public surface, and do NOT need their own folder + `index.ts`. Page-local API modules (`LogsPage/logsApi.ts`, `MetricsPage/metricsApi.ts`, `TracesPage/tracesApi.ts`) follow the same rule — they hold fetchers and types for endpoints only that page consumes.
 
 **Page-internal sub-components** go in a `components/` sub-folder inside the page folder (e.g. `ToolCallsPage/components/ToolLatencyCard/`, `LogsPage/components/LogStream/`). Apply the same container/view split and barrel rule as top-level components. Use this pattern when a page grows enough sub-components that the page folder would otherwise become cluttered. Small leaf sub-components that have no container/view split may stay as flat `.tsx` files inside `components/` (e.g. `MetricsPage/components/`, `TokensPage/components/`); give them a folder + barrel once they grow one.
 
