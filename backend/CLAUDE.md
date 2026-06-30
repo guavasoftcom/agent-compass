@@ -1,6 +1,15 @@
 # Backend conventions
 
-Project-wide conventions for `backend/` (Spring Boot 3.5, Java 21). Read [../AGENTS.md](../AGENTS.md) for repo-wide context.
+Project-wide conventions for `backend/` (Spring Boot 4.1, Java 21). Read [../AGENTS.md](../AGENTS.md) for repo-wide context.
+
+## Spring Boot 4 notes
+
+Boot 4 differs from 3.x in ways that bit this project during the upgrade — keep them in mind:
+
+- **Jackson 3** is the default JSON stack (`tools.jackson.*` namespace; `jackson-annotations` stays at `com.fasterxml.jackson.annotation`). Dates serialize as **ISO-8601 strings by default** (`WRITE_DATES_AS_TIMESTAMPS` moved from `SerializationFeature` to `DateTimeFeature` and now defaults to false), so no `spring.jackson.serialization` override is needed for that.
+- **Auto-configuration is split into per-technology modules** that are NOT all pulled in transitively. This project explicitly depends on `spring-boot-flyway` (Flyway won't run migrations without it) and the test scope adds `spring-boot-starter-webmvc-test` for the `@WebMvcTest` slice (now in package `org.springframework.boot.webmvc.test.autoconfigure`).
+- **Testcontainers 2.x** renamed the Maven artifacts: `org.testcontainers:junit-jupiter` → `testcontainers-junit-jupiter`, `:postgresql` → `testcontainers-postgresql` (Java package names unchanged).
+- **`maven-compiler-plugin` is pinned at 3.13.0** on purpose — 3.14+/3.15 regress Lombok+MapStruct multi-round annotation processing and silently drop mapper beans. Don't bump it.
 
 ## Module layout
 

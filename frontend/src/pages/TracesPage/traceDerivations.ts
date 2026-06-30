@@ -12,21 +12,26 @@ import type {
 
 // ---- shared derivation helpers (server mirrors these groupings) ------------
 // TraceRow has no `service` field; the operation is `rootSpanName` and the
-// service is derived from its dotted prefix. The histogram/facets endpoints
-// MUST group by the same mapping so client + server counts agree.
+// service is derived from its prefix. Real Claude Code root spans are
+// `claude_code.`-prefixed (`claude_code.tool.execution`, `claude_code.llm_request`,
+// `claude_code.interaction`); the sample store uses the bare operation form
+// (`tool.execute`, `model.completion`). Strip the prefix, then match. The
+// histogram/facets CASE in SpanRepository.java MUST mirror this so client +
+// server counts agree.
 const SERVICE_BY_PREFIX: Array<[string, string]> = [
-  ['session.', 'claude_code.session'],
-  ['context.', 'claude_code.session'],
-  ['tool.', 'claude_code.tools'],
-  ['model.', 'claude_code.models'],
-  ['mcp.', 'mcp.client'],
-  ['subagent.', 'claude_code.subagents'],
+  ['interaction', 'claude_code.session'],
+  ['session', 'claude_code.session'],
+  ['context', 'claude_code.session'],
+  ['tool', 'claude_code.tools'],
+  ['llm', 'claude_code.models'],
+  ['model', 'claude_code.models'],
 ];
 export const serviceOf = (rootSpanName: string | null | undefined): string => {
   if (!rootSpanName) {
     return 'claude_code';
   }
-  const hit = SERVICE_BY_PREFIX.find(([p]) => rootSpanName.startsWith(p));
+  const operation = rootSpanName.toLowerCase().replace(/^claude_code\./, '');
+  const hit = SERVICE_BY_PREFIX.find(([prefix]) => operation.startsWith(prefix));
   return hit ? hit[1] : 'claude_code';
 };
 export const statusOf = (t: TraceRow): TraceStatus => (t.errorCount > 0 ? 'error' : 'ok');

@@ -10,14 +10,17 @@ Backend counterpart: `LogsController` → `LogService` (`backend/.../controller/
 LogsPage/
 ├── LogsPage.tsx          container — window context, manual reload invalidation
 ├── LogsPageView.tsx      view + filter state + the two page-level queries (see deviation note)
-├── logsApi.ts            fetchers, types, query serialization, sample-data fallback,
-│                         severityOf/eventNameOf/toolNameOf row helpers
+├── logsApi.ts            the four fetchers; re-exports logsTypes + logsDerivations so
+│                         components import everything from './logsApi'
+├── logsTypes.ts          DTO types + Severity/FacetKey enums + LogsFilters
+├── logsDerivations.ts    buildLogsQuery + severityOf/eventNameOf/toolNameOf row helpers
+├── logsSampleData.ts     synthetic store + in-memory query engine (VITE_LOGS_SAMPLE=1)
 ├── components/
 │   ├── LogHistogramChart/   stacked severity bars + legend (pure derivation, no fetch)
 │   ├── LogFacetRail/        search box + severity/event/tool checkbox facets (no fetch)
-│   ├── LogStream/           infinite scroll-back + live-tail poll (fetches)
+│   ├── LogStream/           infinite scroll-back + live-tail poll (fetches); exports SeverityChip
 │   ├── LogTable/            offset-paged DataGrid-style table (fetches)
-│   └── severity.ts          severity → theme color
+│   └── severity.ts          severity → theme color (single source; histogram/stream/facets share it)
 └── index.ts
 ```
 
@@ -144,8 +147,8 @@ query string.
 - **Deviation from the container/view convention**: the two page-level `useQuery` calls live
   in `LogsPageView.tsx`, not the container, because they depend on filter state that belongs
   to the view (facets, search, zoom, legend). Push state up before moving the queries.
-- Severity on real rows is **derived**, not stored: `severityOf` in `logsApi.ts` mirrors the
-  SQL function `derive_log_severity` (`V6__log_severity_function.sql`). Change them in lockstep.
+- Severity on real rows is **derived**, not stored: `severityOf` in `logsDerivations.ts` mirrors
+  the SQL function `derive_log_severity` (`V6__log_severity_function.sql`). Change them in lockstep.
 - `VITE_LOGS_SAMPLE=1` swaps all fetchers to an in-memory synthetic store (offline UI work);
   shapes are identical to the live endpoints.
 - The body box is `calc(100vh - 460px)` (`BODY_CHROME_PX`) — header + histogram + toolbar

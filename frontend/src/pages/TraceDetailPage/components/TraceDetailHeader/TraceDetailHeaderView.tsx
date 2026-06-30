@@ -5,6 +5,7 @@ import { formatDuration, formatTokens } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
 import IdChip from './IdChip';
 import SummaryStrip, { type SummaryItem } from './SummaryStrip';
+import { fontFamilies } from '../../../../theme/typography';
 
 export interface TraceDetailHeaderViewProps {
   traceId: string;
@@ -59,7 +60,7 @@ const TraceDetailHeaderView = ({
           <Box
             component="small"
             sx={{
-              fontFamily: "'Space Grotesk', sans-serif",
+              fontFamily: fontFamilies.body,
               fontSize: 12,
               fontWeight: 500,
               color: 'text.secondary',
@@ -134,7 +135,7 @@ const TraceDetailHeaderView = ({
         <Box>
           <Typography
             sx={{
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontWeight: 700,
               fontSize: 12,
               letterSpacing: '1.6px',
@@ -157,7 +158,7 @@ const TraceDetailHeaderView = ({
               component={RouterLink}
               to="/traces"
               sx={{
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 fontWeight: 700,
                 fontSize: 26,
                 letterSpacing: '-0.4px',
@@ -173,7 +174,7 @@ const TraceDetailHeaderView = ({
             <Typography
               component="h1"
               sx={{
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 fontSize: 26,
                 fontWeight: 800,
                 letterSpacing: '-0.5px',

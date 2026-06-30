@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { WINDOWS } from '../../constants';
-import { useWindowContext } from '../../windowContext';
+import { WINDOWS } from '../../lib/constants';
+import { useWindowContext } from '../../lib/windowContext';
 import MetricsPageView from './MetricsPageView';
 import { fetchMetrics, type MetricsQueryParams } from './metricsApi';
 
@@ -13,7 +13,8 @@ const AUTO_REFRESH_INTERVAL_MS = 60_000;
  * the other pages; the simplified view does the rest.
  */
 export default function MetricsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh } =
+    useWindowContext();
 
   const params = useMemo<MetricsQueryParams>(() => {
     // The metrics window is anchored to current wall-clock time at fetch time.
@@ -29,7 +30,9 @@ export default function MetricsPage() {
   }, [selection]);
 
   const refetchInterval: number | false =
-    autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
+    autoRefresh && selection.kind === 'preset'
+      ? AUTO_REFRESH_INTERVAL_MS
+      : false;
 
   const metricsQuery = useQuery({
     queryKey: ['metrics/series', params],

@@ -2,10 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import './fonts'; // self-hosted Sora + Space Grotesk (bundled, no CDN)
+import './theme/fonts'; // self-hosted Sora + Space Grotesk (bundled, no CDN)
 import App from './App';
-import { ColorModeProvider } from './colorMode';
-import { WindowProvider } from './windowContext';
+import { ColorModeProvider } from './theme/colorMode';
+import { WindowProvider } from './lib/windowContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {

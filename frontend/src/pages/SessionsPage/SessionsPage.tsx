@@ -6,15 +6,15 @@ import {
   type SessionsSortModel,
   type WindowSelection,
 } from '../../api';
-import { WINDOWS } from '../../constants';
-import { useWindowContext } from '../../windowContext';
+import { PAGE_SIZE_OPTIONS, WINDOWS } from '../../lib/constants';
+import { useWindowContext } from '../../lib/windowContext';
 import SessionsPageView, {
   type PaginationModel,
   type SessionsKpis,
 } from './SessionsPageView';
 
 const AUTO_REFRESH_INTERVAL_MS = 60_000;
-const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 const DEFAULT_SORT: SessionsSortModel = { field: 'costUsd', direction: 'desc' };
 
 const EMPTY_KPIS: SessionsKpis = {

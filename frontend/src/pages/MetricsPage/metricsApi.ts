@@ -10,7 +10,8 @@
 import { METRICS, type MetricSeries } from './components/metricsSampleData';
 
 const USE_SAMPLE_DATA =
-  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_METRICS_SAMPLE === '1';
+  (import.meta as unknown as { env?: Record<string, string> }).env
+    ?.VITE_METRICS_SAMPLE === '1';
 
 /** Time window derived from the page's WindowSelection. */
 export interface MetricsQueryParams {
@@ -31,7 +32,9 @@ const getJSON = async <T>(url: string): Promise<T> => {
 };
 
 /** GET /api/metrics/series — the claude_code.* metrics with trend + splits. */
-export const fetchMetrics = async (params: MetricsQueryParams): Promise<MetricSeries[]> => {
+export const fetchMetrics = async (
+  params: MetricsQueryParams,
+): Promise<MetricSeries[]> => {
   if (USE_SAMPLE_DATA) {
     return METRICS;
   }

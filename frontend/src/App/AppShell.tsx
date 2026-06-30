@@ -18,7 +18,7 @@ import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import NavItem from './NavItem';
 import ColorModeToggle from './ColorModeToggle';
 import AuroraMark from './AuroraMark';
-import navGroups from './navItems';
+import navGroups from './navGroups';
 
 const DRAWER_WIDTH_OPEN = 244;
 const DRAWER_WIDTH_COLLAPSED = 76;

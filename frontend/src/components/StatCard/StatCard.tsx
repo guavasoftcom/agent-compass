@@ -1,5 +1,15 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
+import type { PaperProps } from '@mui/material';
+import { gradients } from '../../theme/colors';
+import { fontFamilies } from '../../theme/typography';
+
+export interface StatCardTrend {
+  /** The delta label to display (e.g. "+3.2%" or "−12"). */
+  delta: ReactNode;
+  /** Determines the arrow direction and colour (green = up, red = down). */
+  direction: 'up' | 'down';
+}
 
 export interface StatCardProps {
   label: ReactNode;
@@ -11,38 +21,187 @@ export interface StatCardProps {
    * (matches the "Top tool" card in the mockup). Otherwise the value is plain ink.
    */
   accent?: boolean;
+  /**
+   * When true, renders the value in the Sora display typeface at 30 px with tight
+   * letter-spacing — matching the TokensPage KPI tiles. The default h4 MUI variant
+   * is used otherwise.
+   */
+  displayFont?: boolean;
+  /**
+   * Override the font size of the value when `displayFont` is true. Defaults to 30.
+   * Use this when a denser strip card needs a smaller number (e.g. MetricKpiStrip
+   * uses 23 to fit six cards across one row).
+   */
+  displayFontSize?: number;
+  /**
+   * When false, the label is rendered in mixed-case body style rather than the
+   * default uppercase tracking caption. Useful for metric-name labels that are
+   * already lowercase identifiers (MetricKpiStrip).
+   */
+  labelUppercase?: boolean;
+  /**
+   * Optional inline trend badge rendered to the right of the value (delta text +
+   * directional arrow). Green for "up", red for "down".
+   */
+  trend?: StatCardTrend;
   /** Optional slot rendered below the sub (e.g. a sparkline). */
   children?: ReactNode;
+  /**
+   * Optional node rendered absolutely in the top-right corner of the card.
+   * When present the Paper receives `position: relative` and the label gets
+   * a right-padding of 1.5 to avoid overlap with the adornment.
+   * Intended for small badge indicators such as the metric-type dot in MetricKpiStrip.
+   */
+  adornment?: ReactNode;
+  /**
+   * Props forwarded to the underlying MUI Paper element. Use this to wire up
+   * interactive behaviour (onClick, role, tabIndex, onKeyDown, sx overrides) when
+   * the card acts as a selector button, e.g. MetricKpiStrip.
+   */
+  PaperProps?: PaperProps;
 }
 
-const StatCard = ({ label, value, sub, accent = false, children }: StatCardProps) => {
+const TrendArrowUp = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} width={11} height={11}>
+    <path d="M7 14l5-5 5 5" />
+  </svg>
+);
+
+const TrendArrowDown = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} width={11} height={11}>
+    <path d="M7 10l5 5 5-5" />
+  </svg>
+);
+
+const StatCard = ({
+  label,
+  value,
+  sub,
+  accent = false,
+  displayFont = false,
+  displayFontSize = 30,
+  labelUppercase = true,
+  trend,
+  adornment,
+  children,
+  PaperProps: paperProps,
+}: StatCardProps) => {
+  const { sx: paperSx, ...restPaperProps } = paperProps ?? {};
+
+  const mergedPaperSx = useMemo(
+    () => [
+      { p: 2, height: '100%', ...(adornment ? { position: 'relative' } : {}) },
+      ...(Array.isArray(paperSx) ? paperSx : paperSx ? [paperSx] : []),
+    ],
+    [adornment, paperSx],
+  );
+
+  const valueContent = (
+    <>
+      {value ?? '—'}
+      {trend && (
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '2px',
+            fontSize: 11,
+            fontWeight: 700,
+            fontVariantNumeric: 'tabular-nums',
+            ml: 1,
+            color: trend.direction === 'up' ? 'success.main' : 'error.main',
+            verticalAlign: 'middle',
+          }}
+        >
+          {trend.delta}
+          {trend.direction === 'up' ? <TrendArrowUp /> : <TrendArrowDown />}
+        </Box>
+      )}
+    </>
+  );
+
   return (
-    <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600 }}
-      >
-        {label}
-      </Typography>
-      <Typography
-        variant="h4"
-        sx={{
-          mt: 0.75,
-          fontWeight: 800,
-          lineHeight: 1.05,
-          ...(accent
-            ? {
-                backgroundImage: 'linear-gradient(120deg, #8b5cff, #ff6ad5)',
-                WebkitBackgroundClip: 'text',
-                backgroundClip: 'text',
-                color: 'transparent',
-              }
-            : { color: 'text.primary' }),
-        }}
-      >
-        {value ?? '—'}
-      </Typography>
+    <Paper
+      variant="outlined"
+      sx={mergedPaperSx}
+      {...restPaperProps}
+    >
+      {adornment && (
+        <Box sx={{ position: 'absolute', top: 13, right: 13 }}>
+          {adornment}
+        </Box>
+      )}
+      {labelUppercase ? (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600, ...(adornment ? { pr: 1.5 } : {}) }}
+        >
+          {label}
+        </Typography>
+      ) : (
+        <Typography
+          sx={{
+            fontSize: 12,
+            fontWeight: 600,
+            fontFamily: fontFamilies.body,
+            color: 'text.secondary',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            ...(adornment ? { pr: 1.5 } : {}),
+          }}
+        >
+          {label}
+        </Typography>
+      )}
+
+      {displayFont ? (
+        <Box
+          sx={{
+            mt: 0.75,
+            fontFamily: fontFamilies.display,
+            fontWeight: 800,
+            fontSize: displayFontSize,
+            lineHeight: 1.05,
+            letterSpacing: '-0.6px',
+            minHeight: 36,
+            display: 'flex',
+            alignItems: 'center',
+            ...(accent
+              ? {
+                  backgroundImage: gradients.auroraActionSoft,
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                }
+              : { color: 'text.primary' }),
+          }}
+        >
+          {valueContent}
+        </Box>
+      ) : (
+        <Typography
+          variant="h4"
+          sx={{
+            mt: 0.75,
+            fontWeight: 800,
+            lineHeight: 1.05,
+            ...(accent
+              ? {
+                  backgroundImage: gradients.auroraActionSoft,
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                }
+              : { color: 'text.primary' }),
+          }}
+        >
+          {valueContent}
+        </Typography>
+      )}
+
       {sub && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.25 }}>
           {sub}

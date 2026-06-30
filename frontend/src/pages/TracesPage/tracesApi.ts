@@ -38,7 +38,7 @@ export * from './traceTypes';
 export * from './traceDerivations';
 
 const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
-export const USE_SAMPLE_DATA = env.VITE_TRACES_SAMPLE === '1';
+const USE_SAMPLE_DATA = env.VITE_TRACES_SAMPLE === '1';
 
 // ============================================================================
 // public API — swap the sample branch for real fetches when the endpoints exist

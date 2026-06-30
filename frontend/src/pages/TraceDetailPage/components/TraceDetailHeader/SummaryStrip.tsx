@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Box, Typography } from '@mui/material';
+import { fontFamilies } from '../../../../theme/typography';
 
 export interface SummaryItem {
   /** Uppercase label shown above the value. */
@@ -44,7 +45,7 @@ const SummaryStrip = ({ items }: { items: SummaryItem[] }) => (
       >
         <Typography
           sx={{
-            fontFamily: "'Sora', sans-serif",
+            fontFamily: fontFamilies.display,
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: '0.7px',
@@ -73,12 +74,12 @@ const SummaryStrip = ({ items }: { items: SummaryItem[] }) => (
             color: 'text.primary',
             ...(item.monospace
               ? {
-                  fontFamily: "'JetBrains Mono', monospace",
+                  fontFamily: fontFamilies.mono,
                   fontSize: 16,
                   fontWeight: 600,
                 }
               : {
-                  fontFamily: "'Sora', sans-serif",
+                  fontFamily: fontFamilies.display,
                   fontSize: 20,
                   fontWeight: 700,
                 }),

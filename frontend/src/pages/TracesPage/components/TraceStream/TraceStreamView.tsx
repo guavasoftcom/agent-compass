@@ -4,6 +4,7 @@ import { Box, Typography, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import { gradients } from '../../../../theme/colors';
 import type { TraceRow } from '../../../../api';
 import {
   durationMsOf,
@@ -15,6 +16,7 @@ import {
   tokensOf,
 } from '../../tracesApi';
 import TraceSummaryInline from '../TraceSummaryInline';
+import { fontFamilies } from '../../../../theme/typography';
 
 const GRID_TEMPLATE_COLUMNS =
   '4px 112px minmax(170px,1.35fr) 188px 78px 56px 74px 150px 24px';
@@ -32,7 +34,7 @@ const HeaderCell = ({
   <Typography
     component="span"
     sx={{
-      fontFamily: "'Sora', sans-serif",
+      fontFamily: fontFamilies.display,
       fontSize: 10,
       fontWeight: 700,
       letterSpacing: '0.7px',
@@ -157,7 +159,7 @@ const TraceStreamView = ({
             <AccountTreeIcon sx={{ fontSize: 40, color: 'text.disabled' }} />
             <Typography
               sx={{
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 color: 'text.primary',
                 fontSize: 16,
                 fontWeight: 700,
@@ -209,7 +211,7 @@ const TraceStreamView = ({
                 />
                 <Box
                   sx={{
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: fontFamilies.mono,
                     fontSize: 12,
                     color: 'text.secondary',
                     fontVariantNumeric: 'tabular-nums',
@@ -229,7 +231,7 @@ const TraceStreamView = ({
                   <Box
                     component="span"
                     sx={{
-                      fontFamily: "'JetBrains Mono', monospace",
+                      fontFamily: fontFamilies.mono,
                       fontSize: 13,
                       color: 'text.primary',
                       fontWeight: 500,
@@ -250,7 +252,7 @@ const TraceStreamView = ({
                       borderRadius: 0.75,
                       bgcolor: 'action.hover',
                       color: 'text.secondary',
-                      fontFamily: "'JetBrains Mono', monospace",
+                      fontFamily: fontFamilies.mono,
                       fontSize: 10.5,
                       fontWeight: 500,
                       whiteSpace: 'nowrap',
@@ -274,7 +276,7 @@ const TraceStreamView = ({
                         color: 'error.main',
                         bgcolor: (th) =>
                           `color-mix(in srgb, ${th.palette.error.main} 14%, transparent)`,
-                        fontFamily: "'Sora', sans-serif",
+                        fontFamily: fontFamilies.display,
                         fontSize: 10,
                         fontWeight: 700,
                         flexShrink: 0,
@@ -311,7 +313,7 @@ const TraceStreamView = ({
                         opacity: 0.85,
                         background:
                           status === 'error'
-                            ? 'linear-gradient(90deg, #e5484d, #ff8d6a)'
+                            ? gradients.error
                             : `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.primary.light})`,
                       }}
                     />
@@ -330,7 +332,7 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: fontFamilies.mono,
                     fontSize: 12.5,
                     fontVariantNumeric: 'tabular-nums',
                     textAlign: 'right',
@@ -346,7 +348,7 @@ const TraceStreamView = ({
                     alignItems: 'center',
                     justifyContent: 'flex-end',
                     gap: 0.6,
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: fontFamilies.mono,
                     fontSize: 12,
                     color: 'text.secondary',
                     fontVariantNumeric: 'tabular-nums',
@@ -359,7 +361,7 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: fontFamilies.mono,
                     fontSize: 12,
                     textAlign: 'right',
                     fontVariantNumeric: 'tabular-nums',
@@ -371,7 +373,7 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: fontFamilies.mono,
                     fontSize: 11.5,
                     color: 'text.disabled',
                     whiteSpace: 'nowrap',

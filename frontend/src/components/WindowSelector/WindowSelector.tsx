@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { WindowSelection } from '../../api';
-import { WINDOWS, type WindowOption } from '../../constants';
+import { WINDOWS, type WindowOption } from '../../lib/constants';
 import WindowSelectorView from './WindowSelectorView';
 
 const MAX_RANGE_MS = 30 * 24 * 60 * 60 * 1000;

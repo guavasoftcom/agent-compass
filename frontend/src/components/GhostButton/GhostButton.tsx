@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SxProps, Theme } from '@mui/material';
 import { Box } from '@mui/material';
+import { fontFamilies } from '../../theme/typography';
 
 export type GhostButtonTone = 'default' | 'danger';
 
@@ -47,7 +48,7 @@ const GhostButton = ({
           border: 1,
           cursor: disabled ? 'default' : 'pointer',
           opacity: disabled ? 0.4 : 1,
-          fontFamily: "'Sora', sans-serif",
+          fontFamily: fontFamilies.display,
           fontSize: 12,
           fontWeight: isDanger ? 700 : 600,
           color: isDanger ? 'error.main' : 'text.secondary',

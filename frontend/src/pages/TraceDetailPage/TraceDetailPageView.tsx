@@ -11,6 +11,7 @@ import TraceDetailHeader from './components/TraceDetailHeader';
 import TraceMinimap, { type ZoomView } from './components/TraceMinimap';
 import WaterfallToolbar from './components/WaterfallToolbar';
 import SpanWaterfallRow from './components/SpanWaterfallRow';
+import { fontFamilies } from '../../theme/typography';
 
 export interface TraceDetailPageViewProps {
   traceId: string;
@@ -254,7 +255,7 @@ const TraceDetailPageView = ({
           <Box
             sx={{
               pl: 1.75,
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
               letterSpacing: '0.6px',
@@ -277,7 +278,7 @@ const TraceDetailPageView = ({
                       ? 'translate(-100%,-50%)'
                       : 'translate(-50%,-50%)',
                   left: `${fraction * 100}%`,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  fontFamily: fontFamilies.mono,
                   fontSize: 9.5,
                   color: 'text.disabled',
                 }}
@@ -291,7 +292,7 @@ const TraceDetailPageView = ({
         {/* body */}
         <Box
           ref={waterfallRef}
-          sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+          sx={{ flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}
         >
           {visible.map((s) => {
             const left = Math.max(0, percentOf(offMsOf(s)));
@@ -313,7 +314,6 @@ const TraceDetailPageView = ({
                 left={left}
                 right={right}
                 width={Math.max(0, right - left)}
-                labelLeft={left < 60}
                 onToggleCollapse={toggleCollapse}
                 onSelect={selectSpan}
               />

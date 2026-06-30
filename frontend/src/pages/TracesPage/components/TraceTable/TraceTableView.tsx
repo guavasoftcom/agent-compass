@@ -1,9 +1,7 @@
 import { Fragment } from 'react';
 import type { ReactNode } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
-import GhostButton from '../../../../components/GhostButton';
+import { alpha, Box, Typography } from '@mui/material';
+import { auroraColors } from '../../../../theme/colors';
 import type { TraceRow } from '../../../../api';
 import {
   formatDuration,
@@ -13,8 +11,8 @@ import {
 } from '../../tracesApi';
 import { serviceColor } from '../traceColors';
 import TraceSummaryInline from '../TraceSummaryInline';
-
-const PAGE_SIZES = [25, 50, 100];
+import TablePager from '../../../../components/TablePager';
+import { fontFamilies } from '../../../../theme/typography';
 
 const TableHeaderCell = ({
   children,
@@ -29,7 +27,7 @@ const TableHeaderCell = ({
       position: 'sticky',
       top: 0,
       zIndex: 2,
-      fontFamily: "'Sora', sans-serif",
+      fontFamily: fontFamilies.display,
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: '0.6px',
@@ -71,9 +69,6 @@ const TraceTableView = ({
   onPageChange,
   onPageSizeChange,
 }: TraceTableViewProps) => {
-  const theme = useTheme();
-  const start = page * pageSize;
-  const end = Math.min(start + pageSize, total);
   const cellSx = {
     px: 1.75,
     py: 1.4,
@@ -128,8 +123,8 @@ const TraceTableView = ({
                           : i % 2
                             ? (th) =>
                                 th.palette.mode === 'dark'
-                                  ? 'rgba(139,92,255,0.04)'
-                                  : 'rgba(124,77,255,0.022)'
+                                  ? alpha(auroraColors.violetLight, 0.04)
+                                  : alpha(auroraColors.violet, 0.022)
                             : 'transparent',
                       },
                       '&:hover > td': { bgcolor: 'action.hover' },
@@ -141,7 +136,7 @@ const TraceTableView = ({
                         ...cellSx,
                         color: 'text.secondary',
                         whiteSpace: 'nowrap',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 12.5,
                       }}
                     >
@@ -163,7 +158,7 @@ const TraceTableView = ({
                       component="td"
                       sx={{
                         ...cellSx,
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 12.5,
                         color: 'text.primary',
                       }}
@@ -174,7 +169,7 @@ const TraceTableView = ({
                       component="td"
                       sx={{
                         ...cellSx,
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 12.5,
                       }}
                     >
@@ -203,7 +198,7 @@ const TraceTableView = ({
                         ...cellSx,
                         textAlign: 'right',
                         fontVariantNumeric: 'tabular-nums',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                       }}
                     >
                       {formatDuration(trace.durationNanos)}
@@ -214,7 +209,7 @@ const TraceTableView = ({
                         ...cellSx,
                         textAlign: 'right',
                         fontVariantNumeric: 'tabular-nums',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                       }}
                     >
                       {trace.spanCount}
@@ -225,7 +220,7 @@ const TraceTableView = ({
                         ...cellSx,
                         textAlign: 'right',
                         fontVariantNumeric: 'tabular-nums',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         color:
                           tokensOf(trace) > 0
                             ? 'text.secondary'
@@ -242,7 +237,7 @@ const TraceTableView = ({
                         ...cellSx,
                         textAlign: 'right',
                         fontVariantNumeric: 'tabular-nums',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         color: trace.errorCount
                           ? 'error.main'
                           : 'text.disabled',
@@ -255,7 +250,7 @@ const TraceTableView = ({
                       component="td"
                       sx={{
                         ...cellSx,
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 11.5,
                         color: 'text.disabled',
                       }}
@@ -266,7 +261,7 @@ const TraceTableView = ({
                       component="td"
                       sx={{
                         ...cellSx,
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 11.5,
                         color: 'text.disabled',
                       }}
@@ -292,7 +287,7 @@ const TraceTableView = ({
           <Box sx={{ p: 5, textAlign: 'center', color: 'text.secondary' }}>
             <Typography
               sx={{
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 fontSize: 15,
                 fontWeight: 700,
                 color: 'text.primary',
@@ -304,121 +299,13 @@ const TraceTableView = ({
         ) : null}
       </Box>
 
-      {/* pager */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          gap: 2.25,
-          px: 2,
-          py: 1.5,
-          borderTop: 1,
-          borderColor: 'divider',
-          flexWrap: 'wrap',
-          flexShrink: 0,
-        }}
-      >
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1.1,
-            fontSize: 12.5,
-            color: 'text.secondary',
-          }}
-        >
-          Rows per page
-          <Box
-            sx={{
-              display: 'inline-flex',
-              bgcolor: 'action.hover',
-              borderRadius: 1.1,
-              p: '3px',
-              gap: '2px',
-            }}
-          >
-            {PAGE_SIZES.map((size) => {
-              const isSelected = size === pageSize;
-              return (
-                <Box
-                  key={size}
-                  component="button"
-                  onClick={() => onPageSizeChange(size)}
-                  sx={{
-                    border: 'none',
-                    bgcolor: isSelected ? 'background.paper' : 'transparent',
-                    color: isSelected ? 'primary.main' : 'text.secondary',
-                    boxShadow: isSelected ? 1 : 'none',
-                    fontFamily: "'Sora', sans-serif",
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    px: 1.4,
-                    py: 0.5,
-                    borderRadius: 0.9,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {size}
-                </Box>
-              );
-            })}
-          </Box>
-        </Box>
-        <Box
-          sx={{
-            fontSize: 12.5,
-            color: 'text.secondary',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {total ? (
-            <>
-              <b style={{ color: theme.palette.text.primary }}>
-                {start + 1}–{end}
-              </b>{' '}
-              of{' '}
-              <b style={{ color: theme.palette.text.primary }}>
-                {total.toLocaleString()}
-              </b>
-            </>
-          ) : (
-            '0 of 0'
-          )}
-        </Box>
-        <Box sx={{ display: 'flex', gap: 0.75 }}>
-          {[
-            {
-              direction: -1,
-              icon: <ChevronLeftIcon sx={{ fontSize: 15 }} />,
-              disabled: page === 0,
-            },
-            {
-              direction: 1,
-              icon: <ChevronRightIcon sx={{ fontSize: 15 }} />,
-              disabled: end >= total,
-            },
-          ].map((pagerButton, index) => (
-            <GhostButton
-              key={index}
-              disabled={pagerButton.disabled}
-              onClick={() => onPageChange(page + pagerButton.direction)}
-              sx={{
-                width: 32,
-                height: 32,
-                px: 0,
-                display: 'grid',
-                placeItems: 'center',
-                '&:hover': pagerButton.disabled
-                  ? {}
-                  : { color: 'primary.main' },
-              }}
-            >
-              {pagerButton.icon}
-            </GhostButton>
-          ))}
-        </Box>
-      </Box>
+      <TablePager
+        page={page}
+        pageSize={pageSize}
+        rowCount={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
     </Box>
   );
 };

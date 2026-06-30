@@ -1,6 +1,7 @@
 import { Box } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { useCopyToClipboard } from './useCopyToClipboard';
+import { fontFamilies } from '../../../../theme/typography';
 
 // Compact, labeled, copyable ID chip showing the full value with a click-to-copy affordance.
 const IdChip = ({ label, value }: { label: string; value: string }) => {
@@ -27,7 +28,7 @@ const IdChip = ({ label, value }: { label: string; value: string }) => {
       <Box
         component="span"
         sx={{
-          fontFamily: "'Sora', sans-serif",
+          fontFamily: fontFamilies.display,
           fontSize: 9.5,
           fontWeight: 700,
           letterSpacing: '0.5px',
@@ -40,7 +41,7 @@ const IdChip = ({ label, value }: { label: string; value: string }) => {
       <Box
         component="span"
         sx={{
-          fontFamily: "'JetBrains Mono', monospace",
+          fontFamily: fontFamilies.mono,
           fontSize: 11.5,
           color: copied ? 'success.main' : 'text.secondary',
         }}

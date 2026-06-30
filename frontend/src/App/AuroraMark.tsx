@@ -1,4 +1,6 @@
-import { Box } from '@mui/material';
+import { alpha, Box } from '@mui/material';
+import { auroraColors, gradients, neutralColors } from '../theme/colors';
+import { fontFamilies } from '../theme/typography';
 
 export interface AuroraMarkProps {
   size?: number;
@@ -18,13 +20,13 @@ const AuroraMark = ({ size = 36 }: AuroraMarkProps) => {
         display: 'grid',
         placeItems: 'center',
         flexShrink: 0,
-        color: '#fff',
-        fontFamily: "'Sora', sans-serif",
+        color: neutralColors.white,
+        fontFamily: fontFamilies.display,
         fontWeight: 800,
         fontSize: Math.round(size * 0.5),
         lineHeight: 1,
-        background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
-        boxShadow: '0 6px 18px rgba(139, 92, 255, 0.45)',
+        background: gradients.auroraAction,
+        boxShadow: `0 6px 18px ${alpha(auroraColors.violetLight, 0.45)}`,
       }}
     >
       A

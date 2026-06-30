@@ -3,6 +3,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import type { WindowSelection } from '../../api';
+import { fontFamilies } from '../../theme/typography';
 
 export interface ReportPageViewProps {
   selection: WindowSelection;
@@ -55,7 +56,7 @@ export default function ReportPageView({
           component="pre"
           sx={{
             m: 0,
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontFamily: fontFamilies.mono,
             fontSize: 14,
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',

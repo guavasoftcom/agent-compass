@@ -3,7 +3,7 @@ import { Box, Tooltip } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
 import StatCard from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
-import { colorForIndex } from '../../theme';
+import { colorForIndex } from '../../theme/theme';
 import type { HookExecutionRow, ToolDenialRow } from '../../api';
 import ToolDenialsCard from './ToolDenialsCard';
 import HookExecutionsCard from './HookExecutionsCard';
@@ -47,9 +47,10 @@ const PermissionDenialsPageView = ({
   }, [denialRows]);
 
   const topSlice = denialSlices[0];
-  const topShare = topSlice && totalDenials > 0
-    ? `${((topSlice.value / totalDenials) * 100).toFixed(1)}%`
-    : null;
+  const topShare =
+    topSlice && totalDenials > 0
+      ? `${((topSlice.value / totalDenials) * 100).toFixed(1)}%`
+      : null;
 
   // Distinct-tools card subtitle: the leading tool names. When the list is
   // truncated with an ellipsis, a tooltip reveals the full set of denied tools.
@@ -79,8 +80,8 @@ const PermissionDenialsPageView = ({
   return (
     <PageLayout
       subtitle={
-        'Tool permission denials and hook execution outcomes — which tools the agent was blocked '
-        + 'from using and why, plus whether configured hooks blocked or errored during execution.'
+        'Tool permission denials and hook execution outcomes — which tools the agent was blocked ' +
+        'from using and why, plus whether configured hooks blocked or errored during execution.'
       }
       error={error}
     >
@@ -88,32 +89,53 @@ const PermissionDenialsPageView = ({
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' },
+          gridTemplateColumns: {
+            xs: '1fr',
+            sm: 'repeat(2, 1fr)',
+            md: 'repeat(4, 1fr)',
+          },
           gap: 2,
         }}
       >
         <StatCard
           label="Total denials"
           value={totalDenials.toLocaleString()}
-          sub={distinctDeniedTools > 0 ? `across ${distinctDeniedTools} distinct tools` : undefined}
+          sub={
+            distinctDeniedTools > 0
+              ? `across ${distinctDeniedTools} distinct tools`
+              : undefined
+          }
           accent
         />
         <StatCard
           label="Distinct tools denied"
-          value={distinctDeniedTools === 0 ? '—' : distinctDeniedTools.toLocaleString()}
+          value={
+            distinctDeniedTools === 0
+              ? '—'
+              : distinctDeniedTools.toLocaleString()
+          }
           sub={toolListSub}
         />
         <StatCard
           label="Hook blocking errors"
           value={
-            totalBlockingErrors === 0
-              ? '—'
-              : <Box component="span" sx={{ color: 'error.main' }}>{totalBlockingErrors.toLocaleString()}</Box>
+            totalBlockingErrors === 0 ? (
+              '—'
+            ) : (
+              <Box component="span" sx={{ color: 'error.main' }}>
+                {totalBlockingErrors.toLocaleString()}
+              </Box>
+            )
           }
           sub={
             blockingHookCount > 0 ? (
               <Box component="span">
-                <Box component="span" sx={{ color: 'error.main', fontWeight: 700 }}>{blockingHookCount}</Box>
+                <Box
+                  component="span"
+                  sx={{ color: 'error.main', fontWeight: 700 }}
+                >
+                  {blockingHookCount}
+                </Box>
                 {` ${blockingHookCount === 1 ? 'hook' : 'hooks'} actively blocked a tool`}
               </Box>
             ) : undefined
@@ -121,8 +143,16 @@ const PermissionDenialsPageView = ({
         />
         <StatCard
           label="Most denied tool"
-          value={<Box component="span" sx={{ fontSize: 26 }}>{mostDeniedTool}</Box>}
-          sub={topSlice && topShare ? `${topSlice.value.toLocaleString()} denials · ${topShare}` : undefined}
+          value={
+            <Box component="span" sx={{ fontSize: 26 }}>
+              {mostDeniedTool}
+            </Box>
+          }
+          sub={
+            topSlice && topShare
+              ? `${topSlice.value.toLocaleString()} denials · ${topShare}`
+              : undefined
+          }
         />
       </Box>
 
@@ -135,7 +165,10 @@ const PermissionDenialsPageView = ({
           alignItems: 'stretch',
         }}
       >
-        <ToolDenialsCard denialRows={denialRows} isDenialsLoading={isDenialsLoading} />
+        <ToolDenialsCard
+          denialRows={denialRows}
+          isDenialsLoading={isDenialsLoading}
+        />
         <DonutCard
           title="Denials by tool"
           slices={denialSlices}

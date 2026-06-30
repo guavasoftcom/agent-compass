@@ -1,8 +1,16 @@
 import type { ReactNode } from 'react';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { alpha, Box, CircularProgress, Typography } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import {
+  auroraColors,
+  gradients,
+  neutralColors,
+  severity,
+  tokenComposition,
+} from '../../../../theme/colors';
 import type { TraceRow } from '../../../../api';
 import { formatDuration, formatTokens } from '../../tracesApi';
+import { fontFamilies } from '../../../../theme/typography';
 
 export interface OpGroup {
   name: string;
@@ -41,10 +49,10 @@ export interface TraceSummaryInlineViewProps {
 const TOK_SEG: ReadonlyArray<
   [string, 'cacheRead' | 'input' | 'cacheCreate' | 'output', string]
 > = [
-  ['Cache read', 'cacheRead', '#7c4dff'],
-  ['Input', 'input', '#1aa7dd'],
-  ['Cache creation', 'cacheCreate', '#e84bc0'],
-  ['Output', 'output', '#22b08a'],
+  ['Cache read', 'cacheRead', tokenComposition.cacheRead],
+  ['Input', 'input', tokenComposition.input],
+  ['Cache creation', 'cacheCreate', tokenComposition.cacheCreate],
+  ['Output', 'output', tokenComposition.output],
 ];
 
 // Inline span summary — a trace has no attributes of its own, so instead of
@@ -66,8 +74,8 @@ const TraceSummaryInlineView = ({
         py: 1.75,
         bgcolor: (th) =>
           th.palette.mode === 'dark'
-            ? 'rgba(255,255,255,0.03)'
-            : 'rgba(28,24,48,0.025)',
+            ? alpha(neutralColors.white, 0.03)
+            : alpha(neutralColors.inkLight, 0.025),
       }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -141,7 +149,7 @@ const TraceSummaryInlineView = ({
                     <Box
                       component="span"
                       sx={{
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 13,
                         fontWeight: 600,
                         color: 'text.primary',
@@ -162,7 +170,7 @@ const TraceSummaryInlineView = ({
                     <Box
                       component="span"
                       sx={{
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: fontFamilies.mono,
                         fontSize: 10.5,
                         color: 'text.secondary',
                       }}
@@ -234,7 +242,7 @@ const TraceSummaryInlineView = ({
                           component="span"
                           sx={{
                             ml: 'auto',
-                            fontFamily: "'JetBrains Mono', monospace",
+                            fontFamily: fontFamilies.mono,
                             fontSize: 10.5,
                             color: 'text.primary',
                           }}
@@ -265,7 +273,7 @@ const TraceSummaryInlineView = ({
                       ? (g.selfTimeMs / model.totalMs) * 100
                       : 0;
                   const dotColor = g.errorCount
-                    ? '#e5484d'
+                    ? severity.error
                     : g.other
                       ? 'text.disabled'
                       : serviceHue;
@@ -299,7 +307,7 @@ const TraceSummaryInlineView = ({
                         <Box
                           component="span"
                           sx={{
-                            fontFamily: "'JetBrains Mono', monospace",
+                            fontFamily: fontFamilies.mono,
                             fontSize: 11.5,
                             color: 'text.primary',
                             whiteSpace: 'nowrap',
@@ -320,7 +328,7 @@ const TraceSummaryInlineView = ({
                               bgcolor: (th) =>
                                 `color-mix(in srgb, ${th.palette.error.main} 14%, transparent)`,
                               color: 'error.main',
-                              fontFamily: "'JetBrains Mono', monospace",
+                              fontFamily: fontFamilies.mono,
                               fontSize: 9.5,
                             }}
                           >
@@ -342,7 +350,7 @@ const TraceSummaryInlineView = ({
                             height: '100%',
                             borderRadius: '4px',
                             background: g.errorCount
-                              ? `linear-gradient(90deg, color-mix(in srgb, #e5484d 55%, transparent), #e5484d)`
+                              ? `linear-gradient(90deg, color-mix(in srgb, ${severity.error} 55%, transparent), ${severity.error})`
                               : `linear-gradient(90deg, color-mix(in srgb, ${serviceHue} 42%, transparent), ${serviceHue})`,
                           }}
                         />
@@ -353,7 +361,7 @@ const TraceSummaryInlineView = ({
                           alignItems: 'center',
                           gap: 0.85,
                           justifyContent: 'flex-end',
-                          fontFamily: "'JetBrains Mono', monospace",
+                          fontFamily: fontFamilies.mono,
                           fontSize: 11,
                           color: 'text.secondary',
                           fontVariantNumeric: 'tabular-nums',
@@ -417,9 +425,9 @@ const TraceSummaryInlineView = ({
                 borderRadius: 1.1,
                 cursor: 'pointer',
                 color: 'common.white',
-                background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
-                boxShadow: '0 6px 16px rgba(139,92,255,0.36)',
-                fontFamily: "'Sora', sans-serif",
+                background: gradients.auroraAction,
+                boxShadow: `0 6px 16px ${alpha(auroraColors.violetLight, 0.36)}`,
+                fontFamily: fontFamilies.display,
                 fontSize: 12.5,
                 fontWeight: 600,
               }}
@@ -440,7 +448,7 @@ const SectionHead = ({ children }: { children: ReactNode }) => (
       alignItems: 'center',
       gap: 1,
       mb: 1.25,
-      fontFamily: "'Sora', sans-serif",
+      fontFamily: fontFamilies.display,
       fontSize: 10.5,
       fontWeight: 700,
       letterSpacing: '1px',
@@ -460,7 +468,7 @@ const Pill = ({ children }: { children: ReactNode }) => (
       py: 0.15,
       borderRadius: 0.75,
       bgcolor: 'action.hover',
-      fontFamily: "'JetBrains Mono', monospace",
+      fontFamily: fontFamilies.mono,
       fontSize: 10,
       fontWeight: 500,
       letterSpacing: 0,
@@ -512,7 +520,7 @@ const Tile = ({
     <Box
       component="span"
       sx={{
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: fontFamilies.mono,
         fontSize: 16,
         fontWeight: 600,
         color: bad ? 'error.main' : 'text.primary',
@@ -567,7 +575,7 @@ const Meta = ({ k, v }: { k: string; v: string }) => (
     <Box
       component="span"
       sx={{
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: fontFamilies.mono,
         fontSize: 11,
         color: 'text.secondary',
       }}

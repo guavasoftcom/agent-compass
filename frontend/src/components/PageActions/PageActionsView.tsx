@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { Box, Button, CircularProgress, Tooltip } from '@mui/material';
+import { alpha, Box, Button, CircularProgress, Tooltip } from '@mui/material';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { auroraColors, gradients } from '../../theme/colors';
 
 export interface PageActionsViewProps {
   windowSelector: ReactNode;
@@ -66,10 +67,10 @@ const PageActionsView = ({
               px: 1,
               // Aurora gradient "go" button when auto-refresh is on.
               ...(autoRefreshActive && {
-                background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
-                boxShadow: '0 6px 16px rgba(139, 92, 255, 0.4)',
+                background: gradients.auroraAction,
+                boxShadow: `0 6px 16px ${alpha(auroraColors.violetLight, 0.4)}`,
                 '&:hover': {
-                  background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
+                  background: gradients.auroraAction,
                   filter: 'brightness(1.06)',
                 },
               }),

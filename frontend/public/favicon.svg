@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Agent Compass">
+  <defs>
+    <linearGradient id="aurora" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cff"/>
+      <stop offset="100%" stop-color="#ff6ad5"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="30" ry="30" fill="url(#aurora)"/>
+  <path d="M50 30 L30 74 M50 30 L70 74 M38.5 60 L61.5 60"
+        fill="none" stroke="#ffffff" stroke-width="11"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

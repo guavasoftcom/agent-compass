@@ -10,6 +10,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import type { ValueDialogState } from './types';
 import { tryParseJson, isPlainObject } from './utils';
+import { fontFamilies } from '../../theme/typography';
 
 export interface ExpandedValueDialogProps {
   state: ValueDialogState | null;
@@ -26,7 +27,7 @@ export const ExpandedValueDialog = ({
   const parsedValue = parsed?.value;
   return (
     <Dialog open={state != null} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle sx={{ pr: 6, fontFamily: 'monospace' }}>
+      <DialogTitle sx={{ pr: 6, fontFamily: fontFamilies.mono }}>
         {state?.key}
         <IconButton
           aria-label="close"
@@ -51,7 +52,7 @@ export const ExpandedValueDialog = ({
             sx={{
               p: 1,
               borderRadius: 1,
-              fontFamily: 'monospace',
+              fontFamily: fontFamilies.mono,
               fontSize: '0.75rem',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',

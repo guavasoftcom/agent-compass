@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchTokenUsage, type TokenUsageSummary } from '../../api';
-import { WINDOWS } from '../../constants';
-import { useWindowContext } from '../../windowContext';
+import { WINDOWS } from '../../lib/constants';
+import { useWindowContext } from '../../lib/windowContext';
 import TokensPageView from './TokensPageView';
 
 const AUTO_REFRESH_INTERVAL_MS = 60_000;

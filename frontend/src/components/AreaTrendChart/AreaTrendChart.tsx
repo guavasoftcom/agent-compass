@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { Box, Typography } from '@mui/material';
+import { alpha, Box, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import { neutralColors } from '../../theme/colors';
+import { fontFamilies } from '../../theme/typography';
 
 export interface AreaTrendSeries {
   label: string;
@@ -444,11 +446,11 @@ const AreaTrendChart = ({
             borderRadius: 1.5,
             px: 1.625,
             py: 1.375,
-            boxShadow: '0 16px 38px rgba(10,6,30,.32)',
+            boxShadow: `0 16px 38px ${alpha(neutralColors.shadowDeep, 0.32)}`,
             zIndex: 6,
           }}
         >
-          <Typography sx={{ fontFamily: "'Sora', sans-serif", fontWeight: 600, fontSize: 12, mb: 1 }}>
+          <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 12, mb: 1 }}>
             {formatTooltipHeader(axisDates[hover.index])}
           </Typography>
           {hoverRows.map((row) => (

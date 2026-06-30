@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { WINDOWS } from '../../constants';
-import { useWindowContext } from '../../windowContext';
+import { WINDOWS } from '../../lib/constants';
+import { useWindowContext } from '../../lib/windowContext';
 import type { WindowSelection } from '../../api';
 import LogsPageView from './LogsPageView';
 

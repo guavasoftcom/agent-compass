@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { colorForIndex } from '../../../../theme';
+import { colorForIndex } from '../../../../theme/theme';
 import type { ToolLatencyRow } from '../../../../api';
 import ToolLatencyCardView, {
   type LatencyBarSeries,

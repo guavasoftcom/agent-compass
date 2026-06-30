@@ -1,64 +1,172 @@
-import { useEffect, useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { fetchLogsPage, type LogsFilters } from '../../logsApi';
-import LogTableView from './LogTableView';
+import { useState } from 'react';
+import { Box, alpha } from '@mui/material';
+import type { SxProps, Theme } from '@mui/material/styles';
+import type { LogRow } from '../../../../api';
+import { AttributeList } from '../../../../components/AttributeList';
+import { type ValueDialogState } from '../../../../components/AttributeList/AttributeValue';
+import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
+import { fontFamilies } from '../../../../theme/typography';
+import TablePager from '../../../../components/TablePager';
+import LogTableRow from './LogTableRow';
 
-const DEFAULT_PAGE_SIZE = 50;
+const tableSx: SxProps<Theme> = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  minWidth: 1000,
+  fontFamily: fontFamilies.body,
+  '& thead th': {
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+    backgroundColor: 'background.paper',
+    fontFamily: fontFamilies.display,
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.6px',
+    textTransform: 'uppercase',
+    color: 'text.secondary',
+    textAlign: 'left',
+    whiteSpace: 'nowrap',
+    padding: '15px 14px 13px',
+    borderBottom: 1,
+    borderColor: 'divider',
+  },
+  '& tbody td': {
+    padding: '11px 14px',
+    fontSize: '13px',
+    borderBottom: 1,
+    borderColor: 'divider',
+    color: 'text.primary',
+    verticalAlign: 'top',
+  },
+  '& tbody tr:nth-of-type(even) td': {
+    backgroundColor: (t) =>
+      alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.04 : 0.022),
+  },
+  '& tbody tr:hover td': { backgroundColor: 'action.hover' },
+  '& td.id': { color: 'text.disabled', fontVariantNumeric: 'tabular-nums' },
+  '& td.ts': {
+    color: 'text.secondary',
+    whiteSpace: 'nowrap',
+    fontSize: '12.5px',
+  },
+  '& td.body': {
+    fontFamily: fontFamilies.mono,
+    fontSize: '12px',
+    color: 'text.primary',
+    maxWidth: 380,
+  },
+  '& td.scope': {
+    fontFamily: fontFamilies.mono,
+    fontSize: '12px',
+    color: 'text.secondary',
+    whiteSpace: 'nowrap',
+  },
+  '& td.attr': { maxWidth: 320 },
+  '& td.state': {
+    textAlign: 'center',
+    color: 'text.secondary',
+    padding: '40px 14px',
+  },
+};
 
-export interface LogTableProps {
-  /** Called at fetch time to produce fresh timestamps — never captured at render time. */
-  resolveFilters: () => LogsFilters;
-  /** Stable serialization of the current filter+window state — query key + reset-to-first-page trigger. */
-  filtersKey: string;
-  /** Report the matching-row total up to the shared events counter. */
-  onTotalChange: (total: number) => void;
+interface Props {
+  rows: LogRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  loading: boolean;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
 }
 
-/**
- * Table container — owns offset paging (page + size) and its own offset-paged query.
- * Only mounted in Table view, so the query runs whenever it is visible. Renders the
- * presentational LogTableView. Never polls — live tail and auto-refresh are
- * Stream-only; the table refetches on filter/window changes and manual reload.
- *
- * `placeholderData: keepPreviousData` means page flips and background refetches
- * repaint in place rather than blanking the table between fetches.
- */
-const LogTable = ({ resolveFilters, filtersKey, onTotalChange }: LogTableProps) => {
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-
-  // A new filter set resets back to the first page. Done in render (not an effect) so
-  // it lands before the query fires this render and preserves the chosen pageSize.
-  const [prevFiltersKey, setPrevFiltersKey] = useState(filtersKey);
-  if (prevFiltersKey !== filtersKey) {
-    setPrevFiltersKey(filtersKey);
-    setPage(0);
-  }
-
-  const query = useQuery({
-    queryKey: ['log-table', filtersKey, page, pageSize],
-    queryFn: () => fetchLogsPage(resolveFilters(), page, pageSize),
-    placeholderData: keepPreviousData,
-  });
-
-  const total = query.data?.totalCount ?? 0;
-  useEffect(() => {
-    onTotalChange(total);
-  }, [total, onTotalChange]);
+const LogTable = ({
+  rows,
+  total,
+  page,
+  pageSize,
+  loading,
+  onPageChange,
+  onPageSizeChange,
+}: Props) => {
+  // shared with the Stream: long values truncate to "View more" → repair modal
+  const [dialog, setDialog] = useState<ValueDialogState | null>(null);
+  // per-row "+N more" expansion (reveals attributes beyond the first 4)
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const toggleRow = (id: number) =>
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
 
   return (
-    <LogTableView
-      rows={query.data?.items ?? []}
-      total={total}
-      page={page}
-      pageSize={pageSize}
-      loading={query.isLoading}
-      onPageChange={setPage}
-      onPageSizeChange={(size) => {
-        setPageSize(size);
-        setPage(0);
-      }}
-    />
+    <>
+      <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <Box component="table" sx={tableSx}>
+          <Box component="thead">
+            <Box component="tr">
+              {[
+                'ID',
+                'Timestamp',
+                'Severity',
+                'Body',
+                'Scope',
+                'Attributes',
+              ].map((h) => (
+                <Box component="th" key={h}>
+                  {h}
+                </Box>
+              ))}
+            </Box>
+          </Box>
+          <Box component="tbody">
+            {loading && rows.length === 0 ? (
+              <Box component="tr">
+                <Box component="td" className="state" colSpan={6}>
+                  Loading logs…
+                </Box>
+              </Box>
+            ) : null}
+            {!loading && rows.length === 0 ? (
+              <Box component="tr">
+                <Box component="td" className="state" colSpan={6}>
+                  No logs in this window.
+                </Box>
+              </Box>
+            ) : null}
+            {rows.map((row) => (
+              <LogTableRow
+                key={row.id}
+                row={row}
+                expanded={expandedRows.has(row.id)}
+                onToggle={() => toggleRow(row.id)}
+                onExpandValue={setDialog}
+              />
+            ))}
+          </Box>
+        </Box>
+      </Box>
+
+      <TablePager
+        page={page}
+        pageSize={pageSize}
+        rowCount={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+      <ExpandedValueDialog
+        state={dialog}
+        onClose={() => setDialog(null)}
+        renderAttributeList={(a) => (
+          <AttributeList attributes={a} inlineExpand />
+        )}
+      />
+    </>
   );
 };
 

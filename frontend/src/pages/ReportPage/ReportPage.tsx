@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchReportMarkdown } from '../../api';
-import { useWindowContext } from '../../windowContext';
+import { useWindowContext } from '../../lib/windowContext';
 import ReportPageView from './ReportPageView';
 
 const COPIED_TIMEOUT_MS = 1500;

@@ -1,10 +1,12 @@
 import { Link as RouterLink, Outlet } from 'react-router-dom';
-import { Box, ButtonBase, Stack } from '@mui/material';
+import { alpha, Box, ButtonBase, Stack } from '@mui/material';
+import { neutralColors } from '../../theme/colors';
 import PageLayout from '../PageLayout';
 import PageActions from '../PageActions';
-import { WINDOWS } from '../../constants';
+import { WINDOWS } from '../../lib/constants';
 import type { WindowSelection } from '../../api';
 import type { SectionTab, SectionContextValue } from './SectionLayout';
+import { fontFamilies } from '../../theme/typography';
 
 export interface SectionLayoutViewProps {
   eyebrow?: string;
@@ -66,7 +68,7 @@ export const SectionLayoutView = ({
                 px: 2,
                 py: 1,
                 borderRadius: 999,
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 fontSize: 14,
                 fontWeight: 600,
                 lineHeight: 1,
@@ -76,13 +78,13 @@ export const SectionLayoutView = ({
                 color: selected ? 'text.primary' : 'text.secondary',
                 backgroundColor: selected
                   ? theme.palette.mode === 'dark'
-                    ? 'rgba(255, 255, 255, 0.08)'
-                    : 'rgba(255, 255, 255, 0.9)'
+                    ? alpha(neutralColors.white, 0.08)
+                    : alpha(neutralColors.white, 0.9)
                   : 'transparent',
                 boxShadow: selected
                   ? theme.palette.mode === 'dark'
-                    ? 'inset 0 1px 0 rgba(255, 255, 255, 0.07)'
-                    : '0 1px 2px rgba(28, 24, 48, 0.06)'
+                    ? `inset 0 1px 0 ${alpha(neutralColors.white, 0.07)}`
+                    : `0 1px 2px ${alpha(neutralColors.inkLight, 0.06)}`
                   : 'none',
                 transition: theme.transitions.create([
                   'background-color',

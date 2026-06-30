@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { WindowSelection } from '../../api';
-import type { WindowOption } from '../../constants';
+import type { WindowOption } from '../../lib/constants';
 import WindowSelector from '../WindowSelector';
 import PageActionsView from './PageActionsView';
 

@@ -1,7 +1,7 @@
 import { useLocation, useOutletContext } from 'react-router-dom';
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
-import { useWindowContext } from '../../windowContext';
-import { groupForPath } from '../../App/navItems';
+import { useWindowContext } from '../../lib/windowContext';
+import { groupForPath } from '../../App/navGroups';
 import type { WindowSelection } from '../../api';
 import { SectionLayoutView } from './SectionLayoutView';
 

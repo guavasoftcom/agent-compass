@@ -18,15 +18,15 @@
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <spring.boot.version>3.5.3</spring.boot.version>
-    <otel.proto.version>1.7.0-alpha</otel.proto.version>
-    <lombok.version>1.18.38</lombok.version>
+    <spring.boot.version>4.1.0</spring.boot.version>
+    <otel.proto.version>1.10.0-alpha</otel.proto.version>
+    <lombok.version>1.18.46</lombok.version>
     <mapstruct.version>1.6.3</mapstruct.version>
     <lombok.mapstruct.binding.version>0.2.0</lombok.mapstruct.binding.version>
-    <springdoc.version>2.8.6</springdoc.version>
-    <testcontainers.version>1.21.3</testcontainers.version>
+    <springdoc.version>3.0.3</springdoc.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
     <checkstyle.plugin.version>3.6.0</checkstyle.plugin.version>
-    <checkstyle.version>10.26.1</checkstyle.version>
+    <checkstyle.version>13.6.0</checkstyle.version>
   </properties>
 
   <dependencyManagement>
@@ -81,6 +81,14 @@
       <artifactId>postgresql</artifactId>
       <scope>runtime</scope>
     </dependency>
+    <!-- Spring Boot 4 moved the Flyway auto-configuration out of the core
+         spring-boot-autoconfigure jar into this per-technology module; without it
+         Flyway no longer runs migrations on startup (Hibernate ddl-auto=validate
+         then fails on the missing schema). It pulls flyway-core transitively. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-flyway</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-core</artifactId>
@@ -124,6 +132,13 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Spring Boot 4 split the MVC test slice (@WebMvcTest + MockMvc auto-config)
+         out of spring-boot-test-autoconfigure into its own starter. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-testcontainers</artifactId>
@@ -131,12 +146,12 @@
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>postgresql</artifactId>
+      <artifactId>testcontainers-postgresql</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
