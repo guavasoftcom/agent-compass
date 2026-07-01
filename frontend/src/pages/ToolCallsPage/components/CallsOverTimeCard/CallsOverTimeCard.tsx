@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useTheme } from '@mui/material';
-import { colorForIndex } from '../../../../theme';
+import { colorForIndex } from '../../../../theme/theme';
 import type { ToolCallTimeseries } from '../../../../api';
 import CallsOverTimeCardView, {
   type LineSeries,

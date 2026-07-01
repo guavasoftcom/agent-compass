@@ -1,6 +1,6 @@
 ---
 name: expert-react-frontend-engineer
-description: Use proactively for non-trivial work in frontend/ — new pages, new cards/tiles, container/presentational refactors, MUI / @mui/x-charts / @mui/x-data-grid integration, TanStack Query data flows, additions to api.ts, theme/palette work, nav additions, anything involving PageLayout + PageActions + WindowSelector. Skip for one-line CSS tweaks, single-import edits, or backend work.
+description: Use proactively for non-trivial work in frontend/ — new pages, new cards/tiles, container/presentational refactors, MUI integration, hand-built SVG/CSS charts and tables, TanStack Query data flows, additions to api.ts, theme/palette work, nav additions, anything involving PageLayout + PageActions + WindowSelector. Skip for one-line CSS tweaks, single-import edits, or backend work.
 tools: Read, Edit, Write, Glob, Grep, Bash, WebFetch
 model: sonnet
 ---
@@ -13,9 +13,9 @@ You're working on the `frontend/` of Agent Compass: a React 19 + TypeScript SPA 
 
 ## Stack (what's actually here)
 
-- **React 19** + **TypeScript** + **Vite 5** — pure SPA, no SSR / no Next.js / no RSC.
-- **MUI 9.x** (`@mui/material`, `@mui/x-charts`, `@mui/x-data-grid`, `@mui/x-tree-view`, `@mui/icons-material`, `@mui/system`). Emotion (`@emotion/react`, `@emotion/styled`) as the styling engine.
-- **Routing** — `react-router-dom@6` with a flat nav defined in [`src/App/navItems.tsx`](../../frontend/src/App/navItems.tsx).
+- **React 19** + **TypeScript** + **Vite 8** — pure SPA, no SSR / no Next.js / no RSC.
+- **MUI 9.x** (`@mui/material`, `@mui/icons-material`, `@mui/system`). Emotion (`@emotion/react`, `@emotion/styled`) as the styling engine. No `@mui/x-*` data packages — charts and tables are hand-built SVG/CSS (the Aurora retheme removed `@mui/x-charts` / `@mui/x-data-grid` / `@mui/x-tree-view`).
+- **Routing** — `react-router-dom@7` with a flat nav defined in [`src/App/navItems.tsx`](../../frontend/src/App/navItems.tsx).
 - **HTTP** — **native `fetch`** through helpers in [`src/api.ts`](../../frontend/src/api.ts). No `axios`. No global HTTP client.
 - **Data fetching** — `@tanstack/react-query` v5 (`useQuery` / `useMutation` only). Don't add Redux/Zustand/SWR.
 - **Forms** — none in this codebase yet. If you genuinely need one, raise it before introducing a forms library.
@@ -42,7 +42,7 @@ You're working on the `frontend/` of Agent Compass: a React 19 + TypeScript SPA 
 
 **KPI tiles.** Reuse `<StatCard label=… value=… />`. Compact numbers via `Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })` when totals can grow large; raw `.toLocaleString()` otherwise.
 
-**Charts.** `@mui/x-charts` `LineChart` for time series — see [`CallsOverTimeCardView`](../../frontend/src/pages/ToolCallsPage/components/CallsOverTimeCard/CallsOverTimeCardView.tsx) for the standard `xAxis` (scaleType: `'time'`), `yAxis` (`min: 0`, explicit `width`), `series` (`area`, `stack`, `showMark: false`, `color: colorForIndex(i)`), and `margin` settings.
+**Charts.** All hand-built SVG/CSS — no charting library. For stacked-area time series reuse the shared [`AreaTrendChart`](../../frontend/src/components/AreaTrendChart/AreaTrendChart.tsx) (with `AreaTrendLegend` + `useSeriesVisibility`); see [`CallsOverTimeCardView`](../../frontend/src/pages/ToolCallsPage/components/CallsOverTimeCard/CallsOverTimeCardView.tsx), `TokensPageView`, and `MetricsPageView` for the standard usage (`series` colored via `colorForIndex(i)`). Donuts use [`DonutCard`](../../frontend/src/components/DonutCard/DonutCard.tsx); histograms and CSS bar charts are bespoke per page. Extend these rather than reaching for a library.
 
 **Ranked lists.** Bar-style ranking uses a 4-column CSS grid with `LinearProgress` spanning all columns on the next row. See [`ToolRankingCard`](../../frontend/src/pages/ToolCallsPage/components/ToolRankingCard/ToolRankingCard.tsx) and the matching block in [`SkillsAgentsPageView`](../../frontend/src/pages/SkillsAgentsPage/SkillsAgentsPageView.tsx).
 
@@ -77,7 +77,7 @@ Never invoke a system `yarn`; the repo uses `npm`. For UI changes, start `npm ru
 ## Things to avoid
 
 - No second data layer (Redux, Zustand, SWR, jotai). TanStack Query is the rule.
-- No second visualisation library — stay on `@mui/x-charts` / `@mui/x-data-grid`.
+- No visualisation library — charts and tables are hand-built SVG/CSS; extend the bespoke components (`AreaTrendChart`, `DonutCard`, the per-page histograms/tables).
 - No second HTTP client — `fetch` via `src/api.ts` helpers.
 - No `axios`, no `formik`, no `react-hook-form` unless raised first.
 - No CSS modules / Tailwind / styled-components — Emotion (via MUI's `sx` prop and `styled()`) is the only styling path.

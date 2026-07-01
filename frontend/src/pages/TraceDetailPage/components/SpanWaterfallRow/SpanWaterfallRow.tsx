@@ -1,11 +1,13 @@
 import { Box, Tooltip, alpha, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import { neutralColors } from '../../../../theme/colors';
 import type { SpanRow } from '../../../../api';
 import { formatDuration, formatTokens } from '../../../TracesPage/tracesApi';
 import {
   tokenBreakdownForSpan,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
+import { fontFamilies } from '../../../../theme/typography';
 
 interface Props {
   span: SpanRow;
@@ -21,7 +23,6 @@ interface Props {
   left: number;
   right: number;
   width: number;
-  labelLeft: boolean;
   onToggleCollapse: (spanId: string) => void;
   onSelect: (spanId: string) => void;
 }
@@ -34,10 +35,9 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
         arrow
         placement="top"
         title={
-          <Box sx={{ py: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
-            <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.6 }}>
-              {formatTokens(tokens.input + tokens.output + tokens.cacheCreate)}{' '}
-              billable tokens
+          <Box sx={{ py: 0.5, fontFamily: fontFamilies.mono }}>
+            <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
+              {formatTokens(tokens.input + tokens.output + tokens.cacheCreate)}
             </Box>
             <Box
               sx={{
@@ -67,9 +67,6 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
                 {formatTokens(tokens.output)}
               </Box>
             </Box>
-            <Box sx={{ fontSize: 10, opacity: 0.6, mt: 0.6 }}>
-              cache read billed separately →
-            </Box>
           </Box>
         }
       >
@@ -86,7 +83,7 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
             color: 'warning.main',
             bgcolor: (t) =>
               `color-mix(in srgb, ${t.palette.warning.main} 16%, transparent)`,
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: fontFamilies.mono,
             fontSize: 10,
             fontWeight: 600,
             flexShrink: 0,
@@ -112,7 +109,7 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
         arrow
         placement="top"
         title={
-          <Box sx={{ py: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
+          <Box sx={{ py: 0.5, fontFamily: fontFamilies.mono }}>
             <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
               {tokens.cacheRead.toLocaleString()} cache read
             </Box>
@@ -136,7 +133,7 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
               `color-mix(in srgb, ${t.palette.info.main} 88%, ${t.palette.text.secondary})`,
             bgcolor: (t) =>
               `color-mix(in srgb, ${t.palette.info.main} 14%, transparent)`,
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: fontFamilies.mono,
             fontSize: 10,
             fontWeight: 600,
             flexShrink: 0,
@@ -173,7 +170,6 @@ const SpanWaterfallRow = ({
   left,
   right,
   width,
-  labelLeft,
   onToggleCollapse,
   onSelect,
 }: Props) => {
@@ -183,6 +179,17 @@ const SpanWaterfallRow = ({
   const barBackground = isError
     ? theme.palette.error.main
     : `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.primary.light})`;
+
+  // Duration-label placement, kept inside the track so it can never force a
+  // horizontal scrollbar: after the bar when it ends with room to spare, just
+  // before the bar's start when the bar sits to the right, and — for a
+  // full-width bar like the root span, where neither side has room — tucked
+  // inside the bar's right end with light text so it reads as a deliberate
+  // on-bar label rather than overlapping in the dim body color.
+  const labelInsideBar = right >= 85;
+  const durationLabelStyle = labelInsideBar
+    ? { right: `calc(${100 - right}% + 8px)`, color: neutralColors.white }
+    : { left: `calc(${right}% + 6px)` };
   return (
     <Box
       data-span={span.spanId}
@@ -263,7 +270,7 @@ const SpanWaterfallRow = ({
             borderRadius: '5px',
             border: 1,
             borderColor: 'divider',
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: fontFamilies.mono,
             fontSize: 10,
             fontWeight: 600,
             color: 'text.secondary',
@@ -284,10 +291,10 @@ const SpanWaterfallRow = ({
               borderRadius: '4px',
               bgcolor: (t) =>
                 t.palette.mode === 'dark'
-                  ? 'rgba(255,255,255,0.08)'
-                  : 'rgba(28,24,48,0.08)',
+                  ? alpha(neutralColors.white, 0.08)
+                  : alpha(neutralColors.inkLight, 0.08),
               color: 'text.disabled',
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: fontFamilies.mono,
               fontSize: 9.5,
               fontWeight: 500,
               flexShrink: 0,
@@ -299,7 +306,7 @@ const SpanWaterfallRow = ({
         <Box
           component="span"
           sx={{
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: fontFamilies.mono,
             fontSize: 12.5,
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -321,7 +328,7 @@ const SpanWaterfallRow = ({
               color: 'error.main',
               bgcolor: (t) =>
                 `color-mix(in srgb, ${t.palette.error.main} 14%, transparent)`,
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
               flexShrink: 0,
@@ -341,7 +348,7 @@ const SpanWaterfallRow = ({
               color: 'warning.main',
               bgcolor: (t) =>
                 `color-mix(in srgb, ${t.palette.warning.main} 14%, transparent)`,
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
               flexShrink: 0,
@@ -361,7 +368,7 @@ const SpanWaterfallRow = ({
               color: 'info.main',
               bgcolor: (t) =>
                 `color-mix(in srgb, ${t.palette.info.main} 14%, transparent)`,
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
               flexShrink: 0,
@@ -394,14 +401,12 @@ const SpanWaterfallRow = ({
                 position: 'absolute',
                 top: '50%',
                 transform: 'translateY(-50%)',
-                fontFamily: "'JetBrains Mono', monospace",
+                fontFamily: fontFamilies.mono,
                 fontSize: 10,
                 color: 'text.secondary',
                 whiteSpace: 'nowrap',
                 pointerEvents: 'none',
-                ...(labelLeft
-                  ? { left: `calc(${left + width}% + 6px)` }
-                  : { right: `calc(${100 - left}% + 6px)` }),
+                ...durationLabelStyle,
               }}
             >
               {formatDuration(span.durationNanos)}

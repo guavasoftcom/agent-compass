@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import {
+  alpha,
   Box,
   Button,
   Divider,
@@ -7,14 +8,16 @@ import {
   MenuItem,
   Typography,
 } from '@mui/material';
+import { auroraColors, gradients, neutralColors } from '../../theme/colors';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import CheckIcon from '@mui/icons-material/Check';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
-import type { WindowOption } from '../../constants';
+import type { WindowOption } from '../../lib/constants';
 import AuroraCalendar from './AuroraCalendar';
+import { fontFamilies } from '../../theme/typography';
 
 export interface WindowSelectorViewProps {
   windows: readonly WindowOption[];
@@ -100,8 +103,8 @@ const WindowSelectorView = ({
               backgroundColor: theme.palette.background.paper,
               boxShadow:
                 theme.palette.mode === 'dark'
-                  ? '0 28px 64px rgba(0,0,0,0.6)'
-                  : '0 24px 60px rgba(36,20,80,0.18)',
+                  ? `0 28px 64px ${alpha(neutralColors.black, 0.6)}`
+                  : `0 24px 60px ${alpha(neutralColors.shadowIndigo, 0.18)}`,
               overflow: 'hidden',
             }),
           },
@@ -130,8 +133,8 @@ const WindowSelectorView = ({
                           backgroundColor: theme.palette.action.selected,
                           boxShadow: `inset 0 0 0 1px ${
                             theme.palette.mode === 'dark'
-                              ? 'rgba(139,92,255,0.4)'
-                              : 'rgba(124,77,255,0.32)'
+                              ? alpha(auroraColors.violetLight, 0.4)
+                              : alpha(auroraColors.violet, 0.32)
                           }`,
                           '&:hover': { backgroundColor: theme.palette.action.selected },
                         },
@@ -207,7 +210,7 @@ const WindowSelectorView = ({
                   pb: 1.25,
                   cursor: 'pointer',
                   color: 'text.secondary',
-                  fontFamily: "'Sora', sans-serif",
+                  fontFamily: fontFamilies.display,
                   fontSize: 11,
                   fontWeight: 700,
                   letterSpacing: 1.2,
@@ -251,12 +254,12 @@ const WindowSelectorView = ({
                     mt: 1.75,
                     height: 40,
                     borderRadius: 1.5,
-                    fontFamily: "'Sora', sans-serif",
+                    fontFamily: fontFamilies.display,
                     fontWeight: 600,
-                    background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
-                    boxShadow: '0 8px 18px rgba(124,77,255,0.4)',
+                    background: gradients.auroraAction,
+                    boxShadow: `0 8px 18px ${alpha(auroraColors.violet, 0.4)}`,
                     '&:hover': {
-                      background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
+                      background: gradients.auroraAction,
                       filter: 'brightness(1.05)',
                     },
                     '&.Mui-disabled': { background: undefined, opacity: 0.5 },

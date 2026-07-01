@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { WINDOWS } from '../../constants';
-import type { WindowOption } from '../../constants';
-import { useWindowContext } from '../../windowContext';
+import { WINDOWS } from '../../lib/constants';
+import type { WindowOption } from '../../lib/constants';
+import { useWindowContext } from '../../lib/windowContext';
 import type { WindowSelection } from '../../api';
 import useTracesExplorer, { type TracesExplorer } from './useTracesExplorer';
 

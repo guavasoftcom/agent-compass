@@ -10,6 +10,7 @@ import {
   useTheme,
 } from '@mui/material';
 import type { HookExecutionRow } from '../../api';
+import { fontFamilies } from '../../theme/typography';
 
 export interface HookExecutionsCardProps {
   hookRows: HookExecutionRow[];
@@ -28,7 +29,7 @@ const HookExecutionsCard = ({ hookRows, isHooksLoading }: HookExecutionsCardProp
 
   return (
     <Paper variant="outlined" sx={{ p: '22px 24px' }}>
-      <Typography sx={{ fontFamily: "'Sora', sans-serif", fontWeight: 600, fontSize: 16 }}>
+      <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 16 }}>
         Hook execution outcomes
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, mb: 0.5, lineHeight: 1.5 }}>
@@ -65,7 +66,7 @@ const HookExecutionsCard = ({ hookRows, isHooksLoading }: HookExecutionsCardProp
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
-                      fontFamily: 'monospace',
+                      fontFamily: fontFamilies.mono,
                       color: 'text.secondary',
                     }}
                   >

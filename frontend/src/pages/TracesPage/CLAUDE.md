@@ -30,7 +30,7 @@ container as default). The container owns the behavior — context reads, local 
 derivation — and renders nothing but `<XView ... />`; the view is pure props in, JSX out (the same
 Page/PageView rule from [frontend/CLAUDE.md](../../../CLAUDE.md), applied per component). View-prop
 types live in the `XView.tsx` file that owns them (e.g. `HistogramSeries`, `TraceFacetSelections`,
-`TraceSummaryModel`/`OpGroup`, `PlacedSpan`); `index.ts` re-exports those.
+`TraceSummaryModel`/`OpGroup`); `index.ts` re-exports those.
 
 - **Page-scoped components — container reads context, view takes props** — they are inherently
   TracesPage-specific (they know about `TraceRow`, facets, the histogram shape): `TraceHistogram`,
@@ -42,12 +42,15 @@ types live in the `XView.tsx` file that owns them (e.g. `HistogramSeries`, `Trac
 - **Generic leaf widgets stay prop-driven** — small, reusable, no knowledge of the page.
   `TraceSortDropdown` is split (its container owns the open/select state, the view renders).
   `TraceViewToggle` and `TraceTailToggle` are pure presentational already — no behavior to extract,
-  so they stay single-file views. The page view feeds all three their props from context. Keep them
+  so they stay single-file views. (`TraceViewToggle` is now a thin wrapper over the shared
+  `components/StreamTableToggle`, preserving its `view`/`onViewChange` prop signature so the
+  context wiring is unchanged.) The page view feeds all three their props from context. Keep them
   decoupled; don't wire them to the context.
-- **Row-scoped components — container owns the query, view renders** — `TraceSummaryInline` /
-  `TraceWaterfallInline` take a single `trace` prop because each instance is bound to one expanded
-  row, not to page state. The container runs the `['trace-inline-spans', traceId]` query and the
-  span-derivation `useMemo`; the view renders the resulting model.
+- **Row-scoped component — container owns the query, view renders** — `TraceSummaryInline` takes a
+  single `trace` prop because each instance is bound to one expanded row, not to page state. The
+  container runs the `['trace-inline-spans', traceId]` query and the span-derivation `useMemo`; the
+  view renders the resulting model. It deliberately summarizes where the trace spent its time/tokens
+  rather than re-drawing the detail page's waterfall.
 
 When adding behavior: add state/handlers to `useTracesExplorer`, surface them in its return
 object (the view's prop surface is `ReturnType<typeof useTracesExplorer>` plus window chrome, so
@@ -65,21 +68,23 @@ TracesPage/
 │                             traceDerivations so `from './tracesApi'` stays the single import surface
 ├── traceTypes.ts             shared types (TracesFilters, TraceHistogram, TraceFacets, cursors, …) — no runtime
 ├── traceDerivations.ts       serviceOf/statusOf/durationMsOf/tokensOf/formatTokens/formatDuration/quantile/
-│                             DURATION_BUCKETS/NANOS_PER_MILLI + buildTracesQuery (shared by fetchers + sample)
+│                             durationBucketOf/DURATION_BUCKETS/NANOS_PER_MILLI + buildTracesQuery (shared by fetchers + sample)
+├── tokenBreakdown.ts         tokenBreakdownForSpan(span) → per-span input/output/cacheCreate/cacheRead
+│                             token split; also imported across TraceDetailPage
 ├── tracesSampleData.ts       VITE_TRACES_SAMPLE synthetic store + in-memory query engine (sampleHistogram/
-│                             Facets/Cursor/Page/Spans); split out so it can't cycle with the network layer
+│                             Facets/Cursor/Page/Spans); split out so it can't cycle with the network layer.
+│                             RNG + latency helpers come from lib/sampleData (shared with LogsPage)
 ├── components/            each folder = X.tsx (container) + XView.tsx (view) + index.ts, except
 │   │                      the two pure leaves which are single-file views
 │   ├── TraceHistogram/       throughput bars + p95 polyline + legend + bar-zoom (context, no fetch)
 │   ├── TraceFacetRail/       search box + status/operation/service/duration/session facets (context)
 │   ├── TraceStream/          cursor-paged infinite scroll-back (context)
-│   ├── TraceTable/           offset-paged table + pager (context)
+│   ├── TraceTable/           offset-paged table + shared TablePager footer (context)
 │   ├── TraceFilterChips/     active zoom + filter chips + "Clear all" (context)
-│   ├── TraceViewToggle/      Stream|Table segmented toggle (pure prop-driven leaf, single file)
+│   ├── TraceViewToggle/      Stream|Table toggle — thin wrapper over shared StreamTableToggle
 │   ├── TraceTailToggle/      live-tail pill (pure prop-driven leaf, single file)
 │   ├── TraceSortDropdown/    sort menu (container owns open state; prop-driven leaf)
 │   ├── TraceSummaryInline/   expanded-row span summary; container owns query (prop: trace)
-│   ├── TraceWaterfallInline/ expanded-row span waterfall; container owns query (prop: trace)
 │   └── traceColors.ts        service → color (also imported by TraceDetailPage)
 └── index.ts
 ```
@@ -112,7 +117,7 @@ TracesPage/
 
 ## Who calls which API
 
-All fetchers live in `tracesApi.ts` (not `api.ts`) and share `buildTracesQuery(filters)` for the
+All fetchers live in `tracesApi.ts` (not the shared `api/index.ts`) and share `buildTracesQuery(filters)` for the
 query string. `filtersKey = JSON.stringify(filters)`, where `filters` already has the zoom range
 substituted for the window range when a zoom is active.
 
@@ -122,7 +127,7 @@ substituted for the window range when a zoom is active.
 | `useTracesExplorer` (`useQuery`)                | `['trace-facets', filtersKey]`                  | `fetchTraceFacets` → `GET /api/traces/facets?…` |
 | `useTracesExplorer` (`useQuery`, Table only)    | `['trace-table', filtersKey, sort, page, size]` | `fetchTracesPage` → `GET /api/traces?…&page=N&size=M` (`enabled: view === 'table'`) |
 | `useTracesExplorer` (manual state, NOT cached)  | — (lives in hook `useState`)                    | `fetchTracesCursor(filters, {sort, cursor, limit:60})` for reset/`loadMore`; `{after, limit:20}` every 1.5 s for tail → `GET /api/traces?…` |
-| `TraceSummaryInline` / `TraceWaterfallInline`   | `['trace-inline-spans', traceId]`               | `fetchSpansForTrace` → per-trace spans |
+| `TraceSummaryInline`                            | `['trace-inline-spans', traceId]`               | `fetchSpansForTrace` → per-trace spans |
 
 `TraceHistogram`, `TraceFacetRail`, and `TraceFilterChips` never fetch — they read
 `histogramData` / `facetsData` (and filter state) from context.

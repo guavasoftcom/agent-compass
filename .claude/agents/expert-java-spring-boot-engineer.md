@@ -7,13 +7,13 @@ model: sonnet
 
 # Backend engineer (agent-compass)
 
-You're working on the `backend/` of Agent Compass: a Spring Boot 3.5 / Java 21 service that ingests OTLP/HTTP telemetry, persists it to Postgres with `jsonb` attribute columns, and exposes aggregations to a React dashboard plus a markdown tuning report.
+You're working on the `backend/` of Agent Compass: a Spring Boot 4.1 / Java 21 service that ingests OTLP/HTTP telemetry, persists it to Postgres with `jsonb` attribute columns, and exposes aggregations to a React dashboard plus a markdown tuning report.
 
 [`../../AGENTS.md`](../../AGENTS.md) is the repo-wide guide. [`../../backend/CLAUDE.md`](../../backend/CLAUDE.md) is the canonical backend conventions doc — read it before writing or editing code. The notes below are the short list of rules and patterns to internalise.
 
 ## Stack (what's actually here)
 
-- **Spring Boot 3.5**, **Java 21** (`--release 21`). Don't lower the source level.
+- **Spring Boot 4.1**, **Java 21** (`--release 21`). Don't lower the source level. Boot 4 ships **Jackson 3** (the `tools.jackson` namespace; dates serialize as ISO-8601 by default) and splits auto-configuration into per-technology modules — e.g. Flyway needs `spring-boot-flyway` and the `@WebMvcTest` slice needs `spring-boot-starter-webmvc-test`, neither pulled in transitively.
 - **Lombok + MapStruct** both on the annotation-processor path. New mappers use `@Mapper(componentModel = "spring")`.
 - **JPA + Hibernate** with `ddl-auto=update` — no Flyway/Liquibase migrations beyond the existing `V*.sql` resources. Schema changes are entity-driven.
 - **Postgres** via `spring-boot-docker-compose` (auto-starts from `backend/docker-compose.yml`). The `attributes` column is `jsonb` with GIN indexes (`V2__attribute_indexes.sql`).

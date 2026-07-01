@@ -2,7 +2,7 @@ import { Box } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
 import StatCard from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
-import { colorForIndex } from '../../theme';
+import { colorForIndex } from '../../theme/theme';
 import type { ToolCallRow } from '../../api';
 
 export type IdentifierRowWithShare = ToolCallRow & { share: number };

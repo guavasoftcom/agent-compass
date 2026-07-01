@@ -1,6 +1,7 @@
 import { Box, useTheme } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import GhostButton from '../../../../components/GhostButton';
+import { fontFamilies } from '../../../../theme/typography';
 
 interface Props {
   anyCollapsed: boolean;
@@ -35,7 +36,7 @@ const WaterfallToolbar = ({
           display: 'flex',
           alignItems: 'center',
           gap: 1.1,
-          fontFamily: "'Sora', sans-serif",
+          fontFamily: fontFamilies.display,
           fontSize: 11.5,
           fontWeight: 700,
           letterSpacing: '0.6px',

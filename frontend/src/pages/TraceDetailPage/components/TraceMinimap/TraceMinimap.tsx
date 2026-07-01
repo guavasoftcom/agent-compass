@@ -2,7 +2,8 @@ import { useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Box, alpha, useTheme } from '@mui/material';
 import type { SpanRow } from '../../../../api';
-import { spanColor } from '../../../TracesPage/components/traceColors';
+import { spanColor, SERVICE_LEGEND } from '../../../TracesPage/components/traceColors';
+import { fontFamilies } from '../../../../theme/typography';
 
 export interface ZoomView {
   s: number;
@@ -93,13 +94,46 @@ const TraceMinimap = ({
         flexShrink: 0,
       }}
     >
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 1,
+          mb: 1,
+        }}
+      >
+        {/* Per-operation hue legend — explains the minimap span colors. Error
+            spans override to red (see the toolbar legend above). */}
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.2 }}>
+          {SERVICE_LEGEND.map(({ label, color }) => (
+            <Box
+              key={label}
+              component="span"
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.6,
+                fontSize: 9.5,
+                color: 'text.disabled',
+                fontFamily: fontFamilies.display,
+                fontWeight: 600,
+                letterSpacing: '0.3px',
+                pointerEvents: 'none',
+              }}
+            >
+              <Box sx={{ width: 8, height: 8, borderRadius: '2px', bgcolor: color }} />
+              {label}
+            </Box>
+          ))}
+        </Box>
         <Box
           component="span"
           sx={{
             fontSize: 9.5,
             color: 'text.disabled',
-            fontFamily: "'Sora', sans-serif",
+            fontFamily: fontFamilies.display,
             fontWeight: 600,
             letterSpacing: '0.3px',
             textTransform: 'uppercase',

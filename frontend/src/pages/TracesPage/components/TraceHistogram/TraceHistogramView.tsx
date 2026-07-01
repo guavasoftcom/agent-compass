@@ -6,6 +6,7 @@ import {
   type TraceHistogram,
   type TraceHistogramBucket,
 } from '../../tracesApi';
+import { fontFamilies } from '../../../../theme/typography';
 
 export type HistogramSeries = 'ok' | 'error' | 'p95';
 
@@ -108,7 +109,7 @@ const TraceHistogramView = ({
           <Typography
             component="span"
             sx={{
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontSize: 11.5,
               fontWeight: 700,
               letterSpacing: '0.6px',
@@ -124,7 +125,7 @@ const TraceHistogramView = ({
               display: 'inline-flex',
               alignItems: 'center',
               gap: 1.25,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: fontFamilies.mono,
               fontSize: 11,
               color: 'text.disabled',
             }}
@@ -297,7 +298,7 @@ const TraceHistogramView = ({
         >
           <Typography
             sx={{
-              fontFamily: "'Sora', sans-serif",
+              fontFamily: fontFamilies.display,
               fontWeight: 700,
               fontSize: 12,
               mb: 0.75,

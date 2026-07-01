@@ -13,8 +13,8 @@ End-to-end flow:
 
 ## Repository layout
 
-- `backend/` — Spring Boot 3.5 (Java 21), Spring Data JPA, `opentelemetry-proto`, Postgres.
-- `frontend/` — React + Vite + Material UI (`@mui/x-data-grid`, `@mui/x-charts`), TanStack Query, React Router.
+- `backend/` — Spring Boot 4.1 (Java 21), Spring Data JPA, `opentelemetry-proto`, Postgres.
+- `frontend/` — React + Vite + Material UI (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` or `@mui/x-data-grid`), TanStack Query, React Router.
 
 ## Prerequisites
 
@@ -94,7 +94,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - **Sessions** — session list with summary KPIs and per-session token usage.
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
-- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body; rows expand to an inline span summary/waterfall, with a full per-trace span detail and cross-signal logs.
+- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body; rows expand to an inline span summary, with a full per-trace span detail (waterfall) and cross-signal logs.
 - **Report** — renders the report as monospace text with a one-click "Copy markdown" button.
 
 ## Tests
@@ -110,7 +110,7 @@ cd backend
 
 - OTLP/HTTP directly into Spring Boot keeps the system **vendor-neutral** — no SigNoz, no Aspire, no proprietary query API to lock against. OTLP is the CNCF standard.
 - Postgres + `jsonb` fits the telemetry shape: stable numeric spine, open-ended attribute bag, SQL aggregations for report generation.
-- Material UI (`@mui/x-data-grid` + `@mui/x-charts`) covers both grid and chart needs without pulling in a second visualization library.
+- Material UI provides the component primitives; charts and tables are hand-built SVG/CSS (the Aurora retheme dropped `@mui/x-charts` / `@mui/x-data-grid`) so visuals match the rest of the UI exactly — no second visualization library.
 - Lombok keeps the entity/DTO boilerplate down; MapStruct (`spring` component model) generates `MetricPoint` → `EventRowDto` translation; `lombok-mapstruct-binding` keeps the two annotation processors happy together.
 - springdoc-openapi auto-derives the OpenAPI schema from the controllers — `@Tag`/`@Operation` annotations on each handler shape the Swagger UI without a separate spec file.
 - Testcontainers gives the integration test a real Postgres (with `jsonb`) so the test exercises the same JPA + native SQL aggregation path that production uses; `@ServiceConnection` wires the container into Spring Boot's datasource automatically.

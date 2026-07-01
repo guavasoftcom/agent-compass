@@ -224,12 +224,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -316,12 +318,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -405,12 +409,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.trace_id,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -486,12 +492,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.trace_id,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -571,12 +579,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.trace_id,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -655,12 +665,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.trace_id,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -736,12 +748,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.trace_id,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -821,12 +835,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.trace_id,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -922,12 +938,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1022,12 +1040,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1124,12 +1144,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1228,12 +1250,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1328,12 +1352,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1428,12 +1454,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1528,12 +1556,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1628,12 +1658,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1728,12 +1760,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -1827,12 +1861,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
@@ -1930,12 +1966,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2037,12 +2075,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2145,12 +2185,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2252,12 +2294,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2360,12 +2404,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2467,12 +2513,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2577,12 +2625,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2689,12 +2739,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2797,12 +2849,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2896,12 +2950,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -2995,12 +3051,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -3094,12 +3152,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -3193,12 +3253,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -3295,12 +3357,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -3402,12 +3466,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE
@@ -3507,12 +3573,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'  THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'tool.%'     THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'model.%'    THEN 'claude_code.models'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'mcp.%'      THEN 'mcp.client'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'subagent.%' THEN 'claude_code.subagents'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
                   ELSE 'claude_code'
                 END AS service,
                 CASE

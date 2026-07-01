@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Box, Typography } from '@mui/material';
 import { attrValueAsString } from '../../attrFormat';
+import { fontFamilies } from '../../../../theme/typography';
 
 // Wall-clock HH:MM:SS.mmm for a millisecond timestamp.
 export const clock = (ms: number): string => {
@@ -10,10 +11,10 @@ export const clock = (ms: number): string => {
 };
 
 export const SectionTitle = ({ children, count, tone }: { children: ReactNode; count?: number; tone?: 'token' | 'tool' }) => (
-  <Typography sx={{ fontFamily: "'Sora', sans-serif", fontSize: 10.5, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', color: tone === 'token' ? 'warning.main' : tone === 'tool' ? 'info.main' : 'text.secondary', mb: 1.1, display: 'flex', alignItems: 'center', gap: 1 }}>
+  <Typography sx={{ fontFamily: fontFamilies.display, fontSize: 10.5, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', color: tone === 'token' ? 'warning.main' : tone === 'tool' ? 'info.main' : 'text.secondary', mb: 1.1, display: 'flex', alignItems: 'center', gap: 1 }}>
     {tone === 'tool' ? <Box component="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} sx={{ width: 13, height: 13 }}><path d="M14.7 6.3a4 4 0 0 0-5.2 5.2L3 18l3 3 6.5-6.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.1-.6-.6-2.1 2.4-2.4z" /></Box> : null}
     {children}
-    {count != null ? <Box component="span" sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: tone ? 700 : 500, color: tone === 'token' ? 'warning.main' : tone === 'tool' ? 'info.main' : 'text.disabled', bgcolor: (t) => (tone === 'token' ? `color-mix(in srgb, ${t.palette.warning.main} 16%, transparent)` : tone === 'tool' ? `color-mix(in srgb, ${t.palette.info.main} 16%, transparent)` : t.palette.action.hover), borderRadius: 0.75, px: 0.9, py: 0.15 }}>{count.toLocaleString()}</Box> : null}
+    {count != null ? <Box component="span" sx={{ fontFamily: fontFamilies.mono, fontSize: 10.5, fontWeight: tone ? 700 : 500, color: tone === 'token' ? 'warning.main' : tone === 'tool' ? 'info.main' : 'text.disabled', bgcolor: (t) => (tone === 'token' ? `color-mix(in srgb, ${t.palette.warning.main} 16%, transparent)` : tone === 'tool' ? `color-mix(in srgb, ${t.palette.info.main} 16%, transparent)` : t.palette.action.hover), borderRadius: 0.75, px: 0.9, py: 0.15 }}>{count.toLocaleString()}</Box> : null}
   </Typography>
 );
 
@@ -25,8 +26,8 @@ export const AttrRows = ({ attrs, tone }: { attrs: Record<string, unknown>; tone
       const isPrompt = !tone && /prompt$/i.test(k);
       return (
         <Box key={k} sx={{ display: 'grid', gridTemplateColumns: 'minmax(120px,auto) 1fr', gap: 1.75, px: 1.75, py: 1, borderBottom: 1, borderColor: (t) => (tone === 'token' ? `color-mix(in srgb, ${t.palette.warning.main} 22%, transparent)` : tone === 'tool' ? `color-mix(in srgb, ${t.palette.info.main} 20%, transparent)` : t.palette.divider), '&:last-of-type': { borderBottom: 'none' }, fontSize: 12.5, ...(isPrompt ? { bgcolor: (t) => `color-mix(in srgb, ${t.palette.primary.main} 9%, transparent)`, boxShadow: (t) => `inset 3px 0 0 ${t.palette.primary.main}` } : {}) }}>
-          <Box component="span" sx={{ fontFamily: "'JetBrains Mono', monospace", color: (t) => (tone === 'token' ? `color-mix(in srgb, ${t.palette.warning.main} 78%, ${t.palette.text.secondary})` : tone === 'tool' ? `color-mix(in srgb, ${t.palette.info.main} 76%, ${t.palette.text.secondary})` : isPrompt ? t.palette.primary.main : t.palette.text.secondary), fontWeight: isPrompt ? 600 : 400, whiteSpace: 'nowrap' }}>{k}</Box>
-          <Box component="span" sx={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: tone === 'token' ? 600 : 500, wordBreak: 'break-word', color: tone === 'token' ? 'warning.main' : num ? 'info.main' : str ? 'success.main' : 'text.primary' }}>{num ? (v as number).toLocaleString() : attrValueAsString(v)}</Box>
+          <Box component="span" sx={{ fontFamily: fontFamilies.mono, color: (t) => (tone === 'token' ? `color-mix(in srgb, ${t.palette.warning.main} 78%, ${t.palette.text.secondary})` : tone === 'tool' ? `color-mix(in srgb, ${t.palette.info.main} 76%, ${t.palette.text.secondary})` : isPrompt ? t.palette.primary.main : t.palette.text.secondary), fontWeight: isPrompt ? 600 : 400, whiteSpace: 'nowrap' }}>{k}</Box>
+          <Box component="span" sx={{ fontFamily: fontFamilies.mono, fontWeight: tone === 'token' ? 600 : 500, wordBreak: 'break-word', color: tone === 'token' ? 'warning.main' : num ? 'info.main' : str ? 'success.main' : 'text.primary' }}>{num ? (v as number).toLocaleString() : attrValueAsString(v)}</Box>
         </Box>
       );
     })}

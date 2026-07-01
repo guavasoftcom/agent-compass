@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { Box, Paper, Typography, useTheme } from '@mui/material';
-import { colorForIndex } from '../../theme';
+import { colorForIndex } from '../../theme/theme';
 import type { ToolDenialRow } from '../../api';
+import { fontFamilies } from '../../theme/typography';
 
 export interface ToolDenialsCardProps {
   denialRows: ToolDenialRow[];
@@ -17,7 +18,8 @@ const SOURCE_LABELS: Record<string, string> = {
   user_reject: 'user (reject)',
 };
 
-const formatSource = (source: string): string => SOURCE_LABELS[source] ?? source;
+const formatSource = (source: string): string =>
+  SOURCE_LABELS[source] ?? source;
 
 /**
  * Stable colour per denial source so the same source reads the same hue across
@@ -58,7 +60,10 @@ const useSourceColor = () => {
  * each tool was blocked (policy rule vs. hook vs. a user decision), which a flat
  * list buries. Mirrors the Aurora mockup.
  */
-const ToolDenialsCard = ({ denialRows, isDenialsLoading }: ToolDenialsCardProps) => {
+const ToolDenialsCard = ({
+  denialRows,
+  isDenialsLoading,
+}: ToolDenialsCardProps) => {
   const theme = useTheme();
   const sourceColor = useSourceColor();
   const trackColor = theme.custom?.progressTrack ?? theme.palette.action.hover;
@@ -82,15 +87,33 @@ const ToolDenialsCard = ({ denialRows, isDenialsLoading }: ToolDenialsCardProps)
 
   return (
     <Paper variant="outlined" sx={{ p: '22px 24px', height: '100%' }}>
-      <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1.25, mb: 0.5 }}>
-        <Typography sx={{ fontFamily: "'Sora', sans-serif", fontWeight: 600, fontSize: 16 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 1.25,
+          mb: 0.5,
+        }}
+      >
+        <Typography
+          sx={{
+            fontFamily: fontFamilies.display,
+            fontWeight: 600,
+            fontSize: 16,
+          }}
+        >
           Denials by tool &amp; source
         </Typography>
-        <Typography variant="caption" color="text.secondary">why each tool was blocked</Typography>
+        <Typography variant="caption" color="text.secondary">
+          why each tool was blocked
+        </Typography>
       </Box>
 
       {!isDenialsLoading && groups.length === 0 ? (
-        <Typography color="text.secondary" sx={{ mt: 1 }}>No tool denials in this window.</Typography>
+        <Typography color="text.secondary" sx={{ mt: 1 }}>
+          No tool denials in this window.
+        </Typography>
       ) : (
         groups.map((group, groupIndex) => (
           <Box
@@ -102,19 +125,58 @@ const ToolDenialsCard = ({ denialRows, isDenialsLoading }: ToolDenialsCardProps)
               borderColor: 'divider',
             }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: 1.125 }}>
-              <Box sx={{ fontWeight: 600, fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'baseline',
+                gap: 1,
+                mb: 1.125,
+              }}
+            >
+              <Box
+                sx={{
+                  fontWeight: 600,
+                  fontSize: 14,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {group.tool}
               </Box>
-              <Box sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 14, whiteSpace: 'nowrap' }}>
+              <Box
+                sx={{
+                  fontVariantNumeric: 'tabular-nums',
+                  fontWeight: 700,
+                  fontSize: 14,
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {group.total.toLocaleString()}{' '}
-                <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500, fontSize: 12 }}>
+                <Box
+                  component="span"
+                  sx={{
+                    color: 'text.secondary',
+                    fontWeight: 500,
+                    fontSize: 12,
+                  }}
+                >
                   {group.total === 1 ? 'denial' : 'denials'}
                 </Box>
               </Box>
             </Box>
 
-            <Box sx={{ height: 10, borderRadius: '6px', bgcolor: trackColor, overflow: 'hidden', display: 'flex' }}>
+            <Box
+              sx={{
+                height: 10,
+                borderRadius: '6px',
+                bgcolor: trackColor,
+                overflow: 'hidden',
+                display: 'flex',
+              }}
+            >
               {group.rows.map((row) => (
                 <Box
                   key={`${row.tool}-${row.source}-bar`}
@@ -127,15 +189,44 @@ const ToolDenialsCard = ({ denialRows, isDenialsLoading }: ToolDenialsCardProps)
               ))}
             </Box>
 
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '7px 18px', mt: 1.375 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '7px 18px',
+                mt: 1.375,
+              }}
+            >
               {group.rows.map((row) => (
                 <Box
                   key={`${row.tool}-${row.source}-leg`}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 0.875, fontSize: 12.5, color: 'text.secondary' }}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.875,
+                    fontSize: 12.5,
+                    color: 'text.secondary',
+                  }}
                 >
-                  <Box sx={{ width: 9, height: 9, borderRadius: '3px', flexShrink: 0, bgcolor: sourceColor(row.source) }} />
+                  <Box
+                    sx={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: '3px',
+                      flexShrink: 0,
+                      bgcolor: sourceColor(row.source),
+                    }}
+                  />
                   {formatSource(row.source)}
-                  <Box component="b" sx={{ color: 'text.primary', fontWeight: 700, fontVariantNumeric: 'tabular-nums', ml: 0.25 }}>
+                  <Box
+                    component="b"
+                    sx={{
+                      color: 'text.primary',
+                      fontWeight: 700,
+                      fontVariantNumeric: 'tabular-nums',
+                      ml: 0.25,
+                    }}
+                  >
                     {row.count.toLocaleString()}
                   </Box>
                 </Box>

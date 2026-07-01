@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
-import { Box, Paper, Stack, Typography } from '@mui/material';
+import { alpha, Box, Paper, Stack, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import { neutralColors } from '../../theme/colors';
+import { fontFamilies } from '../../theme/typography';
 
 export interface DonutSlice {
   label: string;
@@ -50,7 +52,9 @@ const DonutCard = ({
   const theme = useTheme();
   const sum = slices.reduce((acc, slice) => acc + slice.value, 0);
   const trackColor =
-    theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.07)' : 'rgba(28,24,48,0.07)';
+    theme.palette.mode === 'dark'
+      ? alpha(neutralColors.white, 0.07)
+      : alpha(neutralColors.inkLight, 0.07);
 
   // Build one arc per slice, positioned by rotating from -90° (12 o'clock).
   const positiveSlices = slices.filter((slice) => slice.value > 0);
@@ -122,7 +126,7 @@ const DonutCard = ({
             >
               <Typography
                 sx={{
-                  fontFamily: "'Sora', sans-serif",
+                  fontFamily: fontFamilies.display,
                   fontWeight: 800,
                   fontSize: 36,
                   lineHeight: 1,

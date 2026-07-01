@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Box, IconButton, Stack, Typography } from '@mui/material';
+import { alpha, Box, IconButton, Stack, Typography } from '@mui/material';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import { auroraColors, gradients, neutralColors } from '../../theme/colors';
+import { fontFamilies } from '../../theme/typography';
 
 /**
  * Self-contained Aurora range calendar — no @mui/x-date-pickers dependency and no
@@ -144,7 +146,7 @@ const AuroraCalendar = ({
         direction="row"
         sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}
       >
-        <Typography sx={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, fontSize: 15 }}>
+        <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 700, fontSize: 15 }}>
           {MONTHS[view.month]} {view.year}
         </Typography>
         <Stack direction="row" spacing={0.5}>
@@ -225,14 +227,14 @@ const AuroraCalendar = ({
                 fontWeight: isEdge ? 700 : 500,
                 borderRadius: inRange && !isEdge ? 0 : 1.25,
                 cursor: 'pointer',
-                color: isEdge ? '#fff' : 'text.primary',
+                color: isEdge ? neutralColors.white : 'text.primary',
                 position: 'relative',
                 ...(inRange &&
                   !isEdge && {
                     bgcolor:
                       t.palette.mode === 'dark'
-                        ? 'rgba(139,92,255,0.16)'
-                        : 'rgba(124,77,255,0.10)',
+                        ? alpha(auroraColors.violetLight, 0.16)
+                        : alpha(auroraColors.violet, 0.1),
                     ...(key === startKey && { borderRadius: '10px 0 0 10px' }),
                     ...(key === endKey && { borderRadius: '0 10px 10px 0' }),
                   }),
@@ -240,13 +242,13 @@ const AuroraCalendar = ({
                   !isEdge && {
                     boxShadow: `inset 0 0 0 1.5px ${
                       t.palette.mode === 'dark'
-                        ? 'rgba(139,92,255,0.4)'
-                        : 'rgba(124,77,255,0.32)'
+                        ? alpha(auroraColors.violetLight, 0.4)
+                        : alpha(auroraColors.violet, 0.32)
                     }`,
                   }),
                 ...(isEdge && {
-                  background: 'linear-gradient(135deg, #8b5cff, #ff6ad5)',
-                  boxShadow: '0 5px 14px rgba(124,77,255,0.45)',
+                  background: gradients.auroraAction,
+                  boxShadow: `0 5px 14px ${alpha(auroraColors.violet, 0.45)}`,
                 }),
                 '&:hover': isEdge
                   ? undefined
@@ -282,8 +284,8 @@ const AuroraCalendar = ({
               border: `1px solid ${t.palette.divider}`,
               bgcolor:
                 t.palette.mode === 'dark'
-                  ? 'rgba(255,255,255,0.04)'
-                  : 'rgba(28,24,48,0.04)',
+                  ? alpha(neutralColors.white, 0.04)
+                  : alpha(neutralColors.inkLight, 0.04),
               color: 'text.primary',
               colorScheme: t.palette.mode,
               fontFamily: 'inherit',
@@ -314,8 +316,8 @@ const AuroraCalendar = ({
               border: `1px solid ${t.palette.divider}`,
               bgcolor:
                 t.palette.mode === 'dark'
-                  ? 'rgba(255,255,255,0.04)'
-                  : 'rgba(28,24,48,0.04)',
+                  ? alpha(neutralColors.white, 0.04)
+                  : alpha(neutralColors.inkLight, 0.04),
               color: 'text.primary',
               colorScheme: t.palette.mode,
               fontFamily: 'inherit',

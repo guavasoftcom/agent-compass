@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Stack, Tooltip, Typography } from '@mui/material';
+import { auroraColors } from '../../../../theme/colors';
+import ChartCard from '../../../../components/ChartCard/ChartCard';
 
 export interface LatencyBarSeries {
   label: string;
@@ -86,40 +88,26 @@ const ToolLatencyCardView = ({
 }: ToolLatencyCardViewProps) => {
   const typical = series[0];
   const worst = series[1];
-  const typicalColor = typical?.color ?? '#1aa7dd';
-  const worstColor = worst?.color ?? '#e84bc0';
+  const typicalColor = typical?.color ?? auroraColors.cyan;
+  const worstColor = worst?.color ?? auroraColors.pink;
 
   const totals = toolLabels.map(
     (_, index) => (typical?.data[index] ?? 0) + (worst?.data[index] ?? 0),
   );
   const max = Math.max(...totals, 0.0001);
 
-  return (
-    <Paper variant="outlined" sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Stack
-        direction="row"
-        sx={{ alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 0.25 }}
-      >
-        <Typography variant="subtitle1">Latency per tool (s)</Typography>
-        <Stack direction="row" spacing={1.5} sx={{ flexShrink: 0 }}>
-          <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-            <Box sx={{ width: 9, height: 9, borderRadius: '3px', bgcolor: typicalColor }} />
-            <Typography variant="caption" color="text.secondary">
-              {typical?.label ?? 'Typical'}
-            </Typography>
-          </Stack>
-          <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-            <Box sx={{ width: 9, height: 9, borderRadius: '3px', bgcolor: worstColor }} />
-            <Typography variant="caption" color="text.secondary">
-              {worst?.label ?? 'Worst 5%'}
-            </Typography>
-          </Stack>
-        </Stack>
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        Typical latency (median) plus the extra time the slowest 5% of calls take.
-      </Typography>
+  const legendItems = [
+    { label: typical?.label ?? 'Typical', color: typicalColor },
+    { label: worst?.label ?? 'Worst 5%', color: worstColor },
+  ];
 
+  return (
+    <ChartCard
+      title="Latency per tool (s)"
+      subtitle="Typical latency (median) plus the extra time the slowest 5% of calls take."
+      legend={legendItems}
+      fillHeight
+    >
       {!hasData && !isLoading ? (
         <Box sx={{ height: 200, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <Typography color="text.secondary">No tool-scope spans in this window.</Typography>
@@ -168,7 +156,7 @@ const ToolLatencyCardView = ({
           })}
         </Box>
       )}
-    </Paper>
+    </ChartCard>
   );
 };
 

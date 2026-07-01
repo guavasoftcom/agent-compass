@@ -1,7 +1,7 @@
 import { Box, Grid } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
 import DonutCard from '../../components/DonutCard';
-import { colorForIndex } from '../../theme';
+import { colorForIndex } from '../../theme/theme';
 
 import type {
   ToolCallRow,

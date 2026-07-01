@@ -23,25 +23,10 @@ import {
   quantile,
   serviceOf,
 } from './traceDerivations';
+import { createSampleRng, latency } from '../../lib/sampleData';
+import { MS_PER_MINUTE, MS_PER_HOUR } from '../../lib/constants';
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-
-let seed = 90125;
-const rnd = () => {
-  seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-  return seed / 0x7fffffff;
-};
-const pick = <T,>(a: readonly T[]): T => a[Math.floor(rnd() * a.length)];
-const ri = (lo: number, hi: number) => Math.floor(lo + rnd() * (hi - lo + 1));
-const HEX = '0123456789abcdef';
-const hx = (n: number) => {
-  let s = '';
-  for (let i = 0; i < n; i += 1) {
-    s += HEX[Math.floor(rnd() * 16)];
-  }
-  return s;
-};
+const { rnd, pick, ri, hx } = createSampleRng(90125);
 const wpick = (pairs: Array<[string, number]>): string => {
   let tot = 0;
   pairs.forEach((p) => {
@@ -73,7 +58,7 @@ const OPS: Record<string, OpCfg> = {
 };
 
 const NOW = Date.now();
-const WINDOW_MS = 24 * HOUR;
+const WINDOW_MS = 24 * MS_PER_HOUR;
 const T0 = NOW - WINDOW_MS;
 const SESSIONS = Array.from({ length: 14 }, () => `sess_${hx(8)}`);
 
@@ -164,12 +149,11 @@ const matches = (r: SampleTrace, f: TracesFilters, exclude: FacetKey | 'q' | nul
   return true;
 };
 
-const NICE = [MIN, 2 * MIN, 5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR];
+const NICE = [MS_PER_MINUTE, 2 * MS_PER_MINUTE, 5 * MS_PER_MINUTE, 10 * MS_PER_MINUTE, 15 * MS_PER_MINUTE, 30 * MS_PER_MINUTE, MS_PER_HOUR, 2 * MS_PER_HOUR, 3 * MS_PER_HOUR, 6 * MS_PER_HOUR];
 const niceBucket = (spanMs: number, target: number) => {
   const raw = spanMs / target;
   return NICE.find((n) => n >= raw) ?? NICE[NICE.length - 1];
 };
-const latency = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
 const SORTS: Record<TraceSortKey, (a: SampleTrace, b: SampleTrace) => number> = {
   new: (a, b) => b._ts - a._ts,

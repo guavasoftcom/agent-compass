@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
+  alpha,
   ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
   Tooltip,
 } from '@mui/material';
+import { auroraColors } from '../theme/colors';
 
 export interface NavItemProps {
   to: string;
@@ -42,13 +44,13 @@ const NavItem = ({ to, label, icon, navOpen }: NavItemProps) => {
             '&.active': {
               background:
                 theme.palette.mode === 'dark'
-                  ? 'linear-gradient(90deg, rgba(139,92,255,0.22), rgba(139,92,255,0.05))'
-                  : 'linear-gradient(90deg, rgba(124,77,255,0.14), rgba(124,77,255,0.03))',
+                  ? `linear-gradient(90deg, ${alpha(auroraColors.violetLight, 0.22)}, ${alpha(auroraColors.violetLight, 0.05)})`
+                  : `linear-gradient(90deg, ${alpha(auroraColors.violet, 0.14)}, ${alpha(auroraColors.violet, 0.03)})`,
               color: 'primary.main',
               boxShadow: `inset 0 0 0 1px ${
                 theme.palette.mode === 'dark'
-                  ? 'rgba(139,92,255,0.30)'
-                  : 'rgba(124,77,255,0.22)'
+                  ? alpha(auroraColors.violetLight, 0.3)
+                  : alpha(auroraColors.violet, 0.22)
               }`,
               '& .MuiListItemIcon-root': { color: 'primary.main' },
               '& .MuiListItemText-primary': { fontWeight: 600 },

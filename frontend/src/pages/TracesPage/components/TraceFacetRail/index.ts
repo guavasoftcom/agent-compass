@@ -1,2 +1,2 @@
 export { default } from './TraceFacetRail';
-export type { TraceFacetSelections } from './TraceFacetRailView';
+export type { TraceFacetSelections } from './TraceFacetRail';

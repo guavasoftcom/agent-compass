@@ -1,9 +1,9 @@
 server:
   port: 8080
 spring:
-  jackson:
-    serialization:
-      WRITE_DATES_AS_TIMESTAMPS: false
+  # Jackson 3 (Spring Boot 4) writes dates as ISO-8601 strings by default
+  # (WRITE_DATES_AS_TIMESTAMPS moved to DateTimeFeature and now defaults to false),
+  # so the explicit serialization override that used to live here is no longer needed.
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/coding_agent_tuning}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}

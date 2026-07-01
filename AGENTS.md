@@ -8,13 +8,13 @@ OTLP/HTTP telemetry sink → Postgres (`jsonb`) → markdown tuning report + Rea
 
 ## Repository layout
 
-- `backend/` — Spring Boot 3.5 on Java 21. Package root: `com.guavasoft.agentcompass`. See [backend/CLAUDE.md](backend/CLAUDE.md) for naming, web-layer, and data conventions.
+- `backend/` — Spring Boot 4.1 on Java 21. Package root: `com.guavasoft.agentcompass`. See [backend/CLAUDE.md](backend/CLAUDE.md) for naming, web-layer, and data conventions.
   - `otlp/` — the OTLP ingest slice (own `controller` / `mapper` / `service` sub-packages); controllers expose `POST /v1/logs`, `/v1/metrics`, `/v1/traces`.
   - `entity/`, `repository/` — JPA + `jsonb` storage in `log_records`, `metric_points`, `spans`.
   - `service/`, `controller/` — aggregation, dashboard JSON, markdown report. Per-domain controllers (`LogsController`, `MetricsController`, `SessionController`, `ToolActivityController`, `TracesController`, `ReportController`) serve the React app under `/api`.
   - `model/` — record DTOs (Lombok `@Data @Builder` on older shapes); MapStruct mappers in `mapper/` (`spring` component model) handle entity → DTO.
   - `config/` — `TuningProperties` (overridable event/attribute/metric names), `OpenApiConfig`, etc.
-- `frontend/` — React 19 + Vite 5 + MUI 9 (`@mui/x-data-grid` / `@mui/x-charts` / `@mui/x-tree-view`), TanStack Query v5, React Router 6. Package manager is Yarn (Berry — Yarn 4); a stray `package-lock.json` is legacy — don't `npm install`.
+- `frontend/` — React 19 + Vite 8 + MUI 9 (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` / `@mui/x-data-grid` / `@mui/x-tree-view`), TanStack Query v5, React Router 7. Package manager is Yarn (Berry — Yarn 4); a stray `package-lock.json` is legacy — don't `npm install`. See [frontend/CLAUDE.md](frontend/CLAUDE.md) for conventions; each `frontend/src/pages/<Name>Page/` folder also has its own `CLAUDE.md` covering that page's files, data flow, and gotchas.
 
 ## Run / build / test
 
@@ -44,7 +44,7 @@ cd frontend && yarn lint
 - **Attribute payloads are `jsonb`** — use the existing converter pattern in `entity/` rather than flattening into columns.
 - **OpenAPI** is auto-derived. Annotate new endpoints with `@Tag` / `@Operation` so Swagger UI stays useful.
 - **Frontend data fetching** goes through TanStack Query; don't introduce a second data layer (Redux, SWR, etc.).
-- **Charts and grids** stay on `@mui/x-charts` / `@mui/x-data-grid` — don't add a second visualization library.
+- **Charts and tables** are hand-built SVG/CSS (no `@mui/x-charts` / `@mui/x-data-grid`) — extend the existing bespoke components; don't add a visualization library.
 
 ## Configuration the agent should know
 

@@ -10,6 +10,7 @@ import TraceViewToggle from './components/TraceViewToggle';
 import TraceTailToggle from './components/TraceTailToggle';
 import TraceSortDropdown from './components/TraceSortDropdown';
 import TraceFilterChips from './components/TraceFilterChips';
+import { fontFamilies } from '../../theme/typography';
 
 const TracesPageView = () => {
   const {
@@ -102,7 +103,7 @@ const TracesPageView = () => {
               sx={{
                 color: 'text.primary',
                 fontWeight: 700,
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 fontSize: 13,
               }}
             >
@@ -112,7 +113,7 @@ const TracesPageView = () => {
               component="span"
               sx={{
                 color: 'text.secondary',
-                fontFamily: "'Sora', sans-serif",
+                fontFamily: fontFamilies.display,
                 fontWeight: 600,
                 fontSize: 13,
               }}
