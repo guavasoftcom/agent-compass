@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
+import { alpha, Box, Typography, useTheme } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import type { LogRow, SpanRow } from '../../../../api';
 import { formatDuration } from '../../../TracesPage/tracesApi';
@@ -10,7 +10,7 @@ import LogEntry from './LogEntry';
 import TokensSection from './TokensSection';
 import SpanAttributesColumn from './SpanAttributesColumn';
 import SpanEventsList from './SpanEventsList';
-import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 interface Props {
   span: SpanRow;
@@ -59,7 +59,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
         mt: 2,
         border: 1,
         borderColor: 'divider',
-        borderRadius: 2.25,
+        borderRadius: radii.xl,
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
@@ -82,7 +82,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
             content: '""',
             width: 40,
             height: 3,
-            borderRadius: 1,
+            borderRadius: radii.sm,
             bgcolor: 'divider',
           },
           '&:hover::before': { bgcolor: 'primary.main' },
@@ -100,7 +100,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
         }}
       >
         <Typography
-          sx={{ fontFamily: fontFamilies.mono, fontSize: 14, fontWeight: 600 }}
+          sx={{ typography: 'mono', fontSize: 14, fontWeight: 600 }}
         >
           {span.name}
         </Typography>
@@ -113,7 +113,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
             width: 28,
             height: 28,
             border: 'none',
-            borderRadius: 1,
+            borderRadius: radii.sm,
             bgcolor: 'transparent',
             cursor: 'pointer',
             color: 'text.secondary',
@@ -159,11 +159,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
                 <Box
                   component="span"
                   sx={{
-                    fontFamily: fontFamilies.display,
-                    fontSize: 9.5,
-                    fontWeight: 700,
-                    letterSpacing: '0.6px',
-                    textTransform: 'uppercase',
+                    typography: 'eyebrowSm',
                     color: 'text.disabled',
                     alignSelf: 'center',
                   }}
@@ -173,7 +169,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
                 <Box
                   component="span"
                   sx={{
-                    fontFamily: fontFamilies.mono,
+                    typography: 'mono',
                     fontSize: 12,
                     color: 'text.primary',
                   }}
@@ -193,7 +189,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
                 py: 1,
                 border: 1,
                 borderColor: 'divider',
-                borderRadius: 1.25,
+                borderRadius: radii.sm,
                 fontSize: 12.5,
               }}
             >
@@ -202,7 +198,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
                 sx={{
                   flex: 1,
                   height: 6,
-                  borderRadius: 1,
+                  borderRadius: radii.sm,
                   bgcolor: 'action.hover',
                   overflow: 'hidden',
                 }}
@@ -211,7 +207,7 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
                   sx={{
                     width: `${selfPct}%`,
                     height: '100%',
-                    borderRadius: 1,
+                    borderRadius: radii.sm,
                     background: `linear-gradient(90deg, ${theme.palette.warning.main}, ${theme.palette.warning.light})`,
                   }}
                 />
@@ -225,11 +221,10 @@ const SpanDetailDock = ({ span, selfNanos, tokens, logs, onClose }: Props) => {
                 px: 1.4,
                 py: 1,
                 border: 1,
-                borderRadius: 1.25,
+                borderRadius: radii.sm,
                 fontSize: 12.5,
                 color: 'error.main',
-                borderColor: (t) =>
-                  `color-mix(in srgb, ${t.palette.error.main} 36%, transparent)`,
+                borderColor: (t) => alpha(t.palette.error.main, 0.36),
               }}
             >
               {span.statusMessage}

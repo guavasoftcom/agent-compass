@@ -135,11 +135,7 @@ const TraceDetailHeaderView = ({
         <Box>
           <Typography
             sx={{
-              fontFamily: fontFamilies.display,
-              fontWeight: 700,
-              fontSize: 12,
-              letterSpacing: '1.6px',
-              textTransform: 'uppercase',
+              typography: 'eyebrow',
               color: 'primary.main',
               mb: 0.75,
             }}

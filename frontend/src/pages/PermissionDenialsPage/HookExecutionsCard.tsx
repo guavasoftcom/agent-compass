@@ -1,4 +1,5 @@
 import {
+  alpha,
   Box,
   Paper,
   Table,
@@ -62,11 +63,11 @@ const HookExecutionsCard = ({ hookRows, isHooksLoading }: HookExecutionsCardProp
                   <TableCell sx={{ fontWeight: 600 }}>{row.hookEvent}</TableCell>
                   <TableCell
                     sx={{
+                      typography: 'mono',
                       maxWidth: 300,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
-                      fontFamily: fontFamilies.mono,
                       color: 'text.secondary',
                     }}
                   >
@@ -90,7 +91,7 @@ const HookExecutionsCard = ({ hookRows, isHooksLoading }: HookExecutionsCardProp
                           fontSize: 13,
                           fontVariantNumeric: 'tabular-nums',
                           color: 'error.main',
-                          bgcolor: `color-mix(in srgb, ${theme.palette.error.main} 16%, transparent)`,
+                          bgcolor: alpha(theme.palette.error.main, 0.16),
                         }}
                       >
                         {blocking.toLocaleString()}

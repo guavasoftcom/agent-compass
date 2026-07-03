@@ -18,43 +18,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // attaches each log to its emitting span by span_id.
   List<LogRecordEntity> findByTraceIdOrderByTimestampAsc(String traceId);
 
-  // Returns every log_records row whose attributes jsonb contains every entry in
-  // :filters
-  // (an AND set of "key=value" strings), optionally narrowed to a
-  // [startTimestamp, endTimestamp]
-  // window, sorted newest first. Empty filters array + null window bounds = all
-  // rows. The
-  // ":xxx IS NULL OR col {<=,>=} :xxx" pattern lets the same query power "all
-  // logs", "logs
-  // since X", "logs within [X,Y]", etc. without separate methods.
-  //
-  // Time-window correlation is used here (rather than trace_id/span_id) because
-  // this
-  // dataset's instrumentation does not propagate OTLP trace context onto log
-  // records: the
-  // trace_id and span_id columns are NULL for every row. Filtering by the
-  // timestamp window
-  // of a trace or span is the most precise cross-signal linkage available.
-  @Query(value = """
-      SELECT *
-      FROM log_records
-      WHERE (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
-        AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
-        AND NOT EXISTS (
-          SELECT 1
-          FROM unnest(CAST(:filters AS text[])) AS required_filter
-          WHERE required_filter NOT IN (
-            SELECT row_entry.key || '=' || row_entry.value
-            FROM jsonb_each_text(attributes) AS row_entry
-          )
-        )
-      ORDER BY timestamp DESC
-      """, nativeQuery = true)
-  List<LogRecordEntity> findAllMatchingFilters(
-      @Param("filters") String[] filters,
-      @Param("startTimestamp") Instant startTimestamp,
-      @Param("endTimestamp") Instant endTimestamp);
-
   // Returns every distinct "key=value" pair across log_records.attributes,
   // narrowed to rows
   // that contain every entry in :filters and (optionally) fall within a
@@ -205,24 +168,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                     AS avg_out
       FROM log_records
       WHERE attributes ->> 'event.name' = :eventName
-        AND timestamp >= :since
-      GROUP BY tool
-      ORDER BY calls DESC
-      """, nativeQuery = true)
-  List<Object[]> aggregateToolPerformance(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since);
-
-  @Query(value = """
-      SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COUNT(*)                                           AS calls,
-        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                AS avg_ms,
-        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
-        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                     AS avg_out
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY tool
@@ -245,28 +190,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // single failing call gives the reader enough context (the specific command or
   // file path
   // and the raw error string) without bloating the report with every variant.
-  @Query(value = """
-      SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
-        MIN(COALESCE(
-              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-              ''))                                          AS example_scope,
-        MIN(COALESCE(attributes ->> 'error', ''))           AS example_message,
-        COUNT(*)                                            AS failures
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> 'success' = 'false'
-        AND timestamp >= :since
-      GROUP BY tool, error_type
-      ORDER BY failures DESC
-      """, nativeQuery = true)
-  List<Object[]> aggregateToolFailures(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since);
-
   @Query(value = """
       SELECT
         COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
@@ -564,35 +487,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       ORDER BY calls DESC
       LIMIT :hotspotLimit
       """, nativeQuery = true)
-  List<Object[]> aggregateBashCommandHotspots(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since,
-      @Param("hotspotLimit") int hotspotLimit);
-
-  @Query(value = """
-      SELECT
-        COALESCE(
-          NULLIF(
-            split_part(
-              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-              ' ',
-              1),
-            ''),
-          'unknown')                                                                       AS command_prefix,
-        COUNT(*)                                                                            AS calls,
-        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                 AS avg_ms,
-        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
-        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                      AS avg_out
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> :toolAttribute = 'Bash'
-        AND timestamp >= :start
-        AND timestamp <= :end
-      GROUP BY command_prefix
-      ORDER BY calls DESC
-      LIMIT :hotspotLimit
-      """, nativeQuery = true)
   List<Object[]> aggregateBashCommandHotspotsInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
@@ -605,26 +499,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // tool_input JSON string; fall through to '' so callers can still see the byte
   // count even
   // when tool_input wasn't captured.
-  @Query(value = """
-      SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
-        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                 '')                                            AS scope,
-        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
-        AND timestamp >= :since
-      ORDER BY bytes DESC
-      LIMIT :resultLimit
-      """, nativeQuery = true)
-  List<Object[]> aggregateOversizedToolResults(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since,
-      @Param("resultLimit") int resultLimit);
-
   @Query(value = """
       SELECT
         COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
@@ -656,41 +530,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // between consecutive reads, computed via LAG) let the report distinguish
   // hunting loops
   // (many reads, small max-gap) from incidental spread-across-the-day re-reads.
-  @Query(value = """
-      WITH read_events AS (
-        SELECT
-          COALESCE(attributes ->> 'session.id', 'unknown')                AS session_id,
-          (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
-          timestamp                                                        AS read_timestamp,
-          LAG(timestamp) OVER (
-            PARTITION BY COALESCE(attributes ->> 'session.id', 'unknown'),
-                         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'
-            ORDER BY timestamp
-          )                                                                AS prev_timestamp
-        FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
-          AND attributes ->> :toolAttribute = 'Read'
-          AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
-          AND timestamp >= :since
-      )
-      SELECT
-        session_id,
-        file_path,
-        COUNT(*)                                                                                AS reads,
-        ROUND(EXTRACT(EPOCH FROM (MAX(read_timestamp) - MIN(read_timestamp))) / 60.0)            AS span_minutes,
-        ROUND(EXTRACT(EPOCH FROM COALESCE(MAX(read_timestamp - prev_timestamp), INTERVAL '0')) / 60.0) AS max_gap_minutes
-      FROM read_events
-      GROUP BY session_id, file_path
-      HAVING COUNT(*) > 1
-      ORDER BY reads DESC
-      LIMIT :readLimit
-      """, nativeQuery = true)
-  List<Object[]> aggregateRedundantFileReads(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since,
-      @Param("readLimit") int readLimit);
-
   @Query(value = """
       WITH read_events AS (
         SELECT
@@ -741,28 +580,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> :toolAttribute = 'Edit'
         AND attributes ->> 'success' = 'false'
         AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
-        AND timestamp >= :since
-      GROUP BY session_id, file_path
-      HAVING COUNT(*) >= 2
-      ORDER BY failures DESC
-      LIMIT :loopLimit
-      """, nativeQuery = true)
-  List<Object[]> aggregateEditFailureLoops(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since,
-      @Param("loopLimit") int loopLimit);
-
-  @Query(value = """
-      SELECT
-        COALESCE(attributes ->> 'session.id', 'unknown')                          AS session_id,
-        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'           AS file_path,
-        COUNT(*)                                                                   AS failures
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> :toolAttribute = 'Edit'
-        AND attributes ->> 'success' = 'false'
-        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY session_id, file_path
@@ -802,33 +619,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
         AND (attributes ->> 'duration_ms')::numeric >= :minDurationMs
         AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
-        AND timestamp >= :since
-      ORDER BY ((attributes ->> 'duration_ms')::numeric
-                * (attributes ->> 'tool_result_size_bytes')::numeric) DESC
-      LIMIT :resultLimit
-      """, nativeQuery = true)
-  List<Object[]> aggregateSlowAndLargeCalls(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since,
-      @Param("minDurationMs") long minDurationMs,
-      @Param("minBytes") long minBytes,
-      @Param("resultLimit") int resultLimit);
-
-  @Query(value = """
-      SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                 '')                                       AS scope,
-        ((attributes ->> 'duration_ms')::numeric)::bigint            AS duration_ms,
-        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> 'duration_ms' IS NOT NULL
-        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
-        AND (attributes ->> 'duration_ms')::numeric >= :minDurationMs
-        AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
         AND timestamp >= :start
         AND timestamp <= :end
       ORDER BY ((attributes ->> 'duration_ms')::numeric
@@ -851,20 +641,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // the report state the denominator instead of silently lumping uninstrumented
   // calls into
   // 'unknown'.
-  @Query(value = """
-      SELECT
-        COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' IS NOT NULL) AS with_command,
-        COUNT(*)                                                                                          AS total
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> :toolAttribute = 'Bash'
-        AND timestamp >= :since
-      """, nativeQuery = true)
-  List<Object[]> bashCommandCoverage(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("since") Instant since);
-
   @Query(value = """
       SELECT
         COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' IS NOT NULL) AS with_command,

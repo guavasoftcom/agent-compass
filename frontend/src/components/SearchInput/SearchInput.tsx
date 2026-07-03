@@ -1,6 +1,7 @@
 import { Box, InputBase, alpha } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
+import { radii } from '../../theme/theme';
 
 export interface SearchInputProps {
   value: string;
@@ -24,7 +25,7 @@ const SearchInput = ({ value, onChange, placeholder, sx }: SearchInputProps) => 
         sx={{
           width: '100%',
           height: 38,
-          borderRadius: 1.25,
+          borderRadius: radii.sm,
           border: 1,
           borderColor: 'divider',
           bgcolor: 'background.paper',

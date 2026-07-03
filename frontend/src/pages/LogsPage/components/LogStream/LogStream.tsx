@@ -6,6 +6,7 @@ import type { LogRow } from '../../../../api';
 import { eventNameOf, severityOf, toolNameOf } from '../../logsApi';
 import { severityColor } from '../severity';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 import { SeverityChip } from '../SeverityChip';
 import LogRowDetail from './LogRowDetail';
 
@@ -31,14 +32,14 @@ const Tag = ({ children, strong }: { children: ReactNode; strong?: boolean }) =>
   <Box
     component="span"
     sx={{
+      typography: 'mono',
       display: 'inline-flex',
       alignItems: 'center',
       height: 20,
       px: 1,
-      borderRadius: 0.75,
+      borderRadius: radii.xs,
       bgcolor: 'action.hover',
       color: strong ? 'text.primary' : 'text.secondary',
-      fontFamily: fontFamilies.mono,
       fontSize: 11,
       fontWeight: 600,
       whiteSpace: 'nowrap',
@@ -125,11 +126,11 @@ const LogStream = ({ rows, total, loading, hasMore, expanded, onToggleExpand, on
                 }}
               >
                 <Box sx={{ alignSelf: 'stretch', bgcolor: severityColor(theme, sev) }} />
-                <Box component="span" sx={{ fontFamily: fontFamilies.mono, fontSize: 12, color: 'text.secondary', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }} title={new Date(row.timestamp).toLocaleString()}>
+                <Box component="span" sx={{ typography: 'mono', fontSize: 12, color: 'text.secondary', whiteSpace: 'nowrap' }} title={new Date(row.timestamp).toLocaleString()}>
                   {relTime(row.timestamp)}
                 </Box>
                 <SeverityChip severity={sev} />
-                <Box sx={{ fontFamily: fontFamilies.mono, fontSize: 12.5, color: 'text.primary', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                <Box sx={{ typography: 'mono', fontSize: 12.5, color: 'text.primary', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
                   <Box component="span" sx={{ color: 'text.disabled', mr: 1.1 }}>
                     {row.scopeName}
                   </Box>
@@ -216,7 +217,7 @@ const Skeleton = ({ width }: { width: number }) => (
       height: 11,
       width,
       maxWidth: '70%',
-      borderRadius: 0.75,
+      borderRadius: radii.xs,
       background: (t) =>
         `linear-gradient(90deg, ${t.palette.action.hover} 0%, ${alpha(t.palette.primary.main, 0.12)} 50%, ${t.palette.action.hover} 100%)`,
       backgroundSize: '200% 100%',

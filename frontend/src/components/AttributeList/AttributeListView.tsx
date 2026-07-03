@@ -3,7 +3,7 @@ import { Box } from '@mui/material';
 import type { ValueDialogState } from './types';
 import { AttributeValue } from './AttributeValue';
 import { ExpandedValueDialog } from './ExpandedValueDialog';
-import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface AttributeListViewProps {
   attributes: Record<string, unknown>;
@@ -31,10 +31,10 @@ export const AttributeListView = ({
   return (
     <Box
       sx={{
+        typography: 'mono',
         m: 0,
         p: 1,
-        borderRadius: 1,
-        fontFamily: fontFamilies.mono,
+        borderRadius: radii.sm,
         fontSize,
         bgcolor: disableBackground ? 'transparent' : 'action.hover',
         width: '100%',

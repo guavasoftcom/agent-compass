@@ -1,4 +1,4 @@
-import StreamTableToggle, { type StreamTableView } from '../../../../components/StreamTableToggle/StreamTableToggle';
+import StreamTableToggle, { type StreamTableView } from '../../../../components/StreamTableToggle';
 
 export type TraceView = StreamTableView;
 

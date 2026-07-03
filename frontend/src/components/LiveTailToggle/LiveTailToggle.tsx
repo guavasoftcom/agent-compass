@@ -1,6 +1,7 @@
 import { alpha, Box } from '@mui/material';
 import { auroraColors, gradients } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface LiveTailToggleProps {
   active: boolean;
@@ -25,7 +26,7 @@ const LiveTailToggle = ({ active, locked, tooltip, onToggle }: LiveTailTogglePro
         gap: 1,
         height: 40,
         px: 1.75,
-        borderRadius: 1.5,
+        borderRadius: radii.lg,
         cursor: locked ? 'not-allowed' : 'pointer',
         opacity: locked ? 0.4 : 1,
         fontFamily: fontFamilies.display,

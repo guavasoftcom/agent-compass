@@ -7,6 +7,7 @@ import { WINDOWS } from '../../lib/constants';
 import type { WindowSelection } from '../../api';
 import type { SectionTab, SectionContextValue } from './SectionLayout';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface SectionLayoutViewProps {
   eyebrow?: string;
@@ -67,7 +68,7 @@ export const SectionLayoutView = ({
               sx={(theme) => ({
                 px: 2,
                 py: 1,
-                borderRadius: 999,
+                borderRadius: radii.pill,
                 fontFamily: fontFamilies.display,
                 fontSize: 14,
                 fontWeight: 600,

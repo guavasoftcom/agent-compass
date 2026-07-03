@@ -1,11 +1,9 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { WINDOWS } from '../../lib/constants';
+import { AUTO_REFRESH_INTERVAL_MS, MS_PER_MINUTE, WINDOWS } from '../../lib/constants';
 import { useWindowContext } from '../../lib/windowContext';
 import MetricsPageView from './MetricsPageView';
 import { fetchMetrics, type MetricsQueryParams } from './metricsApi';
-
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 /**
  * Metrics page container — sources the shared window selection and fetches the
@@ -24,7 +22,7 @@ export default function MetricsPage() {
     const from =
       selection.kind === 'custom'
         ? selection.startTimestamp
-        : new Date(nowMs - selection.minutes * 60_000).toISOString();
+        : new Date(nowMs - selection.minutes * MS_PER_MINUTE).toISOString();
     const to = selection.kind === 'custom' ? selection.endTimestamp : now;
     return { from, to };
   }, [selection]);

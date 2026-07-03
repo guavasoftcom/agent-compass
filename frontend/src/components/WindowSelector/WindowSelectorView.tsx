@@ -18,6 +18,7 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import type { WindowOption } from '../../lib/constants';
 import AuroraCalendar from './AuroraCalendar';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface WindowSelectorViewProps {
   windows: readonly WindowOption[];
@@ -97,7 +98,7 @@ const WindowSelectorView = ({
             sx: (theme) => ({
               mt: 1,
               width: 332,
-              borderRadius: 2.25,
+              borderRadius: radii.xl,
               border: `1px solid ${theme.palette.divider}`,
               backgroundImage: 'none',
               backgroundColor: theme.palette.background.paper,
@@ -122,7 +123,7 @@ const WindowSelectorView = ({
                       selected={selected}
                       onClick={() => onPresetSelect(window.value)}
                       sx={(theme) => ({
-                        borderRadius: 1.25,
+                        borderRadius: radii.sm,
                         py: 1.1,
                         px: 1.5,
                         fontSize: 14,
@@ -162,7 +163,7 @@ const WindowSelectorView = ({
                   m: 1,
                   px: 1.5,
                   py: 1.25,
-                  borderRadius: 1.25,
+                  borderRadius: radii.sm,
                   cursor: 'pointer',
                   border: `1px solid ${theme.palette.divider}`,
                   transition: theme.transitions.create(['background-color', 'border-color']),
@@ -210,11 +211,7 @@ const WindowSelectorView = ({
                   pb: 1.25,
                   cursor: 'pointer',
                   color: 'text.secondary',
-                  fontFamily: fontFamilies.display,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: 1.2,
-                  textTransform: 'uppercase',
+                  typography: 'eyebrowSm',
                   transition: (theme) => theme.transitions.create('color'),
                   '&:hover': { color: 'primary.main' },
                 }}
@@ -253,7 +250,7 @@ const WindowSelectorView = ({
                   sx={{
                     mt: 1.75,
                     height: 40,
-                    borderRadius: 1.5,
+                    borderRadius: radii.lg,
                     fontFamily: fontFamilies.display,
                     fontWeight: 600,
                     background: gradients.auroraAction,

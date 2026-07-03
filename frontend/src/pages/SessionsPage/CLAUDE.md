@@ -117,9 +117,9 @@ Fetchers live in the shared `api/endpoints.ts` (not a page-local module) and use
   total (MAX per stream then SUM across streams), not a plain SUM. The view formats it with
   `formatTokens` from `components/sessionsFormat.ts` (M/K compact) rather than the global
   formatter used on other pages.
-- **Table box height** is `calc(100vh - 320px)` with `minHeight: 420`. If you add or remove
-  chrome above the table card, retune the `320px` constant or the table will over/under-fill the
-  viewport.
+- **Table box height** is `calc(100vh - BODY_CHROME_PX px)` (`BODY_CHROME_PX` = 320, top of
+  `SessionsPageView.tsx`) with `minHeight: 420`. If you add or remove chrome above the table card,
+  retune that constant or the table will over/under-fill the viewport.
 - **`DenialChip` threshold**: 0 → dimmed text, 1–3 → amber, 4+ → red. Colors come from
   `theme.palette.warning.main` / `theme.palette.error.main` — never hard-coded hex.
 - **`startType` field** is present on `SessionSummaryRow` but not rendered in the table. Resume

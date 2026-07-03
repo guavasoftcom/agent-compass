@@ -1,6 +1,6 @@
 import { Box, Typography } from '@mui/material';
 import AreaTrendChart, { AreaTrendLegend, useSeriesVisibility } from '../../../../components/AreaTrendChart';
-import ChartCard from '../../../../components/ChartCard/ChartCard';
+import ChartCard from '../../../../components/ChartCard';
 
 export interface LineSeries {
   label: string;

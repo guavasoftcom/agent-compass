@@ -1,4 +1,4 @@
-import LiveTailToggle, { type LiveTailToggleProps } from '../../../../components/LiveTailToggle/LiveTailToggle';
+import LiveTailToggle, { type LiveTailToggleProps } from '../../../../components/LiveTailToggle';
 
 export interface TraceTailToggleProps {
   active: boolean;

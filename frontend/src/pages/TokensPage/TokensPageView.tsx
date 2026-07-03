@@ -11,6 +11,7 @@ import type { TokenUsageSummary, WindowSelection } from '../../api';
 import TokenSummaryCards from './components/TokenSummaryCards';
 import TokenByModelCard from './components/TokenByModelCard';
 import TokenCompositionCard from './components/TokenCompositionCard';
+import { formatCompact } from '../../lib/format';
 
 export interface TokensPageViewProps {
   selection: WindowSelection;
@@ -24,13 +25,6 @@ export interface TokensPageViewProps {
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
 }
-
-const COMPACT_NUMBER = new Intl.NumberFormat('en-US', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
-
-const formatCompact = (value: number): string => COMPACT_NUMBER.format(value);
 
 // Short, human display name for a model id, e.g. "claude-sonnet-4" → "Sonnet 4".
 const shortModelName = (model: string): string => {

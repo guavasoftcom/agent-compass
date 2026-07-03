@@ -2,7 +2,6 @@ import { Box, Typography, useTheme } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
 import { auroraColors } from '../../../../theme/colors';
 import type { MetricSeries } from '../metricsSampleData';
-import { fontFamilies } from '../../../../theme/typography';
 import StatCard from '../../../../components/StatCard/StatCard';
 import LineSparkline from '../../../../components/LineSparkline';
 
@@ -34,11 +33,7 @@ const MetricKpiStrip = ({ metrics, selectedId, onSelect }: MetricKpiStripProps) 
     <Box>
       <Typography
         sx={{
-          fontFamily: fontFamilies.display,
-          fontSize: 10.5,
-          fontWeight: 700,
-          letterSpacing: 1.1,
-          textTransform: 'uppercase',
+          typography: 'eyebrowSm',
           color: 'text.disabled',
           mb: 1.25,
         }}

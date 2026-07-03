@@ -36,6 +36,17 @@ export const colorForIndex = (index: number): string => {
   return CHART_PALETTE[index % CHART_PALETTE.length];
 };
 
+// Corner-radius scale in MUI shape units (×12px base, see `shape.borderRadius` below).
+// Every `sx` borderRadius snaps to one of these so cards, controls, chips, and bars
+// share a consistent rounding rhythm. `lg` (18px) matches the MuiPaper.outlined card.
+export const radii = {
+  xs: 0.75, // 9px  — chips, small bars, dense tiles
+  sm: 1.25, // 15px — inputs, cells, medium surfaces
+  lg: 1.5, //  18px — cards / Paper surfaces
+  xl: 2.25, // 27px — large panels / docks
+  pill: 999, // fully rounded — progress bars, pills
+} as const;
+
 interface ThemeTokens {
   primary: string;
   primarySoft: string;
@@ -141,6 +152,29 @@ export const createAppTheme = (mode: ColorMode = 'light'): Theme => {
       h6: { fontFamily: fontFamilies.display, fontWeight: 700, fontSize: 16.5 },
       subtitle1: { fontFamily: fontFamilies.display, fontWeight: 600 },
       button: { textTransform: 'none', fontWeight: 600 },
+      // Monospace + tabular figures for numeric/ID/timestamp text. Applied via
+      // `sx={{ typography: 'mono' }}` so it composes with any element's own sizing.
+      mono: {
+        fontFamily: fontFamilies.mono,
+        fontVariantNumeric: 'tabular-nums',
+      },
+      // Uppercase display-font section labels ("eyebrows"). Two sizes: `eyebrow`
+      // for card/section headers, `eyebrowSm` for dense contexts (table headers,
+      // inline labels). Use via `sx={{ typography: 'eyebrow' }}`.
+      eyebrow: {
+        fontFamily: fontFamilies.display,
+        fontWeight: 700,
+        fontSize: 12,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+      },
+      eyebrowSm: {
+        fontFamily: fontFamilies.display,
+        fontWeight: 700,
+        fontSize: 10.5,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+      },
     },
     components: {
       MuiCssBaseline: {

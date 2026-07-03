@@ -1,6 +1,5 @@
 import { Alert, Box, Stack, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
-import { fontFamilies } from '../../theme/typography';
 
 export interface PageLayoutProps {
   /**
@@ -66,11 +65,7 @@ export default function PageLayout({
                   component="div"
                   sx={{
                     color: 'primary.main',
-                    fontFamily: fontFamilies.display,
-                    fontWeight: 700,
-                    fontSize: 12,
-                    letterSpacing: 1.6,
-                    textTransform: 'uppercase',
+                    typography: 'eyebrow',
                     mb: 0.75,
                   }}
                 >

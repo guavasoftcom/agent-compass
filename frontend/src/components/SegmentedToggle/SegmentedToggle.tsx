@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Box, type SxProps, type Theme } from '@mui/material';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface SegmentedToggleOption<T> {
   value: T;
@@ -19,7 +20,7 @@ export interface SegmentedToggleProps<T> {
 // active one lifted onto a paper background. Shared by the per-page "rows per
 // page" / "split by" toggles so they all read identically.
 const SegmentedToggle = <T,>({ options, value, onChange, sx }: SegmentedToggleProps<T>) => (
-  <Box sx={[{ display: 'inline-flex', bgcolor: 'action.hover', borderRadius: 1.25, p: '3px', gap: '2px' }, ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>
+  <Box sx={[{ display: 'inline-flex', bgcolor: 'action.hover', borderRadius: radii.sm, p: '3px', gap: '2px' }, ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>
     {options.map((option) => {
       const isActive = option.value === value;
       return (
@@ -36,7 +37,7 @@ const SegmentedToggle = <T,>({ options, value, onChange, sx }: SegmentedTogglePr
             fontWeight: 600,
             px: 1.4,
             py: 0.5,
-            borderRadius: 1,
+            borderRadius: radii.sm,
             color: isActive ? 'primary.main' : 'text.secondary',
             bgcolor: isActive ? 'background.paper' : 'transparent',
             boxShadow: isActive ? 1 : 'none',

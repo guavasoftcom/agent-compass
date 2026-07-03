@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
+import { alpha, Box, Typography, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
@@ -17,6 +17,7 @@ import {
 } from '../../tracesApi';
 import TraceSummaryInline from '../TraceSummaryInline';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 const GRID_TEMPLATE_COLUMNS =
   '4px 112px minmax(170px,1.35fr) 188px 78px 56px 74px 150px 24px';
@@ -34,11 +35,7 @@ const HeaderCell = ({
   <Typography
     component="span"
     sx={{
-      fontFamily: fontFamilies.display,
-      fontSize: 10,
-      fontWeight: 700,
-      letterSpacing: '0.7px',
-      textTransform: 'uppercase',
+      typography: 'eyebrowSm',
       color: 'text.secondary',
       py: 1.25,
       textAlign: align,
@@ -211,10 +208,9 @@ const TraceStreamView = ({
                 />
                 <Box
                   sx={{
-                    fontFamily: fontFamilies.mono,
+                    typography: 'mono',
                     fontSize: 12,
                     color: 'text.secondary',
-                    fontVariantNumeric: 'tabular-nums',
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -231,7 +227,7 @@ const TraceStreamView = ({
                   <Box
                     component="span"
                     sx={{
-                      fontFamily: fontFamilies.mono,
+                      typography: 'mono',
                       fontSize: 13,
                       color: 'text.primary',
                       fontWeight: 500,
@@ -245,14 +241,14 @@ const TraceStreamView = ({
                   <Box
                     component="span"
                     sx={{
+                      typography: 'mono',
                       display: 'inline-flex',
                       alignItems: 'center',
                       height: 18,
                       px: 0.9,
-                      borderRadius: 0.75,
+                      borderRadius: radii.xs,
                       bgcolor: 'action.hover',
                       color: 'text.secondary',
-                      fontFamily: fontFamilies.mono,
                       fontSize: 10.5,
                       fontWeight: 500,
                       whiteSpace: 'nowrap',
@@ -272,10 +268,9 @@ const TraceStreamView = ({
                         gap: 0.5,
                         height: 19,
                         px: 1,
-                        borderRadius: 0.9,
+                        borderRadius: radii.xs,
                         color: 'error.main',
-                        bgcolor: (th) =>
-                          `color-mix(in srgb, ${th.palette.error.main} 14%, transparent)`,
+                        bgcolor: (th) => alpha(th.palette.error.main, 0.14),
                         fontFamily: fontFamilies.display,
                         fontSize: 10,
                         fontWeight: 700,
@@ -295,9 +290,8 @@ const TraceStreamView = ({
                       position: 'relative',
                       width: '100%',
                       height: 16,
-                      borderRadius: 0.9,
-                      bgcolor: (th) =>
-                        `color-mix(in srgb, ${th.palette.primary.main} 11%, transparent)`,
+                      borderRadius: radii.xs,
+                      bgcolor: (th) => alpha(th.palette.primary.main, 0.11),
                       overflow: 'hidden',
                     }}
                   >
@@ -307,7 +301,7 @@ const TraceStreamView = ({
                         left: 0,
                         top: 0,
                         bottom: 0,
-                        borderRadius: 0.9,
+                        borderRadius: radii.xs,
                         width: `${fillPercent}%`,
                         minWidth: 3,
                         opacity: 0.85,
@@ -332,9 +326,8 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
-                    fontFamily: fontFamilies.mono,
+                    typography: 'mono',
                     fontSize: 12.5,
-                    fontVariantNumeric: 'tabular-nums',
                     textAlign: 'right',
                     fontWeight: 500,
                     color: isSlow ? 'warning.main' : 'text.primary',
@@ -344,14 +337,13 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
+                    typography: 'mono',
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'flex-end',
                     gap: 0.6,
-                    fontFamily: fontFamilies.mono,
                     fontSize: 12,
                     color: 'text.secondary',
-                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
                   <AccountTreeIcon
@@ -361,10 +353,9 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
-                    fontFamily: fontFamilies.mono,
+                    typography: 'mono',
                     fontSize: 12,
                     textAlign: 'right',
-                    fontVariantNumeric: 'tabular-nums',
                     color:
                       tokensOf(trace) > 0 ? 'text.secondary' : 'text.disabled',
                   }}
@@ -373,7 +364,7 @@ const TraceStreamView = ({
                 </Box>
                 <Box
                   sx={{
-                    fontFamily: fontFamilies.mono,
+                    typography: 'mono',
                     fontSize: 11.5,
                     color: 'text.disabled',
                     whiteSpace: 'nowrap',

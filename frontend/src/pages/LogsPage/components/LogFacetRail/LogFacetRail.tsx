@@ -1,5 +1,5 @@
 import { useTheme } from '@mui/material';
-import FacetRail, { type FacetRailSection } from '../../../../components/FacetRail/FacetRail';
+import FacetRail, { type FacetRailSection } from '../../../../components/FacetRail';
 import { SEVERITIES, type FacetKey, type LogFacets, type Severity } from '../../logsApi';
 import { severityColor } from '../severity';
 

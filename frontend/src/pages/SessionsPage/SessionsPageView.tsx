@@ -41,6 +41,10 @@ export interface SessionsPageViewProps {
   isPolling: boolean;
 }
 
+// Viewport height reserved for the page chrome above the table (header + KPI strip),
+// subtracted from 100vh to size the scrollable table body.
+const BODY_CHROME_PX = 320;
+
 const SessionsPageView = ({
   selection,
   onSelectionChange,
@@ -93,7 +97,7 @@ const SessionsPageView = ({
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          height: 'calc(100vh - 320px)',
+          height: `calc(100vh - ${BODY_CHROME_PX}px)`,
           minHeight: 420,
         }}
       >

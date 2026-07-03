@@ -1,6 +1,7 @@
 import { Box, useTheme } from '@mui/material';
 import { SEVERITIES, type Severity } from '../../logsApi';
 import { severityColor } from '../severity';
+import { radii } from '../../../../theme/theme';
 
 interface SeverityLegendProps {
   facetSeverity: { value: string; count: number }[];
@@ -46,7 +47,7 @@ const SeverityLegend = ({
               sx={{
                 width: 10,
                 height: 10,
-                borderRadius: 0.75,
+                borderRadius: radii.xs,
                 bgcolor: severityColor(theme, severity),
               }}
             />

@@ -13,6 +13,7 @@ import { serviceColor } from '../traceColors';
 import TraceSummaryInline from '../TraceSummaryInline';
 import TablePager from '../../../../components/TablePager';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 const TableHeaderCell = ({
   children,
@@ -24,14 +25,10 @@ const TableHeaderCell = ({
   <Box
     component="th"
     sx={{
+      typography: 'eyebrowSm',
       position: 'sticky',
       top: 0,
       zIndex: 2,
-      fontFamily: fontFamilies.display,
-      fontSize: 11,
-      fontWeight: 700,
-      letterSpacing: '0.6px',
-      textTransform: 'uppercase',
       color: 'text.secondary',
       textAlign: align ?? 'left',
       px: 1.75,
@@ -133,10 +130,10 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
                         color: 'text.secondary',
                         whiteSpace: 'nowrap',
-                        fontFamily: fontFamilies.mono,
                         fontSize: 12.5,
                       }}
                     >
@@ -157,8 +154,8 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
-                        fontFamily: fontFamilies.mono,
                         fontSize: 12.5,
                         color: 'text.primary',
                       }}
@@ -168,8 +165,8 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
-                        fontFamily: fontFamilies.mono,
                         fontSize: 12.5,
                       }}
                     >
@@ -185,7 +182,7 @@ const TraceTableView = ({
                           sx={{
                             width: 8,
                             height: 8,
-                            borderRadius: 0.5,
+                            borderRadius: radii.xs,
                             bgcolor: serviceColor(serviceName),
                           }}
                         />
@@ -195,10 +192,9 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
                         textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums',
-                        fontFamily: fontFamilies.mono,
                       }}
                     >
                       {formatDuration(trace.durationNanos)}
@@ -206,10 +202,9 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
                         textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums',
-                        fontFamily: fontFamilies.mono,
                       }}
                     >
                       {trace.spanCount}
@@ -217,10 +212,9 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
                         textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums',
-                        fontFamily: fontFamilies.mono,
                         color:
                           tokensOf(trace) > 0
                             ? 'text.secondary'
@@ -234,10 +228,9 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
                         textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums',
-                        fontFamily: fontFamilies.mono,
                         color: trace.errorCount
                           ? 'error.main'
                           : 'text.disabled',
@@ -249,8 +242,8 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
-                        fontFamily: fontFamilies.mono,
                         fontSize: 11.5,
                         color: 'text.disabled',
                       }}
@@ -260,8 +253,8 @@ const TraceTableView = ({
                     <Box
                       component="td"
                       sx={{
+                        typography: 'mono',
                         ...cellSx,
-                        fontFamily: fontFamilies.mono,
                         fontSize: 11.5,
                         color: 'text.disabled',
                       }}

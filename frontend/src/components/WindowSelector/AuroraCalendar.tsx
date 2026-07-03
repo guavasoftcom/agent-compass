@@ -4,6 +4,7 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { auroraColors, gradients, neutralColors } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 /**
  * Self-contained Aurora range calendar — no @mui/x-date-pickers dependency and no
@@ -156,7 +157,7 @@ const AuroraCalendar = ({
             aria-label="previous month"
             sx={(t) => ({
               border: `1px solid ${t.palette.divider}`,
-              borderRadius: 1.25,
+              borderRadius: radii.sm,
               '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
             })}
           >
@@ -168,7 +169,7 @@ const AuroraCalendar = ({
             aria-label="next month"
             sx={(t) => ({
               border: `1px solid ${t.palette.divider}`,
-              borderRadius: 1.25,
+              borderRadius: radii.sm,
               '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
             })}
           >
@@ -225,7 +226,7 @@ const AuroraCalendar = ({
                 placeItems: 'center',
                 fontSize: 13,
                 fontWeight: isEdge ? 700 : 500,
-                borderRadius: inRange && !isEdge ? 0 : 1.25,
+                borderRadius: inRange && !isEdge ? 0 : radii.sm,
                 cursor: 'pointer',
                 color: isEdge ? neutralColors.white : 'text.primary',
                 position: 'relative',
@@ -280,7 +281,7 @@ const AuroraCalendar = ({
               width: '100%',
               height: 38,
               px: 1.25,
-              borderRadius: 1.25,
+              borderRadius: radii.sm,
               border: `1px solid ${t.palette.divider}`,
               bgcolor:
                 t.palette.mode === 'dark'
@@ -312,7 +313,7 @@ const AuroraCalendar = ({
               width: '100%',
               height: 38,
               px: 1.25,
-              borderRadius: 1.25,
+              borderRadius: radii.sm,
               border: `1px solid ${t.palette.divider}`,
               bgcolor:
                 t.palette.mode === 'dark'

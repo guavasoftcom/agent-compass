@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Box, Stack, Tooltip, Typography } from '@mui/material';
 import { auroraColors } from '../../../../theme/colors';
-import ChartCard from '../../../../components/ChartCard/ChartCard';
+import ChartCard from '../../../../components/ChartCard';
 
 export interface LatencyBarSeries {
   label: string;

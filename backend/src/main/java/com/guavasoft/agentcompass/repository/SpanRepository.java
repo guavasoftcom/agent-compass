@@ -1,6 +1,5 @@
 package com.guavasoft.agentcompass.repository;
 
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -8,73 +7,11 @@ import org.springframework.data.repository.query.Param;
 import com.guavasoft.agentcompass.entity.SpanEntity;
 
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 
 public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
 
-    List<SpanEntity> findAllByOrderByStartTimestampDesc(Pageable pageable);
-
     List<SpanEntity> findByTraceIdOrderByStartTimestampAsc(String traceId);
-
-    @Query(value = "SELECT trace_id AS traceId, "
-            + "       COUNT(*) AS spanCount, "
-            + "       MIN(start_timestamp) AS minStart, "
-            + "       MAX(end_timestamp) AS maxEnd, "
-            + "       SUM(CASE WHEN status_code = 'error' THEN 1 ELSE 0 END) AS errorCount "
-            + "FROM spans "
-            + "GROUP BY trace_id "
-            + "ORDER BY (MAX(end_timestamp) - MIN(start_timestamp)) DESC", nativeQuery = true)
-    List<TraceSummaryProjection> findTraceSummaries(Pageable pageable);
-
-    // Overlap semantics: a trace is "in window" if any of its spans overlap the
-    // window,
-    // so long-running traces straddling the window edges still appear. The
-    // aggregated row
-    // reflects the trace's full bounds, not just the in-window slice.
-    @Query(value = "SELECT trace_id AS traceId, "
-            + "       COUNT(*) AS spanCount, "
-            + "       MIN(start_timestamp) AS minStart, "
-            + "       MAX(end_timestamp) AS maxEnd, "
-            + "       SUM(CASE WHEN status_code = 'error' THEN 1 ELSE 0 END) AS errorCount "
-            + "FROM spans "
-            + "WHERE trace_id IN ("
-            + "    SELECT peer.trace_id FROM spans peer "
-            + "    WHERE peer.end_timestamp >= :since"
-            + ") "
-            + "GROUP BY trace_id "
-            + "ORDER BY (MAX(end_timestamp) - MIN(start_timestamp)) DESC", nativeQuery = true)
-    List<TraceSummaryProjection> findTraceSummariesSince(@Param("since") Instant since, Pageable pageable);
-
-    @Query(value = "SELECT trace_id AS traceId, "
-            + "       COUNT(*) AS spanCount, "
-            + "       MIN(start_timestamp) AS minStart, "
-            + "       MAX(end_timestamp) AS maxEnd, "
-            + "       SUM(CASE WHEN status_code = 'error' THEN 1 ELSE 0 END) AS errorCount "
-            + "FROM spans "
-            + "WHERE trace_id IN ("
-            + "    SELECT peer.trace_id FROM spans peer "
-            + "    WHERE peer.start_timestamp <= :end AND peer.end_timestamp >= :start"
-            + ") "
-            + "GROUP BY trace_id "
-            + "ORDER BY (MAX(end_timestamp) - MIN(start_timestamp)) DESC", nativeQuery = true)
-    List<TraceSummaryProjection> findTraceSummariesInRange(
-            @Param("start") Instant start, @Param("end") Instant end, Pageable pageable);
-
-    @Query(value = "SELECT trace_id AS traceId, span_id AS spanId, name, attributes ->> 'session.id' AS sessionId "
-            + "FROM spans "
-            + "WHERE trace_id IN :traceIds AND parent_span_id IS NULL", nativeQuery = true)
-    List<TraceRootProjection> findRootSpansByTraceIds(@Param("traceIds") Collection<String> traceIds);
-
-    @Query("SELECT COUNT(DISTINCT s.traceId) FROM SpanEntity s")
-    long countDistinctTraces();
-
-    @Query("SELECT COUNT(DISTINCT s.traceId) FROM SpanEntity s WHERE s.endTimestamp >= :since")
-    long countDistinctTracesSince(@Param("since") Instant since);
-
-    @Query("SELECT COUNT(DISTINCT s.traceId) FROM SpanEntity s "
-            + "WHERE s.startTimestamp <= :end AND s.endTimestamp >= :start")
-    long countDistinctTracesInRange(@Param("start") Instant start, @Param("end") Instant end);
 
     // For each (session_id, reference_timestamp) pair in the exemplar list, find
     // the span whose start_timestamp is closest to the reference timestamp and

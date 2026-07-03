@@ -1,5 +1,5 @@
 import { Box, Paper, Stack, Typography } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import PageLayout from '../../components/PageLayout';
 import StatCard from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
@@ -117,7 +117,7 @@ const FailureRanking = ({
                       height: '100%',
                       borderRadius: '6px',
                       width: `${Math.min(100, Math.max(row.failureRate * 100, 1.5))}%`,
-                      background: `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, transparent), ${color})`,
+                      background: `linear-gradient(90deg, ${alpha(color, 0.55)}, ${color})`,
                     }}
                   />
                 </Box>

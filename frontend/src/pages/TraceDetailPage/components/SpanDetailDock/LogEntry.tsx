@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Box, Dialog, DialogContent, DialogTitle, IconButton, Tooltip, useTheme } from '@mui/material';
+import { Alert, alpha, Box, Dialog, DialogContent, DialogTitle, IconButton, Tooltip, useTheme } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import type { LogRow } from '../../../../api';
@@ -47,7 +47,7 @@ const AttrValue = ({ value, onViewFull }: { value: unknown; onViewFull: (text: s
           e.stopPropagation();
           onViewFull(text);
         }}
-        sx={{ ml: 0.25, px: 0.6, py: 0.05, border: 'none', borderRadius: '4px', bgcolor: (t) => `color-mix(in srgb, ${t.palette.primary.main} 14%, transparent)`, color: 'primary.main', fontFamily: fontFamilies.display, fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase', cursor: 'pointer', '&:hover': { bgcolor: (t) => `color-mix(in srgb, ${t.palette.primary.main} 22%, transparent)` } }}
+        sx={{ ml: 0.25, px: 0.6, py: 0.05, border: 'none', borderRadius: '4px', bgcolor: (t) => alpha(t.palette.primary.main, 0.14), color: 'primary.main', typography: 'eyebrowSm', cursor: 'pointer', '&:hover': { bgcolor: (t) => alpha(t.palette.primary.main, 0.22) } }}
       >
         view formatted ({text.length.toLocaleString()} chars)
       </Box>
@@ -92,24 +92,24 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
       sx={{ borderBottom: 1, borderColor: 'divider', cursor: hasDetail ? 'pointer' : 'default', '&:hover': hasDetail ? { bgcolor: 'action.hover' } : undefined }}
     >
       <Box sx={{ display: 'flex', gap: 1, py: 1, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <Box component="span" sx={{ fontFamily: fontFamilies.mono, fontSize: 10.5, color: 'text.disabled', whiteSpace: 'nowrap' }} title={new Date(logMs).toISOString()}>
+        <Box component="span" sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled', whiteSpace: 'nowrap' }} title={new Date(logMs).toISOString()}>
           T+{formatDuration(offsetNanos)} · {clock(logMs)}
         </Box>
         <Box component="span" sx={{ fontFamily: fontFamilies.display, fontSize: 9.5, fontWeight: 700, color: sevPalette, minWidth: 38 }}>{sev}</Box>
-        {eventName ? <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', height: 16, px: 0.75, borderRadius: '4px', bgcolor: (t) => `color-mix(in srgb, ${t.palette.primary.main} 14%, transparent)`, color: 'primary.main', fontFamily: fontFamilies.mono, fontSize: 10, fontWeight: 600 }}>{eventName}</Box> : null}
-        {tool ? <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', height: 16, px: 0.75, borderRadius: '4px', bgcolor: (t) => `color-mix(in srgb, ${t.palette.info.main} 14%, transparent)`, color: 'info.main', fontFamily: fontFamilies.mono, fontSize: 10, fontWeight: 600 }}>{tool}</Box> : null}
+        {eventName ? <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', height: 16, px: 0.75, borderRadius: '4px', bgcolor: (t) => alpha(t.palette.primary.main, 0.14), color: 'primary.main', typography: 'mono', fontSize: 10, fontWeight: 600 }}>{eventName}</Box> : null}
+        {tool ? <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', height: 16, px: 0.75, borderRadius: '4px', bgcolor: (t) => alpha(t.palette.info.main, 0.14), color: 'info.main', typography: 'mono', fontSize: 10, fontWeight: 600 }}>{tool}</Box> : null}
         {log.body ? <Box component="span" sx={{ fontSize: 12.5, color: 'text.primary', wordBreak: 'break-word' }}>{log.body}</Box> : null}
       </Box>
       {expanded ? (
         <Box sx={{ pb: 1, pl: 1, display: 'flex', flexDirection: 'column', gap: 0.4 }} onClick={(e) => e.stopPropagation()}>
           {log.scopeName ? (
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(140px,auto) 1fr', gap: 1.5, fontFamily: fontFamilies.mono, fontSize: 11.5 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(140px,auto) 1fr', gap: 1.5, typography: 'mono', fontSize: 11.5 }}>
               <Box component="span" sx={{ color: 'text.secondary' }}>scope</Box>
               <Box component="span" sx={{ color: 'text.primary', wordBreak: 'break-word' }}>{log.scopeName}</Box>
             </Box>
           ) : null}
           {detailEntries.map(([k, v]) => (
-            <Box key={k} sx={{ display: 'grid', gridTemplateColumns: 'minmax(140px,auto) 1fr', gap: 1.5, fontFamily: fontFamilies.mono, fontSize: 11.5 }}>
+            <Box key={k} sx={{ display: 'grid', gridTemplateColumns: 'minmax(140px,auto) 1fr', gap: 1.5, typography: 'mono', fontSize: 11.5 }}>
               <Box component="span" sx={{ color: 'text.secondary' }}>{k}</Box>
               <AttrValue value={v} onViewFull={(text) => setModalValue({ key: k, raw: text })} />
             </Box>
@@ -117,7 +117,7 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
         </Box>
       ) : null}
       <Dialog open={modalValue != null} onClose={closeModal} maxWidth="md" fullWidth onClick={(e) => e.stopPropagation()}>
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontFamily: fontFamilies.mono, fontSize: 14 }}>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, typography: 'mono', fontSize: 14 }}>
           <Box component="span" sx={{ flex: 1, wordBreak: 'break-word' }}>{modalValue?.key}</Box>
           <Tooltip arrow placement="top" title={copied ? 'Copied' : 'Copy displayed value'}>
             <IconButton size="small" onClick={copyDisplayed} sx={{ color: copied ? 'success.main' : 'text.secondary' }}>
@@ -130,7 +130,7 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
         </DialogTitle>
         <DialogContent dividers sx={{ p: 0 }}>
           {parsed?.repaired ? <Alert severity="warning" sx={{ borderRadius: 0 }}>Repaired from truncated JSON — trailing values may be missing or incomplete.</Alert> : null}
-          <Box component="pre" sx={{ m: 0, p: 2, fontFamily: fontFamilies.mono, fontSize: 12.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'text.primary' }}>{displayText}</Box>
+          <Box component="pre" sx={{ m: 0, p: 2, typography: 'mono', fontSize: 12.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'text.primary' }}>{displayText}</Box>
         </DialogContent>
       </Dialog>
     </Box>

@@ -2,7 +2,7 @@
 // Split out of tracesApi.ts so both the live network layer and the sample-data
 // engine can depend on these without a circular import.
 
-import type { TraceRow } from '../../api';
+import type { FacetValue, TraceRow } from '../../api';
 
 export type TraceStatus = 'ok' | 'error';
 export type FacetKey = 'status' | 'operation' | 'service' | 'duration' | 'session';
@@ -39,10 +39,7 @@ export interface TraceHistogram {
   errorCount: number;
 }
 
-export interface FacetValue {
-  value: string;
-  count: number;
-}
+export type { FacetValue };
 export interface TraceFacets {
   status: FacetValue[];
   operation: FacetValue[];

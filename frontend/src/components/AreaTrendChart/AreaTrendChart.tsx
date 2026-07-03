@@ -4,6 +4,7 @@ import { alpha, Box, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { neutralColors } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface AreaTrendSeries {
   label: string;
@@ -41,7 +42,7 @@ export interface AreaTrendChartProps {
   yScale?: 'linear' | 'log';
 }
 
-const PAD = { left: 52, right: 16, top: 16, bottom: 44 };
+const PLOT_PADDING = { left: 52, right: 16, top: 16, bottom: 44 };
 
 // Fine "nice-max" ladder so the data peak fills most of the plot height
 // (a coarse 1/2/5/10 ladder leaves big dead space above the curve).
@@ -50,10 +51,10 @@ const niceMax = (value: number): number => {
   if (value <= 0) {
     return 1;
   }
-  const pow = 10 ** Math.floor(Math.log10(value));
-  const f = value / pow;
-  const step = NICE_STEPS.find((s) => f <= s) ?? 10;
-  return step * pow;
+  const powerOfTen = 10 ** Math.floor(Math.log10(value));
+  const mantissa = value / powerOfTen;
+  const step = NICE_STEPS.find((candidate) => mantissa <= candidate) ?? 10;
+  return step * powerOfTen;
 };
 
 const defaultFormatX = (date: Date): string =>
@@ -63,7 +64,12 @@ const formatXDate = (date: Date): string =>
   date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
 const defaultTooltipHeader = (date: Date): string =>
-  date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 
 interface Layer {
   seriesIndex: number;
@@ -96,7 +102,7 @@ const AreaTrendChart = ({
   axisDates,
   series,
   yLabel,
-  formatY = (v) => String(Math.round(v)),
+  formatY = (value) => String(Math.round(value)),
   formatX = defaultFormatX,
   formatTooltipHeader = defaultTooltipHeader,
   height = 300,
@@ -106,76 +112,90 @@ const AreaTrendChart = ({
   yScale = 'linear',
 }: AreaTrendChartProps) => {
   const theme = useTheme();
-  const gradId = useId().replace(/:/g, '');
-  const ref = useRef<HTMLDivElement | null>(null);
+  const gradientId = useId().replace(/:/g, '');
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(800);
-  const [hover, setHover] = useState<{ index: number; leftPx: number } | null>(null);
+  const [hover, setHover] = useState<{
+    index: number;
+    leftPixels: number;
+  } | null>(null);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) {
+    const element = containerRef.current;
+    if (!element) {
       return;
     }
     const observer = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w) {
-        setWidth(w);
+      const measuredWidth = entries[0]?.contentRect.width;
+      if (measuredWidth) {
+        setWidth(measuredWidth);
       }
     });
-    observer.observe(el);
+    observer.observe(element);
     return () => observer.disconnect();
   }, []);
 
-  const isLog = yScale === 'log';
-  const n = axisDates.length;
-  const plotW = width - PAD.left - PAD.right;
-  const plotH = height - PAD.top - PAD.bottom;
-  const baseY = PAD.top + plotH;
+  const isLogarithmic = yScale === 'log';
+  const bucketCount = axisDates.length;
+  const plotWidth = width - PLOT_PADDING.left - PLOT_PADDING.right;
+  const plotHeight = height - PLOT_PADDING.top - PLOT_PADDING.bottom;
+  const baselineY = PLOT_PADDING.top + plotHeight;
 
-  const isActive = (k: number): boolean => (activeStates ? activeStates[k] !== false : true);
+  const isActive = (seriesIndex: number): boolean =>
+    activeStates ? activeStates[seriesIndex] !== false : true;
 
   // Build the visible layers. Stacked → cumulative bands; unstacked → each series
   // is its own line, its band filled down to the shared baseline (set below once the
   // domain is known).
   const layers: Layer[] = [];
-  const running = new Array(n).fill(0);
-  series.forEach((s, k) => {
-    if (!isActive(k)) {
+  const runningTotals = new Array(bucketCount).fill(0);
+  series.forEach((seriesItem, seriesIndex) => {
+    if (!isActive(seriesIndex)) {
       return;
     }
     if (stacked) {
-      const lower = running.slice();
-      const upper = running.map((v, i) => v + (s.data[i] ?? 0));
-      layers.push({ seriesIndex: k, label: s.label, color: s.color, lower, upper });
-      for (let i = 0; i < n; i += 1) {
-        running[i] = upper[i];
+      const lower = runningTotals.slice();
+      const upper = runningTotals.map(
+        (total, i) => total + (seriesItem.data[i] ?? 0),
+      );
+      layers.push({
+        seriesIndex,
+        label: seriesItem.label,
+        color: seriesItem.color,
+        lower,
+        upper,
+      });
+      for (let i = 0; i < bucketCount; i += 1) {
+        runningTotals[i] = upper[i];
       }
     } else {
       layers.push({
-        seriesIndex: k,
-        label: s.label,
-        color: s.color,
+        seriesIndex,
+        label: seriesItem.label,
+        color: seriesItem.color,
         lower: [],
-        upper: (s.data ?? []).slice(0, n).map((v) => v ?? 0),
+        upper: (seriesItem.data ?? [])
+          .slice(0, bucketCount)
+          .map((value) => value ?? 0),
       });
     }
   });
 
   // --- Y domain --------------------------------------------------------------
   let yFloor: number;
-  let yCeil: number;
+  let yCeiling: number;
   let yTicks: number[];
 
-  if (isLog) {
+  if (isLogarithmic) {
     let minPositive = Infinity;
     let maxValue = 1;
     for (const layer of layers) {
-      for (const v of layer.upper) {
-        if (v > 0 && v < minPositive) {
-          minPositive = v;
+      for (const value of layer.upper) {
+        if (value > 0 && value < minPositive) {
+          minPositive = value;
         }
-        if (v > maxValue) {
-          maxValue = v;
+        if (value > maxValue) {
+          maxValue = value;
         }
       }
     }
@@ -183,26 +203,33 @@ const AreaTrendChart = ({
       minPositive = 1;
     }
     // Floor a decade below the smallest positive value; ceiling at/above the max.
-    const floorExp = Math.floor(Math.log10(minPositive)) - 1;
-    const ceilExp = Math.max(floorExp + 1, Math.ceil(Math.log10(maxValue)));
-    yFloor = 10 ** floorExp;
-    yCeil = 10 ** ceilExp;
+    const floorExponent = Math.floor(Math.log10(minPositive)) - 1;
+    const ceilingExponent = Math.max(
+      floorExponent + 1,
+      Math.ceil(Math.log10(maxValue)),
+    );
+    yFloor = 10 ** floorExponent;
+    yCeiling = 10 ** ceilingExponent;
     yTicks = [];
-    for (let exp = floorExp; exp <= ceilExp; exp += 1) {
-      yTicks.push(10 ** exp);
+    for (
+      let exponent = floorExponent;
+      exponent <= ceilingExponent;
+      exponent += 1
+    ) {
+      yTicks.push(10 ** exponent);
     }
   } else {
     yFloor = 0;
-    let top = 1;
+    let peakValue = 1;
     for (const layer of layers) {
-      for (const v of layer.upper) {
-        if (v > top) {
-          top = v;
+      for (const value of layer.upper) {
+        if (value > peakValue) {
+          peakValue = value;
         }
       }
     }
-    yCeil = niceMax(top);
-    yTicks = Array.from({ length: 6 }, (_, i) => (yCeil * i) / 5);
+    yCeiling = niceMax(peakValue);
+    yTicks = Array.from({ length: 6 }, (_, i) => (yCeiling * i) / 5);
   }
 
   // Shared baseline for unstacked bands (axis floor).
@@ -212,16 +239,19 @@ const AreaTrendChart = ({
     }
   }
 
-  const xAt = (i: number) => (n <= 1 ? PAD.left : PAD.left + (i * plotW) / (n - 1));
-  const yAt = (value: number): number => {
-    if (isLog) {
+  const xCoordinateAt = (i: number) =>
+    bucketCount <= 1
+      ? PLOT_PADDING.left
+      : PLOT_PADDING.left + (i * plotWidth) / (bucketCount - 1);
+  const yCoordinateAt = (value: number): number => {
+    if (isLogarithmic) {
       const clamped = Math.max(value, yFloor);
-      const t =
+      const fraction =
         (Math.log10(clamped) - Math.log10(yFloor)) /
-        (Math.log10(yCeil) - Math.log10(yFloor));
-      return PAD.top + (1 - t) * plotH;
+        (Math.log10(yCeiling) - Math.log10(yFloor));
+      return PLOT_PADDING.top + (1 - fraction) * plotHeight;
     }
-    return PAD.top + (1 - value / yCeil) * plotH;
+    return PLOT_PADDING.top + (1 - value / yCeiling) * plotHeight;
   };
 
   const bandPath = (layer: Layer): string => {
@@ -229,33 +259,46 @@ const AreaTrendChart = ({
     if (layer.upper.length === 0) {
       return '';
     }
-    let d = layer.upper.map((v, i) => `${i ? 'L' : 'M'}${xAt(i)},${yAt(v)}`).join('');
+    let pathData = layer.upper
+      .map(
+        (value, i) =>
+          `${i ? 'L' : 'M'}${xCoordinateAt(i)},${yCoordinateAt(value)}`,
+      )
+      .join('');
     for (let i = layer.lower.length - 1; i >= 0; i -= 1) {
-      d += `L${xAt(i)},${yAt(layer.lower[i])}`;
+      pathData += `L${xCoordinateAt(i)},${yCoordinateAt(layer.lower[i])}`;
     }
-    return `${d}Z`;
+    return `${pathData}Z`;
   };
 
   const linePath = (layer: Layer): string =>
-    layer.upper.map((v, i) => `${i ? 'L' : 'M'}${xAt(i)},${yAt(v)}`).join('');
+    layer.upper
+      .map(
+        (value, i) =>
+          `${i ? 'L' : 'M'}${xCoordinateAt(i)},${yCoordinateAt(value)}`,
+      )
+      .join('');
 
-  const xTickCount = Math.min(8, n);
-  const xTickIdx =
-    n === 0
+  const xTickCount = Math.min(8, bucketCount);
+  const xTickIndexes =
+    bucketCount === 0
       ? []
-      : n === 1
+      : bucketCount === 1
         ? [0]
         : Array.from({ length: xTickCount }, (_, i) =>
-            Math.round((i * (n - 1)) / (xTickCount - 1)),
+            Math.round((i * (bucketCount - 1)) / (xTickCount - 1)),
           );
 
   const gridColor = theme.palette.divider;
   const labelColor = theme.palette.text.secondary;
 
   // Two-line date+time labels once the window spans more than 2h; a single time
-  // line below that. PAD.bottom (44) reserves room for the second line.
-  const spanMs = n >= 2 ? axisDates[n - 1].getTime() - axisDates[0].getTime() : 0;
-  const twoLine = spanMs > 2 * 60 * 60 * 1000;
+  // line below that. PLOT_PADDING.bottom (44) reserves room for the second line.
+  const spanMilliseconds =
+    bucketCount >= 2
+      ? axisDates[bucketCount - 1].getTime() - axisDates[0].getTime()
+      : 0;
+  const twoLine = spanMilliseconds > 2 * 60 * 60 * 1000;
 
   // Line opacity reflects focus; bands additionally fade when unstacked so the
   // overlapping fills stay legible.
@@ -265,14 +308,19 @@ const AreaTrendChart = ({
     lineOpacityFor(label) * (stacked ? 1 : 0.35);
 
   const handleMove = (event: ReactMouseEvent<SVGSVGElement>) => {
-    if (n < 1) {
+    if (bucketCount < 1) {
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
     const localX = ((event.clientX - rect.left) / rect.width) * width;
-    const raw = n <= 1 ? 0 : Math.round(((localX - PAD.left) * (n - 1)) / plotW);
-    const index = Math.max(0, Math.min(n - 1, raw));
-    setHover({ index, leftPx: event.clientX - rect.left });
+    const rawIndex =
+      bucketCount <= 1
+        ? 0
+        : Math.round(
+            ((localX - PLOT_PADDING.left) * (bucketCount - 1)) / plotWidth,
+          );
+    const index = Math.max(0, Math.min(bucketCount - 1, rawIndex));
+    setHover({ index, leftPixels: event.clientX - rect.left });
   };
 
   // Tooltip rows: every visible series at the hovered bucket, ranked high→low.
@@ -289,13 +337,19 @@ const AreaTrendChart = ({
   const hoverTotal = hoverRows.reduce((sum, row) => sum + row.value, 0);
 
   // Flip the tooltip to the left of the cursor when near the right edge.
-  const TIP_W = 190;
-  const tipLeft = hover != null
-    ? Math.max(4, hover.leftPx > width - TIP_W ? hover.leftPx - TIP_W : hover.leftPx + 16)
-    : 0;
+  const TOOLTIP_WIDTH = 190;
+  const tooltipLeft =
+    hover != null
+      ? Math.max(
+          4,
+          hover.leftPixels > width - TOOLTIP_WIDTH
+            ? hover.leftPixels - TOOLTIP_WIDTH
+            : hover.leftPixels + 16,
+        )
+      : 0;
 
   return (
-    <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
+    <Box ref={containerRef} sx={{ width: '100%', position: 'relative' }}>
       <svg
         width={width}
         height={height}
@@ -307,32 +361,39 @@ const AreaTrendChart = ({
       >
         <defs>
           {layers.map((layer) => (
-            <linearGradient key={layer.seriesIndex} id={`${gradId}-${layer.seriesIndex}`} x1="0" y1="0" x2="0" y2="1">
+            <linearGradient
+              key={layer.seriesIndex}
+              id={`${gradientId}-${layer.seriesIndex}`}
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="1"
+            >
               <stop offset="0" stopColor={layer.color} stopOpacity={0.4} />
               <stop offset="1" stopColor={layer.color} stopOpacity={0.04} />
             </linearGradient>
           ))}
         </defs>
 
-        {yTicks.map((v, i) => (
+        {yTicks.map((tickValue, i) => (
           <g key={i}>
             <line
-              x1={PAD.left}
-              y1={yAt(v)}
-              x2={width - PAD.right}
-              y2={yAt(v)}
+              x1={PLOT_PADDING.left}
+              y1={yCoordinateAt(tickValue)}
+              x2={width - PLOT_PADDING.right}
+              y2={yCoordinateAt(tickValue)}
               stroke={gridColor}
               strokeDasharray="3 4"
             />
             <text
-              x={PAD.left - 8}
-              y={yAt(v) + 4}
+              x={PLOT_PADDING.left - 8}
+              y={yCoordinateAt(tickValue) + 4}
               textAnchor="end"
               fill={labelColor}
               fontSize={11}
               fontFamily={theme.typography.fontFamily}
             >
-              {formatY(v)}
+              {formatY(tickValue)}
             </text>
           </g>
         ))}
@@ -341,7 +402,7 @@ const AreaTrendChart = ({
           <path
             key={`band-${layer.seriesIndex}`}
             d={bandPath(layer)}
-            fill={`url(#${gradId}-${layer.seriesIndex})`}
+            fill={`url(#${gradientId}-${layer.seriesIndex})`}
             opacity={bandOpacityFor(layer.label)}
             style={{ transition: 'opacity .12s' }}
           />
@@ -360,28 +421,32 @@ const AreaTrendChart = ({
           />
         ))}
 
-        {xTickIdx.map((idx) => {
-          const date = axisDates[idx];
+        {xTickIndexes.map((tickIndex) => {
+          const date = axisDates[tickIndex];
           if (twoLine) {
             return (
               <text
-                key={idx}
-                x={xAt(idx)}
+                key={tickIndex}
+                x={xCoordinateAt(tickIndex)}
                 y={height - 26}
                 textAnchor="middle"
                 fill={labelColor}
                 fontSize={11}
                 fontFamily={theme.typography.fontFamily}
               >
-                <tspan x={xAt(idx)} dy="0">{formatXDate(date)}</tspan>
-                <tspan x={xAt(idx)} dy="14">{formatX(date)}</tspan>
+                <tspan x={xCoordinateAt(tickIndex)} dy="0">
+                  {formatXDate(date)}
+                </tspan>
+                <tspan x={xCoordinateAt(tickIndex)} dy="14">
+                  {formatX(date)}
+                </tspan>
               </text>
             );
           }
           return (
             <text
-              key={idx}
-              x={xAt(idx)}
+              key={tickIndex}
+              x={xCoordinateAt(tickIndex)}
               y={height - 14}
               textAnchor="middle"
               fill={labelColor}
@@ -395,12 +460,12 @@ const AreaTrendChart = ({
 
         <text
           x={12}
-          y={PAD.top + plotH / 2}
+          y={PLOT_PADDING.top + plotHeight / 2}
           textAnchor="middle"
           fill={labelColor}
           fontSize={11}
           fontFamily={theme.typography.fontFamily}
-          transform={`rotate(-90 12 ${PAD.top + plotH / 2})`}
+          transform={`rotate(-90 12 ${PLOT_PADDING.top + plotHeight / 2})`}
         >
           {yLabel}
         </text>
@@ -409,10 +474,10 @@ const AreaTrendChart = ({
         {hover != null && (
           <g pointerEvents="none">
             <line
-              x1={xAt(hover.index)}
-              y1={PAD.top}
-              x2={xAt(hover.index)}
-              y2={baseY}
+              x1={xCoordinateAt(hover.index)}
+              y1={PLOT_PADDING.top}
+              x2={xCoordinateAt(hover.index)}
+              y2={baselineY}
               stroke={theme.palette.text.secondary}
               strokeWidth={1}
               strokeDasharray="3 3"
@@ -420,8 +485,8 @@ const AreaTrendChart = ({
             {layers.map((layer) => (
               <circle
                 key={`dot-${layer.seriesIndex}`}
-                cx={xAt(hover.index)}
-                cy={yAt(layer.upper[hover.index])}
+                cx={xCoordinateAt(hover.index)}
+                cy={yCoordinateAt(layer.upper[hover.index])}
                 r={3.6}
                 fill={layer.color}
                 stroke={theme.palette.background.paper}
@@ -437,20 +502,27 @@ const AreaTrendChart = ({
           sx={{
             position: 'absolute',
             top: 8,
-            left: tipLeft,
+            left: tooltipLeft,
             pointerEvents: 'none',
-            minWidth: TIP_W - 22,
+            minWidth: TOOLTIP_WIDTH - 22,
             bgcolor: 'background.paper',
             border: '1px solid',
             borderColor: 'divider',
-            borderRadius: 1.5,
+            borderRadius: radii.lg,
             px: 1.625,
             py: 1.375,
             boxShadow: `0 16px 38px ${alpha(neutralColors.shadowDeep, 0.32)}`,
             zIndex: 6,
           }}
         >
-          <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 12, mb: 1 }}>
+          <Typography
+            sx={{
+              fontFamily: fontFamilies.display,
+              fontWeight: 600,
+              fontSize: 12,
+              mb: 1,
+            }}
+          >
             {formatTooltipHeader(axisDates[hover.index])}
           </Typography>
           {hoverRows.map((row) => (
@@ -466,11 +538,32 @@ const AreaTrendChart = ({
                 opacity: row.value === 0 ? 0.4 : 1,
               }}
             >
-              <Box sx={{ width: 9, height: 9, borderRadius: '3px', bgcolor: row.color, flexShrink: 0 }} />
-              <Box sx={{ flex: 1, color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <Box
+                sx={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: '3px',
+                  bgcolor: row.color,
+                  flexShrink: 0,
+                }}
+              />
+              <Box
+                sx={{
+                  flex: 1,
+                  color: 'text.secondary',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 {row.label}
               </Box>
-              <Box sx={{ fontWeight: 700, color: 'text.primary', fontVariantNumeric: 'tabular-nums' }}>
+              <Box
+                sx={{
+                  fontWeight: 700,
+                  color: 'text.primary',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
                 {formatY(row.value)}
               </Box>
             </Box>

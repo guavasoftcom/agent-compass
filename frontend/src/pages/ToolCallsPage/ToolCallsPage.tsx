@@ -6,11 +6,10 @@ import {
   fetchToolCallsTimeseries,
 } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
+import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
 import ToolCallsPageView, {
   type ToolCallRowWithShare,
 } from './ToolCallsPageView';
-
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 export default function ToolCallsPage() {
   const { selection, autoRefresh } = useSectionContext();

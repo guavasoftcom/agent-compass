@@ -1,6 +1,6 @@
 import { Box, Paper } from '@mui/material';
-import BreakdownList from '../../../../components/BreakdownList/BreakdownList';
-import type { BreakdownRow } from '../../../../components/BreakdownList/BreakdownList';
+import BreakdownList from '../../../../components/BreakdownList';
+import type { BreakdownRow } from '../../../../components/BreakdownList';
 import { fontFamilies } from '../../../../theme/typography';
 
 /**

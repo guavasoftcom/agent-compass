@@ -7,6 +7,7 @@ import {
   type TraceHistogramBucket,
 } from '../../tracesApi';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 export type HistogramSeries = 'ok' | 'error' | 'p95';
 
@@ -109,11 +110,7 @@ const TraceHistogramView = ({
           <Typography
             component="span"
             sx={{
-              fontFamily: fontFamilies.display,
-              fontSize: 11.5,
-              fontWeight: 700,
-              letterSpacing: '0.6px',
-              textTransform: 'uppercase',
+              typography: 'eyebrow',
               color: 'text.secondary',
             }}
           >
@@ -122,10 +119,10 @@ const TraceHistogramView = ({
           <Box
             component="span"
             sx={{
+              typography: 'mono',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 1.25,
-              fontFamily: fontFamilies.mono,
               fontSize: 11,
               color: 'text.disabled',
             }}
@@ -167,7 +164,7 @@ const TraceHistogramView = ({
                   sx={{
                     width: 10,
                     height: item.line ? 3 : 10,
-                    borderRadius: item.line ? 1 : 0.75,
+                    borderRadius: item.line ? radii.sm : radii.xs,
                     bgcolor: item.color,
                   }}
                 />
@@ -288,7 +285,7 @@ const TraceHistogramView = ({
             bgcolor: 'background.paper',
             border: 1,
             borderColor: 'divider',
-            borderRadius: 1.5,
+            borderRadius: radii.lg,
             px: 1.5,
             py: 1.25,
             boxShadow: 6,
@@ -342,7 +339,7 @@ const TraceHistogramView = ({
                 }}
               >
                 <Box
-                  sx={{ width: 9, height: 9, borderRadius: 0.5, bgcolor: r.c }}
+                  sx={{ width: 9, height: 9, borderRadius: radii.xs, bgcolor: r.c }}
                 />
                 {r.l}
               </Box>
