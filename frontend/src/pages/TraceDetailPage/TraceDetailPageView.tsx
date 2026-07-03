@@ -11,7 +11,7 @@ import TraceDetailHeader from './components/TraceDetailHeader';
 import TraceMinimap, { type ZoomView } from './components/TraceMinimap';
 import WaterfallToolbar from './components/WaterfallToolbar';
 import SpanWaterfallRow from './components/SpanWaterfallRow';
-import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface TraceDetailPageViewProps {
   traceId: string;
@@ -219,7 +219,7 @@ const TraceDetailPageView = ({
           flexDirection: 'column',
           border: 1,
           borderColor: 'divider',
-          borderRadius: 2.25,
+          borderRadius: radii.xl,
           overflow: 'hidden',
           bgcolor: 'background.paper',
         }}
@@ -255,11 +255,7 @@ const TraceDetailPageView = ({
           <Box
             sx={{
               pl: 1.75,
-              fontFamily: fontFamilies.display,
-              fontSize: 9.5,
-              fontWeight: 700,
-              letterSpacing: '0.6px',
-              textTransform: 'uppercase',
+              typography: 'eyebrowSm',
               color: 'text.disabled',
             }}
           >
@@ -278,7 +274,7 @@ const TraceDetailPageView = ({
                       ? 'translate(-100%,-50%)'
                       : 'translate(-50%,-50%)',
                   left: `${fraction * 100}%`,
-                  fontFamily: fontFamilies.mono,
+                  typography: 'mono',
                   fontSize: 9.5,
                   color: 'text.disabled',
                 }}

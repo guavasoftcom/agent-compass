@@ -7,9 +7,8 @@ import {
   type HookExecutionRow,
 } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
+import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
 import PermissionDenialsPageView from './PermissionDenialsPageView';
-
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 export default function PermissionDenialsPage() {
   const { selection, autoRefresh } = useSectionContext();

@@ -1,7 +1,7 @@
 import { Box, Paper, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
-import BreakdownList from '../../../../components/BreakdownList/BreakdownList';
-import type { BreakdownRow } from '../../../../components/BreakdownList/BreakdownList';
+import BreakdownList from '../../../../components/BreakdownList';
+import type { BreakdownRow } from '../../../../components/BreakdownList';
 import type { MetricSeries } from '../metricsSampleData';
 import { fontFamilies } from '../../../../theme/typography';
 

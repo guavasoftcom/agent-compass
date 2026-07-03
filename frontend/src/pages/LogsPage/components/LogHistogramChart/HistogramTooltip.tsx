@@ -2,6 +2,7 @@ import { Box, Typography, useTheme } from '@mui/material';
 import ZoomInRoundedIcon from '@mui/icons-material/ZoomInRounded';
 import { SEVERITIES, type HistogramBucket } from '../../logsApi';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 import { severityColor } from '../severity';
 import { MS_PER_DAY } from '../../../../lib/constants';
 import { bucketTotal } from './bucketTotal';
@@ -39,7 +40,7 @@ const HistogramTooltip = ({
         bgcolor: 'background.paper',
         border: 1,
         borderColor: 'divider',
-        borderRadius: 1.5,
+        borderRadius: radii.lg,
         boxShadow: 6,
         px: 1.5,
         py: 1.25,
@@ -85,7 +86,7 @@ const HistogramTooltip = ({
               sx={{
                 width: 9,
                 height: 9,
-                borderRadius: 0.5,
+                borderRadius: radii.xs,
                 bgcolor: severityColor(theme, severity),
               }}
             />

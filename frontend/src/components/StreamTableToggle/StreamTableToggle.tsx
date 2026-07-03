@@ -2,6 +2,7 @@ import { Box } from '@mui/material';
 import ViewStreamIcon from '@mui/icons-material/ViewStream';
 import TableRowsIcon from '@mui/icons-material/TableRows';
 import SegmentedToggle from '../SegmentedToggle/SegmentedToggle';
+import { radii } from '../../theme/theme';
 
 export type StreamTableView = 'stream' | 'table';
 
@@ -37,7 +38,7 @@ const StreamTableToggle = ({ value, onChange }: StreamTableToggleProps) => {
       options={VIEW_OPTIONS}
       value={value}
       onChange={onChange}
-      sx={{ borderRadius: 1.5, height: 40, alignItems: 'center' }}
+      sx={{ borderRadius: radii.lg, height: 40, alignItems: 'center' }}
     />
   );
 };

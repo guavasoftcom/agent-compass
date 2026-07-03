@@ -1,12 +1,9 @@
 import { useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { WINDOWS } from '../../lib/constants';
+import { AUTO_REFRESH_INTERVAL_MS, MS_PER_MINUTE, WINDOWS } from '../../lib/constants';
 import { useWindowContext } from '../../lib/windowContext';
 import type { WindowSelection } from '../../api';
 import LogsPageView from './LogsPageView';
-
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
-const MS_PER_MINUTE = 60_000;
 
 interface ResolvedWindow {
   startTimestamp: string;

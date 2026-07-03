@@ -4,6 +4,7 @@ import AreaTrendChart from '../../../../components/AreaTrendChart';
 import SegmentedToggle from '../../../../components/SegmentedToggle';
 import { colorForIndex } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
+import { formatCompact } from '../../../../lib/format';
 import type { MetricSeries } from '../metricsSampleData';
 
 export interface MetricTrendCardProps {
@@ -15,9 +16,6 @@ export interface MetricTrendCardProps {
 }
 
 const SPLIT_NONE = 'None';
-
-const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
-const formatCompact = (value: number): string => COMPACT.format(value);
 
 /**
  * Trend chart card for the selected metric. Renders a titled Paper with an
@@ -79,12 +77,8 @@ const MetricTrendCard = ({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.125 }}>
             <Box
               sx={{
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: 0.6,
-                textTransform: 'uppercase',
+                typography: 'eyebrowSm',
                 color: 'text.disabled',
-                fontFamily: fontFamilies.display,
               }}
             >
               Split by

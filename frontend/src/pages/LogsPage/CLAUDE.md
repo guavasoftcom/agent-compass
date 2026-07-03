@@ -35,7 +35,7 @@ LogsPage/
 │ │ clicking a bar zooms the page window into that bucket (30-min floor) │ │
 │ └─────────────────────────────────────────────────────────────────────┘ │
 │ [Stream|Table toggle] [● Live tail]            [ 1,234 events counter ] │
-│ ┌─ fixed-height body (calc(100vh - 460px)) ───────────────────────────┐ │
+│ ┌─ fixed-height body (calc(100vh - 430px)) ───────────────────────────┐ │
 │ │ [zoom chip] [filter chips…] [Clear all]   ← only when filters active│ │
 │ │                                                                     │ │
 │ │ Stream view:                          Table view:                   │ │
@@ -151,5 +151,7 @@ query string.
   the SQL function `derive_log_severity` (`V6__log_severity_function.sql`). Change them in lockstep.
 - `VITE_LOGS_SAMPLE=1` swaps all fetchers to an in-memory synthetic store (offline UI work);
   shapes are identical to the live endpoints.
-- The body box is `calc(100vh - 460px)` (`BODY_CHROME_PX`) — header + histogram + toolbar
-  chrome. If you change the chrome height, retune that constant or the page scrolls.
+- The body box height is `calc(100vh - Npx)`, reserving space for the header + histogram +
+  toolbar chrome. Stream and Table view reserve slightly different amounts — `STREAM_BODY_CHROME_PX`
+  (430) vs `TABLE_BODY_CHROME_PX` (420), the 10px being Stream's extra facet-rail header row. If
+  you change the chrome height, retune those constants (top of `LogsPageView.tsx`) or the page scrolls.

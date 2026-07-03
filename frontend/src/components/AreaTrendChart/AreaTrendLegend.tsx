@@ -19,7 +19,14 @@ export interface AreaTrendLegendProps {
 const AreaTrendLegend = ({ items, visibility }: AreaTrendLegendProps) => {
   const { active, toggle, setFocused } = visibility;
   return (
-    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '5px 8px', justifyContent: 'flex-end' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '5px 8px',
+        justifyContent: 'flex-end',
+      }}
+    >
       {items.map((item, index) => {
         const isOff = !active[index];
         return (
@@ -52,7 +59,11 @@ const AreaTrendLegend = ({ items, visibility }: AreaTrendLegendProps) => {
               opacity: isOff ? 0.42 : 1,
               transition: 'background .12s, border-color .12s, opacity .12s',
               '&:hover': { bgcolor: 'action.hover', borderColor: 'divider' },
-              '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+              '&:focus-visible': {
+                outline: '2px solid',
+                outlineColor: 'primary.main',
+                outlineOffset: 2,
+              },
             }}
           >
             <Box

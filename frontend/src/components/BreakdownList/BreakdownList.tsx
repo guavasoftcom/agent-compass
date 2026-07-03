@@ -1,5 +1,5 @@
 import { Box, LinearProgress, useTheme } from '@mui/material';
-import { colorForIndex } from '../../theme/theme';
+import { colorForIndex, radii } from '../../theme/theme';
 import { fontFamilies } from '../../theme/typography';
 
 /**
@@ -259,9 +259,9 @@ const BreakdownList = ({
                 sx={{
                   mt: 1.625,
                   height: 8,
-                  borderRadius: 5,
+                  borderRadius: radii.pill,
                   bgcolor: trackColor,
-                  '& .MuiLinearProgress-bar': { backgroundColor: color, borderRadius: 5 },
+                  '& .MuiLinearProgress-bar': { backgroundColor: color, borderRadius: radii.pill },
                 }}
               />
               {row.secondaryText && (
@@ -334,9 +334,9 @@ const BreakdownList = ({
               value={row.percentage}
               sx={{
                 height: 8,
-                borderRadius: 5,
+                borderRadius: radii.pill,
                 bgcolor: trackColor,
-                '& .MuiLinearProgress-bar': { backgroundColor: color, borderRadius: 5 },
+                '& .MuiLinearProgress-bar': { backgroundColor: color, borderRadius: radii.pill },
               }}
             />
             {row.secondaryText && (

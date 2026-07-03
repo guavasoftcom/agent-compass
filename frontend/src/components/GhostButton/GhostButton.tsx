@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import type { SxProps, Theme } from '@mui/material';
-import { Box } from '@mui/material';
+import { alpha, Box } from '@mui/material';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export type GhostButtonTone = 'default' | 'danger';
 
@@ -44,7 +45,7 @@ const GhostButton = ({
           gap: 0.9,
           height: 30,
           px: 1.4,
-          borderRadius: 1.1,
+          borderRadius: radii.sm,
           border: 1,
           cursor: disabled ? 'default' : 'pointer',
           opacity: disabled ? 0.4 : 1,
@@ -53,10 +54,10 @@ const GhostButton = ({
           fontWeight: isDanger ? 700 : 600,
           color: isDanger ? 'error.main' : 'text.secondary',
           borderColor: isDanger
-            ? (t) => `color-mix(in srgb, ${t.palette.error.main} 40%, transparent)`
+            ? (t) => alpha(t.palette.error.main, 0.4)
             : 'divider',
           bgcolor: isDanger
-            ? (t) => `color-mix(in srgb, ${t.palette.error.main} 12%, transparent)`
+            ? (t) => alpha(t.palette.error.main, 0.12)
             : 'background.paper',
           '& svg': { fontSize: 14 },
           '&:hover': disabled

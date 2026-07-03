@@ -12,7 +12,6 @@ import {
 } from '@mui/material';
 import { auroraColors, severity } from '../../../../theme/colors';
 import type { ToolRepeatStatRow } from '../../../../api';
-import { fontFamilies } from '../../../../theme/typography';
 
 export interface ToolRepeatsCardProps {
   rows: ToolRepeatStatRow[];
@@ -24,20 +23,16 @@ const NO_SCOPE_LABEL = '(no scope)';
 // Tint the "max run" value by how long the chain is: longer chains are more of a smell.
 const runTone = (value: number): { bg: string; fg: string } => {
   if (value >= 6) {
-    return { bg: `color-mix(in srgb, ${severity.severe} 16%, transparent)`, fg: severity.severe };
+    return { bg: alpha(severity.severe, 0.16), fg: severity.severe };
   }
   if (value >= 4) {
-    return { bg: `color-mix(in srgb, ${severity.warning} 18%, transparent)`, fg: severity.warning };
+    return { bg: alpha(severity.warning, 0.18), fg: severity.warning };
   }
   return { bg: alpha(auroraColors.violet, 0.12), fg: 'inherit' };
 };
 
 const headSx = {
-  fontFamily: fontFamilies.display,
-  fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: 0.6,
-  textTransform: 'uppercase',
+  typography: 'eyebrowSm',
   color: 'text.secondary',
   borderColor: 'divider',
 } as const;
@@ -101,7 +96,7 @@ const ToolRepeatsCard = ({ rows, isLoading }: ToolRepeatsCardProps) => {
                           <Typography
                             variant="caption"
                             sx={{
-                              fontFamily: fontFamilies.mono,
+                              typography: 'mono',
                               whiteSpace: 'pre-wrap',
                               wordBreak: 'break-all',
                             }}

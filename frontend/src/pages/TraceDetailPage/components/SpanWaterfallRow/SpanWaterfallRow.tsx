@@ -35,7 +35,7 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
         arrow
         placement="top"
         title={
-          <Box sx={{ py: 0.5, fontFamily: fontFamilies.mono }}>
+          <Box sx={{ py: 0.5, typography: 'mono' }}>
             <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
               {formatTokens(tokens.input + tokens.output + tokens.cacheCreate)}
             </Box>
@@ -81,9 +81,8 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
             height: 17,
             borderRadius: '5px',
             color: 'warning.main',
-            bgcolor: (t) =>
-              `color-mix(in srgb, ${t.palette.warning.main} 16%, transparent)`,
-            fontFamily: fontFamilies.mono,
+            bgcolor: (t) => alpha(t.palette.warning.main, 0.16),
+            typography: 'mono',
             fontSize: 10,
             fontWeight: 600,
             flexShrink: 0,
@@ -109,7 +108,7 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
         arrow
         placement="top"
         title={
-          <Box sx={{ py: 0.5, fontFamily: fontFamilies.mono }}>
+          <Box sx={{ py: 0.5, typography: 'mono' }}>
             <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
               {tokens.cacheRead.toLocaleString()} cache read
             </Box>
@@ -131,9 +130,8 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
             borderRadius: '5px',
             color: (t) =>
               `color-mix(in srgb, ${t.palette.info.main} 88%, ${t.palette.text.secondary})`,
-            bgcolor: (t) =>
-              `color-mix(in srgb, ${t.palette.info.main} 14%, transparent)`,
-            fontFamily: fontFamilies.mono,
+            bgcolor: (t) => alpha(t.palette.info.main, 0.14),
+            typography: 'mono',
             fontSize: 10,
             fontWeight: 600,
             flexShrink: 0,
@@ -270,7 +268,7 @@ const SpanWaterfallRow = ({
             borderRadius: '5px',
             border: 1,
             borderColor: 'divider',
-            fontFamily: fontFamilies.mono,
+            typography: 'mono',
             fontSize: 10,
             fontWeight: 600,
             color: 'text.secondary',
@@ -294,7 +292,7 @@ const SpanWaterfallRow = ({
                   ? alpha(neutralColors.white, 0.08)
                   : alpha(neutralColors.inkLight, 0.08),
               color: 'text.disabled',
-              fontFamily: fontFamilies.mono,
+              typography: 'mono',
               fontSize: 9.5,
               fontWeight: 500,
               flexShrink: 0,
@@ -306,7 +304,7 @@ const SpanWaterfallRow = ({
         <Box
           component="span"
           sx={{
-            fontFamily: fontFamilies.mono,
+            typography: 'mono',
             fontSize: 12.5,
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -326,8 +324,7 @@ const SpanWaterfallRow = ({
               py: 0.1,
               borderRadius: '5px',
               color: 'error.main',
-              bgcolor: (t) =>
-                `color-mix(in srgb, ${t.palette.error.main} 14%, transparent)`,
+              bgcolor: (t) => alpha(t.palette.error.main, 0.14),
               fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
@@ -346,8 +343,7 @@ const SpanWaterfallRow = ({
               py: 0.1,
               borderRadius: '5px',
               color: 'warning.main',
-              bgcolor: (t) =>
-                `color-mix(in srgb, ${t.palette.warning.main} 14%, transparent)`,
+              bgcolor: (t) => alpha(t.palette.warning.main, 0.14),
               fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
@@ -366,8 +362,7 @@ const SpanWaterfallRow = ({
               py: 0.1,
               borderRadius: '5px',
               color: 'info.main',
-              bgcolor: (t) =>
-                `color-mix(in srgb, ${t.palette.info.main} 14%, transparent)`,
+              bgcolor: (t) => alpha(t.palette.info.main, 0.14),
               fontFamily: fontFamilies.display,
               fontSize: 9.5,
               fontWeight: 700,
@@ -401,7 +396,7 @@ const SpanWaterfallRow = ({
                 position: 'absolute',
                 top: '50%',
                 transform: 'translateY(-50%)',
-                fontFamily: fontFamilies.mono,
+                typography: 'mono',
                 fontSize: 10,
                 color: 'text.secondary',
                 whiteSpace: 'nowrap',

@@ -7,13 +7,10 @@ import TimelineIcon from '@mui/icons-material/Timeline';
 import type { LogRow } from '../../../../api';
 import { AttributeList } from '../../../../components/AttributeList';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 const detailHeadingSx = {
-  fontFamily: fontFamilies.display,
-  fontSize: 10.5,
-  fontWeight: 700,
-  letterSpacing: '1px',
-  textTransform: 'uppercase' as const,
+  typography: 'eyebrowSm' as const,
   color: 'text.secondary',
   mb: 1.1,
 };
@@ -39,11 +36,7 @@ const MetaItem = ({ label, value }: { label: string; value: string }) => (
     <Box
       component="span"
       sx={{
-        fontFamily: fontFamilies.display,
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: '0.6px',
-        textTransform: 'uppercase',
+        typography: 'eyebrowSm',
         color: 'text.disabled',
       }}
     >
@@ -52,7 +45,7 @@ const MetaItem = ({ label, value }: { label: string; value: string }) => (
     <Box
       component="span"
       sx={{
-        fontFamily: fontFamilies.mono,
+        typography: 'mono',
         fontSize: 12,
         color: 'text.primary',
       }}
@@ -95,14 +88,14 @@ const LogRowDetail = ({ row }: { row: LogRow }) => {
           <Typography sx={detailHeadingSx}>Body</Typography>
           <Box
             sx={{
-              fontFamily: fontFamilies.mono,
+              typography: 'mono',
               fontSize: 12.5,
               lineHeight: 1.65,
               color: 'text.primary',
               bgcolor: 'background.paper',
               border: 1,
               borderColor: 'divider',
-              borderRadius: 1.5,
+              borderRadius: radii.lg,
               p: 1.75,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
@@ -144,7 +137,7 @@ const LogRowDetail = ({ row }: { row: LogRow }) => {
                   gap: 0.9,
                   height: 30,
                   px: 1.6,
-                  borderRadius: 1.1,
+                  borderRadius: radii.sm,
                   bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
                   border: (t) =>
                     `1px solid ${alpha(t.palette.primary.main, 0.32)}`,
@@ -201,7 +194,7 @@ const LogRowDetail = ({ row }: { row: LogRow }) => {
             sx={{
               border: 1,
               borderColor: 'divider',
-              borderRadius: 1.5,
+              borderRadius: radii.lg,
               overflow: 'hidden',
               bgcolor: 'background.paper',
               px: 1,

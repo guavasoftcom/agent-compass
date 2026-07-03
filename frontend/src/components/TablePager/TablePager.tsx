@@ -2,6 +2,7 @@ import { Box } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 import SegmentedToggle from '../SegmentedToggle';
 import { PAGE_SIZE_OPTIONS } from '../../lib/constants';
+import { radii } from '../../theme/theme';
 
 // Square icon button style for the pager prev/next chevrons.
 const pagerNavSx: SxProps<Theme> = {
@@ -9,7 +10,7 @@ const pagerNavSx: SxProps<Theme> = {
   height: 32,
   display: 'grid',
   placeItems: 'center',
-  borderRadius: 1.25,
+  borderRadius: radii.sm,
   border: 1,
   borderColor: 'divider',
   bgcolor: 'background.paper',

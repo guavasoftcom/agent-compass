@@ -70,13 +70,6 @@ public class LogService {
   private final LogRecordMapper logRecordMapper;
   private final TuningProperties tuningProperties;
 
-  public List<LogRecord> recentLogs(
-      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp) {
-    List<LogRecordEntity> logRecordEntities = logRecordRepository.findAllMatchingFilters(
-        toFilterArray(activeFilters), startTimestamp, endTimestamp);
-    return logRecordMapper.toLogRecords(logRecordEntities);
-  }
-
   // Claude Code >= 2.1.152 stamps OTLP trace context onto its event logs, so every
   // log belonging to a trace carries that trace's trace_id. We fetch by trace_id,
   // then re-point each log onto the fine-grained span that actually did the work
@@ -262,15 +255,6 @@ public class LogService {
     return mapIdentifierCounts(rows);
   }
 
-  public List<ToolPerformance> aggregateToolPerformance(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateToolPerformance(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since);
-    return mapToolPerformance(rows);
-  }
-
   public List<ToolPerformance> aggregateToolPerformanceInRange(Instant start, Instant end) {
     List<Object[]> rows = logRecordRepository.aggregateToolPerformanceInRange(
         tuningProperties.getToolEventName(),
@@ -289,15 +273,6 @@ public class LogService {
             row[3] == null ? 0L : ((Number) row[3]).longValue(),
             row[4] == null ? 0L : ((Number) row[4]).longValue()))
         .toList();
-  }
-
-  public List<ToolFailure> aggregateToolFailures(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateToolFailures(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since);
-    return mapToolFailures(rows);
   }
 
   public List<ToolFailure> aggregateToolFailuresInRange(Instant start, Instant end) {
@@ -448,16 +423,6 @@ public class LogService {
         .toList();
   }
 
-  public List<BashCommandHotspot> aggregateBashCommandHotspots(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateBashCommandHotspots(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since,
-        BASH_HOTSPOT_LIMIT);
-    return mapBashCommandHotspots(rows);
-  }
-
   public List<BashCommandHotspot> aggregateBashCommandHotspotsInRange(Instant start, Instant end) {
     List<Object[]> rows = logRecordRepository.aggregateBashCommandHotspotsInRange(
         tuningProperties.getToolEventName(),
@@ -479,16 +444,6 @@ public class LogService {
         .toList();
   }
 
-  public List<OversizedToolResult> aggregateOversizedToolResults(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateOversizedToolResults(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since,
-        OVERSIZED_RESULT_LIMIT);
-    return mapOversizedToolResults(rows);
-  }
-
   public List<OversizedToolResult> aggregateOversizedToolResultsInRange(Instant start, Instant end) {
     List<Object[]> rows = logRecordRepository.aggregateOversizedToolResultsInRange(
         tuningProperties.getToolEventName(),
@@ -506,16 +461,6 @@ public class LogService {
             row[1] == null ? "" : (String) row[1],
             ((Number) row[2]).longValue()))
         .toList();
-  }
-
-  public List<RedundantFileRead> aggregateRedundantFileReads(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateRedundantFileReads(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since,
-        REDUNDANT_READ_LIMIT);
-    return mapRedundantFileReads(rows);
   }
 
   public List<RedundantFileRead> aggregateRedundantFileReadsInRange(Instant start, Instant end) {
@@ -539,16 +484,6 @@ public class LogService {
         .toList();
   }
 
-  public List<EditFailureLoop> aggregateEditFailureLoops(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateEditFailureLoops(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since,
-        EDIT_FAILURE_LOOP_LIMIT);
-    return mapEditFailureLoops(rows);
-  }
-
   public List<EditFailureLoop> aggregateEditFailureLoopsInRange(Instant start, Instant end) {
     List<Object[]> rows = logRecordRepository.aggregateEditFailureLoopsInRange(
         tuningProperties.getToolEventName(),
@@ -566,18 +501,6 @@ public class LogService {
             (String) row[1],
             ((Number) row[2]).longValue()))
         .toList();
-  }
-
-  public List<SlowAndLargeCall> aggregateSlowAndLargeCalls(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateSlowAndLargeCalls(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since,
-        SLOW_AND_LARGE_MIN_DURATION_MS,
-        SLOW_AND_LARGE_MIN_BYTES,
-        SLOW_AND_LARGE_LIMIT);
-    return mapSlowAndLargeCalls(rows);
   }
 
   public List<SlowAndLargeCall> aggregateSlowAndLargeCallsInRange(Instant start, Instant end) {
@@ -631,15 +554,6 @@ public class LogService {
             row[3] == null ? 0L : ((Number) row[3]).longValue(),
             row[4] == null ? 0L : ((Number) row[4]).longValue()))
         .toList();
-  }
-
-  public BashCommandCoverage bashCommandCoverage(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.bashCommandCoverage(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        since);
-    return mapBashCommandCoverage(rows);
   }
 
   public BashCommandCoverage bashCommandCoverageInRange(Instant start, Instant end) {

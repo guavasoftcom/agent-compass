@@ -2,6 +2,7 @@ import { Box, alpha, useTheme } from '@mui/material';
 import { type Severity } from '../../logsApi';
 import { severityColor } from '../severity';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 // Severity badge (e.g. ERROR / WARN / INFO / DEBUG) used by both the Logs stream
 // rows and the Logs table. Lives here rather than inside either so neither has to
@@ -19,7 +20,7 @@ export const SeverityChip = ({ severity }: { severity: Severity }) => {
         justifyContent: 'center',
         height: 19,
         px: 1,
-        borderRadius: 0.75,
+        borderRadius: radii.xs,
         fontFamily: fontFamilies.display,
         fontSize: 10,
         fontWeight: 700,

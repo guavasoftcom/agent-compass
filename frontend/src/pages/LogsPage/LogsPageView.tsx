@@ -5,8 +5,9 @@ import CloseIcon from '@mui/icons-material/Close';
 import ZoomInRoundedIcon from '@mui/icons-material/ZoomInRounded';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
-import LiveTailToggle from '../../components/LiveTailToggle/LiveTailToggle';
-import StreamTableToggle from '../../components/StreamTableToggle/StreamTableToggle';
+import LiveTailToggle from '../../components/LiveTailToggle';
+import StreamTableToggle from '../../components/StreamTableToggle';
+import { TAIL_INTERVAL_MS } from '../../lib/constants';
 import type { WindowOption } from '../../lib/constants';
 import type { LogRow, WindowSelection } from '../../api';
 import {
@@ -25,6 +26,7 @@ import LogFacetRail, { type FacetSelections } from './components/LogFacetRail';
 import LogStream from './components/LogStream';
 import LogTable from './components/LogTable';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface LogsPageViewProps {
   selection: WindowSelection;
@@ -40,8 +42,13 @@ export interface LogsPageViewProps {
   isPolling: boolean;
 }
 
-const TAIL_INTERVAL_MS = 1500;
 const STREAM_PAGE = 60;
+
+// Viewport height reserved for the page chrome above the body (header + histogram
+// + toolbar), subtracted from 100vh to size the scrollable body. Stream view has
+// one extra toolbar row (facet rail header) so it reserves 10px more than Table.
+const STREAM_BODY_CHROME_PX = 430;
+const TABLE_BODY_CHROME_PX = 420;
 
 const emptySelections = (): FacetSelections => ({
   severity: new Set(),
@@ -372,7 +379,7 @@ const LogsPageView = ({
             gap: 0.6,
             height: 40,
             px: 1.9,
-            borderRadius: 1.5,
+            borderRadius: radii.lg,
             border: 1,
             borderColor: 'divider',
             bgcolor: 'background.paper',
@@ -426,7 +433,7 @@ const LogsPageView = ({
                 height: 30,
                 pl: 1.1,
                 pr: 0.75,
-                borderRadius: 1.1,
+                borderRadius: radii.sm,
                 bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
                 boxShadow: (t) =>
                   `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}`,
@@ -445,7 +452,7 @@ const LogsPageView = ({
                   placeItems: 'center',
                   width: 17,
                   height: 17,
-                  borderRadius: 0.7,
+                  borderRadius: radii.xs,
                   cursor: 'pointer',
                   '&:hover': {
                     bgcolor: (t) => alpha(t.palette.primary.main, 0.32),
@@ -466,7 +473,7 @@ const LogsPageView = ({
                 height: 30,
                 pl: 1.4,
                 pr: 0.75,
-                borderRadius: 1.1,
+                borderRadius: radii.sm,
                 bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
                 boxShadow: (t) =>
                   `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}`,
@@ -484,7 +491,7 @@ const LogsPageView = ({
                   placeItems: 'center',
                   width: 17,
                   height: 17,
-                  borderRadius: 0.7,
+                  borderRadius: radii.xs,
                   cursor: 'pointer',
                   '&:hover': {
                     bgcolor: (t) => alpha(t.palette.primary.main, 0.32),
@@ -522,7 +529,7 @@ const LogsPageView = ({
             display: 'grid',
             gridTemplateColumns: { xs: '1fr', md: '236px 1fr' },
             gap: 2,
-            height: 'calc(100vh - 430px)',
+            height: `calc(100vh - ${STREAM_BODY_CHROME_PX}px)`,
             minHeight: 420,
           }}
         >
@@ -569,7 +576,7 @@ const LogsPageView = ({
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            height: 'calc(100vh - 420px)',
+            height: `calc(100vh - ${TABLE_BODY_CHROME_PX}px)`,
             minHeight: 420,
           }}
         >

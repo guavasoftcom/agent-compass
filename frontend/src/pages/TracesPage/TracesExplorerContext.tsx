@@ -1,14 +1,11 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { WINDOWS } from '../../lib/constants';
+import { AUTO_REFRESH_INTERVAL_MS, MS_PER_MINUTE, WINDOWS } from '../../lib/constants';
 import type { WindowOption } from '../../lib/constants';
 import { useWindowContext } from '../../lib/windowContext';
 import type { WindowSelection } from '../../api';
 import useTracesExplorer, { type TracesExplorer } from './useTracesExplorer';
-
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
-const MS_PER_MINUTE = 60_000;
 
 interface ResolvedWindow {
   startTimestamp: string;

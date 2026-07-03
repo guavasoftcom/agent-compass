@@ -1,7 +1,7 @@
 import { alpha, Box, LinearProgress, Paper, Stack, Typography, useTheme } from '@mui/material';
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import { neutralColors } from '../../../../theme/colors';
-import { colorForIndex } from '../../../../theme/theme';
+import { colorForIndex, radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 
 export interface CompositionSlice {
@@ -209,11 +209,11 @@ const TokenCompositionCard = ({
             value={Math.min(100, cacheReadRatio * 100)}
             sx={(t) => ({
               height: 12,
-              borderRadius: 7,
+              borderRadius: radii.pill,
               mt: 4,
               bgcolor: t.custom?.progressTrack ?? t.palette.action.hover,
               '& .MuiLinearProgress-bar': {
-                borderRadius: 7,
+                borderRadius: radii.pill,
                 background: `linear-gradient(90deg, ${colorForIndex(0)}, ${colorForIndex(1)})`,
               },
             })}
@@ -231,14 +231,14 @@ const TokenCompositionCard = ({
               mt: 3.25,
               px: 1.75,
               py: 1.25,
-              borderRadius: 2.5,
+              borderRadius: radii.xl,
               display: 'flex',
               alignItems: 'center',
               gap: 1.25,
               fontSize: 14,
               fontWeight: 500,
               color: ratioColor,
-              bgcolor: `color-mix(in srgb, ${ratioColor} 14%, transparent)`,
+              bgcolor: alpha(ratioColor, 0.14),
             }}
           >
             {healthy && <CheckCircleOutlinedIcon sx={{ fontSize: 18 }} />}

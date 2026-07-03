@@ -2,6 +2,7 @@ import { Box, alpha } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ZoomInRoundedIcon from '@mui/icons-material/ZoomInRounded';
 import type { FacetKey } from '../../tracesApi';
+import { radii } from '../../../../theme/theme';
 
 export interface TraceFilterChip {
   key: FacetKey | 'q';
@@ -43,7 +44,7 @@ const TraceFilterChipsView = ({
             height: 30,
             pl: 1.1,
             pr: 0.75,
-            borderRadius: 1.1,
+            borderRadius: radii.sm,
             bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
             boxShadow: (t) =>
               `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}`,
@@ -62,7 +63,7 @@ const TraceFilterChipsView = ({
               placeItems: 'center',
               width: 17,
               height: 17,
-              borderRadius: 0.7,
+              borderRadius: radii.xs,
               cursor: 'pointer',
               '&:hover': {
                 bgcolor: (t) => alpha(t.palette.primary.main, 0.32),
@@ -83,7 +84,7 @@ const TraceFilterChipsView = ({
             height: 30,
             pl: 1.4,
             pr: 0.75,
-            borderRadius: 1.1,
+            borderRadius: radii.sm,
             bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
             boxShadow: (t) =>
               `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}`,
@@ -101,7 +102,7 @@ const TraceFilterChipsView = ({
               placeItems: 'center',
               width: 17,
               height: 17,
-              borderRadius: 0.7,
+              borderRadius: radii.xs,
               cursor: 'pointer',
               '&:hover': {
                 bgcolor: (t) => alpha(t.palette.primary.main, 0.32),

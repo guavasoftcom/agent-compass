@@ -176,7 +176,8 @@ substituted for the window range when a zoom is active.
   `react-refresh/only-export-components` (a warning, same as `windowContext.tsx`). Accepted.
 - The view prop surface is derived: `TracesPageViewProps extends ReturnType<typeof useTracesExplorer>`.
   Add a field to the hook's return and the view/consumers see it without a second edit.
-- The body box is `calc(100vh - 480px)` — header + histogram + toolbar chrome. Retune if you change
+- The body box is `calc(100vh - BODY_CHROME_PX px)` (`BODY_CHROME_PX` = 480, top of
+  `TracesPageView.tsx`) — header + histogram + toolbar chrome. Retune that constant if you change
   the chrome height or the page scrolls.
 - `VITE_TRACES_SAMPLE=1` swaps all fetchers to an in-memory synthetic store (offline UI work);
   shapes match the live endpoints.

@@ -11,6 +11,11 @@ import TraceTailToggle from './components/TraceTailToggle';
 import TraceSortDropdown from './components/TraceSortDropdown';
 import TraceFilterChips from './components/TraceFilterChips';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
+
+// Viewport height reserved for the page chrome above the body (header + histogram
+// + toolbar), subtracted from 100vh to size the scrollable Stream/Table body.
+const BODY_CHROME_PX = 480;
 
 const TracesPageView = () => {
   const {
@@ -89,7 +94,7 @@ const TracesPageView = () => {
               gap: 0.6,
               height: 40,
               px: 1.9,
-              borderRadius: 1.5,
+              borderRadius: radii.lg,
               border: 1,
               borderColor: 'divider',
               bgcolor: 'background.paper',
@@ -132,7 +137,7 @@ const TracesPageView = () => {
             display: 'grid',
             gridTemplateColumns: { xs: '1fr', md: '236px 1fr' },
             gap: 2,
-            height: 'calc(100vh - 480px)',
+            height: `calc(100vh - ${BODY_CHROME_PX}px)`,
             minHeight: 400,
           }}
         >
@@ -164,7 +169,7 @@ const TracesPageView = () => {
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            height: 'calc(100vh - 480px)',
+            height: `calc(100vh - ${BODY_CHROME_PX}px)`,
             minHeight: 400,
           }}
         >

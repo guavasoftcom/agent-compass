@@ -3,6 +3,7 @@ import SortRoundedIcon from '@mui/icons-material/SortRounded';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import CheckIcon from '@mui/icons-material/Check';
 import type { TraceSortKey } from '../../tracesApi';
+import { radii } from '../../../../theme/theme';
 
 const SORTS: Array<{ id: TraceSortKey; label: string }> = [
   { id: 'new', label: 'Newest' },
@@ -43,7 +44,7 @@ const TraceSortDropdownView = ({
           height: 40,
           pl: 1.6,
           pr: 1.25,
-          borderRadius: 1.5,
+          borderRadius: radii.lg,
           border: 1,
           borderColor: 'divider',
           bgcolor: 'background.paper',
@@ -76,7 +77,7 @@ const TraceSortDropdownView = ({
               bgcolor: 'background.paper',
               border: 1,
               borderColor: 'divider',
-              borderRadius: 1.5,
+              borderRadius: radii.lg,
               boxShadow: 8,
               p: 0.75,
             }}
@@ -94,7 +95,7 @@ const TraceSortDropdownView = ({
                     gap: 1.25,
                     px: 1.4,
                     py: 1.1,
-                    borderRadius: 1.1,
+                    borderRadius: radii.sm,
                     fontSize: 13,
                     color: isActive ? 'primary.main' : 'text.primary',
                     bgcolor: isActive

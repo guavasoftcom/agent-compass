@@ -4,6 +4,7 @@ import { severityOf } from '../../logsApi';
 import { SeverityChip } from '../SeverityChip';
 import { AttributeValue, type ValueDialogState } from '../../../../components/AttributeList/AttributeValue';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 interface LogTableRowProps {
   row: LogRow;
@@ -43,7 +44,7 @@ const LogTableRow = ({ row, expanded, onToggle, onExpandValue }: LogTableRowProp
           <Box
             key={k}
             component="span"
-            sx={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 0.4, mr: 0.75, mb: 0.6, fontFamily: fontFamilies.mono, fontSize: 11, bgcolor: 'action.hover', borderRadius: 0.75, px: 0.9, py: 0.25, color: 'text.secondary', maxWidth: '100%', overflowWrap: 'anywhere' }}
+            sx={{ typography: 'mono', display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 0.4, mr: 0.75, mb: 0.6, fontSize: 11, bgcolor: 'action.hover', borderRadius: radii.xs, px: 0.9, py: 0.25, color: 'text.secondary', maxWidth: '100%', overflowWrap: 'anywhere' }}
           >
             {`${k}=`}
             <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>

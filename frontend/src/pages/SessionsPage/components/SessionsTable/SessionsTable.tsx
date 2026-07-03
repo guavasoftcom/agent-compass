@@ -4,6 +4,7 @@ import type { SxProps, Theme } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type { SessionSummaryRow, SessionsSortModel } from '../../../../api';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 import {
   USD_FORMATTER,
   USD_PER_MINUTE_FORMATTER,
@@ -77,15 +78,11 @@ const tableSx: SxProps<Theme> = {
   minWidth: 980,
   fontFamily: fontFamilies.body,
   '& thead th': {
+    typography: 'eyebrowSm',
     position: 'sticky',
     top: 0,
     zIndex: 1,
     backgroundColor: 'background.paper',
-    fontFamily: fontFamilies.display,
-    fontSize: '11px',
-    fontWeight: 700,
-    letterSpacing: '0.6px',
-    textTransform: 'uppercase',
     color: 'text.secondary',
     textAlign: 'left',
     whiteSpace: 'nowrap',
@@ -120,7 +117,7 @@ const tableSx: SxProps<Theme> = {
   },
   '& td.tokens': { fontWeight: 600 },
   '& td.session': {
-    fontFamily: fontFamilies.mono,
+    typography: 'mono',
     fontSize: '12.5px',
     letterSpacing: '-0.2px',
     color: 'text.secondary',
@@ -155,7 +152,7 @@ const DenialChip = ({ count }: { count: number }) => {
         minWidth: 24,
         height: 22,
         px: 0.75,
-        borderRadius: 1.25,
+        borderRadius: radii.sm,
         fontWeight: 700,
         fontSize: 13,
         fontVariantNumeric: 'tabular-nums',
@@ -179,7 +176,7 @@ const TerminalBadge = ({ interactive }: { interactive: boolean }) => (
       gap: 0.75,
       height: 22,
       px: 1,
-      borderRadius: 1.5,
+      borderRadius: radii.lg,
       fontFamily: fontFamilies.display,
       fontSize: 11,
       fontWeight: 600,

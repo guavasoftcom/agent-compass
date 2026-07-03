@@ -7,7 +7,7 @@ import {
   type LogHistogram,
   type Severity,
 } from '../../logsApi';
-import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 import { severityColor } from '../severity';
 import {
   MS_PER_MINUTE,
@@ -127,11 +127,7 @@ const LogHistogramChart = ({
           <Typography
             component="span"
             sx={{
-              fontFamily: fontFamilies.display,
-              fontSize: 11.5,
-              fontWeight: 700,
-              letterSpacing: '0.6px',
-              textTransform: 'uppercase',
+              typography: 'eyebrow',
               color: 'text.secondary',
             }}
           >
@@ -152,7 +148,7 @@ const LogHistogramChart = ({
               gap: 0.6,
               height: 18,
               px: 0.9,
-              borderRadius: 0.75,
+              borderRadius: radii.xs,
               bgcolor: 'action.hover',
               color: 'text.disabled',
               fontSize: 10,

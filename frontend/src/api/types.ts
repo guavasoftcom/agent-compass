@@ -64,6 +64,14 @@ export interface ListResult<T> {
   totalCount: number | null;
 }
 
+// One facet bucket: a distinct value and how many rows carry it. Shared by the
+// Logs and Traces facet rails (LogFacets / TraceFacets) and mirrors the backend
+// FacetValue DTO.
+export interface FacetValue {
+  value: string;
+  count: number;
+}
+
 export type WindowSelection =
   | { kind: 'preset'; minutes: number }
   | { kind: 'custom'; startTimestamp: string; endTimestamp: string };

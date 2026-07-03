@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Box, Typography } from '@mui/material';
+import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 
 export interface SummaryItem {
@@ -23,7 +24,7 @@ const SummaryStrip = ({ items }: { items: SummaryItem[] }) => (
       mb: 2,
       border: 1,
       borderColor: 'divider',
-      borderRadius: 2.25,
+      borderRadius: radii.xl,
       overflow: 'hidden',
       bgcolor: 'background.paper',
     }}
@@ -45,11 +46,7 @@ const SummaryStrip = ({ items }: { items: SummaryItem[] }) => (
       >
         <Typography
           sx={{
-            fontFamily: fontFamilies.display,
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: '0.7px',
-            textTransform: 'uppercase',
+            typography: 'eyebrowSm',
             color: 'text.disabled',
           }}
         >
@@ -74,7 +71,7 @@ const SummaryStrip = ({ items }: { items: SummaryItem[] }) => (
             color: 'text.primary',
             ...(item.monospace
               ? {
-                  fontFamily: fontFamilies.mono,
+                  typography: 'mono',
                   fontSize: 16,
                   fontWeight: 600,
                 }

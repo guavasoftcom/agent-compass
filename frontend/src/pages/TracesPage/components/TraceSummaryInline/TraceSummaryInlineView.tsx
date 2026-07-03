@@ -11,6 +11,7 @@ import {
 import type { TraceRow } from '../../../../api';
 import { formatDuration, formatTokens } from '../../tracesApi';
 import { fontFamilies } from '../../../../theme/typography';
+import { radii } from '../../../../theme/theme';
 
 export interface OpGroup {
   name: string;
@@ -149,7 +150,7 @@ const TraceSummaryInlineView = ({
                     <Box
                       component="span"
                       sx={{
-                        fontFamily: fontFamilies.mono,
+                        typography: 'mono',
                         fontSize: 13,
                         fontWeight: 600,
                         color: 'text.primary',
@@ -170,7 +171,7 @@ const TraceSummaryInlineView = ({
                     <Box
                       component="span"
                       sx={{
-                        fontFamily: fontFamilies.mono,
+                        typography: 'mono',
                         fontSize: 10.5,
                         color: 'text.secondary',
                       }}
@@ -241,8 +242,8 @@ const TraceSummaryInlineView = ({
                         <Box
                           component="span"
                           sx={{
+                            typography: 'mono',
                             ml: 'auto',
-                            fontFamily: fontFamilies.mono,
                             fontSize: 10.5,
                             color: 'text.primary',
                           }}
@@ -307,7 +308,7 @@ const TraceSummaryInlineView = ({
                         <Box
                           component="span"
                           sx={{
-                            fontFamily: fontFamilies.mono,
+                            typography: 'mono',
                             fontSize: 11.5,
                             color: 'text.primary',
                             whiteSpace: 'nowrap',
@@ -322,13 +323,12 @@ const TraceSummaryInlineView = ({
                           <Box
                             component="span"
                             sx={{
+                              typography: 'mono',
                               flexShrink: 0,
                               px: 0.6,
-                              borderRadius: 0.6,
-                              bgcolor: (th) =>
-                                `color-mix(in srgb, ${th.palette.error.main} 14%, transparent)`,
+                              borderRadius: radii.xs,
+                              bgcolor: (th) => alpha(th.palette.error.main, 0.14),
                               color: 'error.main',
-                              fontFamily: fontFamilies.mono,
                               fontSize: 9.5,
                             }}
                           >
@@ -350,21 +350,20 @@ const TraceSummaryInlineView = ({
                             height: '100%',
                             borderRadius: '4px',
                             background: g.errorCount
-                              ? `linear-gradient(90deg, color-mix(in srgb, ${severity.error} 55%, transparent), ${severity.error})`
-                              : `linear-gradient(90deg, color-mix(in srgb, ${serviceHue} 42%, transparent), ${serviceHue})`,
+                              ? `linear-gradient(90deg, ${alpha(severity.error, 0.55)}, ${severity.error})`
+                              : `linear-gradient(90deg, ${alpha(serviceHue, 0.42)}, ${serviceHue})`,
                           }}
                         />
                       </Box>
                       <Box
                         sx={{
+                          typography: 'mono',
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 0.85,
                           justifyContent: 'flex-end',
-                          fontFamily: fontFamilies.mono,
                           fontSize: 11,
                           color: 'text.secondary',
-                          fontVariantNumeric: 'tabular-nums',
                         }}
                       >
                         <Box component="span" sx={{ color: 'text.disabled' }}>
@@ -422,7 +421,7 @@ const TraceSummaryInlineView = ({
                 height: 30,
                 px: 1.5,
                 border: 'none',
-                borderRadius: 1.1,
+                borderRadius: radii.sm,
                 cursor: 'pointer',
                 color: 'common.white',
                 background: gradients.auroraAction,
@@ -444,15 +443,11 @@ const TraceSummaryInlineView = ({
 const SectionHead = ({ children }: { children: ReactNode }) => (
   <Typography
     sx={{
+      typography: 'eyebrowSm',
       display: 'flex',
       alignItems: 'center',
       gap: 1,
       mb: 1.25,
-      fontFamily: fontFamilies.display,
-      fontSize: 10.5,
-      fontWeight: 700,
-      letterSpacing: '1px',
-      textTransform: 'uppercase',
       color: 'text.secondary',
     }}
   >
@@ -464,11 +459,11 @@ const Pill = ({ children }: { children: ReactNode }) => (
   <Box
     component="span"
     sx={{
+      typography: 'mono',
       px: 0.9,
       py: 0.15,
-      borderRadius: 0.75,
+      borderRadius: radii.xs,
       bgcolor: 'action.hover',
-      fontFamily: fontFamilies.mono,
       fontSize: 10,
       fontWeight: 500,
       letterSpacing: 0,
@@ -499,7 +494,7 @@ const Tile = ({
       flexDirection: 'column',
       gap: 0.2,
       p: 1,
-      borderRadius: 1.1,
+      borderRadius: radii.sm,
       border: 1,
       borderColor: 'divider',
       bgcolor: 'background.paper',
@@ -520,7 +515,7 @@ const Tile = ({
     <Box
       component="span"
       sx={{
-        fontFamily: fontFamilies.mono,
+        typography: 'mono',
         fontSize: 16,
         fontWeight: 600,
         color: bad ? 'error.main' : 'text.primary',
@@ -575,7 +570,7 @@ const Meta = ({ k, v }: { k: string; v: string }) => (
     <Box
       component="span"
       sx={{
-        fontFamily: fontFamilies.mono,
+        typography: 'mono',
         fontSize: 11,
         color: 'text.secondary',
       }}

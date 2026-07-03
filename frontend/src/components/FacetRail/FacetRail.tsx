@@ -1,7 +1,8 @@
 import { Box, Typography, useTheme } from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
-import SearchInput from '../SearchInput/SearchInput';
+import SearchInput from '../SearchInput';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 /**
  * A single facet value row: the checkbox, optional color dot, label, and count.
@@ -109,11 +110,7 @@ const FacetRail = ({
               <Typography
                 component="span"
                 sx={{
-                  fontFamily: fontFamilies.display,
-                  fontSize: 10.5,
-                  fontWeight: 700,
-                  letterSpacing: '1.1px',
-                  textTransform: 'uppercase',
+                  typography: 'eyebrowSm',
                   color: 'text.secondary',
                 }}
               >
@@ -150,7 +147,7 @@ const FacetRail = ({
                   my: '1px',
                   px: 1.1,
                   py: 0.75,
-                  borderRadius: 1.1,
+                  borderRadius: radii.sm,
                   cursor: 'pointer',
                   color: item.selected ? 'text.primary' : 'text.secondary',
                   opacity: item.count ? 1 : 0.4,
@@ -162,7 +159,7 @@ const FacetRail = ({
                   sx={{
                     width: 15,
                     height: 15,
-                    borderRadius: 0.75,
+                    borderRadius: radii.xs,
                     flexShrink: 0,
                     display: 'grid',
                     placeItems: 'center',
@@ -182,7 +179,7 @@ const FacetRail = ({
                     sx={{
                       width: 8,
                       height: 8,
-                      borderRadius: 0.5,
+                      borderRadius: radii.xs,
                       bgcolor: item.color,
                       flexShrink: 0,
                     }}

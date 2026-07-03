@@ -6,9 +6,9 @@ import {
   type ToolFailureRateRow,
 } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
+import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
 import ToolReliabilityPageView from './ToolReliabilityPageView';
 
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
 const MIN_CALLS_FOR_RANKING = 5;
 
 export default function ToolReliabilityPage() {

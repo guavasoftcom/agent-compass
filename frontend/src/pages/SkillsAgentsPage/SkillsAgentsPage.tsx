@@ -6,11 +6,10 @@ import {
   type ToolCallRow,
 } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
+import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
 import SkillsAgentsPageView, {
   type IdentifierRowWithShare,
 } from './SkillsAgentsPageView';
-
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 const withShare = (rows: ToolCallRow[]): {
   rows: IdentifierRowWithShare[];

@@ -1,4 +1,4 @@
-import { Box, Paper, Typography } from '@mui/material';
+import { alpha, Box, Paper, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
 import { auroraColors, gradients } from '../../../../theme/colors';
 import type { MetricSeries } from '../metricsSampleData';
@@ -54,27 +54,19 @@ const MetricHeader = ({ metric }: MetricHeaderProps) => {
         </Typography>
         <Box
           sx={(t) => ({
-            fontSize: 9.5,
-            fontWeight: 700,
-            letterSpacing: 0.4,
-            textTransform: 'uppercase',
-            fontFamily: fontFamilies.display,
+            typography: 'eyebrowSm',
             px: 0.75,
             py: '2px',
             borderRadius: '5px',
             color: t.palette.info?.main ?? t.palette.primary.main,
-            bgcolor: `color-mix(in srgb, ${t.palette.info?.main ?? auroraColors.cyan} 18%, transparent)`,
+            bgcolor: alpha(t.palette.info?.main ?? auroraColors.cyan, 0.18),
           })}
         >
           {TYPE_BADGE(metric.type)}
         </Box>
         <Box
           sx={{
-            fontSize: 9.5,
-            fontWeight: 700,
-            letterSpacing: 0.4,
-            textTransform: 'uppercase',
-            fontFamily: fontFamilies.display,
+            typography: 'eyebrowSm',
             px: 0.75,
             py: '2px',
             borderRadius: '5px',

@@ -17,8 +17,8 @@ import {
 import type { HistogramSeries } from './components/TraceHistogram';
 import type { TraceFacetSelections } from './components/TraceFacetRail';
 import type { TraceView } from './components/TraceViewToggle';
+import { TAIL_INTERVAL_MS } from '../../lib/constants';
 
-const TAIL_INTERVAL_MS = 1500;
 const STREAM_PAGE = 60;
 const TAIL_PAGE = 20;
 const HISTOGRAM_BUCKETS = 48;

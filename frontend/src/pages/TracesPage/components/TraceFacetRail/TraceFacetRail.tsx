@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useTheme } from '@mui/material';
-import FacetRail, { type FacetRailSection } from '../../../../components/FacetRail/FacetRail';
+import FacetRail, { type FacetRailSection } from '../../../../components/FacetRail';
 import {
   DURATION_BUCKETS,
   type FacetKey,

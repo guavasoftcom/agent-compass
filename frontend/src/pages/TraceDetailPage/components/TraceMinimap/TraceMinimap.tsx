@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Box, alpha, useTheme } from '@mui/material';
 import type { SpanRow } from '../../../../api';
 import { spanColor, SERVICE_LEGEND } from '../../../TracesPage/components/traceColors';
+import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 
 export interface ZoomView {
@@ -131,12 +132,9 @@ const TraceMinimap = ({
         <Box
           component="span"
           sx={{
-            fontSize: 9.5,
-            color: 'text.disabled',
-            fontFamily: fontFamilies.display,
+            typography: 'eyebrowSm',
             fontWeight: 600,
-            letterSpacing: '0.3px',
-            textTransform: 'uppercase',
+            color: 'text.disabled',
             pointerEvents: 'none',
           }}
         >
@@ -202,7 +200,7 @@ const TraceMinimap = ({
                 content: '""',
                 width: 2,
                 height: '55%',
-                borderRadius: 1,
+                borderRadius: radii.sm,
                 bgcolor: 'primary.main',
                 opacity: 0.75,
               },
@@ -223,7 +221,7 @@ const TraceMinimap = ({
                 content: '""',
                 width: 2,
                 height: '55%',
-                borderRadius: 1,
+                borderRadius: radii.sm,
                 bgcolor: 'primary.main',
                 opacity: 0.75,
               },

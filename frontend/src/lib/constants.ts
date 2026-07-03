@@ -23,3 +23,11 @@ export const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 export const MS_PER_MINUTE = 60_000;
 export const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 export const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+// Preset-only auto-refresh cadence, shared by every page's polling interval so
+// the whole dashboard refetches on the same 60s beat.
+export const AUTO_REFRESH_INTERVAL_MS = MS_PER_MINUTE;
+
+// Live-tail poll cadence for the cursor-paged Stream views (Logs, Traces): how
+// often each prepends genuinely new rows while auto-refresh is on.
+export const TAIL_INTERVAL_MS = 1500;

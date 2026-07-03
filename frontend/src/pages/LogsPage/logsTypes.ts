@@ -4,7 +4,7 @@
 // facet rail, stream, and table all share. Re-exported from ./logsApi so consumers
 // import everything from one place.
 
-import type { LogRow } from '../../api';
+import type { FacetValue, LogRow } from '../../api';
 
 export const SEVERITIES = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -38,10 +38,7 @@ export interface LogHistogram {
   buckets: HistogramBucket[];
 }
 
-export interface FacetValue {
-  value: string;
-  count: number;
-}
+export type { FacetValue };
 export interface LogFacets {
   severity: FacetValue[];
   event: FacetValue[];
