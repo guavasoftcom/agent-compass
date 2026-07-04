@@ -8,6 +8,17 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/coding_agent_tuning}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    hikari:
+      # Sized for the dashboard's read-heavy aggregation load without overwhelming
+      # Postgres' own connection ceiling; well above the 2-connection default that
+      # was previously implicit.
+      maximum-pool-size: 20
+      # Applied per-connection via SET on checkout (Postgres has no server-wide
+      # default). Bounds any single native aggregation query — including a
+      # forgotten LIMIT-less scan on the 1M+-row metric_points/log_records tables
+      # — to 15s instead of one runaway statement pinning a pool connection
+      # indefinitely.
+      connection-init-sql: SET statement_timeout = 15000
   jpa:
     hibernate:
       ddl-auto: validate

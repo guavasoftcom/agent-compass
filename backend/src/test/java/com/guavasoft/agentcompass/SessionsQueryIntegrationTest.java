@@ -18,6 +18,8 @@ import com.guavasoft.agentcompass.service.MetricService;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,9 +54,12 @@ class SessionsQueryIntegrationTest {
   @Autowired
   MetricService metricService;
 
+  private final List<Long> seededMetricPointIds = new ArrayList<>();
+
   @BeforeEach
   void seedSessions() {
     metricPointRepository.deleteAll();
+    seededMetricPointIds.clear();
     Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
 
     // Session A: multi-stream cost (12 + 3 = 15) and active time 1500 (MAX of a
@@ -85,6 +90,13 @@ class SessionsQueryIntegrationTest {
     // total 1,000,000; B and C have no token rows -> 0.
     saveTokenUsage("A", 400_000.0, base);
     saveTokenUsage("A", 1_000_000.0, base.plusSeconds(60));
+
+    // Fixtures seed rows directly (bypassing OtlpMetricService), so value_delta
+    // starts NULL. Replicate the ingest-time computation here — same
+    // recomputeValueDeltas call the real ingest path uses after saveAll — so the
+    // session aggregations under test see the same value_delta they would in
+    // production.
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
   }
 
   @Test
@@ -169,7 +181,8 @@ class SessionsQueryIntegrationTest {
     entity.setValueKind("double");
     entity.setAttributes(Map.of(
         "session.id", sessionId, "start_type", startType, "terminal.type", terminalType));
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 
   private void saveTokenUsage(String sessionId, double value, Instant timestamp) {
@@ -180,7 +193,8 @@ class SessionsQueryIntegrationTest {
     entity.setValueDouble(value);
     entity.setValueKind("double");
     entity.setAttributes(Map.of("session.id", sessionId, "type", "input"));
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 
   private void saveActive(String sessionId, String model, String querySource, double value, Instant timestamp) {
@@ -199,6 +213,7 @@ class SessionsQueryIntegrationTest {
         "session.id", sessionId,
         "model", model,
         "query_source", querySource));
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 }

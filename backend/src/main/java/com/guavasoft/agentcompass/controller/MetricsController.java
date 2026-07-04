@@ -10,8 +10,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -21,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostSummary;
-import com.guavasoft.agentcompass.model.EventRow;
+import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.MetricSeries;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.TokenDistribution;
@@ -64,27 +62,33 @@ public class MetricsController {
 
     @GetMapping("")
     @Operation(
-            summary = "Persisted OTLP metric data points, narrowed by active attribute filters",
-            description = "Drives the Metrics DataGrid. Returns every metric_points row that contains "
-                    + "*every* filter parameter (AND) in its attributes jsonb, in reverse chronological "
-                    + "order. When no filter is supplied, returns all rows. X-Total-Count mirrors the "
-                    + "returned list size, so it reflects the filtered count when filters are active.")
+            summary = "Persisted OTLP metric data points, narrowed by active attribute filters — offset-paged",
+            description = "Drives the Metrics DataGrid. Returns one page of metric_points rows that contain "
+                    + "*every* filter parameter (AND) in their attributes jsonb, in reverse chronological "
+                    + "order (timestamp DESC, id DESC). page is 0-based; size is clamped between 1 and 500 "
+                    + "(default 25). totalCount is the full filtered row count across all pages, independent "
+                    + "of page/size.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
-            description = "OTLP metric data points matching every filter, newest first. The "
-                    + "X-Total-Count header carries the size of the returned (filtered) list.",
+            description = "One page of OTLP metric data points matching every filter, newest first, plus "
+                    + "the total matching row count",
             content = @Content(
                     mediaType = "application/json",
-                    array = @ArraySchema(schema = @Schema(implementation = EventRow.class)))))
-    public ResponseEntity<List<EventRow>> metrics(
+                    schema = @Schema(implementation = MetricPage.class))))
+    public MetricPage metrics(
             @Parameter(description = "Active key=value filters; rows must contain all of them", example = "method=GET")
             @RequestParam(required = false) List<String> filter,
-            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
-        List<EventRow> items = metricService.recentEvents(
-                filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Total-Count", String.valueOf(items.size()));
-        return ResponseEntity.ok().headers(headers).body(items);
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams,
+            @Parameter(description = "0-based page number", example = "0")
+            @RequestParam(required = false, defaultValue = "0") int page,
+            @Parameter(description = "Page size (clamped between 1 and 500)", example = "25")
+            @RequestParam(required = false, defaultValue = "25") int size) {
+        return metricService.recentEvents(
+                filter == null ? List.of() : filter,
+                timeWindowParams.startTimestamp(),
+                timeWindowParams.endTimestamp(),
+                page,
+                size);
     }
 
     @GetMapping("/catalog")
