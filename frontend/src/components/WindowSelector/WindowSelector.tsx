@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import type { WindowSelection } from '../../api';
-import { WINDOWS, type WindowOption } from '../../lib/constants';
+import { MAX_WINDOW_SPAN_MS, WINDOWS, type WindowOption } from '../../lib/constants';
 import WindowSelectorView from './WindowSelectorView';
-
-const MAX_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface WindowSelectorProps {
   selection: WindowSelection;
@@ -94,7 +92,7 @@ const WindowSelector = ({
   const rangeTooLarge =
     !!startInput &&
     !!endInput &&
-    new Date(endInput).getTime() - new Date(startInput).getTime() > MAX_RANGE_MS;
+    new Date(endInput).getTime() - new Date(startInput).getTime() > MAX_WINDOW_SPAN_MS;
 
   const customApplyDisabled =
     !startInput ||

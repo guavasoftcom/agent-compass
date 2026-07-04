@@ -21,6 +21,14 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `LiveTailToggle` — shared live-tail pill; Traces' `TraceTailToggle` wraps it.
   - `BreakdownList` — shared ranked-breakdown list; used by the metric and token breakdowns.
   - `ChartCard` — shared titled chart-container card; used by the Tool-activity cards.
+  - `ErrorBoundary` — the one class component in the app (React only exposes
+    `componentDidCatch`/`getDerivedStateFromError` on classes); renders a MUI `Alert` + reload
+    button in place of a crashed subtree. Wired around `<Outlet />` in `App/AppShell.tsx` so the
+    app-bar/drawer chrome survives a page-level render crash; takes a `resetKeys` prop
+    (`AppShell` passes `[location.pathname]`) so the fallback clears itself on navigation
+    instead of sticking until a manual reload. This is defense-in-depth, not a substitute for
+    runtime-guarding attacker-influenceable attribute values before rendering them (see
+    `pages/LogsPage/CLAUDE.md`'s `eventNameOf`/`toolNameOf` gotcha for the canonical example).
 - `pages/<Name>Page/` — one folder per route. Each follows the container/presentational split (see below). Sections that group tabs (e.g. `ToolActivitySection`) wrap their child pages in a `SectionLayout`.
 - `theme/` — the design system. Six files: `colors.ts`, `typography.ts`, `theme.ts`, `colorMode.tsx`, `fonts.ts` (self-hosted `@fontsource` side-effect imports), and `mui-stack-augment.d.ts` (Stack prop augmentation). No barrel — import the specific file (`from '../../theme/colors'`).
   - `theme/colors.ts` — **the single source of truth for every raw color**. Hue-named primitives (`auroraColors`, `neutralColors`), semantic aliases (`severity`, `tokenComposition`), and the signature `gradients`. No `#rrggbb` / `rgba(...)` literal should live anywhere else under `src/`; for transparency wrap a base token in MUI's `alpha(token, opacity)` rather than hand-writing an rgba string. `theme.ts`, `traceColors.ts`, and component `sx` props all reference these tokens.

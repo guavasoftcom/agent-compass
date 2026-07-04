@@ -58,6 +58,17 @@ export const severityOf = (r: LogRow): Severity => {
   }
   return 'INFO';
 };
-export const eventNameOf = (r: LogRow): string | null => (r.attributes?.['event.name'] as string | undefined) ?? null;
-export const toolNameOf = (r: LogRow): string | null =>
-  (r.attributes?.['tool_name'] as string | undefined) ?? null;
+// OTLP kvlist/array attribute values arrive in the browser as untyped JSON, and
+// unauthenticated ingest means an attacker can send an object/array where a
+// string is expected. Guard with typeof at runtime — a bare `as string` cast is
+// compile-time only and lets an object reach `<Tag>{event}</Tag>` in LogStream,
+// which throws "Objects are not valid as a React child" and (with no
+// ErrorBoundary above it) unmounts the whole page.
+export const eventNameOf = (r: LogRow): string | null => {
+  const value = r.attributes?.['event.name'];
+  return typeof value === 'string' ? value : null;
+};
+export const toolNameOf = (r: LogRow): string | null => {
+  const value = r.attributes?.['tool_name'];
+  return typeof value === 'string' ? value : null;
+};

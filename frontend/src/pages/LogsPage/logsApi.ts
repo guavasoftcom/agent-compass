@@ -11,6 +11,7 @@
 // serialization, severityOf/eventNameOf/toolNameOf) in ./logsDerivations — both
 // re-exported here so the view components keep importing everything from one place.
 
+import { getJson } from '../../api/http';
 import type {
   LogCursor,
   LogCursorPage,
@@ -44,14 +45,14 @@ export const fetchLogHistogram = (f: LogsFilters, buckets = 50): Promise<LogHist
   // so severity is never sent as a filter — matches GET /api/logs/histogram.
   const p = buildLogsQuery({ ...f, severity: [] });
   p.set('buckets', String(buckets));
-  return fetch(`/api/logs/histogram?${p.toString()}`).then((r) => r.json() as Promise<LogHistogram>);
+  return getJson<LogHistogram>(`/api/logs/histogram?${p.toString()}`);
 };
 
 export const fetchLogFacets = (f: LogsFilters): Promise<LogFacets> => {
   if (USE_SAMPLE_DATA) {
     return sampleFacets(f);
   }
-  return fetch(`/api/logs/facets?${buildLogsQuery(f).toString()}`).then((r) => r.json() as Promise<LogFacets>);
+  return getJson<LogFacets>(`/api/logs/facets?${buildLogsQuery(f).toString()}`);
 };
 
 export const fetchLogsCursor = (
@@ -73,7 +74,7 @@ export const fetchLogsCursor = (
   if (opts.after) {
     p.set('after', `${opts.after.ts},${opts.after.id}`);
   }
-  return fetch(`/api/logs?${p.toString()}`).then((r) => r.json() as Promise<LogCursorPage>);
+  return getJson<LogCursorPage>(`/api/logs?${p.toString()}`);
 };
 
 export const fetchLogsPage = (f: LogsFilters, page: number, size: number): Promise<LogsListResult> => {
@@ -83,5 +84,5 @@ export const fetchLogsPage = (f: LogsFilters, page: number, size: number): Promi
   const p = buildLogsQuery(f);
   p.set('page', String(page));
   p.set('size', String(size));
-  return fetch(`/api/logs?${p.toString()}`).then((r) => r.json() as Promise<LogsListResult>);
+  return getJson<LogsListResult>(`/api/logs?${p.toString()}`);
 };

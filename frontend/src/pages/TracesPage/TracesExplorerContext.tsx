@@ -1,34 +1,12 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { AUTO_REFRESH_INTERVAL_MS, MS_PER_MINUTE, WINDOWS } from '../../lib/constants';
+import { AUTO_REFRESH_INTERVAL_MS, WINDOWS } from '../../lib/constants';
 import type { WindowOption } from '../../lib/constants';
+import { resolveWindow } from '../../lib/resolveWindow';
 import { useWindowContext } from '../../lib/windowContext';
 import type { WindowSelection } from '../../api';
 import useTracesExplorer, { type TracesExplorer } from './useTracesExplorer';
-
-interface ResolvedWindow {
-  startTimestamp: string;
-  endTimestamp: string;
-  label: string;
-}
-
-const resolveWindow = (selection: WindowSelection): ResolvedWindow => {
-  if (selection.kind === 'custom') {
-    return {
-      startTimestamp: selection.startTimestamp,
-      endTimestamp: selection.endTimestamp,
-      label: 'selected range',
-    };
-  }
-  const now = Date.now();
-  const label = WINDOWS.find((option) => option.value === selection.minutes)?.label ?? 'window';
-  return {
-    startTimestamp: new Date(now - selection.minutes * MS_PER_MINUTE).toISOString(),
-    endTimestamp: new Date(now + MS_PER_MINUTE).toISOString(),
-    label,
-  };
-};
 
 // The view and every page-specific trace component read their data and handlers
 // from this context, so the page tree shares one useTracesExplorer instance

@@ -139,11 +139,18 @@ substituted for the window range when a zoom is active.
   row expansion, sort, and the Stream/Table view. It returns a flat object; the context spreads it
   alongside the window chrome (`selection`, `windows`, `windowLabel`, `error`, `onReload`,
   `autoRefresh`, `onAutoRefreshChange`, `isPolling`, and `onSelectionChange`).
-- **Window resolution**: the provider memoizes `resolveWindow(selection)` on `[selection]` — for a
-  preset this stamps `start = now - minutes`, `end = now + 1 min` at selection time. (Contrast with
-  LogsPage, which resolves at fetch time to keep the end timestamp fresh; if you unify these pages,
-  this is the difference to reconcile.) `zoom`, when set, overrides start/end inside the `filters`
-  memo, so a zoom changes `filtersKey` and re-keys every query.
+- **Window resolution**: the provider memoizes the shared `resolveWindow(selection)`
+  (`../../lib/resolveWindow.ts`, also used by LogsPage) on `[selection]` — for a preset this
+  stamps `start = end - clampedSpan`, `end = now + 1 min` at selection time, where the span is
+  `min(minutes * 60_000, MAX_WINDOW_SPAN_MS)` (`../../lib/constants.ts`, 30 days — mirrors the
+  backend's `@ValidDateRange(maxDays = 30)` cap). Without that clamp the "30 days" preset would
+  resolve to a 30-day-plus-1-minute span and the backend would 400 every request. Like LogsPage,
+  this resolution happens once per selection change, not per fetch or per tail tick — the memo
+  only re-runs when the `selection` object itself changes, so a long-lived preset session has the
+  same frozen-`endTimestamp` staleness characteristic LogsPage has (see
+  `../LogsPage/CLAUDE.md`'s "Data flow" section for the full explanation; this page hasn't been
+  reconciled to a fetch-time resolution model either). `zoom`, when set, overrides start/end
+  inside the `filters` memo, so a zoom changes `filtersKey` and re-keys every query.
 - **The stream is hook-local, not TanStack-cached**: `streamRows`/`streamCursor`/`streamHasMore`
   live in `useState`. `resetStream` re-pulls from the top whenever `[filtersKey, view, sort]`
   changes; `loadMore` appends on scroll. Stale-guarded by a `requestSequence` ref so a slow
