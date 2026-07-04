@@ -526,6 +526,51 @@ class LogsQueryIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
+    // HIGH-2 regression — unclamped limit/size/page resource exhaustion
+    // -------------------------------------------------------------------------
+
+    @Test
+    void offsetPageClampsOversizedSizeInsteadOfFetchingUnboundedRows() {
+        LogQueryCriteria allRows = criteria(List.of(), List.of(), List.of(), List.of(), "");
+        // size is attacker-chosen and huge; must be clamped, not passed straight to SQL LIMIT.
+        LogPage page = service.offsetPage(allRows, 0, 2_000_000_000);
+
+        assertThat(page.totalCount()).isEqualTo(8L);
+        assertThat(page.items()).hasSize(8);
+    }
+
+    @Test
+    void offsetPageGuardsAgainstPageTimesSizeIntOverflow() {
+        LogQueryCriteria allRows = criteria(List.of(), List.of(), List.of(), List.of(), "");
+        // page * size would overflow int and wrap to a negative OFFSET pre-fix, causing a 500.
+        LogPage page = service.offsetPage(allRows, Integer.MAX_VALUE, 25);
+
+        assertThat(page.totalCount()).isEqualTo(8L);
+        assertThat(page.items()).isEmpty();
+    }
+
+    @Test
+    void offsetPageFloorsNegativePageToZero() {
+        LogQueryCriteria allRows = criteria(List.of(), List.of(), List.of(), List.of(), "");
+        LogPage page = service.offsetPage(allRows, -5, 5);
+
+        assertThat(page.totalCount()).isEqualTo(8L);
+        assertThat(page.items()).hasSize(5);
+    }
+
+    @Test
+    void cursorPageFirstClampsOversizedLimitInsteadOfOverflowingTheProbeFetch() {
+        LogQueryCriteria allRows = criteria(List.of(), List.of(), List.of(), List.of(), "");
+        // limit=Integer.MAX_VALUE previously overflowed resolvedLimit + 1 into a negative
+        // SQL LIMIT (500 error). Clamped, this must behave like any oversized-but-valid limit.
+        LogCursorPage page = service.cursorPageFirst(allRows, Integer.MAX_VALUE);
+
+        assertThat(page.totalCount()).isEqualTo(8L);
+        assertThat(page.items()).hasSize(8);
+        assertThat(page.hasMore()).isFalse();
+    }
+
+    // -------------------------------------------------------------------------
     // Full-text query test
     // -------------------------------------------------------------------------
 

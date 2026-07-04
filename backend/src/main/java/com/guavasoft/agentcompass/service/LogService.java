@@ -680,6 +680,16 @@ public class LogService {
 
   private static final int DEFAULT_HISTOGRAM_BUCKETS = 50;
   private static final int DEFAULT_CURSOR_LIMIT = 60;
+  private static final int DEFAULT_OFFSET_PAGE_SIZE = 25;
+
+  /**
+   * Ceiling on both cursor {@code limit} and offset {@code size}. Without this, an
+   * attacker-chosen {@code limit=1000000000} fetches a billion-row List (OOM), and
+   * {@code limit=Integer.MAX_VALUE} overflows the "+1 probe" ({@code resolvedLimit + 1})
+   * into a negative SQL LIMIT (500 error). Matches the sessions grid's page-size cap
+   * ({@code MetricService.SESSION_RESULT_LIMIT}).
+   */
+  private static final int MAXIMUM_PAGE_SIZE = 500;
 
   /**
    * totalCount placeholder for cursor continuation (before=) and live-tail
@@ -849,7 +859,7 @@ public class LogService {
    * exactly without a second COUNT query (the "+1 probe" pattern).
    */
   public LogCursorPage cursorPageFirst(LogQueryCriteria criteria, int limit) {
-    int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+    int resolvedLimit = resolveCursorLimit(limit);
     long totalCount = logRecordRepository.countFiltered(
         criteria.startTimestamp(),
         criteria.endTimestamp(),
@@ -883,7 +893,7 @@ public class LogService {
    * expensive filtered COUNT.
    */
   public LogCursorPage cursorPageBefore(LogQueryCriteria criteria, LogCursor cursor, int limit) {
-    int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+    int resolvedLimit = resolveCursorLimit(limit);
 
     List<LogRecord> probeItems = logRecordMapper.toLogRecords(logRecordRepository.cursorBefore(
         criteria.startTimestamp(),
@@ -911,7 +921,7 @@ public class LogService {
    * on every poll was the most frequently executed expensive query in the app.
    */
   public LogCursorPage cursorPageAfter(LogQueryCriteria criteria, LogCursor cursor, int limit) {
-    int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+    int resolvedLimit = resolveCursorLimit(limit);
 
     List<LogRecord> probeItems = logRecordMapper.toLogRecords(logRecordRepository.cursorAfter(
         criteria.startTimestamp(),
@@ -976,7 +986,9 @@ public class LogService {
         tuningProperties.getToolAttribute(),
         criteria.fullTextQuery());
 
-    int pageOffset = page * size;
+    int resolvedSize = clampOffsetPageSize(size);
+    int resolvedPage = Math.max(0, page);
+    int pageOffset = computeOffset(resolvedPage, resolvedSize);
     List<LogRecord> items = logRecordMapper.toLogRecords(logRecordRepository.offsetPage(
         criteria.startTimestamp(),
         criteria.endTimestamp(),
@@ -986,9 +998,40 @@ public class LogService {
         criteria.tools(),
         tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
-        size,
+        resolvedSize,
         pageOffset));
 
     return new LogPage(items, totalCount);
+  }
+
+  /**
+   * Floors {@code limit} to {@link #DEFAULT_CURSOR_LIMIT} and ceiling-clamps it to
+   * {@link #MAXIMUM_PAGE_SIZE} so the "+1 probe" fetch can never overflow into a
+   * negative SQL LIMIT.
+   */
+  private static int resolveCursorLimit(int limit) {
+    if (limit <= 0) {
+      return DEFAULT_CURSOR_LIMIT;
+    }
+    return Math.min(limit, MAXIMUM_PAGE_SIZE);
+  }
+
+  /** Mirrors {@link #resolveCursorLimit(int)} for the offset-mode {@code size} param. */
+  private static int clampOffsetPageSize(int size) {
+    if (size <= 0) {
+      return DEFAULT_OFFSET_PAGE_SIZE;
+    }
+    return Math.min(size, MAXIMUM_PAGE_SIZE);
+  }
+
+  /**
+   * Computes {@code page * size} as a {@code long} before narrowing back to {@code int},
+   * clamping to {@link Integer#MAX_VALUE} rather than letting the multiplication wrap
+   * around into a negative SQL OFFSET. {@code resolvedSize} is already capped at
+   * {@link #MAXIMUM_PAGE_SIZE}, so only an extreme {@code page} value can trigger this.
+   */
+  private static int computeOffset(int resolvedPage, int resolvedSize) {
+    long rawOffset = (long) resolvedPage * resolvedSize;
+    return rawOffset > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) rawOffset;
   }
 }
