@@ -93,6 +93,61 @@ class TracesControllerTest {
         verify(logService).logsForTrace("0102030405060708090a0b0c0d0e0f10");
     }
 
+    // -------------------------------------------------------------------------
+    // HIGH-1 regression — unauthenticated DoS via unbounded date range / buckets
+    // -------------------------------------------------------------------------
+
+    @Test
+    void histogramRejectsDateRangeOverThirtyDays() throws Exception {
+        mockMvc.perform(get("/api/traces/histogram")
+                        .param("startTimestamp", "1970-01-01T00:00:00Z")
+                        .param("endTimestamp", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void histogramRejectsBucketsAboveMaximum() throws Exception {
+        mockMvc.perform(get("/api/traces/histogram")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z")
+                        .param("endTimestamp", "2026-06-12T00:00:00Z")
+                        .param("buckets", "100000000"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void histogramRejectsBucketsBelowMinimum() throws Exception {
+        mockMvc.perform(get("/api/traces/histogram")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z")
+                        .param("endTimestamp", "2026-06-12T00:00:00Z")
+                        .param("buckets", "0"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void facetsRejectsDateRangeOverThirtyDays() throws Exception {
+        mockMvc.perform(get("/api/traces/facets")
+                        .param("startTimestamp", "1970-01-01T00:00:00Z")
+                        .param("endTimestamp", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void tracesCursorPageRejectsDateRangeOverThirtyDays() throws Exception {
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", "1970-01-01T00:00:00Z")
+                        .param("endTimestamp", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void tracesOffsetPageRejectsDateRangeOverThirtyDays() throws Exception {
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", "1970-01-01T00:00:00Z")
+                        .param("endTimestamp", "2026-01-01T00:00:00Z")
+                        .param("page", "0"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void traceSpansReturnsAllSpansForTheGivenTraceId() throws Exception {
         when(traceService.spansForTrace("0102030405060708090a0b0c0d0e0f10")).thenReturn(List.of(
