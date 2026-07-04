@@ -1,10 +1,16 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { alpha, Box, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { neutralColors } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
 import { radii } from '../../theme/theme';
+import {
+  PLOT_PADDING,
+  buildCoordinateFns,
+  buildLayersAndYDomain,
+  buildPathStrings,
+} from './areaTrendGeometry';
 
 export interface AreaTrendSeries {
   label: string;
@@ -42,21 +48,6 @@ export interface AreaTrendChartProps {
   yScale?: 'linear' | 'log';
 }
 
-const PLOT_PADDING = { left: 52, right: 16, top: 16, bottom: 44 };
-
-// Fine "nice-max" ladder so the data peak fills most of the plot height
-// (a coarse 1/2/5/10 ladder leaves big dead space above the curve).
-const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
-const niceMax = (value: number): number => {
-  if (value <= 0) {
-    return 1;
-  }
-  const powerOfTen = 10 ** Math.floor(Math.log10(value));
-  const mantissa = value / powerOfTen;
-  const step = NICE_STEPS.find((candidate) => mantissa <= candidate) ?? 10;
-  return step * powerOfTen;
-};
-
 const defaultFormatX = (date: Date): string =>
   date.toLocaleTimeString([], { hour: 'numeric' });
 
@@ -70,16 +61,6 @@ const defaultTooltipHeader = (date: Date): string =>
     hour: 'numeric',
     minute: '2-digit',
   });
-
-interface Layer {
-  seriesIndex: number;
-  label: string;
-  color: string;
-  /** Lower edge of this layer's band (cumulative floor when stacked; axis floor when not). */
-  lower: number[];
-  /** Drawn top of this layer (cumulative top when stacked; the series value when not). */
-  upper: number[];
-}
 
 /**
  * Aurora trend chart — hand-built SVG (no @mui/x-charts) so the gradient fade, crisp
@@ -141,143 +122,34 @@ const AreaTrendChart = ({
   const plotHeight = height - PLOT_PADDING.top - PLOT_PADDING.bottom;
   const baselineY = PLOT_PADDING.top + plotHeight;
 
-  const isActive = (seriesIndex: number): boolean =>
-    activeStates ? activeStates[seriesIndex] !== false : true;
+  // Layers + y-domain: rebuilding these means re-scanning every series/bucket,
+  // so they're memoized on the props that can actually change their shape.
+  // Deliberately excludes `hover` — the crosshair/tooltip must never invalidate
+  // this (see handleMove below, which fires on every mouse-move pixel). The
+  // actual computation is a pure function (`areaTrendGeometry.ts`) so it can be
+  // unit-tested without a DOM renderer.
+  const { layers, yFloor, yCeiling, yTicks } = useMemo(
+    () => buildLayersAndYDomain(series, activeStates, bucketCount, stacked, isLogarithmic),
+    [series, activeStates, bucketCount, stacked, isLogarithmic],
+  );
 
-  // Build the visible layers. Stacked → cumulative bands; unstacked → each series
-  // is its own line, its band filled down to the shared baseline (set below once the
-  // domain is known).
-  const layers: Layer[] = [];
-  const runningTotals = new Array(bucketCount).fill(0);
-  series.forEach((seriesItem, seriesIndex) => {
-    if (!isActive(seriesIndex)) {
-      return;
-    }
-    if (stacked) {
-      const lower = runningTotals.slice();
-      const upper = runningTotals.map(
-        (total, i) => total + (seriesItem.data[i] ?? 0),
-      );
-      layers.push({
-        seriesIndex,
-        label: seriesItem.label,
-        color: seriesItem.color,
-        lower,
-        upper,
-      });
-      for (let i = 0; i < bucketCount; i += 1) {
-        runningTotals[i] = upper[i];
-      }
-    } else {
-      layers.push({
-        seriesIndex,
-        label: seriesItem.label,
-        color: seriesItem.color,
-        lower: [],
-        upper: (seriesItem.data ?? [])
-          .slice(0, bucketCount)
-          .map((value) => value ?? 0),
-      });
-    }
-  });
+  // Coordinate mappers: memoized separately from layers/y-domain so a resize
+  // (width/height change) doesn't force a full layer rebuild, and so the path-
+  // string memo below can depend on a stable function reference instead of
+  // re-deriving exhaustive-deps against every primitive it closes over.
+  const coordinateFns = useMemo(
+    () => buildCoordinateFns(bucketCount, plotWidth, plotHeight, isLogarithmic, yFloor, yCeiling),
+    [bucketCount, plotWidth, plotHeight, isLogarithmic, yFloor, yCeiling],
+  );
+  const { xCoordinateAt, yCoordinateAt } = coordinateFns;
 
-  // --- Y domain --------------------------------------------------------------
-  let yFloor: number;
-  let yCeiling: number;
-  let yTicks: number[];
-
-  if (isLogarithmic) {
-    let minPositive = Infinity;
-    let maxValue = 1;
-    for (const layer of layers) {
-      for (const value of layer.upper) {
-        if (value > 0 && value < minPositive) {
-          minPositive = value;
-        }
-        if (value > maxValue) {
-          maxValue = value;
-        }
-      }
-    }
-    if (!Number.isFinite(minPositive)) {
-      minPositive = 1;
-    }
-    // Floor a decade below the smallest positive value; ceiling at/above the max.
-    const floorExponent = Math.floor(Math.log10(minPositive)) - 1;
-    const ceilingExponent = Math.max(
-      floorExponent + 1,
-      Math.ceil(Math.log10(maxValue)),
-    );
-    yFloor = 10 ** floorExponent;
-    yCeiling = 10 ** ceilingExponent;
-    yTicks = [];
-    for (
-      let exponent = floorExponent;
-      exponent <= ceilingExponent;
-      exponent += 1
-    ) {
-      yTicks.push(10 ** exponent);
-    }
-  } else {
-    yFloor = 0;
-    let peakValue = 1;
-    for (const layer of layers) {
-      for (const value of layer.upper) {
-        if (value > peakValue) {
-          peakValue = value;
-        }
-      }
-    }
-    yCeiling = niceMax(peakValue);
-    yTicks = Array.from({ length: 6 }, (_, i) => (yCeiling * i) / 5);
-  }
-
-  // Shared baseline for unstacked bands (axis floor).
-  if (!stacked) {
-    for (const layer of layers) {
-      layer.lower = layer.upper.map(() => yFloor);
-    }
-  }
-
-  const xCoordinateAt = (i: number) =>
-    bucketCount <= 1
-      ? PLOT_PADDING.left
-      : PLOT_PADDING.left + (i * plotWidth) / (bucketCount - 1);
-  const yCoordinateAt = (value: number): number => {
-    if (isLogarithmic) {
-      const clamped = Math.max(value, yFloor);
-      const fraction =
-        (Math.log10(clamped) - Math.log10(yFloor)) /
-        (Math.log10(yCeiling) - Math.log10(yFloor));
-      return PLOT_PADDING.top + (1 - fraction) * plotHeight;
-    }
-    return PLOT_PADDING.top + (1 - value / yCeiling) * plotHeight;
-  };
-
-  const bandPath = (layer: Layer): string => {
-    // No points → empty path (avoids an invalid lone "Z" during loading).
-    if (layer.upper.length === 0) {
-      return '';
-    }
-    let pathData = layer.upper
-      .map(
-        (value, i) =>
-          `${i ? 'L' : 'M'}${xCoordinateAt(i)},${yCoordinateAt(value)}`,
-      )
-      .join('');
-    for (let i = layer.lower.length - 1; i >= 0; i -= 1) {
-      pathData += `L${xCoordinateAt(i)},${yCoordinateAt(layer.lower[i])}`;
-    }
-    return `${pathData}Z`;
-  };
-
-  const linePath = (layer: Layer): string =>
-    layer.upper
-      .map(
-        (value, i) =>
-          `${i ? 'L' : 'M'}${xCoordinateAt(i)},${yCoordinateAt(value)}`,
-      )
-      .join('');
+  // Band/line path strings: the expensive part `handleMove` was rebuilding on
+  // every pixel of mouse movement (points × layers × 4 per hover tick). Memoized
+  // on `layers` + `coordinateFns` only, so hover never invalidates this.
+  const { bandPaths, linePaths } = useMemo(
+    () => buildPathStrings(layers, coordinateFns),
+    [layers, coordinateFns],
+  );
 
   const xTickCount = Math.min(8, bucketCount);
   const xTickIndexes =
@@ -398,20 +270,20 @@ const AreaTrendChart = ({
           </g>
         ))}
 
-        {layers.map((layer) => (
+        {layers.map((layer, layerIndex) => (
           <path
             key={`band-${layer.seriesIndex}`}
-            d={bandPath(layer)}
+            d={bandPaths[layerIndex]}
             fill={`url(#${gradientId}-${layer.seriesIndex})`}
             opacity={bandOpacityFor(layer.label)}
             style={{ transition: 'opacity .12s' }}
           />
         ))}
 
-        {layers.map((layer) => (
+        {layers.map((layer, layerIndex) => (
           <path
             key={`line-${layer.seriesIndex}`}
-            d={linePath(layer)}
+            d={linePaths[layerIndex]}
             fill="none"
             stroke={layer.color}
             strokeWidth={2.5}

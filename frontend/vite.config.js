@@ -9,6 +9,30 @@ export default defineConfig({
       "/api": "http://localhost:8080",
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // React/MUI/Emotion churn far less often than the app's own pages, so
+        // pulling them into their own chunk lets browsers cache them across
+        // deploys instead of re-downloading them whenever a page changes.
+        manualChunks: (id) => {
+          if (!id.includes("node_modules")) {
+            return undefined;
+          }
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/scheduler/") ||
+            id.includes("/@mui/") ||
+            id.includes("/@emotion/")
+          ) {
+            return "vendor";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
   test: {
     coverage: {
       provider: "v8",

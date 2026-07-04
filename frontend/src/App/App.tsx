@@ -1,17 +1,23 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppShell from './AppShell';
-import ToolActivitySection from '../pages/ToolActivitySection';
-import ToolCallsPage from '../pages/ToolCallsPage';
-import ToolReliabilityPage from '../pages/ToolReliabilityPage';
-import SkillsAgentsPage from '../pages/SkillsAgentsPage';
-import PermissionDenialsPage from '../pages/PermissionDenialsPage';
-import TokensPage from '../pages/TokensPage';
-import SessionsPage from '../pages/SessionsPage';
-import MetricsPage from '../pages/MetricsPage';
-import LogsPage from '../pages/LogsPage';
-import TracesPage from '../pages/TracesPage';
-import TraceDetailPage from '../pages/TraceDetailPage';
-import ReportPage from '../pages/ReportPage';
+
+// Route-level code splitting: every page is its own lazily-loaded chunk so the
+// initial bundle only carries the app shell + routing. AppShell wraps the
+// routed <Outlet /> in a <Suspense> (with the ErrorBoundary above it catching
+// a failed chunk load), so no Suspense boundary is needed here.
+const ToolActivitySection = lazy(() => import('../pages/ToolActivitySection'));
+const ToolCallsPage = lazy(() => import('../pages/ToolCallsPage'));
+const ToolReliabilityPage = lazy(() => import('../pages/ToolReliabilityPage'));
+const SkillsAgentsPage = lazy(() => import('../pages/SkillsAgentsPage'));
+const PermissionDenialsPage = lazy(() => import('../pages/PermissionDenialsPage'));
+const TokensPage = lazy(() => import('../pages/TokensPage'));
+const SessionsPage = lazy(() => import('../pages/SessionsPage'));
+const MetricsPage = lazy(() => import('../pages/MetricsPage'));
+const LogsPage = lazy(() => import('../pages/LogsPage'));
+const TracesPage = lazy(() => import('../pages/TracesPage'));
+const TraceDetailPage = lazy(() => import('../pages/TraceDetailPage'));
+const ReportPage = lazy(() => import('../pages/ReportPage'));
 
 const App = () => {
   return (

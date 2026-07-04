@@ -18,6 +18,7 @@ import type { HistogramSeries } from './components/TraceHistogram';
 import type { TraceFacetSelections } from './components/TraceFacetRail';
 import type { TraceView } from './components/TraceViewToggle';
 import { TAIL_INTERVAL_MS } from '../../lib/constants';
+import { useDebouncedValue } from '../../lib/useDebouncedValue';
 
 const STREAM_PAGE = 60;
 const TAIL_PAGE = 20;
@@ -79,6 +80,11 @@ const useTracesExplorer = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
 
+  // The search box stays bound to `search` (immediate) so typing never lags;
+  // only the debounced copy feeds `filters`, so a query fires ~250ms after the
+  // user stops typing instead of on every keystroke.
+  const debouncedSearch = useDebouncedValue(search);
+
   const filters = useMemo<TracesFilters>(
     () => ({
       startTimestamp: zoom ? zoom.startTimestamp : startTimestamp,
@@ -88,9 +94,9 @@ const useTracesExplorer = ({
       service: [...facetSelections.service],
       duration: [...facetSelections.duration],
       session: [...facetSelections.session],
-      q: search || undefined,
+      q: debouncedSearch || undefined,
     }),
-    [zoom, startTimestamp, endTimestamp, facetSelections, search],
+    [zoom, startTimestamp, endTimestamp, facetSelections, debouncedSearch],
   );
   const filtersKey = JSON.stringify(filters);
 
