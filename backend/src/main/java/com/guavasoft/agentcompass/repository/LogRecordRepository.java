@@ -482,7 +482,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       FROM log_records
       WHERE attributes ->> 'event.name' = :eventName
         AND attributes ->> :toolAttribute = 'Bash'
-        AND timestamp >= :since
+        AND timestamp >= :start
+        AND timestamp <= :end
       GROUP BY command_prefix
       ORDER BY calls DESC
       LIMIT :hotspotLimit
