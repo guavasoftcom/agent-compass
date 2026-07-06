@@ -73,7 +73,7 @@ tuning.tool-attribute=tool_name
 All under `/api`, consumed by the React dashboard. Most accept a time window as either `?minutes=` or `?startTimestamp=&endTimestamp=` — see the Swagger UI for full parameter lists.
 
 - `GET /api/logs` — log records, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/logs/histogram` (severity histogram), `/api/logs/facets` (filter-rail counts), and `/api/logs/attributes` / `/attribute-keys` / `/attribute-values` autocomplete.
-- `GET /api/metrics` — metric explorer, with `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
+- `GET /api/metrics` — raw metric points, offset-paged (`page`/`size`, size clamped to 500, `totalCount` in the body); plus `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
 - `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`.
 - `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, and `/api/traces/{traceId}/logs` cross-signal log linkage.
 - `GET /api/sessions` — session list, with `/summary` and `/token-usage`.

@@ -31,3 +31,12 @@ export const AUTO_REFRESH_INTERVAL_MS = MS_PER_MINUTE;
 // Live-tail poll cadence for the cursor-paged Stream views (Logs, Traces): how
 // often each prepends genuinely new rows while auto-refresh is on.
 export const TAIL_INTERVAL_MS = 1500;
+
+// Widest span (in milliseconds) a resolved window may ever cover. Mirrors the
+// backend's `@ValidDateRange(maxDays = 30)` / `DateRangeValidator`
+// (`backend/src/main/java/com/guavasoft/agentcompass/validation/DateRangeValidator.java`),
+// which 400s any request whose `startTimestamp`..`endTimestamp` span is strictly
+// greater than 30 days. Both the custom-range picker (`WindowSelector`) and the
+// shared `resolveWindow` preset clamp read this constant so the two caps can
+// never drift apart. Keep this in lockstep with the backend's `maxDays`.
+export const MAX_WINDOW_SPAN_MS = 30 * 24 * 60 * 60 * 1000;

@@ -1,0 +1,27 @@
+import { describe, expect, it } from 'vitest';
+import { SEARCH_DEBOUNCE_MS, useDebouncedValue } from './useDebouncedValue';
+
+// `useDebouncedValue` is a React hook (useState + useEffect + setTimeout), so
+// exercising its actual debounce behavior requires mounting it inside a
+// component and letting React run its effects. This repo has no jsdom/
+// happy-dom/testing-library/react-test-renderer (see
+// src/components/ErrorBoundary/ErrorBoundary.test.tsx for the same constraint
+// on class components, and note F1/F2's explicit "no new deps" requirement),
+// and calling a hook outside of React's render cycle throws "Invalid hook
+// call" — there's no dispatcher installed. So this only covers what's testable
+// without a renderer: the shared delay constant the Logs/Traces search boxes
+// are wired to. The wiring itself (search box stays immediate, `filters`
+// receives the debounced copy) was verified by hand in the dev server per the
+// task's UI-verification requirement.
+describe('SEARCH_DEBOUNCE_MS', () => {
+  it('is the shared 250ms delay used by the Logs and Traces search boxes', () => {
+    expect(SEARCH_DEBOUNCE_MS).toBe(250);
+  });
+});
+
+describe('useDebouncedValue', () => {
+  it('is exported as a function taking a value and an optional delay', () => {
+    expect(typeof useDebouncedValue).toBe('function');
+    expect(useDebouncedValue.length).toBe(1); // `delayMs` has a default, so arity is 1
+  });
+});

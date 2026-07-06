@@ -9,7 +9,9 @@ Every **page** and every **component** lives in its own folder. The folder name 
 
 A small single-file leaf component may skip the barrel and be imported by its file path (e.g. `components/SearchInput/SearchInput`, `components/FacetRail/FacetRail`, `components/BreakdownList/BreakdownList`).
 
-Cross-cutting modules that are neither pages nor components are grouped into folders at the root of `src/`: `api/` (fetchers, DTO types, and transport behind a barrel), `lib/` (app-level non-UI modules — `constants`, `windowContext`, `sampleData`), and `theme/` (the design system). Only the entry points (`main.tsx`, `vite-env.d.ts`) sit loose at the root.
+Cross-cutting modules that are neither pages nor components are grouped into folders at the root of `src/`: `api/` (fetchers, DTO types, and transport behind a barrel), `lib/` (app-level non-UI modules — `constants`, `windowContext`, `resolveWindow`, `sampleData`, …), and `theme/` (the design system). Only the entry points (`main.tsx`, `vite-env.d.ts`) sit loose at the root.
+
+Unit tests are colocated as `<name>.test.ts` / `<name>.test.tsx` next to the module they cover; the layout below omits them.
 
 ## Layout
 
@@ -23,8 +25,11 @@ frontend/src/
     endpoints.ts                   // fetchXxx(selection) functions
     http.ts                        // transport helpers (getJson/getText/listWithTotalCount/windowQueryParams)
   lib/                             // app-level, non-UI modules
-    constants.ts                   // WINDOWS, PAGE_SIZE_OPTIONS, MS_PER_* factors
+    constants.ts                   // WINDOWS, PAGE_SIZE_OPTIONS, MS_PER_* factors, MAX_WINDOW_SPAN_MS
+    format.ts                      // formatCompact (12.3K / 4.5M) shared by trend cards
+    resolveWindow.ts               // WindowSelection → concrete start/end + label (Logs + Traces)
     sampleData.ts                  // createSampleRng(seed) + latency() for the VITE_*_SAMPLE stores
+    useDebouncedValue.ts           // debounce hook for the Logs/Traces search inputs
     windowContext.tsx              // WindowProvider — global WindowSelection + autoRefresh
   theme/                           // the design system (no barrel — import the specific file)
     colors.ts                      // single source of truth for every raw color
@@ -46,6 +51,7 @@ frontend/src/
     AreaTrendChart/
       AreaTrendChart.tsx
       AreaTrendLegend.tsx
+      areaTrendGeometry.ts         // pure path/tick/hover math (memoized by the chart)
       useSeriesVisibility.ts
       index.ts
     AttributeList/
@@ -62,6 +68,9 @@ frontend/src/
       ChartCard.tsx                // single-file leaf (no barrel)
     DonutCard/
       DonutCard.tsx
+      index.ts
+    ErrorBoundary/
+      ErrorBoundary.tsx            // class-component render-crash fallback (wired in AppShell)
       index.ts
     FacetRail/
       FacetRail.tsx                // shared facet rail (Logs + Traces); single-file leaf

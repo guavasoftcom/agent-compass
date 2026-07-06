@@ -4,9 +4,7 @@ import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 import java.time.Duration;
 
-import com.guavasoft.agentcompass.model.TimeWindowParams;
-
-public class DateRangeValidator implements ConstraintValidator<ValidDateRange, TimeWindowParams> {
+public class DateRangeValidator implements ConstraintValidator<ValidDateRange, DateRangeBounds> {
 
     private static final long SECONDS_PER_DAY = 86_400L;
 
@@ -18,7 +16,7 @@ public class DateRangeValidator implements ConstraintValidator<ValidDateRange, T
     }
 
     @Override
-    public boolean isValid(TimeWindowParams params, ConstraintValidatorContext context) {
+    public boolean isValid(DateRangeBounds params, ConstraintValidatorContext context) {
         if (params.startTimestamp() == null || params.endTimestamp() == null) {
             return true;
         }

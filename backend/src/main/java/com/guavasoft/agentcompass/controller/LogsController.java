@@ -9,6 +9,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -37,6 +39,9 @@ import java.util.List;
 @Tag(name = "Logs", description = "OTLP log records and attribute autocomplete for the Logs DataGrid")
 public class LogsController {
 
+    private static final int MINIMUM_HISTOGRAM_BUCKETS = 1;
+    private static final int MAXIMUM_HISTOGRAM_BUCKETS = 500;
+
     private final LogService logService;
 
     @GetMapping("/histogram")
@@ -56,7 +61,8 @@ public class LogsController {
     public LogHistogram histogram(
             @Parameter(description = "Target bar count — service picks the nearest 'nice' bucket width",
                     example = "50")
-            @RequestParam(required = false, defaultValue = "50") int buckets,
+            @RequestParam(required = false, defaultValue = "50")
+            @Min(MINIMUM_HISTOGRAM_BUCKETS) @Max(MAXIMUM_HISTOGRAM_BUCKETS) int buckets,
             @ModelAttribute LogFilterParams logFilterParams,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         LogQueryCriteria criteria = LogQueryCriteria.of(

@@ -34,3 +34,6 @@
 
 # Ad-hoc dev screenshots
 /*.png
+
+# Local design docs / plan-tracking scratch (personal, not shared)
+.design-docs/

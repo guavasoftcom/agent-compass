@@ -482,7 +482,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       FROM log_records
       WHERE attributes ->> 'event.name' = :eventName
         AND attributes ->> :toolAttribute = 'Bash'
-        AND timestamp >= :since
+        AND timestamp >= :start
+        AND timestamp <= :end
       GROUP BY command_prefix
       ORDER BY calls DESC
       LIMIT :hotspotLimit
@@ -802,16 +803,39 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("end") Instant end,
       @Param("resultLimit") int resultLimit);
 
-  // Returns tool call count and denial count per session for the given session IDs.
-  // Tool calls are log records whose event.name = :toolEventName.
-  // Denials are tool_decision records whose decision attribute = 'reject'.
-  // Sessions with no matching log records are omitted; the service defaults missing entries to 0.
+  // Returns tool call count, denial count, and prompt context per session for the
+  // given session IDs, in a single scan over log_records (the prompt-info rows
+  // are a strict subset of what the counts query already touches, so folding
+  // both into one GROUP BY halves the table scans the Sessions grid needs).
+  // Tool calls are log records whose event.name = :toolEventName. Denials are
+  // tool_decision records whose decision attribute = 'reject'.
+  // userPromptCount is the total user_prompt event count. firstUserPrompt picks
+  // the first *meaningful* prompt body: ARRAY_AGG collects every non-null prompt
+  // text for the session ordered with bare slash commands ('/ship', optionally
+  // trailing whitespace) sorted after every other prompt so a real prompt wins
+  // whenever the session has one, falling back to the literal first prompt only
+  // when every prompt in the session is a slash command; [1] takes the head of
+  // that ordered array. Whitespace (including embedded newlines from multi-line
+  // prompts) collapses to single spaces and the result truncates to 200
+  // characters, both in SQL so the service never handles untruncated prompt
+  // text. Sessions with no prompt attribute value at all (NULL after NULLIF)
+  // still count toward user_prompt_count but contribute no candidate to the
+  // ARRAY_AGG, leaving firstUserPrompt null. Sessions with no matching log
+  // records at all are omitted; the service defaults missing entries to 0 /
+  // null.
   @Query(value = """
       SELECT
           lr.attributes ->> 'session.id'                                           AS session_id,
           COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :toolEventName)  AS tool_call_count,
           COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :toolDecisionEventName
-                             AND lr.attributes ->> 'decision' = 'reject')           AS denial_count
+                             AND lr.attributes ->> 'decision' = 'reject')           AS denial_count,
+          COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :userPromptEventName) AS user_prompt_count,
+          (ARRAY_AGG(
+              left(regexp_replace(NULLIF(lr.attributes ->> :promptAttribute, ''), '\\s+', ' ', 'g'), 200)
+              ORDER BY (NULLIF(lr.attributes ->> :promptAttribute, '') ~ '^\\s*/\\S*\\s*$') ASC, lr.timestamp ASC
+            ) FILTER (WHERE lr.attributes ->> 'event.name' = :userPromptEventName
+                        AND NULLIF(lr.attributes ->> :promptAttribute, '') IS NOT NULL)
+          )[1]                                                                      AS first_user_prompt
       FROM log_records lr
       WHERE lr.attributes ->> 'session.id' IN :sessionIds
       GROUP BY lr.attributes ->> 'session.id'
@@ -819,7 +843,34 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateSessionCounts(
       @Param("sessionIds") Collection<String> sessionIds,
       @Param("toolEventName") String toolEventName,
-      @Param("toolDecisionEventName") String toolDecisionEventName);
+      @Param("toolDecisionEventName") String toolDecisionEventName,
+      @Param("userPromptEventName") String userPromptEventName,
+      @Param("promptAttribute") String promptAttribute);
+
+  // Full prompt timeline for one session (the Sessions grid's expandable row).
+  // Not window-scoped — returns every user_prompt event for the session, oldest
+  // first, capped at :promptLimit (the service clamps this the same way
+  // PageBounds.MAXIMUM_PAGE_SIZE clamps other list endpoints). trace_id is a
+  // top-level column (not an attribute) carrying the claude_code.interaction root
+  // span's trace id; the nested NULLIF normalizes both the empty string and the
+  // all-zero placeholder trace id (pre-tracing sessions) down to SQL NULL so the
+  // service never has to special-case either sentinel value.
+  @Query(value = """
+      SELECT
+        lr.timestamp                                                     AS event_timestamp,
+        lr.attributes ->> :promptAttribute                                AS prompt_text,
+        NULLIF(NULLIF(lr.trace_id, ''), repeat('0', 32))                  AS trace_id
+      FROM log_records lr
+      WHERE lr.attributes ->> 'event.name' = :eventName
+        AND lr.attributes ->> 'session.id' = :sessionId
+      ORDER BY lr.timestamp ASC
+      LIMIT :promptLimit
+      """, nativeQuery = true)
+  List<Object[]> findPromptsForSession(
+      @Param("sessionId") String sessionId,
+      @Param("eventName") String eventName,
+      @Param("promptAttribute") String promptAttribute,
+      @Param("promptLimit") int promptLimit);
 
   // =========================================================================
   // Logs-page aggregation queries (histogram, facets, cursor paging, offset

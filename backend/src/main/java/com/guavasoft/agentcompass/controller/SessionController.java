@@ -15,15 +15,18 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.guavasoft.agentcompass.model.SessionKpis;
+import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
+import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.MetricService;
 
 import java.util.List;
@@ -36,6 +39,7 @@ import java.util.List;
 public class SessionController {
 
     private final MetricService metricService;
+    private final LogService logService;
 
     @GetMapping("")
     @Operation(
@@ -120,5 +124,24 @@ public class SessionController {
                     timeWindowParams.endTimestamp());
         }
         return metricService.aggregateTokenUsage(minutes);
+    }
+
+    @GetMapping("/{sessionId}/prompts")
+    @Operation(
+            summary = "Full user-prompt timeline for one session",
+            description = "Every user_prompt log record for the given session, oldest first, with the full "
+                    + "untruncated prompt text. Not window-scoped — returns the session's entire prompt "
+                    + "history regardless of the dashboard's current time window. Powers the Sessions grid's "
+                    + "expandable row.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "Prompt timeline ordered by timestamp ascending",
+            content = @Content(
+                    mediaType = "application/json",
+                    array = @ArraySchema(schema = @Schema(implementation = SessionPrompt.class)))))
+    public List<SessionPrompt> prompts(
+            @Parameter(description = "Session identifier (the session.id attribute value)",
+                    example = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b") @PathVariable String sessionId) {
+        return logService.promptsForSession(sessionId);
     }
 }

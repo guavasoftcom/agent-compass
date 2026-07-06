@@ -319,7 +319,29 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery);
 
-    // Facet: status counts (status dimension excluded, all other filters applied).
+    // =========================================================================
+    // Consolidated facets query (perf item B3).
+    //
+    // The five facet dimensions (status, operation, service, duration bucket,
+    // session) each keep the pre-existing self-exclusion contract: a facet's own
+    // dimension filter is left OUT of its WHERE clause so the client can still see
+    // counts for options the user hasn't (yet) selected, while every other active
+    // filter still applies. That means each facet needs a *different* filter
+    // predicate over the same rows, which rules out a literal single-WHERE
+    // `GROUP BY GROUPING SETS` (one WHERE clause would have to serve all five
+    // facets identically). Instead: build `traces` once, CROSS JOIN it with a
+    // five-row `facet_kinds` VALUES list, and pick the correct filter subset per
+    // kind via a CASE in the WHERE clause. `traces` is referenced through a single
+    // FROM item here (not five separate FROMs), so `trace_agg` / `trace_roots` /
+    // `traces` are built exactly once per call instead of five times.
+    //
+    // facet_kind discriminates the row shape for the service to demultiplex.
+    // operation/service/session stay capped and ordered by count descending via
+    // ROW_NUMBER() PARTITION BY facet_kind, reproducing the original per-facet
+    // `ORDER BY row_count DESC LIMIT :n`. status/duration have low fixed
+    // cardinality (2 and 4 respectively) so the shared :facetLimit (50) never
+    // trims them — behavior matches the old uncapped queries.
+    // =========================================================================
     @Query(value = """
             WITH trace_agg AS (
               SELECT
@@ -366,383 +388,85 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
-            )
-            SELECT status, COUNT(*) AS row_count
-            FROM traces
-            WHERE (
-              cardinality(CAST(:operations AS text[])) = 0
-              OR root_span_name = ANY(CAST(:operations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:services AS text[])) = 0
-              OR service = ANY(CAST(:services AS text[]))
-            )
-            AND (
-              cardinality(CAST(:durations AS text[])) = 0
-              OR duration_bucket = ANY(CAST(:durations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:sessions AS text[])) = 0
-              OR session_id = ANY(CAST(:sessions AS text[]))
-            )
-            AND (
-              :fullTextQuery = ''
-              OR trace_id ILIKE '%' || :fullTextQuery || '%'
-              OR session_id ILIKE '%' || :fullTextQuery || '%'
-              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
-            )
-            GROUP BY status
-            """, nativeQuery = true)
-    List<Object[]> facetTraceStatus(
-            @Param("windowStart") Instant windowStart,
-            @Param("windowEnd") Instant windowEnd,
-            @Param("operations") String[] operations,
-            @Param("services") String[] services,
-            @Param("durations") String[] durations,
-            @Param("sessions") String[] sessions,
-            @Param("fullTextQuery") String fullTextQuery);
-
-    // Facet: operation (rootSpanName) counts — operation excluded, all others applied.
-    @Query(value = """
-            WITH trace_agg AS (
-              SELECT
-                s.trace_id,
-                MIN(s.start_timestamp)  AS min_start,
-                MAX(s.end_timestamp)    AS max_end,
-                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count
-              FROM spans s
-              WHERE s.start_timestamp >= :windowStart
-                AND s.start_timestamp <= :windowEnd
-              GROUP BY s.trace_id
             ),
-            trace_roots AS (
-              SELECT DISTINCT ON (r.trace_id)
-                r.trace_id,
-                r.name                                  AS root_span_name,
-                r.attributes ->> 'session.id'           AS session_id
-              FROM spans r
-              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
-              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            facet_kinds(kind) AS (
+              VALUES ('status'), ('operation'), ('service'), ('duration_bucket'), ('session')
             ),
-            traces AS (
+            facet_counts AS (
               SELECT
-                a.trace_id,
-                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
-                CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
-                  ELSE 'claude_code'
-                END AS service,
-                COALESCE(rt.root_span_name, '')         AS root_span_name,
-                COALESCE(rt.session_id, '')             AS session_id,
-                CASE
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
-                  ELSE 'd3'
-                END AS duration_bucket
-              FROM trace_agg a
-              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+                fk.kind AS facet_kind,
+                CASE fk.kind
+                  WHEN 'status'          THEN t.status
+                  WHEN 'operation'       THEN t.root_span_name
+                  WHEN 'service'         THEN t.service
+                  WHEN 'duration_bucket' THEN t.duration_bucket
+                  ELSE                        t.session_id
+                END AS facet_key,
+                COUNT(*) AS row_count
+              FROM traces t
+              CROSS JOIN facet_kinds fk
+              WHERE
+                CASE fk.kind
+                  WHEN 'operation' THEN t.root_span_name <> ''
+                  WHEN 'session'   THEN t.session_id <> ''
+                  ELSE true
+                END
+                AND (
+                  fk.kind = 'status'
+                  OR cardinality(CAST(:statuses AS text[])) = 0
+                  OR t.status = ANY(CAST(:statuses AS text[]))
+                )
+                AND (
+                  fk.kind = 'operation'
+                  OR cardinality(CAST(:operations AS text[])) = 0
+                  OR t.root_span_name = ANY(CAST(:operations AS text[]))
+                )
+                AND (
+                  fk.kind = 'service'
+                  OR cardinality(CAST(:services AS text[])) = 0
+                  OR t.service = ANY(CAST(:services AS text[]))
+                )
+                AND (
+                  fk.kind = 'duration_bucket'
+                  OR cardinality(CAST(:durations AS text[])) = 0
+                  OR t.duration_bucket = ANY(CAST(:durations AS text[]))
+                )
+                AND (
+                  fk.kind = 'session'
+                  OR cardinality(CAST(:sessions AS text[])) = 0
+                  OR t.session_id = ANY(CAST(:sessions AS text[]))
+                )
+                AND (
+                  :fullTextQuery = ''
+                  OR t.trace_id ILIKE '%' || :fullTextQuery || '%'
+                  OR t.session_id ILIKE '%' || :fullTextQuery || '%'
+                  OR t.root_span_name ILIKE '%' || :fullTextQuery || '%'
+                )
+              GROUP BY 1, 2
+            ),
+            facet_ranked AS (
+              SELECT
+                facet_kind,
+                facet_key,
+                row_count,
+                ROW_NUMBER() OVER (PARTITION BY facet_kind ORDER BY row_count DESC) AS facet_rank
+              FROM facet_counts
             )
-            SELECT root_span_name AS facet_value, COUNT(*) AS row_count
-            FROM traces
-            WHERE root_span_name <> ''
-            AND (
-              cardinality(CAST(:statuses AS text[])) = 0
-              OR status = ANY(CAST(:statuses AS text[]))
-            )
-            AND (
-              cardinality(CAST(:services AS text[])) = 0
-              OR service = ANY(CAST(:services AS text[]))
-            )
-            AND (
-              cardinality(CAST(:durations AS text[])) = 0
-              OR duration_bucket = ANY(CAST(:durations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:sessions AS text[])) = 0
-              OR session_id = ANY(CAST(:sessions AS text[]))
-            )
-            AND (
-              :fullTextQuery = ''
-              OR trace_id ILIKE '%' || :fullTextQuery || '%'
-              OR session_id ILIKE '%' || :fullTextQuery || '%'
-              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
-            )
-            GROUP BY root_span_name
-            ORDER BY row_count DESC
-            LIMIT :facetLimit
+            SELECT facet_kind, facet_key, row_count
+            FROM facet_ranked
+            WHERE facet_rank <= CASE WHEN facet_kind = 'session' THEN :sessionLimit ELSE :facetLimit END
+            ORDER BY facet_kind, row_count DESC
             """, nativeQuery = true)
-    List<Object[]> facetTraceOperation(
+    List<Object[]> facetTraceAll(
             @Param("windowStart") Instant windowStart,
             @Param("windowEnd") Instant windowEnd,
             @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
             @Param("services") String[] services,
             @Param("durations") String[] durations,
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
-            @Param("facetLimit") int facetLimit);
-
-    // Facet: service counts — service excluded, all others applied.
-    @Query(value = """
-            WITH trace_agg AS (
-              SELECT
-                s.trace_id,
-                MIN(s.start_timestamp)  AS min_start,
-                MAX(s.end_timestamp)    AS max_end,
-                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count
-              FROM spans s
-              WHERE s.start_timestamp >= :windowStart
-                AND s.start_timestamp <= :windowEnd
-              GROUP BY s.trace_id
-            ),
-            trace_roots AS (
-              SELECT DISTINCT ON (r.trace_id)
-                r.trace_id,
-                r.name                                  AS root_span_name,
-                r.attributes ->> 'session.id'           AS session_id
-              FROM spans r
-              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
-              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
-            ),
-            traces AS (
-              SELECT
-                a.trace_id,
-                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
-                CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
-                  ELSE 'claude_code'
-                END AS service,
-                COALESCE(rt.root_span_name, '')         AS root_span_name,
-                COALESCE(rt.session_id, '')             AS session_id,
-                CASE
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
-                  ELSE 'd3'
-                END AS duration_bucket
-              FROM trace_agg a
-              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
-            )
-            SELECT service AS facet_value, COUNT(*) AS row_count
-            FROM traces
-            WHERE (
-              cardinality(CAST(:statuses AS text[])) = 0
-              OR status = ANY(CAST(:statuses AS text[]))
-            )
-            AND (
-              cardinality(CAST(:operations AS text[])) = 0
-              OR root_span_name = ANY(CAST(:operations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:durations AS text[])) = 0
-              OR duration_bucket = ANY(CAST(:durations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:sessions AS text[])) = 0
-              OR session_id = ANY(CAST(:sessions AS text[]))
-            )
-            AND (
-              :fullTextQuery = ''
-              OR trace_id ILIKE '%' || :fullTextQuery || '%'
-              OR session_id ILIKE '%' || :fullTextQuery || '%'
-              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
-            )
-            GROUP BY service
-            ORDER BY row_count DESC
-            LIMIT :facetLimit
-            """, nativeQuery = true)
-    List<Object[]> facetTraceService(
-            @Param("windowStart") Instant windowStart,
-            @Param("windowEnd") Instant windowEnd,
-            @Param("statuses") String[] statuses,
-            @Param("operations") String[] operations,
-            @Param("durations") String[] durations,
-            @Param("sessions") String[] sessions,
-            @Param("fullTextQuery") String fullTextQuery,
-            @Param("facetLimit") int facetLimit);
-
-    // Facet: duration bucket counts — duration excluded, all others applied.
-    @Query(value = """
-            WITH trace_agg AS (
-              SELECT
-                s.trace_id,
-                MIN(s.start_timestamp)  AS min_start,
-                MAX(s.end_timestamp)    AS max_end,
-                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count
-              FROM spans s
-              WHERE s.start_timestamp >= :windowStart
-                AND s.start_timestamp <= :windowEnd
-              GROUP BY s.trace_id
-            ),
-            trace_roots AS (
-              SELECT DISTINCT ON (r.trace_id)
-                r.trace_id,
-                r.name                                  AS root_span_name,
-                r.attributes ->> 'session.id'           AS session_id
-              FROM spans r
-              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
-              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
-            ),
-            traces AS (
-              SELECT
-                a.trace_id,
-                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
-                CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
-                  ELSE 'claude_code'
-                END AS service,
-                COALESCE(rt.root_span_name, '')         AS root_span_name,
-                COALESCE(rt.session_id, '')             AS session_id,
-                CASE
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
-                  ELSE 'd3'
-                END AS duration_bucket
-              FROM trace_agg a
-              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
-            )
-            SELECT duration_bucket AS facet_value, COUNT(*) AS row_count
-            FROM traces
-            WHERE (
-              cardinality(CAST(:statuses AS text[])) = 0
-              OR status = ANY(CAST(:statuses AS text[]))
-            )
-            AND (
-              cardinality(CAST(:operations AS text[])) = 0
-              OR root_span_name = ANY(CAST(:operations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:services AS text[])) = 0
-              OR service = ANY(CAST(:services AS text[]))
-            )
-            AND (
-              cardinality(CAST(:sessions AS text[])) = 0
-              OR session_id = ANY(CAST(:sessions AS text[]))
-            )
-            AND (
-              :fullTextQuery = ''
-              OR trace_id ILIKE '%' || :fullTextQuery || '%'
-              OR session_id ILIKE '%' || :fullTextQuery || '%'
-              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
-            )
-            GROUP BY duration_bucket
-            """, nativeQuery = true)
-    List<Object[]> facetTraceDuration(
-            @Param("windowStart") Instant windowStart,
-            @Param("windowEnd") Instant windowEnd,
-            @Param("statuses") String[] statuses,
-            @Param("operations") String[] operations,
-            @Param("services") String[] services,
-            @Param("sessions") String[] sessions,
-            @Param("fullTextQuery") String fullTextQuery);
-
-    // Facet: session counts — session excluded, all others applied.
-    @Query(value = """
-            WITH trace_agg AS (
-              SELECT
-                s.trace_id,
-                MIN(s.start_timestamp)  AS min_start,
-                MAX(s.end_timestamp)    AS max_end,
-                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count
-              FROM spans s
-              WHERE s.start_timestamp >= :windowStart
-                AND s.start_timestamp <= :windowEnd
-              GROUP BY s.trace_id
-            ),
-            trace_roots AS (
-              SELECT DISTINCT ON (r.trace_id)
-                r.trace_id,
-                r.name                                  AS root_span_name,
-                r.attributes ->> 'session.id'           AS session_id
-              FROM spans r
-              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
-              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
-            ),
-            traces AS (
-              SELECT
-                a.trace_id,
-                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
-                CASE
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
-                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
-                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
-                  ELSE 'claude_code'
-                END AS service,
-                COALESCE(rt.root_span_name, '')         AS root_span_name,
-                COALESCE(rt.session_id, '')             AS session_id,
-                CASE
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
-                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
-                  ELSE 'd3'
-                END AS duration_bucket
-              FROM trace_agg a
-              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
-            )
-            SELECT session_id AS facet_value, COUNT(*) AS row_count
-            FROM traces
-            WHERE session_id <> ''
-            AND (
-              cardinality(CAST(:statuses AS text[])) = 0
-              OR status = ANY(CAST(:statuses AS text[]))
-            )
-            AND (
-              cardinality(CAST(:operations AS text[])) = 0
-              OR root_span_name = ANY(CAST(:operations AS text[]))
-            )
-            AND (
-              cardinality(CAST(:services AS text[])) = 0
-              OR service = ANY(CAST(:services AS text[]))
-            )
-            AND (
-              cardinality(CAST(:durations AS text[])) = 0
-              OR duration_bucket = ANY(CAST(:durations AS text[]))
-            )
-            AND (
-              :fullTextQuery = ''
-              OR trace_id ILIKE '%' || :fullTextQuery || '%'
-              OR session_id ILIKE '%' || :fullTextQuery || '%'
-              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
-            )
-            GROUP BY session_id
-            ORDER BY row_count DESC
-            LIMIT :sessionLimit
-            """, nativeQuery = true)
-    List<Object[]> facetTraceSession(
-            @Param("windowStart") Instant windowStart,
-            @Param("windowEnd") Instant windowEnd,
-            @Param("statuses") String[] statuses,
-            @Param("operations") String[] operations,
-            @Param("services") String[] services,
-            @Param("durations") String[] durations,
-            @Param("fullTextQuery") String fullTextQuery,
+            @Param("facetLimit") int facetLimit,
             @Param("sessionLimit") int sessionLimit);
 
     // Total filtered trace count — used for initial cursor page and offset pages.

@@ -8,8 +8,11 @@ Backend counterpart: `LogsController` → `LogService` (`backend/.../controller/
 
 ```
 LogsPage/
-├── LogsPage.tsx          container — window context, manual reload invalidation
-├── LogsPageView.tsx      view + filter state + the two page-level queries (see deviation note)
+├── LogsPage.tsx          container — resolves the window (`resolveWindow`), manual reload
+│                         invalidation, the preset auto-refresh interval
+├── LogsPageView.tsx      view + filter state + all page-level queries/fetches (see deviation
+│                         note) — histogram/facets/table `useQuery`, plus the stream cursor-page
+│                         and live-tail fetches (plain state, not TanStack Query)
 ├── logsApi.ts            the four fetchers; re-exports logsTypes + logsDerivations so
 │                         components import everything from './logsApi'
 ├── logsTypes.ts          DTO types + Severity/FacetKey enums + LogsFilters
@@ -18,8 +21,11 @@ LogsPage/
 ├── components/
 │   ├── LogHistogramChart/   stacked severity bars + legend (pure derivation, no fetch)
 │   ├── LogFacetRail/        search box + severity/event/tool checkbox facets (no fetch)
-│   ├── LogStream/           infinite scroll-back + live-tail poll (fetches); exports SeverityChip
-│   ├── LogTable/            offset-paged DataGrid-style table (fetches)
+│   ├── LogStream/           infinite scroll-back + live-tail row rendering (pure presentational
+│   │                        leaf — no fetch; `LogsPageView` owns the paging/tail fetches and
+│   │                        passes `rows`/`onLoadMore`/etc as props); exports SeverityChip
+│   ├── LogTable/            offset-paged table (also a pure presentational leaf — no fetch;
+│   │                        `LogsPageView`'s `tableQuery` supplies its rows)
 │   └── severity.ts          severity → theme color (single source; histogram/stream/facets share it)
 └── index.ts
 ```
@@ -54,17 +60,30 @@ LogsPage/
 All fetchers live in `logsApi.ts` (not `api.ts`) and share `buildLogsQuery(filters)` for the
 query string.
 
-`filtersKey` is a combined stable key: `<filterPartsKey>|<windowKey>` where
-`filterPartsKey = JSON.stringify({ severity, event, tool, query })` and
-`windowKey` is one of `preset:<minutes>`, `custom:<start>:<end>`, or `zoom:<t0>:<t1>`.
+`filters` (a `LogsFilters`) bundles the resolved `startTimestamp`/`endTimestamp` (or the local
+zoom range, if set) together with the facet selections, search text, and hidden-severity set;
+`filtersKey = JSON.stringify(filters)` is the single combined cache key — there is no separate
+`windowKey`/`filterPartsKey` split. Because `startTimestamp`/`endTimestamp` only change when
+`resolveWindow` re-resolves (see "Data flow" below), `filtersKey` stays stable between
+auto-refresh ticks the same way a hand-built window key would.
 
-| Component (hook)                        | Query key                                       | Fetcher → endpoint |
-|-----------------------------------------|-------------------------------------------------|--------------------|
-| `LogsPageView` (`useQuery`)             | `['log-histogram', filterPartsKey, windowKey]`  | `fetchLogHistogram` → `GET /api/logs/histogram?…&buckets=50` |
-| `LogsPageView` (`useQuery`)             | `['log-facets', filterPartsKey, windowKey]`     | `fetchLogFacets` → `GET /api/logs/facets?…` |
-| `LogStream` (`useInfiniteQuery`)        | `['log-stream', filtersKey]`                    | `fetchLogsCursor` → `GET /api/logs?…&limit=60[&before=ts,id]` |
-| `LogStream` (tail `setInterval`, 1.5 s) | writes into `['log-stream', …]` cache           | `fetchLogsCursor` → `GET /api/logs?…&after=ts,id&limit=20` |
-| `LogTable` (`useQuery`)                 | `['log-table', filtersKey, page, size]`         | `fetchLogsPage` → `GET /api/logs?…&page=N&size=M` |
+| Component / hook                                | Query key                                | Fetcher → endpoint |
+|---------------------------------------------------|-------------------------------------------|--------------------|
+| `LogsPageView` (`useQuery`, `histogramQuery`)      | `['log-histogram', filtersKey]`           | `fetchLogHistogram(facetFilters, 50)` → `GET /api/logs/histogram?…&buckets=50` |
+| `LogsPageView` (`useQuery`, `facetsQuery`)         | `['log-facets', filtersKey]`               | `fetchLogFacets(facetFilters)` → `GET /api/logs/facets?…` |
+| `LogsPageView` (`useQuery`, `tableQuery`)          | `['log-table', filtersKey, page, pageSize]` | `fetchLogsPage(filters, page, pageSize)` → `GET /api/logs?…&page=N&size=M` (`enabled: view === 'table'`) |
+| `LogsPageView` (`resetStream`/`loadMore`, plain `useState`, NOT a TanStack query) | — | `fetchLogsCursor(filters, { cursor, limit: 60 })` → `GET /api/logs?…&limit=60[&before=ts,id]` |
+| `LogsPageView` (tail `setInterval`, 1.5 s, plain state prepend) | — | `fetchLogsCursor(filters, { after, limit: 20 })` → `GET /api/logs?…&after=ts,id&limit=20` |
+
+`histogramQuery`/`facetsQuery` call `fetchLogHistogram`/`fetchLogFacets` with `facetFilters`
+(`filters` with `hiddenSeverity` forced to `[]`, since the legend mute is client-side only), but
+their query *key* is still `filtersKey` (built from `filters`, not `facetFilters`) — toggling a
+legend/facet severity therefore still busts and refetches both, even though the response
+wouldn't have changed. The stream (`resetStream`/`loadMore`) and the live tail are plain
+`useState`/`useCallback`/`useEffect` in `LogsPageView`, not `useQuery`/`useInfiniteQuery` — there
+is no `['log-stream', …]` TanStack cache entry; `LogStream` (the component) is a pure
+presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props and calls
+`onLoadMore()`.
 
 `LogHistogramChart` and `LogFacetRail` never fetch — they receive `histogramQuery.data` /
 `facetsQuery.data` as props. The attribute-autocomplete endpoints in `api.ts`
@@ -72,27 +91,47 @@ query string.
 
 ## Data flow and filter semantics
 
-- `LogsPage.tsx` passes `selection` (the global `WindowSelection`) and `windowLabel` down to
-  `LogsPageView`. It does NOT resolve timestamps or run a sliding-window interval. Manual
-  reload invalidates the four query keys so TanStack Query performs a background refetch;
-  the cache data stays on screen during the fetch (no empty-state flash).
+- `LogsPage.tsx` resolves the global `WindowSelection` via the shared
+  `resolveWindow(selection)` (`../../lib/resolveWindow.ts`, also used by TracesPage) inside a
+  `useMemo` keyed on `[selection]`, and passes the resulting `startTimestamp`/`endTimestamp`/
+  `windowLabel` down to `LogsPageView` as props. **This resolution happens once per selection
+  change, not per fetch or per tail tick**: the memo only re-runs when the `selection` object
+  itself changes (a new preset/custom range picked), so for a preset the resolved
+  `endTimestamp` is frozen at "`Date.now()` + 1 minute" from the moment the selection was set,
+  not the moment of each request. Manual reload invalidates the four query keys so TanStack
+  Query performs a background refetch of that same frozen window; the cache data stays on
+  screen during the fetch (no empty-state flash).
+  - **Known staleness limitation**: because the resolved end timestamp doesn't advance on its
+    own, a long-lived preset session (auto-refresh left on for a long time without touching the
+    window control) re-fetches the *same* `[start, end]` range rather than sliding it forward —
+    events that arrive after the frozen `endTimestamp` won't appear until the user reselects a
+    window (which recomputes `resolved`). Live tail (below) works around this for the Stream
+    view specifically by fetching with `after=<cursor>` rather than relying on `endTimestamp`
+    to bound "new" rows. See the deferred TODO to reconcile this with TracesPage's context
+    pattern (tracked outside this file).
+  - **30-day preset clamp**: `resolveWindow` clamps a preset's span to `MAX_WINDOW_SPAN_MS`
+    (`../../lib/constants.ts`, 30 days) before computing `startTimestamp`, so the "30 days"
+    preset's `[start, end]` span is exactly 30 days even with the `+1` minute end lookahead —
+    never 30 days + 1 minute. Without this clamp the backend's `@ValidDateRange(maxDays = 30)`
+    rejects every request for that preset with a 400 and the page renders blank.
 - `LogsPageView.tsx` owns the filter state: facet selections, search text, Stream/Table toggle,
   and the local zoom range.
-- **Stable window key**: `LogsPageView` builds a `windowKey` string — `preset:<minutes>`,
-  `custom:<start>:<end>`, or `zoom:<t0>:<t1>` — that does NOT change between auto-refresh
-  ticks. This key is part of every TanStack Query key, so the cache is never invalidated
-  by the passage of time alone. All four queries use `['<prefix>', filterPartsKey, windowKey]`
-  (or `filtersKey = filterPartsKey + '|' + windowKey` for stream/table).
-- **Fetch-time window resolution**: `LogsPageView` defines a plain `resolveFilters()` function
-  (not a memo) that calls `resolveWindow(selection)` at the moment it is invoked. This
-  function is passed as a prop to `LogStream` and `LogTable`; each component's `queryFn`
-  calls it fresh per fetch. Histogram and facet `queryFn`s call it directly. Preset windows
-  therefore always resolve to a fresh end timestamp (1 minute ahead of `Date.now()`) without
-  bumping a version counter or changing the query key.
-- **Auto-refresh**: histogram and facets use `refetchInterval: 60_000` (Stream view +
-  preset only, no zoom) and `placeholderData: keepPreviousData` so background refetches
-  and page flips repaint in place rather than flashing empty state. The table never
-  polls — it refetches on filter/window changes and manual reload only.
+- **Stable query key**: because `startTimestamp`/`endTimestamp` come from `LogsPage.tsx`'s
+  memoized `resolved` (not recomputed on every render), `filtersKey = JSON.stringify(filters)`
+  does NOT change between auto-refresh ticks — only when the selection, zoom, facets, search,
+  or hidden-severity set actually change. So the cache is never invalidated by the passage of
+  time alone; `['log-histogram', filtersKey]` / `['log-facets', filtersKey]` /
+  `['log-table', filtersKey, page, pageSize]` are the three TanStack keys (see the API table
+  above — the stream/tail fetches aren't TanStack-cached at all).
+- **Auto-refresh**: there is no `refetchInterval` on `histogramQuery`/`facetsQuery`/`tableQuery`.
+  Instead, `LogsPage.tsx` (the container) runs a `window.setInterval(reloadLogs, 60_000)` while
+  `autoRefresh && selection.kind === 'preset'`; `reloadLogs` calls
+  `queryClient.invalidateQueries` for `['log-histogram']`, `['log-facets']`, and `['log-table']`
+  by key prefix, which triggers a background refetch of whatever `filtersKey` is currently
+  active. Cached data stays on screen during that refetch (TanStack's default behavior — no
+  `placeholderData` override is needed or present). The table also refetches on every
+  filter/window/page change; it is not otherwise excluded from the 60 s interval, since the
+  invalidate call above hits `['log-table', …]` regardless of `view`.
 - **Unified severity selection**: the histogram legend chips and the facet rail severity
   checkboxes are two surfaces over a single `sel.severity` set in `LogsPageView`. Clicking
   either calls `toggleFacet('severity', s)` — there is no separate mute state.
@@ -131,22 +170,51 @@ query string.
   the pill and the top-right PageActions auto-refresh toggle are disabled — the pill's
   tooltip explains why (the offset-paged table can't tail) — and nothing on
   the page polls; the flag's state is preserved and polling resumes when switching back
-  to Stream. In Stream view, `LogStream` polls `after=<newest ts,id>` every
-  1.5 s and *prepends* results into the first cached page via `setQueryData` (bumping
-  `totalCount`), then fires `onTailRows` so the histogram refetches. No query invalidation —
-  scroll-back position is preserved. Critically, each tail tick calls `resolveFilters()` fresh
-  to get a new `endTimestamp`; this is what keeps the tail alive indefinitely — a frozen
-  end timestamp would eventually fall outside the backend's 30-day ValidDateRange cap.
-  With stable query keys, scroll-back pages, expanded rows, and flash state persist across
-  the whole tail session; they reset only on real filter changes via `prevFiltersKey`.
+  to Stream. In Stream view, a plain `useEffect` in `LogsPageView` (not `LogStream` itself —
+  that component is a presentational leaf, see the API table above) runs a
+  `window.setInterval` every `TAIL_INTERVAL_MS` (1.5 s, `../../lib/constants.ts`) while
+  `autoRefresh && view === 'stream'`. Each tick reads `filtersRef.current` (a ref kept in sync
+  with `filters` via an effect, so async callbacks see fresh values without re-binding) and
+  calls `fetchLogsCursor(filtersRef.current, { after: newestRef.current, limit: 20 })`
+  directly — **not** through TanStack Query — then prepends any new rows into the
+  `loaded` `useState` array, bumps `streamTotal`, and calls `histogramQuery.refetch()`.
+  - **`endTimestamp` is NOT refreshed per tick.** `filtersRef.current.endTimestamp` is whatever
+    `LogsPage.tsx`'s `resolveWindow` memo last produced for the current selection (see "Data
+    flow" above) — the tail does not call `resolveWindow` itself. The tail still surfaces
+    genuinely new rows because it filters by `after=<newest ts,id>`, a cursor comparison, not by
+    re-deriving `endTimestamp`; but a sufficiently long-lived preset session (endTimestamp frozen
+    at selection time + 1 minute) will eventually have its frozen `endTimestamp` fall behind
+    `Date.now()`, and `fetchLogsCursor` still bounds results to `[startTimestamp, endTimestamp]`
+    server-side — so very old sessions can silently stop tailing new rows even though the poll
+    keeps running. This is the same staleness limitation noted in "Data flow" above; there is no
+    per-tick re-resolution in the current code.
+  - Scroll-back pages, expanded rows, and flash state persist across the whole tail session
+    (the `loaded` array is only reset by the `[filtersKey, view]` effect on a real filter/window
+    change) — the tail prepend is a targeted `setLoaded((prev) => [...res.items, ...prev])`, not
+    a full re-fetch.
 - The toolbar "events" counter is whichever of Stream/Table is mounted reporting
   `totalCount` up through `onTotalChange`.
 
 ## Gotchas
 
-- **Deviation from the container/view convention**: the two page-level `useQuery` calls live
-  in `LogsPageView.tsx`, not the container, because they depend on filter state that belongs
-  to the view (facets, search, zoom, legend). Push state up before moving the queries.
+- **`eventNameOf`/`toolNameOf` runtime-guard `event.name`/`tool_name`.** Telemetry attributes
+  are attacker-influenceable (unauthenticated OTLP ingest) and the backend preserves OTLP
+  kvlist/array structure into jsonb, so these attributes can arrive in the browser as an
+  object or array instead of a string. `logsDerivations.ts` checks `typeof value === 'string'`
+  before returning (returning `null` otherwise) rather than doing a compile-time-only
+  `as string` cast — a cast would let a poisoned value reach `<Tag>{event}</Tag>` in
+  `LogStream` and crash the render (React throws "Objects are not valid as a React child").
+  `TraceDetailPage/components/SpanDetailDock/LogEntry.tsx` uses the same guard for the
+  analogous `event.name`/`tool` attributes on the trace-detail dock — keep both in lockstep
+  if you add another attribute-derived string helper anywhere in the app. The app-level
+  `ErrorBoundary` (`../../components/ErrorBoundary`, wired around `<Outlet />` in
+  `App/AppShell.tsx`) is defense-in-depth for this same class of bug, not a substitute for
+  the guard.
+- **Deviation from the container/view convention**: the three page-level `useQuery` calls
+  (histogram, facets, table) — plus the stream cursor-paging and live-tail fetches, which are
+  plain `useState`/`useEffect`, not `useQuery` — live in `LogsPageView.tsx`, not the container,
+  because they depend on filter state that belongs to the view (facets, search, zoom, legend).
+  Push state up before moving the queries.
 - Severity on real rows is **derived**, not stored: `severityOf` in `logsDerivations.ts` mirrors
   the SQL function `derive_log_severity` (`V6__log_severity_function.sql`). Change them in lockstep.
 - `VITE_LOGS_SAMPLE=1` swaps all fetchers to an in-memory synthetic store (offline UI work);

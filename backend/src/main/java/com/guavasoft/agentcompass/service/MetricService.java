@@ -11,8 +11,8 @@ import com.guavasoft.agentcompass.mapper.MetricPointMapper;
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
-import com.guavasoft.agentcompass.model.EventRow;
 import com.guavasoft.agentcompass.model.ExemplarPoint;
+import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.ModelTokenShare;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
@@ -51,12 +51,13 @@ public class MetricService {
   private static final long MIN_BUCKET_SECONDS = 60L;
   private static final int TARGET_BUCKETS_PER_WINDOW = 40;
   private static final int SECONDS_PER_MINUTE = 60;
-  private static final int SESSION_RESULT_LIMIT = 500;
-  private static final int DEFAULT_SESSION_PAGE_SIZE = 25;
+
   private static final int SESSION_TOTAL_COUNT_INDEX = 9;
   private static final int SESSION_COUNTS_SESSION_ID_INDEX = 0;
   private static final int SESSION_COUNTS_TOOL_CALL_INDEX = 1;
   private static final int SESSION_COUNTS_DENIAL_INDEX = 2;
+  private static final int SESSION_COUNTS_USER_PROMPT_COUNT_INDEX = 3;
+  private static final int SESSION_COUNTS_FIRST_USER_PROMPT_INDEX = 4;
   private static final int SESSIONS_TREND_BUCKETS = 24;
 
   private static final String START_TYPE_FRESH = "fresh";
@@ -83,6 +84,20 @@ public class MetricService {
   private static final double HOURS_PER_MONTH = 720.0;
   private static final double TOKENS_PER_COST_UNIT = 1_000.0;
   private static final double HUNDRED_PERCENT = 100.0;
+
+  // B4 perf: discriminator values produced by MetricPointRepository#aggregateCostBreakdown's
+  // GROUPING SETS ((), (bucket), (model)) query, and the column indices of its rows.
+  private static final String COST_BREAKDOWN_ROW_TYPE_BUCKET = "bucket";
+  private static final String COST_BREAKDOWN_ROW_TYPE_MODEL = "model";
+  private static final int COST_BREAKDOWN_ROW_TYPE_INDEX = 0;
+  private static final int COST_BREAKDOWN_BUCKET_INDEX = 1;
+  private static final int COST_BREAKDOWN_MODEL_INDEX = 2;
+  private static final int COST_BREAKDOWN_AMOUNT_INDEX = 3;
+
+  // Column indices of MetricPointRepository#aggregateCostCurrentAndPriorTotals's
+  // single-row (current_total, prior_total) result.
+  private static final int COST_TOTALS_CURRENT_INDEX = 0;
+  private static final int COST_TOTALS_PRIOR_INDEX = 1;
 
   // Distribution
   private static final int DISTRIBUTION_COLUMNS = 24;
@@ -130,13 +145,25 @@ public class MetricService {
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
 
-  private record SessionCounts(long toolCallCount, long denialCount) {}
+  private record SessionCounts(
+      long toolCallCount, long denialCount, long userPromptCount, String firstUserPrompt) {}
 
-  public List<EventRow> recentEvents(
-      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp) {
-    List<MetricPointEntity> metricPointEntities = metricPointRepository.findAllMatchingFilters(
-        toFilterArray(activeFilters), startTimestamp, endTimestamp);
-    return metricPointMapper.toEventRows(metricPointEntities);
+  /**
+   * Offset-paged rows for the Metrics DataGrid. Replaces the former unbounded
+   * {@code findAllMatchingFilters} call (MEDIUM-3: unbounded result set) with a
+   * clamped {@code LIMIT}/{@code OFFSET} query, mirroring {@code LogService#offsetPage}.
+   */
+  public MetricPage recentEvents(
+      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, int page, int size) {
+    String[] filters = toFilterArray(activeFilters);
+    long totalCount = metricPointRepository.countMatchingFilters(filters, startTimestamp, endTimestamp);
+
+    int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
+    int pageOffset = PageBounds.computeOffset(page, pageSize);
+    List<MetricPointEntity> metricPointEntities = metricPointRepository.findPageMatchingFilters(
+        filters, startTimestamp, endTimestamp, pageSize, pageOffset);
+
+    return new MetricPage(metricPointMapper.toEventRows(metricPointEntities), totalCount);
   }
 
   public List<String> availableAttributePairs(
@@ -149,10 +176,11 @@ public class MetricService {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
-    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseries(
+    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseriesInRange(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
         start,
+        end,
         bucketSeconds);
     List<ModelTokenShare> byModel = buildTokensByModel(start, end);
     CostSummary cost = aggregateCostSummary(start, end);
@@ -322,8 +350,8 @@ public class MetricService {
 
   private SessionSummaryPage querySessionsPage(
       Instant start, Instant end, String sortField, String sortDirection, int page, int size) {
-    int pageSize = clampPageSize(size);
-    int pageOffset = Math.max(0, page) * pageSize;
+    int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
+    int pageOffset = PageBounds.computeOffset(page, pageSize);
     List<Object[]> rows = metricPointRepository.aggregateSessionSummaries(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
@@ -347,13 +375,15 @@ public class MetricService {
         : buildSessionCountsMap(logRecordRepository.aggregateSessionCounts(
             sessionIds,
             tuningProperties.getToolEventName(),
-            tuningProperties.getToolDecisionEventName()));
+            tuningProperties.getToolDecisionEventName(),
+            tuningProperties.getUserPromptEventName(),
+            tuningProperties.getPromptAttribute()));
     return new SessionSummaryPage(mapSessionSummaries(rows, countsBySessionId), totalCount);
   }
 
   private static List<SessionSummary> mapSessionSummaries(
       List<Object[]> rows, Map<String, SessionCounts> countsBySessionId) {
-    SessionCounts zeroCounts = new SessionCounts(0L, 0L);
+    SessionCounts zeroCounts = new SessionCounts(0L, 0L, 0L, null);
     return rows.stream()
         .map(row -> {
           String sessionId = (String) row[0];
@@ -369,7 +399,9 @@ public class MetricService {
               counts.denialCount(),
               row[6] == null ? 0L : ((Number) row[6]).longValue(),
               normalizeTerminalType((String) row[7]),
-              normalizeStartType((String) row[8]));
+              normalizeStartType((String) row[8]),
+              counts.firstUserPrompt(),
+              counts.userPromptCount());
         })
         .toList();
   }
@@ -397,7 +429,10 @@ public class MetricService {
           ? 0L : ((Number) row[SESSION_COUNTS_TOOL_CALL_INDEX]).longValue();
       long denialCount = row[SESSION_COUNTS_DENIAL_INDEX] == null
           ? 0L : ((Number) row[SESSION_COUNTS_DENIAL_INDEX]).longValue();
-      map.put(sessionId, new SessionCounts(toolCallCount, denialCount));
+      long userPromptCount = row[SESSION_COUNTS_USER_PROMPT_COUNT_INDEX] == null
+          ? 0L : ((Number) row[SESSION_COUNTS_USER_PROMPT_COUNT_INDEX]).longValue();
+      String firstUserPrompt = (String) row[SESSION_COUNTS_FIRST_USER_PROMPT_INDEX];
+      map.put(sessionId, new SessionCounts(toolCallCount, denialCount, userPromptCount, firstUserPrompt));
     }
     return map;
   }
@@ -494,8 +529,9 @@ public class MetricService {
     String costMetricName = tuningProperties.getCostUsageMetric();
     String tokenMetricName = tuningProperties.getTokenUsageMetric();
 
-    double currentSpend = queryCostTotal(costMetricName, from, to);
-    double priorSpend = queryCostTotal(costMetricName, priorWindowStart, from);
+    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart);
+    double currentSpend = costTotals.currentTotal();
+    double priorSpend = costTotals.priorTotal();
     double deltaPct = priorSpend == 0.0 ? 0.0 : (currentSpend - priorSpend) / priorSpend * 100.0;
 
     double burnRate = currentSpend / windowHours;
@@ -505,8 +541,10 @@ public class MetricService {
     double costPer1k = totalTokens == 0L ? 0.0 : currentSpend / (totalTokens / TOKENS_PER_COST_UNIT);
 
     long trendBucketSeconds = Math.max(1L, (long) windowSeconds / COST_TREND_BUCKETS);
-    List<Double> trend = buildCostTrend(costMetricName, from, to, trendBucketSeconds);
-    List<CostModelShare> byModel = buildCostByModel(costMetricName, from, to, currentSpend);
+    List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
+        costMetricName, from, to, trendBucketSeconds);
+    List<Double> trend = buildCostTrend(breakdownRows);
+    List<CostModelShare> byModel = buildCostByModel(breakdownRows, currentSpend);
 
     return new CostSummary(
         formatUsd(currentSpend),
@@ -519,9 +557,22 @@ public class MetricService {
         "");
   }
 
-  private double queryCostTotal(String metricName, Instant start, Instant end) {
-    Number total = firstScalar(metricPointRepository.aggregateCostTotal(metricName, start, end));
-    return total == null ? 0.0 : total.doubleValue();
+  private record CostTotals(double currentTotal, double priorTotal) {}
+
+  // B4 perf: current-period and prior-period totals now come from ONE scan (see
+  // MetricPointRepository#aggregateCostCurrentAndPriorTotals's FILTER-based
+  // query) instead of two.
+  private CostTotals queryCostTotals(String metricName, Instant from, Instant to, Instant priorFrom) {
+    Object[] totalsRow = firstRow(metricPointRepository.aggregateCostCurrentAndPriorTotals(
+        metricName, from, to, priorFrom));
+    if (totalsRow == null) {
+      return new CostTotals(0.0, 0.0);
+    }
+    double currentTotal = totalsRow[COST_TOTALS_CURRENT_INDEX] == null
+        ? 0.0 : ((Number) totalsRow[COST_TOTALS_CURRENT_INDEX]).doubleValue();
+    double priorTotal = totalsRow[COST_TOTALS_PRIOR_INDEX] == null
+        ? 0.0 : ((Number) totalsRow[COST_TOTALS_PRIOR_INDEX]).doubleValue();
+    return new CostTotals(currentTotal, priorTotal);
   }
 
   private long queryTotalTokens(String metricName, Instant start, Instant end) {
@@ -534,22 +585,36 @@ public class MetricService {
   // list element rather than Object[]{null} — so guarding only rows.get(0)[0]
   // NPEs. Handle the empty list, the null row, and the null cell uniformly.
   private static Number firstScalar(List<Object[]> rows) {
-    if (rows.isEmpty()) {
-      return null;
-    }
-    Object[] firstRow = rows.get(0);
+    Object[] firstRow = firstRow(rows);
     if (firstRow == null || firstRow.length == 0 || firstRow[0] == null) {
       return null;
     }
     return (Number) firstRow[0];
   }
 
-  private List<Double> buildCostTrend(String metricName, Instant from, Instant to, long bucketSeconds) {
-    List<Object[]> trendRows = metricPointRepository.aggregateCostTrend(metricName, from, to, bucketSeconds);
+  // Same empty-list/null-row guard as firstScalar, but for aggregate queries that
+  // return more than one column per row (e.g. the FILTER-based current/prior
+  // totals pair), where the caller reads several indices off the same row.
+  private static Object[] firstRow(List<Object[]> rows) {
+    if (rows.isEmpty()) {
+      return null;
+    }
+    return rows.get(0);
+  }
+
+  // Demultiplexes the 'bucket' rows out of aggregateCostBreakdown's GROUPING SETS
+  // result. Rows already arrive bucket-ascending (see the query's ORDER BY), so
+  // the LinkedHashMap preserves that order exactly like the pre-merge
+  // aggregateCostTrend did.
+  private static List<Double> buildCostTrend(List<Object[]> breakdownRows) {
     Map<Instant, Double> bucketValues = new LinkedHashMap<>();
-    for (Object[] trendRow : trendRows) {
-      Instant bucket = (Instant) trendRow[0];
-      double bucketCost = trendRow[1] == null ? 0.0 : ((Number) trendRow[1]).doubleValue();
+    for (Object[] breakdownRow : breakdownRows) {
+      if (!COST_BREAKDOWN_ROW_TYPE_BUCKET.equals(breakdownRow[COST_BREAKDOWN_ROW_TYPE_INDEX])) {
+        continue;
+      }
+      Instant bucket = (Instant) breakdownRow[COST_BREAKDOWN_BUCKET_INDEX];
+      double bucketCost = breakdownRow[COST_BREAKDOWN_AMOUNT_INDEX] == null
+          ? 0.0 : ((Number) breakdownRow[COST_BREAKDOWN_AMOUNT_INDEX]).doubleValue();
       bucketValues.put(bucket, bucketCost);
     }
     List<Double> trend = new ArrayList<>(bucketValues.size());
@@ -559,15 +624,22 @@ public class MetricService {
     return trend;
   }
 
-  private List<CostModelShare> buildCostByModel(
-      String metricName, Instant from, Instant to, double totalSpend) {
-    List<Object[]> modelRows = metricPointRepository.aggregateCostByModel(metricName, from, to);
+  // Demultiplexes the 'model' rows out of aggregateCostBreakdown's GROUPING SETS
+  // result. Rows already arrive spend-descending (see the query's ORDER BY), so
+  // colorIndex assignment by list position matches the pre-merge
+  // aggregateCostByModel exactly.
+  private static List<CostModelShare> buildCostByModel(List<Object[]> breakdownRows, double totalSpend) {
+    List<Object[]> modelRows = breakdownRows.stream()
+        .filter(breakdownRow -> COST_BREAKDOWN_ROW_TYPE_MODEL.equals(breakdownRow[COST_BREAKDOWN_ROW_TYPE_INDEX]))
+        .toList();
     List<CostModelShare> byModel = new ArrayList<>(modelRows.size());
     for (int colorIndex = 0; colorIndex < modelRows.size(); colorIndex++) {
       Object[] modelRow = modelRows.get(colorIndex);
-      String modelName = modelRow[0] == null ? "unknown" : (String) modelRow[0];
-      double modelCost = modelRow[1] == null ? 0.0 : ((Number) modelRow[1]).doubleValue();
-      int sharePercent = totalSpend == 0.0 ? 0 : (int) Math.round(modelCost / totalSpend * 100.0);
+      String modelName = modelRow[COST_BREAKDOWN_MODEL_INDEX] == null
+          ? "unknown" : (String) modelRow[COST_BREAKDOWN_MODEL_INDEX];
+      double modelCost = modelRow[COST_BREAKDOWN_AMOUNT_INDEX] == null
+          ? 0.0 : ((Number) modelRow[COST_BREAKDOWN_AMOUNT_INDEX]).doubleValue();
+      int sharePercent = totalSpend == 0.0 ? 0 : (int) Math.round(modelCost / totalSpend * HUNDRED_PERCENT);
       byModel.add(new CostModelShare(modelName, formatUsd(modelCost), sharePercent, colorIndex));
     }
     return byModel;
@@ -803,13 +875,6 @@ public class MetricService {
 
   private static String normalizeSortDirection(String sortDirection) {
     return SORT_DIRECTION_ASC.equalsIgnoreCase(sortDirection) ? SORT_DIRECTION_ASC : SORT_DIRECTION_DESC;
-  }
-
-  private static int clampPageSize(int size) {
-    if (size < 1) {
-      return DEFAULT_SESSION_PAGE_SIZE;
-    }
-    return Math.min(size, SESSION_RESULT_LIMIT);
   }
 
   private static long bucketWidthSeconds(int minutes) {

@@ -23,6 +23,7 @@ import com.guavasoft.agentcompass.model.LogQueryCriteria;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
+import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
@@ -217,6 +218,21 @@ public class LogService {
   private static String stringAttribute(Map<String, Object> attributes, String key) {
     Object value = attributes.get(key);
     return value instanceof String text && !text.isEmpty() ? text : null;
+  }
+
+  // Full prompt timeline for one session (the Sessions grid's expandable row).
+  // Not window-scoped; result size is clamped the same way PageBounds.MAXIMUM_PAGE_SIZE
+  // clamps every other list endpoint so a pathologically long session can't
+  // return an unbounded number of rows.
+  public List<SessionPrompt> promptsForSession(String sessionId) {
+    List<Object[]> rows = logRecordRepository.findPromptsForSession(
+        sessionId,
+        tuningProperties.getUserPromptEventName(),
+        tuningProperties.getPromptAttribute(),
+        PageBounds.MAXIMUM_PAGE_SIZE);
+    return rows.stream()
+        .map(row -> new SessionPrompt((Instant) row[0], (String) row[1], (String) row[2]))
+        .toList();
   }
 
   public List<String> availableAttributePairs(
@@ -671,51 +687,26 @@ public class LogService {
   // =========================================================================
 
   /**
-   * Bucket-width ladder in seconds — "nice" steps matching the frontend's NICE
-   * array.
+   * Bucket-width ladder in seconds — "nice" steps matching the LogsPage
+   * frontend's NICE array (which tops out at 2 days, unlike the Traces one).
    */
   private static final long[] HISTOGRAM_LADDER_SECONDS = {
       60L, 120L, 300L, 600L, 900L, 1800L, 3600L, 7200L, 10800L, 21600L, 43200L, 86400L, 172800L
   };
 
-  private static final int DEFAULT_HISTOGRAM_BUCKETS = 50;
-  private static final int DEFAULT_CURSOR_LIMIT = 60;
-
-  /**
-   * totalCount placeholder for cursor continuation (before=) and live-tail
-   * (after=) pages. The client reads the total only from the initial page
-   * ({@code pages[0].totalCount} in LogStream) and bumps it locally on tail
-   * prepends, so those pages skip the expensive filtered COUNT entirely.
-   */
-  private static final long CONTINUATION_PAGE_TOTAL_COUNT = 0L;
   private static final int FACET_VALUE_CAP = 50;
-  private static final long MILLIS_PER_SECOND = 1_000L;
 
   private static final String SEVERITY_ERROR = "ERROR";
   private static final String SEVERITY_WARN = "WARN";
   private static final String SEVERITY_INFO = "INFO";
   private static final String SEVERITY_DEBUG = "DEBUG";
 
-  /**
-   * Picks the smallest ladder step >= rawSeconds, falling back to the largest.
-   */
-  private static long pickBucketSeconds(Instant windowStart, Instant windowEnd, int targetBuckets) {
-    long windowSeconds = Math.max(1L, Duration.between(windowStart, windowEnd).getSeconds());
-    long rawSeconds = windowSeconds / Math.max(1, targetBuckets);
-    for (long stepSeconds : HISTOGRAM_LADDER_SECONDS) {
-      if (stepSeconds >= rawSeconds) {
-        return stepSeconds;
-      }
-    }
-    return HISTOGRAM_LADDER_SECONDS[HISTOGRAM_LADDER_SECONDS.length - 1];
-  }
-
   public LogHistogram histogram(LogQueryCriteria criteria, int targetBuckets) {
-    int resolvedTargetBuckets = targetBuckets <= 0 ? DEFAULT_HISTOGRAM_BUCKETS : targetBuckets;
     Instant windowStart = criteria.startTimestamp();
     Instant windowEnd = criteria.endTimestamp();
-    long bucketSeconds = pickBucketSeconds(windowStart, windowEnd, resolvedTargetBuckets);
-    long bucketMs = bucketSeconds * MILLIS_PER_SECOND;
+    long bucketSeconds = HistogramBucketing.pickBucketSeconds(
+        windowStart, windowEnd, targetBuckets, HISTOGRAM_LADDER_SECONDS);
+    long bucketMs = Duration.ofSeconds(bucketSeconds).toMillis();
 
     List<Object[]> rows = logRecordRepository.histogramBuckets(
         windowStart,
@@ -849,7 +840,7 @@ public class LogService {
    * exactly without a second COUNT query (the "+1 probe" pattern).
    */
   public LogCursorPage cursorPageFirst(LogQueryCriteria criteria, int limit) {
-    int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+    int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
     long totalCount = logRecordRepository.countFiltered(
         criteria.startTimestamp(),
         criteria.endTimestamp(),
@@ -878,12 +869,12 @@ public class LogService {
    * Cursor page — scroll-back (before=ts,id). Returns rows strictly older than
    * the cursor.
    *
-   * <p>{@code totalCount} is {@link #CONTINUATION_PAGE_TOTAL_COUNT}: the client
+   * <p>{@code totalCount} is {@link PageBounds#CONTINUATION_PAGE_TOTAL_COUNT}: the client
    * reads the total only from the initial page, so continuation pages skip the
    * expensive filtered COUNT.
    */
   public LogCursorPage cursorPageBefore(LogQueryCriteria criteria, LogCursor cursor, int limit) {
-    int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+    int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
 
     List<LogRecord> probeItems = logRecordMapper.toLogRecords(logRecordRepository.cursorBefore(
         criteria.startTimestamp(),
@@ -898,20 +889,20 @@ public class LogService {
         criteria.fullTextQuery(),
         resolvedLimit + 1));
 
-    return buildCursorPage(probeItems, resolvedLimit, CONTINUATION_PAGE_TOTAL_COUNT);
+    return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
   }
 
   /**
    * Cursor page — live tail (after=ts,id). Returns rows strictly newer than the
    * cursor; returns an empty page when nothing new has arrived.
    *
-   * <p>{@code totalCount} is {@link #CONTINUATION_PAGE_TOTAL_COUNT}. The tail
+   * <p>{@code totalCount} is {@link PageBounds#CONTINUATION_PAGE_TOTAL_COUNT}. The tail
    * poll runs every 1.5 seconds while live tail is on and the client maintains
    * its own running total from the initial page, so recounting the full window
    * on every poll was the most frequently executed expensive query in the app.
    */
   public LogCursorPage cursorPageAfter(LogQueryCriteria criteria, LogCursor cursor, int limit) {
-    int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+    int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
 
     List<LogRecord> probeItems = logRecordMapper.toLogRecords(logRecordRepository.cursorAfter(
         criteria.startTimestamp(),
@@ -926,7 +917,7 @@ public class LogService {
         criteria.fullTextQuery(),
         resolvedLimit + 1));
 
-    return buildCursorPage(probeItems, resolvedLimit, CONTINUATION_PAGE_TOTAL_COUNT);
+    return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
   }
 
   /**
@@ -976,7 +967,9 @@ public class LogService {
         tuningProperties.getToolAttribute(),
         criteria.fullTextQuery());
 
-    int pageOffset = page * size;
+    int resolvedSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
+    int resolvedPage = Math.max(0, page);
+    int pageOffset = PageBounds.computeOffset(resolvedPage, resolvedSize);
     List<LogRecord> items = logRecordMapper.toLogRecords(logRecordRepository.offsetPage(
         criteria.startTimestamp(),
         criteria.endTimestamp(),
@@ -986,9 +979,10 @@ public class LogService {
         criteria.tools(),
         tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
-        size,
+        resolvedSize,
         pageOffset));
 
     return new LogPage(items, totalCount);
   }
+
 }

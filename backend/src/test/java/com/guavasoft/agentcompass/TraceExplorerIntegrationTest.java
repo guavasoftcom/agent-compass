@@ -375,6 +375,51 @@ class TraceExplorerIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
+    // HIGH-2 regression — unclamped limit/size/page resource exhaustion
+    // -------------------------------------------------------------------------
+
+    @Test
+    void offsetPageClampsOversizedSizeInsteadOfFetchingUnboundedRows() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        // size is attacker-chosen and huge; must be clamped, not passed straight to SQL LIMIT.
+        TracePage page = service.offsetPage(criteria, "new", 0, 2_000_000_000);
+
+        assertThat(page.totalCount()).isEqualTo(4);
+        assertThat(page.items()).hasSize(4);
+    }
+
+    @Test
+    void offsetPageGuardsAgainstPageTimesSizeIntOverflow() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        // page * size would overflow int and wrap to a negative OFFSET pre-fix, causing a 500.
+        TracePage page = service.offsetPage(criteria, "new", Integer.MAX_VALUE, 25);
+
+        assertThat(page.totalCount()).isEqualTo(4);
+        assertThat(page.items()).isEmpty();
+    }
+
+    @Test
+    void offsetPageFloorsNegativePageToZero() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TracePage page = service.offsetPage(criteria, "new", -5, 2);
+
+        assertThat(page.totalCount()).isEqualTo(4);
+        assertThat(page.items()).hasSize(2);
+    }
+
+    @Test
+    void cursorPageFirstClampsOversizedLimitInsteadOfOverflowingTheProbeFetch() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        // limit=Integer.MAX_VALUE previously overflowed resolvedLimit + 1 into a negative
+        // SQL LIMIT (500 error). Clamped, this must behave like any oversized-but-valid limit.
+        TraceCursorPage page = service.cursorPage(criteria, "new", null, null, Integer.MAX_VALUE);
+
+        assertThat(page.totalCount()).isEqualTo(4);
+        assertThat(page.items()).hasSize(4);
+        assertThat(page.hasMore()).isFalse();
+    }
+
+    // -------------------------------------------------------------------------
     // Outside-window exclusion
     // -------------------------------------------------------------------------
 

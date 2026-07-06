@@ -32,13 +32,14 @@ import java.util.Map;
 @Transactional(readOnly = true)
 public class TraceExplorerService {
 
+    /**
+     * Bucket-width ladder in seconds — "nice" steps matching the TracesPage
+     * frontend's NICE array (which tops out at 6 hours, unlike the Logs one).
+     */
     private static final long[] HISTOGRAM_LADDER_SECONDS = {
         60L, 120L, 300L, 600L, 900L, 1800L, 3600L, 7200L, 10800L, 21600L
     };
-    private static final long MILLIS_PER_SECOND = 1_000L;
-    private static final int DEFAULT_HISTOGRAM_BUCKETS = 48;
-    private static final int DEFAULT_CURSOR_LIMIT = 60;
-    private static final long CONTINUATION_PAGE_TOTAL_COUNT = 0L;
+
     private static final int FACET_OPERATION_CAP = 50;
     private static final int FACET_SERVICE_CAP = 50;
     private static final int FACET_SESSION_CAP = 8;
@@ -79,11 +80,11 @@ public class TraceExplorerService {
 
     /** Builds the throughput histogram with per-bucket p95 and window-wide aggregates. */
     public TraceHistogram histogram(TraceQueryCriteria criteria, int targetBuckets) {
-        int resolvedTargetBuckets = targetBuckets <= 0 ? DEFAULT_HISTOGRAM_BUCKETS : targetBuckets;
         Instant windowStart = criteria.startTimestamp();
         Instant windowEnd = criteria.endTimestamp();
-        long bucketSeconds = pickBucketSeconds(windowStart, windowEnd, resolvedTargetBuckets);
-        long bucketMs = bucketSeconds * MILLIS_PER_SECOND;
+        long bucketSeconds = HistogramBucketing.pickBucketSeconds(
+                windowStart, windowEnd, targetBuckets, HISTOGRAM_LADDER_SECONDS);
+        long bucketMs = Duration.ofSeconds(bucketSeconds).toMillis();
 
         List<Object[]> bucketRows = spanRepository.traceHistogramBuckets(
                 windowStart, windowEnd, bucketSeconds,
@@ -132,74 +133,55 @@ public class TraceExplorerService {
         return buckets;
     }
 
-    private static long pickBucketSeconds(Instant windowStart, Instant windowEnd, int targetBuckets) {
-        long windowSeconds = Math.max(1L, Duration.between(windowStart, windowEnd).getSeconds());
-        long rawSeconds = windowSeconds / Math.max(1, targetBuckets);
-        for (long stepSeconds : HISTOGRAM_LADDER_SECONDS) {
-            if (stepSeconds >= rawSeconds) {
-                return stepSeconds;
-            }
-        }
-        return HISTOGRAM_LADDER_SECONDS[HISTOGRAM_LADDER_SECONDS.length - 1];
-    }
-
     // =========================================================================
     // Facets
     // =========================================================================
 
-    /** Returns per-dimension facet counts with standard self-exclusion. */
+    private static final String FACET_KIND_STATUS = "status";
+    private static final String FACET_KIND_OPERATION = "operation";
+    private static final String FACET_KIND_SERVICE = "service";
+    private static final String FACET_KIND_DURATION_BUCKET = "duration_bucket";
+    private static final String FACET_KIND_SESSION = "session";
+
+    /**
+     * Returns per-dimension facet counts with standard self-exclusion, in a single
+     * repository round trip. {@link SpanRepository#facetTraceAll} computes the shared
+     * {@code traces} CTE once and cross-joins it against all five facet dimensions;
+     * this method demultiplexes the flat {@code (facetKind, facetKey, rowCount)} rows
+     * back into the five facet lists the response DTO exposes.
+     */
     public TraceFacets facets(TraceQueryCriteria criteria) {
-        List<FacetValue> statusFacets = buildStatusFacets(criteria);
-        List<FacetValue> operationFacets = buildOperationFacets(criteria);
-        List<FacetValue> serviceFacets = buildServiceFacets(criteria);
-        List<FacetValue> durationFacets = buildDurationFacets(criteria);
-        List<FacetValue> sessionFacets = buildSessionFacets(criteria);
+        List<Object[]> rows = spanRepository.facetTraceAll(
+                criteria.startTimestamp(), criteria.endTimestamp(),
+                criteria.statuses(), criteria.operations(), criteria.services(),
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                FACET_OPERATION_CAP, FACET_SESSION_CAP);
+
+        Map<String, List<Object[]>> rowsByFacetKind = new HashMap<>();
+        for (Object[] row : rows) {
+            rowsByFacetKind
+                    .computeIfAbsent((String) row[0], key -> new ArrayList<>())
+                    .add(row);
+        }
+
+        List<FacetValue> statusFacets = buildStatusFacets(rowsByFacetKind.get(FACET_KIND_STATUS));
+        List<FacetValue> operationFacets = toFacetValues(rowsByFacetKind.get(FACET_KIND_OPERATION));
+        List<FacetValue> serviceFacets = toFacetValues(rowsByFacetKind.get(FACET_KIND_SERVICE));
+        List<FacetValue> durationFacets = buildDurationFacets(rowsByFacetKind.get(FACET_KIND_DURATION_BUCKET));
+        List<FacetValue> sessionFacets = toFacetValues(rowsByFacetKind.get(FACET_KIND_SESSION));
         return new TraceFacets(statusFacets, operationFacets, serviceFacets, durationFacets, sessionFacets);
     }
 
-    private List<FacetValue> buildStatusFacets(TraceQueryCriteria criteria) {
-        List<Object[]> rows = spanRepository.facetTraceStatus(
-                criteria.startTimestamp(), criteria.endTimestamp(),
-                criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery());
-
-        Map<String, Long> countsByStatus = new HashMap<>();
-        for (Object[] row : rows) {
-            countsByStatus.put((String) row[0], ((Number) row[1]).longValue());
-        }
+    /** Column order within a facet row: facet_kind(0), facet_key(1), row_count(2). */
+    private static List<FacetValue> buildStatusFacets(List<Object[]> rows) {
+        Map<String, Long> countsByStatus = countsByFacetKey(rows);
         return List.of(
                 new FacetValue(STATUS_OK, countsByStatus.getOrDefault(STATUS_OK, 0L)),
                 new FacetValue(STATUS_ERROR, countsByStatus.getOrDefault(STATUS_ERROR, 0L)));
     }
 
-    private List<FacetValue> buildOperationFacets(TraceQueryCriteria criteria) {
-        List<Object[]> rows = spanRepository.facetTraceOperation(
-                criteria.startTimestamp(), criteria.endTimestamp(),
-                criteria.statuses(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
-                FACET_OPERATION_CAP);
-        return toFacetValues(rows);
-    }
-
-    private List<FacetValue> buildServiceFacets(TraceQueryCriteria criteria) {
-        List<Object[]> rows = spanRepository.facetTraceService(
-                criteria.startTimestamp(), criteria.endTimestamp(),
-                criteria.statuses(), criteria.operations(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
-                FACET_SERVICE_CAP);
-        return toFacetValues(rows);
-    }
-
-    private List<FacetValue> buildDurationFacets(TraceQueryCriteria criteria) {
-        List<Object[]> rows = spanRepository.facetTraceDuration(
-                criteria.startTimestamp(), criteria.endTimestamp(),
-                criteria.statuses(), criteria.operations(),
-                criteria.services(), criteria.sessions(), criteria.fullTextQuery());
-
-        Map<String, Long> countsByBucket = new HashMap<>();
-        for (Object[] row : rows) {
-            countsByBucket.put((String) row[0], ((Number) row[1]).longValue());
-        }
+    private static List<FacetValue> buildDurationFacets(List<Object[]> rows) {
+        Map<String, Long> countsByBucket = countsByFacetKey(rows);
         return List.of(
                 new FacetValue(DURATION_D0, countsByBucket.getOrDefault(DURATION_D0, 0L)),
                 new FacetValue(DURATION_D1, countsByBucket.getOrDefault(DURATION_D1, 0L)),
@@ -207,18 +189,23 @@ public class TraceExplorerService {
                 new FacetValue(DURATION_D3, countsByBucket.getOrDefault(DURATION_D3, 0L)));
     }
 
-    private List<FacetValue> buildSessionFacets(TraceQueryCriteria criteria) {
-        List<Object[]> rows = spanRepository.facetTraceSession(
-                criteria.startTimestamp(), criteria.endTimestamp(),
-                criteria.statuses(), criteria.operations(),
-                criteria.services(), criteria.durations(), criteria.fullTextQuery(),
-                FACET_SESSION_CAP);
-        return toFacetValues(rows);
+    private static Map<String, Long> countsByFacetKey(List<Object[]> rows) {
+        Map<String, Long> countsByKey = new HashMap<>();
+        if (rows == null) {
+            return countsByKey;
+        }
+        for (Object[] row : rows) {
+            countsByKey.put((String) row[1], ((Number) row[2]).longValue());
+        }
+        return countsByKey;
     }
 
     private static List<FacetValue> toFacetValues(List<Object[]> rows) {
+        if (rows == null) {
+            return List.of();
+        }
         return rows.stream()
-                .map(row -> new FacetValue((String) row[0], ((Number) row[1]).longValue()))
+                .map(row -> new FacetValue((String) row[1], ((Number) row[2]).longValue()))
                 .toList();
     }
 
@@ -243,7 +230,7 @@ public class TraceExplorerService {
     }
 
     private TraceCursorPage cursorPageFirst(TraceQueryCriteria criteria, String sort, int limit) {
-        int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+        int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
         long totalCount = spanRepository.countFilteredTraces(
                 criteria.startTimestamp(), criteria.endTimestamp(),
                 criteria.statuses(), criteria.operations(), criteria.services(),
@@ -256,18 +243,18 @@ public class TraceExplorerService {
 
     private TraceCursorPage cursorPageBefore(
             TraceQueryCriteria criteria, String sort, TraceCursor cursor, int limit) {
-        int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+        int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
         List<TraceSummary> probeItems = fetchSortedCursorRowsBefore(
                 criteria, sort, cursor, resolvedLimit + 1);
-        return buildCursorPage(probeItems, resolvedLimit, CONTINUATION_PAGE_TOTAL_COUNT);
+        return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
     }
 
     private TraceCursorPage cursorPageAfter(
             TraceQueryCriteria criteria, String sort, TraceCursor cursor, int limit) {
-        int resolvedLimit = limit <= 0 ? DEFAULT_CURSOR_LIMIT : limit;
+        int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
         List<TraceSummary> probeItems = fetchSortedCursorRowsAfter(
                 criteria, sort, cursor, resolvedLimit + 1);
-        return buildCursorPage(probeItems, resolvedLimit, CONTINUATION_PAGE_TOTAL_COUNT);
+        return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
     }
 
     private List<TraceSummary> fetchSortedCursorRows(
@@ -503,8 +490,10 @@ public class TraceExplorerService {
                 criteria.statuses(), criteria.operations(), criteria.services(),
                 criteria.durations(), criteria.sessions(), criteria.fullTextQuery());
 
-        int pageOffset = page * size;
-        List<TraceSummary> items = fetchSortedOffsetRows(criteria, sort, size, pageOffset);
+        int resolvedSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
+        int resolvedPage = Math.max(0, page);
+        int pageOffset = PageBounds.computeOffset(resolvedPage, resolvedSize);
+        List<TraceSummary> items = fetchSortedOffsetRows(criteria, sort, resolvedSize, pageOffset);
         return new TracePage(items, totalCount);
     }
 

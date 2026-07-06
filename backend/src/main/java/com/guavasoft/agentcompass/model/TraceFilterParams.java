@@ -6,6 +6,9 @@ import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 
+import com.guavasoft.agentcompass.validation.DateRangeBounds;
+import com.guavasoft.agentcompass.validation.ValidDateRange;
+
 /**
  * Parameter object for the shared trace-filter query params consumed by the histogram, facets,
  * and traces list endpoints. Bound via {@code @ModelAttribute} from repeated query-string entries.
@@ -13,10 +16,15 @@ import lombok.Setter;
  * <p>Uses Lombok {@code @Getter}/{@code @Setter} rather than a record because Spring's
  * WebDataBinder setter path is the only mechanism guaranteed to collect repeated query params
  * ({@code ?status=ok&status=error}) into a {@code List<String>}.
+ *
+ * <p>Implements {@link DateRangeBounds} (rather than exposing only the Lombok-generated
+ * {@code getStartTimestamp()}/{@code getEndTimestamp()}) so the same {@link ValidDateRange}
+ * constraint that caps {@link TimeWindowParams} at 30 days can validate this type too.
  */
 @Getter
 @Setter
-public class TraceFilterParams {
+@ValidDateRange
+public class TraceFilterParams implements DateRangeBounds {
 
     @Parameter(description = "Window start (ISO-8601, required)", example = "2026-06-11T00:00:00Z")
     private Instant startTimestamp;
@@ -53,4 +61,17 @@ public class TraceFilterParams {
             description = "Full-text search over traceId, sessionId, and rootSpanName",
             example = "tool.execute")
     private String q;
+
+    // DateRangeBounds — explicit accessors matching the interface's record-style method
+    // names, distinct from the Lombok-generated getStartTimestamp()/getEndTimestamp().
+
+    @Override
+    public Instant startTimestamp() {
+        return startTimestamp;
+    }
+
+    @Override
+    public Instant endTimestamp() {
+        return endTimestamp;
+    }
 }

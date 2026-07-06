@@ -11,6 +11,7 @@ import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.model.EventRow;
 import com.guavasoft.agentcompass.model.ExemplarPoint;
+import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.MetricSeries;
 import com.guavasoft.agentcompass.model.MetricSplitRow;
 import com.guavasoft.agentcompass.model.TokenDistribution;
@@ -25,7 +26,6 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -42,56 +42,74 @@ class MetricsControllerTest {
     MetricSeriesService metricSeriesService;
 
     @Test
-    void metricsReturnsAllEventRowsWhenNoFilterApplied() throws Exception {
-        when(metricService.recentEvents(List.of(), null, null)).thenReturn(List.of(
-                EventRow.builder()
-                        .id(1L)
-                        .metricName("claude_code.code_edit_tool.decision")
-                        .scopeName("test-scope")
-                        .timestamp(Instant.parse("2026-05-21T12:00:00Z"))
-                        .valueLong(3L)
-                        .valueKind("long")
-                        .build(),
-                EventRow.builder()
-                        .id(2L)
-                        .metricName("claude_code.code_edit_tool.decision")
-                        .scopeName("test-scope")
-                        .timestamp(Instant.parse("2026-05-21T11:00:00Z"))
-                        .valueLong(1L)
-                        .valueKind("long")
-                        .build()));
+    void metricsReturnsFirstPageWhenNoFilterApplied() throws Exception {
+        when(metricService.recentEvents(List.of(), null, null, 0, 25)).thenReturn(new MetricPage(
+                List.of(
+                        EventRow.builder()
+                                .id(1L)
+                                .metricName("claude_code.code_edit_tool.decision")
+                                .scopeName("test-scope")
+                                .timestamp(Instant.parse("2026-05-21T12:00:00Z"))
+                                .valueLong(3L)
+                                .valueKind("long")
+                                .build(),
+                        EventRow.builder()
+                                .id(2L)
+                                .metricName("claude_code.code_edit_tool.decision")
+                                .scopeName("test-scope")
+                                .timestamp(Instant.parse("2026-05-21T11:00:00Z"))
+                                .valueLong(1L)
+                                .valueKind("long")
+                                .build()),
+                2L));
 
         mockMvc.perform(get("/api/metrics"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("X-Total-Count", "2"))
-                .andExpect(jsonPath("$", hasSize(2)))
-                .andExpect(jsonPath("$[0].metricName").value("claude_code.code_edit_tool.decision"))
-                .andExpect(jsonPath("$[0].valueLong").value(3))
-                .andExpect(jsonPath("$[0].valueKind").value("long"));
+                .andExpect(jsonPath("$.totalCount").value(2))
+                .andExpect(jsonPath("$.items", hasSize(2)))
+                .andExpect(jsonPath("$.items[0].metricName").value("claude_code.code_edit_tool.decision"))
+                .andExpect(jsonPath("$.items[0].valueLong").value(3))
+                .andExpect(jsonPath("$.items[0].valueKind").value("long"));
 
-        verify(metricService).recentEvents(List.of(), null, null);
+        verify(metricService).recentEvents(List.of(), null, null, 0, 25);
     }
 
     @Test
-    void metricsNarrowsBySuppliedFiltersAndReturnsFilteredCount() throws Exception {
-        when(metricService.recentEvents(List.of("method=GET", "status=200"), null, null)).thenReturn(List.of(
-                EventRow.builder()
-                        .id(7L)
-                        .metricName("http.server.request.duration")
-                        .scopeName("test-scope")
-                        .timestamp(Instant.parse("2026-05-21T12:00:00Z"))
-                        .valueDouble(12.4)
-                        .valueKind("double")
-                        .build()));
+    void metricsNarrowsBySuppliedFiltersAndReturnsFilteredTotalCount() throws Exception {
+        when(metricService.recentEvents(List.of("method=GET", "status=200"), null, null, 0, 25)).thenReturn(new MetricPage(
+                List.of(
+                        EventRow.builder()
+                                .id(7L)
+                                .metricName("http.server.request.duration")
+                                .scopeName("test-scope")
+                                .timestamp(Instant.parse("2026-05-21T12:00:00Z"))
+                                .valueDouble(12.4)
+                                .valueKind("double")
+                                .build()),
+                1L));
 
         mockMvc.perform(get("/api/metrics")
                 .param("filter", "method=GET", "status=200"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("X-Total-Count", "1"))
-                .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].metricName").value("http.server.request.duration"));
+                .andExpect(jsonPath("$.totalCount").value(1))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].metricName").value("http.server.request.duration"));
 
-        verify(metricService).recentEvents(List.of("method=GET", "status=200"), null, null);
+        verify(metricService).recentEvents(List.of("method=GET", "status=200"), null, null, 0, 25);
+    }
+
+    @Test
+    void metricsDispatchesSuppliedPageAndSizeToService() throws Exception {
+        when(metricService.recentEvents(List.of(), null, null, 2, 50)).thenReturn(new MetricPage(List.of(), 130L));
+
+        mockMvc.perform(get("/api/metrics")
+                .param("page", "2")
+                .param("size", "50"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(0)))
+                .andExpect(jsonPath("$.totalCount").value(130));
+
+        verify(metricService).recentEvents(List.of(), null, null, 2, 50);
     }
 
     @Test

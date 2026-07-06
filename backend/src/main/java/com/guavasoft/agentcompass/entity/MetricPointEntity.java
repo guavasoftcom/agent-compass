@@ -69,4 +69,18 @@ public class MetricPointEntity {
 
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
+
+    // Stored generated column (V11): md5(metric_name || '|' || attributes::text),
+    // the full stream identity. Computed by Postgres on insert — never written by
+    // Hibernate.
+    @Column(name = "stream_id", insertable = false, updatable = false)
+    private String streamId;
+
+    // Reset-aware per-row counter increment (V11), populated by
+    // MetricPointRepository#recomputeValueDeltas after insert. Never written
+    // through the entity — Hibernate must not include it in INSERT/UPDATE
+    // statements, since ingest sets it via a dedicated native UPDATE once the
+    // row's true predecessor (by stream_id, timestamp, id) is visible.
+    @Column(name = "value_delta", insertable = false, updatable = false)
+    private Double valueDelta;
 }

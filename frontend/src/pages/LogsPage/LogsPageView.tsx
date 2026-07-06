@@ -8,6 +8,7 @@ import PageActions from '../../components/PageActions';
 import LiveTailToggle from '../../components/LiveTailToggle';
 import StreamTableToggle from '../../components/StreamTableToggle';
 import { TAIL_INTERVAL_MS } from '../../lib/constants';
+import { useDebouncedValue } from '../../lib/useDebouncedValue';
 import type { WindowOption } from '../../lib/constants';
 import type { LogRow, WindowSelection } from '../../api';
 import {
@@ -109,6 +110,11 @@ const LogsPageView = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
 
+  // The search box stays bound to `search` (immediate) so typing never lags;
+  // only the debounced copy feeds `filters`, so a query fires ~250ms after the
+  // user stops typing instead of on every keystroke.
+  const debouncedSearch = useDebouncedValue(search);
+
   const filters = useMemo<LogsFilters>(
     () => ({
       startTimestamp: zoom ? zoom.startTimestamp : startTimestamp,
@@ -116,10 +122,10 @@ const LogsPageView = ({
       severity: [...sel.severity] as Severity[],
       event: [...sel.event],
       tool: [...sel.tool],
-      q: search || undefined,
+      q: debouncedSearch || undefined,
       hiddenSeverity: [...hidden],
     }),
-    [zoom, startTimestamp, endTimestamp, sel, search, hidden],
+    [zoom, startTimestamp, endTimestamp, sel, debouncedSearch, hidden],
   );
   const filtersKey = JSON.stringify(filters);
 

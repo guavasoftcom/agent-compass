@@ -8,6 +8,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -41,6 +44,9 @@ import java.util.List;
         description = "OTLP trace explorer: histogram, facets, cursor/offset paged list, per-trace spans, and correlated logs")
 public class TracesController {
 
+    private static final int MINIMUM_HISTOGRAM_BUCKETS = 1;
+    private static final int MAXIMUM_HISTOGRAM_BUCKETS = 500;
+
     private final TraceService traceService;
     private final TraceExplorerService traceExplorerService;
     private final LogService logService;
@@ -60,8 +66,9 @@ public class TracesController {
     public TraceHistogram histogram(
             @Parameter(description = "Target bar count — service picks the nearest 'nice' bucket width",
                     example = "48")
-            @RequestParam(required = false, defaultValue = "48") int buckets,
-            @ModelAttribute TraceFilterParams traceFilterParams) {
+            @RequestParam(required = false, defaultValue = "48")
+            @Min(MINIMUM_HISTOGRAM_BUCKETS) @Max(MAXIMUM_HISTOGRAM_BUCKETS) int buckets,
+            @Valid @ModelAttribute TraceFilterParams traceFilterParams) {
         TraceQueryCriteria criteria = buildCriteria(traceFilterParams);
         return traceExplorerService.histogram(criteria, buckets);
     }
@@ -80,7 +87,7 @@ public class TracesController {
             content = @Content(
                     mediaType = "application/json",
                     schema = @Schema(implementation = TraceFacets.class))))
-    public TraceFacets facets(@ModelAttribute TraceFilterParams traceFilterParams) {
+    public TraceFacets facets(@Valid @ModelAttribute TraceFilterParams traceFilterParams) {
         TraceQueryCriteria criteria = buildCriteria(traceFilterParams);
         return traceExplorerService.facets(criteria);
     }
@@ -99,7 +106,7 @@ public class TracesController {
                     mediaType = "application/json",
                     schema = @Schema(implementation = TracePage.class))))
     public TracePage tracesOffsetPage(
-            @ModelAttribute TraceFilterParams traceFilterParams,
+            @Valid @ModelAttribute TraceFilterParams traceFilterParams,
             @ModelAttribute TracePaginationParams tracePaginationParams) {
         TraceQueryCriteria criteria = buildCriteria(traceFilterParams);
         return traceExplorerService.offsetPage(
@@ -125,7 +132,7 @@ public class TracesController {
                     mediaType = "application/json",
                     schema = @Schema(implementation = TraceCursorPage.class))))
     public ResponseEntity<TraceCursorPage> tracesCursorPage(
-            @ModelAttribute TraceFilterParams traceFilterParams,
+            @Valid @ModelAttribute TraceFilterParams traceFilterParams,
             @ModelAttribute TracePaginationParams tracePaginationParams) {
         TraceQueryCriteria criteria = buildCriteria(traceFilterParams);
         TraceCursorPage cursorPage = traceExplorerService.cursorPage(

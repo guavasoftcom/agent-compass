@@ -16,6 +16,7 @@
 
 import type { SpanRow } from '../../api';
 import { fetchTraceSpans } from '../../api';
+import { getJson } from '../../api/http';
 import type {
   TraceCursor,
   TraceCursorPage,
@@ -50,14 +51,14 @@ export const fetchTraceHistogram = (f: TracesFilters, buckets = 48): Promise<Tra
   }
   const p = buildTracesQuery(f);
   p.set('buckets', String(buckets));
-  return fetch(`/api/traces/histogram?${p.toString()}`).then((r) => r.json() as Promise<TraceHistogram>);
+  return getJson<TraceHistogram>(`/api/traces/histogram?${p.toString()}`);
 };
 
 export const fetchTraceFacets = (f: TracesFilters): Promise<TraceFacets> => {
   if (USE_SAMPLE_DATA) {
     return sampleFacets(f);
   }
-  return fetch(`/api/traces/facets?${buildTracesQuery(f).toString()}`).then((r) => r.json() as Promise<TraceFacets>);
+  return getJson<TraceFacets>(`/api/traces/facets?${buildTracesQuery(f).toString()}`);
 };
 
 export const fetchTracesCursor = (
@@ -80,7 +81,7 @@ export const fetchTracesCursor = (
   if (opts.after) {
     p.set('after', `${opts.after.ts},${opts.after.id}`);
   }
-  return fetch(`/api/traces?${p.toString()}`).then((r) => r.json() as Promise<TraceCursorPage>);
+  return getJson<TraceCursorPage>(`/api/traces?${p.toString()}`);
 };
 
 export const fetchTracesPage = (
@@ -96,7 +97,7 @@ export const fetchTracesPage = (
   p.set('sort', sort);
   p.set('page', String(page));
   p.set('size', String(size));
-  return fetch(`/api/traces?${p.toString()}`).then((r) => r.json() as Promise<TracesListResult>);
+  return getJson<TracesListResult>(`/api/traces?${p.toString()}`);
 };
 
 // Inline waterfall reuses the existing per-trace span endpoint (api.ts).

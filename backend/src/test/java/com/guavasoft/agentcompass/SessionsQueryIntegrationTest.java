@@ -9,15 +9,19 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
+import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
 import com.guavasoft.agentcompass.service.MetricService;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +44,10 @@ class SessionsQueryIntegrationTest {
   private static final String ACTIVE_METRIC = "claude_code.active_time.total";
   private static final String SESSION_COUNT_METRIC = "claude_code.session.count";
   private static final String TOKEN_METRIC = "claude_code.token.usage";
+  private static final String USER_PROMPT_EVENT_NAME = "user_prompt";
+  private static final String PROMPT_ATTRIBUTE = "prompt";
+  private static final String TOOL_EVENT_NAME = "tool_result";
+  private static final String TOOL_DECISION_EVENT_NAME = "tool_decision";
   private static final int WINDOW_MINUTES = 60;
 
   @Container
@@ -50,11 +58,32 @@ class SessionsQueryIntegrationTest {
   MetricPointRepository metricPointRepository;
 
   @Autowired
+  LogRecordRepository logRecordRepository;
+
+  @Autowired
   MetricService metricService;
+
+  private final List<Long> seededMetricPointIds = new ArrayList<>();
+
+  // Multi-line prompt seeded for session A. regexp_replace collapses the
+  // embedded newline/tab whitespace run to a single space, so the collapsed text
+  // is fiftyAs + " " + twoHundredFiftyBs; truncated to 200 chars that is
+  // fiftyAs + " " + 149 Bs (50 + 1 + 149 = 200).
+  private static final String MULTI_LINE_PROMPT = "A".repeat(50) + "\n \t \n" + "B".repeat(250);
+  private static final String EXPECTED_COLLAPSED_TRUNCATED_PROMPT = "A".repeat(50) + " " + "B".repeat(149);
+
+  // Real trace ids are 32 hex chars; the all-zero placeholder is what pre-tracing
+  // Claude Code versions stamp onto user_prompt rows instead of leaving trace_id
+  // NULL. Both this sentinel and the empty string must normalize to a null
+  // traceId in the API response.
+  private static final String REAL_TRACE_ID = "0102030405060708090a0b0c0d0e0f10";
+  private static final String ALL_ZERO_TRACE_ID = "0".repeat(32);
 
   @BeforeEach
   void seedSessions() {
     metricPointRepository.deleteAll();
+    logRecordRepository.deleteAll();
+    seededMetricPointIds.clear();
     Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
 
     // Session A: multi-stream cost (12 + 3 = 15) and active time 1500 (MAX of a
@@ -85,6 +114,24 @@ class SessionsQueryIntegrationTest {
     // total 1,000,000; B and C have no token rows -> 0.
     saveTokenUsage("A", 400_000.0, base);
     saveTokenUsage("A", 1_000_000.0, base.plusSeconds(60));
+
+    // Prompt context: A has a single multi-line prompt (whitespace-collapse +
+    // 200-char truncation coverage); B has a bare slash command followed by a
+    // real prompt (the real prompt must win as firstUserPrompt); C has no
+    // user_prompt events at all (firstUserPrompt null, count 0).
+    // B's prompts also cover trace-id normalization: the bare slash command
+    // predates tracing (all-zero placeholder -> null in the API), the real
+    // prompt carries the claude_code.interaction root span's real trace id.
+    saveUserPrompt("A", MULTI_LINE_PROMPT, base, null);
+    saveUserPrompt("B", "/ship", base.plusSeconds(30), ALL_ZERO_TRACE_ID);
+    saveUserPrompt("B", "Add authentication support to the login flow", base.plusSeconds(31), REAL_TRACE_ID);
+
+    // Fixtures seed rows directly (bypassing OtlpMetricService), so value_delta
+    // starts NULL. Replicate the ingest-time computation here — same
+    // recomputeValueDeltas call the real ingest path uses after saveAll — so the
+    // session aggregations under test see the same value_delta they would in
+    // production.
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
   }
 
   @Test
@@ -156,6 +203,83 @@ class SessionsQueryIntegrationTest {
         .isEqualTo(kpis.totalSessions());
   }
 
+  @Test
+  void promptContextEnrichesFirstPromptAndCountPerSession() {
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+
+    SessionSummary sessionA = page.items().stream()
+        .filter(item -> "A".equals(item.sessionId())).findFirst().orElseThrow();
+    assertThat(sessionA.userPromptCount()).isEqualTo(1L);
+    assertThat(sessionA.firstUserPrompt()).isEqualTo(EXPECTED_COLLAPSED_TRUNCATED_PROMPT);
+    assertThat(sessionA.firstUserPrompt()).hasSize(200);
+
+    SessionSummary sessionB = page.items().stream()
+        .filter(item -> "B".equals(item.sessionId())).findFirst().orElseThrow();
+    assertThat(sessionB.userPromptCount()).isEqualTo(2L);
+    assertThat(sessionB.firstUserPrompt()).isEqualTo("Add authentication support to the login flow");
+
+    SessionSummary sessionC = page.items().stream()
+        .filter(item -> "C".equals(item.sessionId())).findFirst().orElseThrow();
+    assertThat(sessionC.userPromptCount()).isEqualTo(0L);
+    assertThat(sessionC.firstUserPrompt()).isNull();
+  }
+
+  @Test
+  void promptInfoFallsBackToTheLiteralFirstPromptWhenEveryPromptIsASlashCommand() {
+    Instant base = Instant.now().minus(5, ChronoUnit.MINUTES);
+    saveUserPrompt("D", "/compact", base, null);
+    saveUserPrompt("D", "/clear", base.plusSeconds(30), null);
+
+    List<Object[]> rows = logRecordRepository.aggregateSessionCounts(
+        List.of("D"), TOOL_EVENT_NAME, TOOL_DECISION_EVENT_NAME, USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE);
+
+    assertThat(rows).hasSize(1);
+    Object[] row = rows.get(0);
+    assertThat(row[0]).isEqualTo("D");
+    assertThat(((Number) row[3]).longValue()).isEqualTo(2L);
+    assertThat(row[4]).isEqualTo("/compact");
+  }
+
+  @Test
+  void promptsForSessionReturnsFullTimelineOrderedAscendingWithNormalizedTraceIds() {
+    List<Object[]> rows = logRecordRepository.findPromptsForSession(
+        "B", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, 500);
+
+    assertThat(rows).hasSize(2);
+    // The all-zero placeholder trace id (pre-tracing sessions) normalizes to
+    // SQL NULL.
+    assertThat(rows.get(0)[1]).isEqualTo("/ship");
+    assertThat(rows.get(0)[2]).isNull();
+    // The real trace id passes through unchanged.
+    assertThat(rows.get(1)[1]).isEqualTo("Add authentication support to the login flow");
+    assertThat(rows.get(1)[2]).isEqualTo(REAL_TRACE_ID);
+  }
+
+  @Test
+  void promptsForSessionMapsEmptyStringTraceIdToNull() {
+    Instant timestamp = Instant.now().minus(5, ChronoUnit.MINUTES);
+    saveUserPrompt("E", "Investigate the intermittent CI failure", timestamp, "");
+
+    List<Object[]> rows = logRecordRepository.findPromptsForSession(
+        "E", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, 500);
+
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0)[2]).isNull();
+  }
+
+  private void saveUserPrompt(String sessionId, String promptText, Instant timestamp, String traceId) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setAttributes(Map.of(
+        "event.name", USER_PROMPT_EVENT_NAME,
+        "session.id", sessionId,
+        PROMPT_ATTRIBUTE, promptText));
+    logRecordRepository.save(entity);
+  }
+
   private void saveCost(String sessionId, String model, String querySource, double value, Instant timestamp) {
     save(COST_METRIC, sessionId, model, querySource, value, timestamp);
   }
@@ -169,7 +293,8 @@ class SessionsQueryIntegrationTest {
     entity.setValueKind("double");
     entity.setAttributes(Map.of(
         "session.id", sessionId, "start_type", startType, "terminal.type", terminalType));
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 
   private void saveTokenUsage(String sessionId, double value, Instant timestamp) {
@@ -180,7 +305,8 @@ class SessionsQueryIntegrationTest {
     entity.setValueDouble(value);
     entity.setValueKind("double");
     entity.setAttributes(Map.of("session.id", sessionId, "type", "input"));
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 
   private void saveActive(String sessionId, String model, String querySource, double value, Instant timestamp) {
@@ -199,6 +325,7 @@ class SessionsQueryIntegrationTest {
         "session.id", sessionId,
         "model", model,
         "query_source", querySource));
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 }

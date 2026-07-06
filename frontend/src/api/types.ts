@@ -167,6 +167,32 @@ export interface SessionSummaryRow {
   tokens: number;
   terminalType: 'interactive' | 'non-interactive';
   startType: 'fresh' | 'resume';
+  /**
+   * Session's first meaningful user prompt, whitespace-collapsed and truncated
+   * to <=200 chars server-side. Null when prompt capture was disabled
+   * (OTEL_LOG_USER_PROMPTS) or the session has no user-authored prompt — this
+   * can be true even when `userPromptCount` is greater than zero.
+   */
+  firstUserPrompt: string | null;
+  userPromptCount: number;
+}
+
+/** One row of a session's full prompt timeline (`GET /api/sessions/{id}/prompts`). */
+export interface SessionPromptRow {
+  timestamp: string;
+  /**
+   * Null for pre-capture events (prompt_text wasn't recorded). Keep these rows
+   * — don't filter them out — and render a placeholder instead of passing null
+   * into a component that would stringify it (e.g. `AttributeValue` renders the
+   * literal text "null").
+   */
+  prompt: string | null;
+  /**
+   * Trace whose root span is this prompt's claude_code.interaction. Null for
+   * prompts from sessions that predate tracing (~35% of existing data) — don't
+   * render a disabled placeholder for those, just omit the link.
+   */
+  traceId: string | null;
 }
 
 export interface SessionsSortModel {

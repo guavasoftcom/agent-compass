@@ -269,4 +269,17 @@ public class TuningProperties {
    */
   private String eventNameAttribute = "event.name";
 
+  /**
+   * Value of the OTLP log attribute {@code event.name} emitted once per user turn,
+   * carrying the raw prompt text in {@link #promptAttribute}. Drives the Sessions
+   * grid's prompt-context enrichment and the per-session prompt timeline.
+   */
+  private String userPromptEventName = "user_prompt";
+
+  /**
+   * Attribute key on a {@link #userPromptEventName} log carrying the full prompt
+   * text submitted by the user.
+   */
+  private String promptAttribute = "prompt";
+
 }

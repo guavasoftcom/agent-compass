@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
+  fetchSessionPrompts,
   fetchSessions,
   fetchSessionsSummary,
   type SessionsSortModel,
@@ -32,6 +33,9 @@ export default function SessionsPage() {
     pageSize: DEFAULT_PAGE_SIZE,
   });
   const [sortModel, setSortModel] = useState<SessionsSortModel>(DEFAULT_SORT);
+  // Prompt-timeline row expansion: only one session's prompts are shown at a
+  // time, so this is a single id rather than a Set.
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
 
   const selectionKey =
     selection.kind === 'preset'
@@ -63,6 +67,17 @@ export default function SessionsPage() {
     placeholderData: keepPreviousData,
   });
 
+  // Full prompt timeline for the expanded row only; not window-scoped and not
+  // polled (no refetchInterval). It still revalidates on its own once the
+  // default 30s staleTime elapses (set globally in main.tsx) and the row is
+  // re-expanded, which matters for live sessions that keep gaining prompts —
+  // this is a cached-then-revalidate read, not a permanently static one.
+  const sessionPromptsQuery = useQuery({
+    queryKey: ['session-prompts', expandedSessionId],
+    queryFn: () => fetchSessionPrompts(expandedSessionId as string),
+    enabled: expandedSessionId !== null,
+  });
+
   const handleReload = () => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
     summaryQuery.refetch();
@@ -71,12 +86,23 @@ export default function SessionsPage() {
 
   const handleSelectionChange = (next: WindowSelection) => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
+    setExpandedSessionId(null);
     setSelection(next);
   };
 
   const handleSortModelChange = (next: SessionsSortModel) => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
+    setExpandedSessionId(null);
     setSortModel(next);
+  };
+
+  const handlePaginationModelChange = (next: PaginationModel) => {
+    setExpandedSessionId(null);
+    setPaginationModel(next);
+  };
+
+  const handleToggleExpand = (sessionId: string) => {
+    setExpandedSessionId((previous) => (previous === sessionId ? null : sessionId));
   };
 
   const isPolling =
@@ -92,7 +118,7 @@ export default function SessionsPage() {
       rows={sessionsQuery.data?.items ?? []}
       rowCount={sessionsQuery.data?.totalCount ?? summaryQuery.data?.totalSessions ?? 0}
       paginationModel={paginationModel}
-      onPaginationModelChange={setPaginationModel}
+      onPaginationModelChange={handlePaginationModelChange}
       sortModel={sortModel}
       onSortModelChange={handleSortModelChange}
       kpis={summaryQuery.data ?? EMPTY_KPIS}
@@ -102,6 +128,11 @@ export default function SessionsPage() {
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}
       isPolling={isPolling}
+      expandedSessionId={expandedSessionId}
+      onToggleExpand={handleToggleExpand}
+      promptTimeline={sessionPromptsQuery.data ?? null}
+      promptTimelineLoading={sessionPromptsQuery.isLoading}
+      promptTimelineError={sessionPromptsQuery.error as Error | null}
     />
   );
 }

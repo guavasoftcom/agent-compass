@@ -9,6 +9,7 @@ import type {
   ListResult,
   LogRow,
   SessionKpis,
+  SessionPromptRow,
   SessionsPageRequest,
   SessionSummaryRow,
   SpanRow,
@@ -98,6 +99,13 @@ export const fetchSessionsSummary = (
   const params = windowQueryParams(selection);
   return getJson(`/api/sessions/summary?${params.toString()}`);
 };
+
+// Full, untruncated prompt timeline for one session — not window-scoped, no
+// query params, max 500 rows, ascending by time.
+export const fetchSessionPrompts = (
+  sessionId: string,
+): Promise<SessionPromptRow[]> =>
+  getJson(`/api/sessions/${encodeURIComponent(sessionId)}/prompts`);
 
 export const fetchToolDenials = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },

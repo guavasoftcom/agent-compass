@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Suspense, useState } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import {
   Box,
+  CircularProgress,
   Container,
   Divider,
   Drawer,
@@ -19,6 +20,7 @@ import NavItem from './NavItem';
 import ColorModeToggle from './ColorModeToggle';
 import AuroraMark from './AuroraMark';
 import navGroups from './navGroups';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const DRAWER_WIDTH_OPEN = 244;
 const DRAWER_WIDTH_COLLAPSED = 76;
@@ -46,8 +48,24 @@ const persistNavOpen = (open: boolean): void => {
   }
 };
 
+// Shown while a lazily-loaded route chunk (see App.tsx) is still downloading.
+const RouteLoadingFallback = () => (
+  <Box
+    sx={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 240,
+      p: 5,
+    }}
+  >
+    <CircularProgress size={32} />
+  </Box>
+);
+
 const AppShell = () => {
   const theme = useTheme();
+  const location = useLocation();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [navOpen, setNavOpen] = useState(readInitialNavOpen);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -236,7 +254,16 @@ const AppShell = () => {
         }}
       >
         <Container maxWidth={false} disableGutters>
-          <Outlet />
+          {/* Wrapping only the routed content (not the drawer/app-bar chrome above)
+              means a page-level render crash falls back to an inline message here
+              while navigation stays usable — the user can click to another page
+              instead of the whole dashboard going blank. `resetKeys` clears the
+              fallback automatically once the route changes. */}
+          <ErrorBoundary resetKeys={[location.pathname]}>
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </Container>
       </Box>
     </Box>

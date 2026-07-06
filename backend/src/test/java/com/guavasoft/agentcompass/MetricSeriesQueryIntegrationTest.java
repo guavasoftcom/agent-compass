@@ -17,6 +17,7 @@ import com.guavasoft.agentcompass.service.MetricSeriesService;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -46,10 +47,12 @@ class MetricSeriesQueryIntegrationTest {
   MetricSeriesService metricSeriesService;
 
   private Instant base;
+  private final List<Long> seededMetricPointIds = new ArrayList<>();
 
   @BeforeEach
   void seed() {
     metricPointRepository.deleteAll();
+    seededMetricPointIds.clear();
     base = Instant.now().minus(20, ChronoUnit.MINUTES);
 
     // token.usage — three concurrent cumulative streams (distinct full attribute
@@ -71,6 +74,13 @@ class MetricSeriesQueryIntegrationTest {
     saveDecision("accept", 8, base.plusSeconds(60));
     saveDecision("accept", 2, base.plusSeconds(120));
     saveDecision("reject", 1, base.plusSeconds(30));
+
+    // Fixtures seed rows directly (bypassing OtlpMetricService), so value_delta
+    // starts NULL. Replicate the ingest-time computation here — same
+    // recomputeValueDeltas call the real ingest path uses after saveAll — so the
+    // reset-aware aggregations under test see the same value_delta they would in
+    // production.
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
   }
 
   @Test
@@ -152,6 +162,7 @@ class MetricSeriesQueryIntegrationTest {
     entity.setValueDouble(value);
     entity.setValueKind("double");
     entity.setAttributes(attributes);
-    metricPointRepository.save(entity);
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 }
