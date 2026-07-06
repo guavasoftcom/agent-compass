@@ -202,6 +202,30 @@ class LogsControllerTest {
         verify(logService).histogram(any(LogQueryCriteria.class), anyInt());
     }
 
+    // -------------------------------------------------------------------------
+    // buckets bounds — mirrors TracesControllerTest's histogram regression so
+    // the two sibling histogram endpoints reject out-of-range buckets
+    // identically (400, no silent service-side floor/ceiling correction).
+    // -------------------------------------------------------------------------
+
+    @Test
+    void histogramRejectsBucketsAboveMaximum() throws Exception {
+        mockMvc.perform(get("/api/logs/histogram")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z")
+                        .param("endTimestamp", "2026-06-12T00:00:00Z")
+                        .param("buckets", "100000000"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void histogramRejectsBucketsBelowMinimum() throws Exception {
+        mockMvc.perform(get("/api/logs/histogram")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z")
+                        .param("endTimestamp", "2026-06-12T00:00:00Z")
+                        .param("buckets", "0"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void facetsDispatchesToServiceAndReturnsThreeDimensions() throws Exception {
         Instant start = Instant.parse("2026-06-01T00:00:00Z");

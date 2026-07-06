@@ -52,16 +52,12 @@ public class MetricService {
   private static final int TARGET_BUCKETS_PER_WINDOW = 40;
   private static final int SECONDS_PER_MINUTE = 60;
 
-  // Shared offset-paging bounds for both the Sessions and Metrics DataGrids.
-  // MAXIMUM_PAGE_SIZE caps size so an attacker-chosen size=1000000000 can't fetch
-  // a billion-row List (OOM); DEFAULT_PAGE_SIZE matches the frontend's default
-  // rows-per-page. Mirrors LogService.MAXIMUM_PAGE_SIZE / DEFAULT_OFFSET_PAGE_SIZE.
-  private static final int MAXIMUM_PAGE_SIZE = 500;
-  private static final int DEFAULT_PAGE_SIZE = 25;
   private static final int SESSION_TOTAL_COUNT_INDEX = 9;
   private static final int SESSION_COUNTS_SESSION_ID_INDEX = 0;
   private static final int SESSION_COUNTS_TOOL_CALL_INDEX = 1;
   private static final int SESSION_COUNTS_DENIAL_INDEX = 2;
+  private static final int SESSION_COUNTS_USER_PROMPT_COUNT_INDEX = 3;
+  private static final int SESSION_COUNTS_FIRST_USER_PROMPT_INDEX = 4;
   private static final int SESSIONS_TREND_BUCKETS = 24;
 
   private static final String START_TYPE_FRESH = "fresh";
@@ -149,7 +145,8 @@ public class MetricService {
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
 
-  private record SessionCounts(long toolCallCount, long denialCount) {}
+  private record SessionCounts(
+      long toolCallCount, long denialCount, long userPromptCount, String firstUserPrompt) {}
 
   /**
    * Offset-paged rows for the Metrics DataGrid. Replaces the former unbounded
@@ -161,8 +158,8 @@ public class MetricService {
     String[] filters = toFilterArray(activeFilters);
     long totalCount = metricPointRepository.countMatchingFilters(filters, startTimestamp, endTimestamp);
 
-    int pageSize = clampPageSize(size);
-    int pageOffset = computeOffset(page, pageSize);
+    int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
+    int pageOffset = PageBounds.computeOffset(page, pageSize);
     List<MetricPointEntity> metricPointEntities = metricPointRepository.findPageMatchingFilters(
         filters, startTimestamp, endTimestamp, pageSize, pageOffset);
 
@@ -179,10 +176,11 @@ public class MetricService {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
-    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseries(
+    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseriesInRange(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
         start,
+        end,
         bucketSeconds);
     List<ModelTokenShare> byModel = buildTokensByModel(start, end);
     CostSummary cost = aggregateCostSummary(start, end);
@@ -352,8 +350,8 @@ public class MetricService {
 
   private SessionSummaryPage querySessionsPage(
       Instant start, Instant end, String sortField, String sortDirection, int page, int size) {
-    int pageSize = clampPageSize(size);
-    int pageOffset = computeOffset(page, pageSize);
+    int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
+    int pageOffset = PageBounds.computeOffset(page, pageSize);
     List<Object[]> rows = metricPointRepository.aggregateSessionSummaries(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
@@ -377,13 +375,15 @@ public class MetricService {
         : buildSessionCountsMap(logRecordRepository.aggregateSessionCounts(
             sessionIds,
             tuningProperties.getToolEventName(),
-            tuningProperties.getToolDecisionEventName()));
+            tuningProperties.getToolDecisionEventName(),
+            tuningProperties.getUserPromptEventName(),
+            tuningProperties.getPromptAttribute()));
     return new SessionSummaryPage(mapSessionSummaries(rows, countsBySessionId), totalCount);
   }
 
   private static List<SessionSummary> mapSessionSummaries(
       List<Object[]> rows, Map<String, SessionCounts> countsBySessionId) {
-    SessionCounts zeroCounts = new SessionCounts(0L, 0L);
+    SessionCounts zeroCounts = new SessionCounts(0L, 0L, 0L, null);
     return rows.stream()
         .map(row -> {
           String sessionId = (String) row[0];
@@ -399,7 +399,9 @@ public class MetricService {
               counts.denialCount(),
               row[6] == null ? 0L : ((Number) row[6]).longValue(),
               normalizeTerminalType((String) row[7]),
-              normalizeStartType((String) row[8]));
+              normalizeStartType((String) row[8]),
+              counts.firstUserPrompt(),
+              counts.userPromptCount());
         })
         .toList();
   }
@@ -427,7 +429,10 @@ public class MetricService {
           ? 0L : ((Number) row[SESSION_COUNTS_TOOL_CALL_INDEX]).longValue();
       long denialCount = row[SESSION_COUNTS_DENIAL_INDEX] == null
           ? 0L : ((Number) row[SESSION_COUNTS_DENIAL_INDEX]).longValue();
-      map.put(sessionId, new SessionCounts(toolCallCount, denialCount));
+      long userPromptCount = row[SESSION_COUNTS_USER_PROMPT_COUNT_INDEX] == null
+          ? 0L : ((Number) row[SESSION_COUNTS_USER_PROMPT_COUNT_INDEX]).longValue();
+      String firstUserPrompt = (String) row[SESSION_COUNTS_FIRST_USER_PROMPT_INDEX];
+      map.put(sessionId, new SessionCounts(toolCallCount, denialCount, userPromptCount, firstUserPrompt));
     }
     return map;
   }
@@ -870,26 +875,6 @@ public class MetricService {
 
   private static String normalizeSortDirection(String sortDirection) {
     return SORT_DIRECTION_ASC.equalsIgnoreCase(sortDirection) ? SORT_DIRECTION_ASC : SORT_DIRECTION_DESC;
-  }
-
-  private static int clampPageSize(int size) {
-    if (size < 1) {
-      return DEFAULT_PAGE_SIZE;
-    }
-    return Math.min(size, MAXIMUM_PAGE_SIZE);
-  }
-
-  /**
-   * Computes {@code page * pageSize} as a {@code long} before narrowing back to
-   * {@code int}, clamping to {@link Integer#MAX_VALUE} rather than letting the
-   * multiplication wrap around into a negative SQL OFFSET. {@code pageSize} is
-   * already capped at {@link #MAXIMUM_PAGE_SIZE} by {@link #clampPageSize(int)},
-   * so only an extreme {@code page} value can trigger this. Mirrors
-   * LogService#computeOffset.
-   */
-  private static int computeOffset(int page, int pageSize) {
-    long rawOffset = (long) Math.max(0, page) * pageSize;
-    return rawOffset > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) rawOffset;
   }
 
   private static long bucketWidthSeconds(int minutes) {

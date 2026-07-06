@@ -32,24 +32,14 @@ import java.util.Map;
 @Transactional(readOnly = true)
 public class TraceExplorerService {
 
+    /**
+     * Bucket-width ladder in seconds — "nice" steps matching the TracesPage
+     * frontend's NICE array (which tops out at 6 hours, unlike the Logs one).
+     */
     private static final long[] HISTOGRAM_LADDER_SECONDS = {
         60L, 120L, 300L, 600L, 900L, 1800L, 3600L, 7200L, 10800L, 21600L
     };
-    private static final long MILLIS_PER_SECOND = 1_000L;
-    private static final int DEFAULT_HISTOGRAM_BUCKETS = 48;
-    private static final int DEFAULT_CURSOR_LIMIT = 60;
-    private static final int DEFAULT_OFFSET_PAGE_SIZE = 25;
 
-    /**
-     * Ceiling on both cursor {@code limit} and offset {@code size}. Without this, an
-     * attacker-chosen {@code limit=1000000000} fetches a billion-row List (OOM), and
-     * {@code limit=Integer.MAX_VALUE} overflows the "+1 probe" ({@code resolvedLimit + 1})
-     * into a negative SQL LIMIT (500 error). Matches the sessions grid's page-size cap
-     * ({@code MetricService.SESSION_RESULT_LIMIT}).
-     */
-    private static final int MAXIMUM_PAGE_SIZE = 500;
-
-    private static final long CONTINUATION_PAGE_TOTAL_COUNT = 0L;
     private static final int FACET_OPERATION_CAP = 50;
     private static final int FACET_SERVICE_CAP = 50;
     private static final int FACET_SESSION_CAP = 8;
@@ -90,11 +80,11 @@ public class TraceExplorerService {
 
     /** Builds the throughput histogram with per-bucket p95 and window-wide aggregates. */
     public TraceHistogram histogram(TraceQueryCriteria criteria, int targetBuckets) {
-        int resolvedTargetBuckets = targetBuckets <= 0 ? DEFAULT_HISTOGRAM_BUCKETS : targetBuckets;
         Instant windowStart = criteria.startTimestamp();
         Instant windowEnd = criteria.endTimestamp();
-        long bucketSeconds = pickBucketSeconds(windowStart, windowEnd, resolvedTargetBuckets);
-        long bucketMs = bucketSeconds * MILLIS_PER_SECOND;
+        long bucketSeconds = HistogramBucketing.pickBucketSeconds(
+                windowStart, windowEnd, targetBuckets, HISTOGRAM_LADDER_SECONDS);
+        long bucketMs = Duration.ofSeconds(bucketSeconds).toMillis();
 
         List<Object[]> bucketRows = spanRepository.traceHistogramBuckets(
                 windowStart, windowEnd, bucketSeconds,
@@ -141,17 +131,6 @@ public class TraceExplorerService {
             bucketStart = bucketEnd;
         }
         return buckets;
-    }
-
-    private static long pickBucketSeconds(Instant windowStart, Instant windowEnd, int targetBuckets) {
-        long windowSeconds = Math.max(1L, Duration.between(windowStart, windowEnd).getSeconds());
-        long rawSeconds = windowSeconds / Math.max(1, targetBuckets);
-        for (long stepSeconds : HISTOGRAM_LADDER_SECONDS) {
-            if (stepSeconds >= rawSeconds) {
-                return stepSeconds;
-            }
-        }
-        return HISTOGRAM_LADDER_SECONDS[HISTOGRAM_LADDER_SECONDS.length - 1];
     }
 
     // =========================================================================
@@ -251,7 +230,7 @@ public class TraceExplorerService {
     }
 
     private TraceCursorPage cursorPageFirst(TraceQueryCriteria criteria, String sort, int limit) {
-        int resolvedLimit = resolveCursorLimit(limit);
+        int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
         long totalCount = spanRepository.countFilteredTraces(
                 criteria.startTimestamp(), criteria.endTimestamp(),
                 criteria.statuses(), criteria.operations(), criteria.services(),
@@ -264,18 +243,18 @@ public class TraceExplorerService {
 
     private TraceCursorPage cursorPageBefore(
             TraceQueryCriteria criteria, String sort, TraceCursor cursor, int limit) {
-        int resolvedLimit = resolveCursorLimit(limit);
+        int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
         List<TraceSummary> probeItems = fetchSortedCursorRowsBefore(
                 criteria, sort, cursor, resolvedLimit + 1);
-        return buildCursorPage(probeItems, resolvedLimit, CONTINUATION_PAGE_TOTAL_COUNT);
+        return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
     }
 
     private TraceCursorPage cursorPageAfter(
             TraceQueryCriteria criteria, String sort, TraceCursor cursor, int limit) {
-        int resolvedLimit = resolveCursorLimit(limit);
+        int resolvedLimit = PageBounds.clampPageSize(limit, PageBounds.DEFAULT_CURSOR_LIMIT);
         List<TraceSummary> probeItems = fetchSortedCursorRowsAfter(
                 criteria, sort, cursor, resolvedLimit + 1);
-        return buildCursorPage(probeItems, resolvedLimit, CONTINUATION_PAGE_TOTAL_COUNT);
+        return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
     }
 
     private List<TraceSummary> fetchSortedCursorRows(
@@ -511,42 +490,11 @@ public class TraceExplorerService {
                 criteria.statuses(), criteria.operations(), criteria.services(),
                 criteria.durations(), criteria.sessions(), criteria.fullTextQuery());
 
-        int resolvedSize = clampOffsetPageSize(size);
+        int resolvedSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
         int resolvedPage = Math.max(0, page);
-        int pageOffset = computeOffset(resolvedPage, resolvedSize);
+        int pageOffset = PageBounds.computeOffset(resolvedPage, resolvedSize);
         List<TraceSummary> items = fetchSortedOffsetRows(criteria, sort, resolvedSize, pageOffset);
         return new TracePage(items, totalCount);
-    }
-
-    /**
-     * Floors {@code limit} to {@link #DEFAULT_CURSOR_LIMIT} and ceiling-clamps it to
-     * {@link #MAXIMUM_PAGE_SIZE} so the "+1 probe" fetch can never overflow into a
-     * negative SQL LIMIT.
-     */
-    private static int resolveCursorLimit(int limit) {
-        if (limit <= 0) {
-            return DEFAULT_CURSOR_LIMIT;
-        }
-        return Math.min(limit, MAXIMUM_PAGE_SIZE);
-    }
-
-    /** Mirrors {@link #resolveCursorLimit(int)} for the offset-mode {@code size} param. */
-    private static int clampOffsetPageSize(int size) {
-        if (size <= 0) {
-            return DEFAULT_OFFSET_PAGE_SIZE;
-        }
-        return Math.min(size, MAXIMUM_PAGE_SIZE);
-    }
-
-    /**
-     * Computes {@code page * size} as a {@code long} before narrowing back to {@code int},
-     * clamping to {@link Integer#MAX_VALUE} rather than letting the multiplication wrap
-     * around into a negative SQL OFFSET. {@code resolvedSize} is already capped at
-     * {@link #MAXIMUM_PAGE_SIZE}, so only an extreme {@code page} value can trigger this.
-     */
-    private static int computeOffset(int resolvedPage, int resolvedSize) {
-        long rawOffset = (long) resolvedPage * resolvedSize;
-        return rawOffset > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) rawOffset;
     }
 
     private List<TraceSummary> fetchSortedOffsetRows(

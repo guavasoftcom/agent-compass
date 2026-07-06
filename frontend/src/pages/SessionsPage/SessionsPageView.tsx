@@ -4,7 +4,12 @@ import PageActions from '../../components/PageActions';
 import TablePager from '../../components/TablePager';
 import SessionsKpiStrip from './components/SessionsKpiStrip';
 import SessionsTable from './components/SessionsTable';
-import type { SessionSummaryRow, SessionsSortModel, WindowSelection } from '../../api';
+import type {
+  SessionPromptRow,
+  SessionSummaryRow,
+  SessionsSortModel,
+  WindowSelection,
+} from '../../api';
 import type { WindowOption } from '../../lib/constants';
 
 export interface SessionsKpis {
@@ -39,6 +44,11 @@ export interface SessionsPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
+  expandedSessionId: string | null;
+  onToggleExpand: (sessionId: string) => void;
+  promptTimeline: SessionPromptRow[] | null;
+  promptTimelineLoading: boolean;
+  promptTimelineError: Error | null;
 }
 
 // Viewport height reserved for the page chrome above the table (header + KPI strip),
@@ -62,6 +72,11 @@ const SessionsPageView = ({
   autoRefresh,
   onAutoRefreshChange,
   isPolling,
+  expandedSessionId,
+  onToggleExpand,
+  promptTimeline,
+  promptTimelineLoading,
+  promptTimelineError,
 }: SessionsPageViewProps) => {
   const showLoading = isLoading && rows.length === 0;
   const showEmpty = !isLoading && rows.length === 0;
@@ -108,6 +123,11 @@ const SessionsPageView = ({
             onSortModelChange={onSortModelChange}
             showLoading={showLoading}
             showEmpty={showEmpty}
+            expandedSessionId={expandedSessionId}
+            onToggleExpand={onToggleExpand}
+            promptTimeline={promptTimeline}
+            promptTimelineLoading={promptTimelineLoading}
+            promptTimelineError={promptTimelineError}
           />
         </div>
         <TablePager

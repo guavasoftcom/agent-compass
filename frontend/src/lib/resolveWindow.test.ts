@@ -14,7 +14,7 @@ describe('resolveWindow', () => {
     vi.useRealTimers();
   });
 
-  it('clamps the 30-day preset span to exactly MAX_WINDOW_SPAN_MS, never exceeding it', () => {
+  it('clamps the 30-day preset so the resolved end-minus-start width never exceeds MAX_WINDOW_SPAN_MS, while still anchoring start to now (not to the slack-shifted end)', () => {
     const thirtyDayOption = WINDOWS.find((option) => option.label === '30 days');
     if (!thirtyDayOption) {
       throw new Error('expected a 30-day preset in WINDOWS');
@@ -22,14 +22,19 @@ describe('resolveWindow', () => {
 
     const resolved = resolveWindow({ kind: 'preset', minutes: thirtyDayOption.value });
 
-    const spanMs = Date.parse(resolved.endTimestamp) - Date.parse(resolved.startTimestamp);
-    expect(spanMs).toBe(MAX_WINDOW_SPAN_MS);
-    expect(spanMs).toBeLessThanOrEqual(MAX_WINDOW_SPAN_MS);
+    const resolvedWidthMs = Date.parse(resolved.endTimestamp) - Date.parse(resolved.startTimestamp);
+    expect(resolvedWidthMs).toBe(MAX_WINDOW_SPAN_MS);
+    expect(resolvedWidthMs).toBeLessThanOrEqual(MAX_WINDOW_SPAN_MS);
     expect(resolved.endTimestamp).toBe(new Date(fixedNowMs + MS_PER_MINUTE).toISOString());
+    // The clamp ceiling is MAX_WINDOW_SPAN_MS minus the 1-minute end slack, so
+    // the requested span (measured from "now", not from the slack-shifted
+    // end) is one minute short of the nominal cap here — that's the price of
+    // keeping the total resolved width within the backend's hard limit.
+    expect(fixedNowMs - Date.parse(resolved.startTimestamp)).toBe(MAX_WINDOW_SPAN_MS - MS_PER_MINUTE);
     expect(resolved.label).toBe('30 days');
   });
 
-  it('keeps start = end - minutes*60_000 with the +1min lookahead for a shorter preset', () => {
+  it('anchors start to now - span (not end - span), so a shorter preset keeps its full requested span instead of shifting forward by the end slack', () => {
     const twentyFourHourOption = WINDOWS.find((option) => option.label === '24 hours');
     if (!twentyFourHourOption) {
       throw new Error('expected a 24-hour preset in WINDOWS');
@@ -37,10 +42,14 @@ describe('resolveWindow', () => {
 
     const resolved = resolveWindow({ kind: 'preset', minutes: twentyFourHourOption.value });
 
+    const expectedStartMs = fixedNowMs - twentyFourHourOption.value * MS_PER_MINUTE;
     const expectedEndMs = fixedNowMs + MS_PER_MINUTE;
-    const expectedStartMs = expectedEndMs - twentyFourHourOption.value * MS_PER_MINUTE;
-    expect(resolved.endTimestamp).toBe(new Date(expectedEndMs).toISOString());
     expect(resolved.startTimestamp).toBe(new Date(expectedStartMs).toISOString());
+    expect(resolved.endTimestamp).toBe(new Date(expectedEndMs).toISOString());
+    // The resolved window is span + 1min wide: the full 24h the user asked
+    // for, plus the ingest slack tacked onto the end — not a 24h window
+    // shifted one minute into the future.
+    expect(expectedEndMs - expectedStartMs).toBe(twentyFourHourOption.value * MS_PER_MINUTE + MS_PER_MINUTE);
     expect(resolved.label).toBe('24 hours');
   });
 

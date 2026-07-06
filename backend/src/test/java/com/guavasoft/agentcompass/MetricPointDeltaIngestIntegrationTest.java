@@ -39,9 +39,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Exercises the ingest-time reset-aware delta computation (V11: stream_id +
  * value_delta) end-to-end through the real OTLP/HTTP path — POST /v1/metrics ->
  * {@link com.guavasoft.agentcompass.otlp.service.OtlpMetricService#ingestProtobuf} ->
+ * {@link MetricPointRepository#lockStreamsForIngest} ->
  * {@link MetricPointRepository#recomputeValueDeltas} — rather than seeding rows
  * directly, so the actual ingest wiring (id collection after saveAll, the
- * correlated previous-row subquery) is what's under test.
+ * correlated previous-row subquery, the successor repair) is what's under test.
+ * The out-of-order tests below cover the successor-repair mechanism; the
+ * concurrent-transaction race the advisory lock guards against can't be
+ * exercised deterministically in a single-threaded test and isn't attempted
+ * here.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
@@ -160,6 +165,53 @@ class MetricPointDeltaIngestIntegrationTest {
         metricPointRepository.aggregateTotalTokens(TOKEN_METRIC, midStreamWindowStart, windowEnd));
     assertThat(windowTotal).isNotNull();
     assertThat(windowTotal.longValue()).isEqualTo(200L);
+  }
+
+  @Test
+  void lateArrivingMidStreamPointRepairsItsSuccessorsStaleDelta() {
+    String sessionId = "delta-out-of-order";
+    // t1 and t3 land first (t2 is skipped); t3's delta is provisionally computed
+    // against t1 since t2 doesn't exist yet.
+    postTokenBatch(List.of(
+        dataPoint(sessionId, "main", 100, baseTimeUnixNanos),
+        dataPoint(sessionId, "main", 400, baseTimeUnixNanos + secondsToNanos(120))));
+
+    List<Double> beforeRepair = orderedDeltasForSession(sessionId);
+    assertThat(beforeRepair).containsExactly(100.0, 300.0);
+
+    // t2 arrives late, landing strictly between t1 and t3 by timestamp.
+    // recomputeValueDeltas must repair t3's already-committed delta (previously
+    // vs t1) in addition to computing t2's own delta (vs t1).
+    postTokenBatch(List.of(dataPoint(sessionId, "main", 250, baseTimeUnixNanos + secondsToNanos(60))));
+
+    List<Double> afterRepair = orderedDeltasForSession(sessionId);
+    assertThat(afterRepair).containsExactly(100.0, 150.0, 150.0);
+    // No resets in this stream, so the deltas telescope exactly to the final
+    // cumulative value (400) — the double-count the successor repair prevents
+    // would otherwise inflate this sum to 550 (100 + 150 + the stale 300).
+    assertThat(afterRepair.stream().mapToDouble(Double::doubleValue).sum()).isEqualTo(400.0);
+  }
+
+  @Test
+  void lateArrivingResetPointStillCountsInFullAndRepairsItsSuccessor() {
+    String sessionId = "delta-out-of-order-reset";
+    // t1 and t3 land first (t2 is skipped); t3 provisionally chains off t1.
+    postTokenBatch(List.of(
+        dataPoint(sessionId, "main", 100, baseTimeUnixNanos),
+        dataPoint(sessionId, "main", 250, baseTimeUnixNanos + secondsToNanos(120))));
+
+    List<Double> beforeRepair = orderedDeltasForSession(sessionId);
+    assertThat(beforeRepair).containsExactly(100.0, 150.0);
+
+    // t2 arrives late with a LOWER value than t1 (a counter reset) landing
+    // between t1 and t3. t2's own delta must take the reset branch (counted in
+    // full, never negative) and t3's stale delta (vs t1) must be repaired to
+    // chain off t2 instead.
+    postTokenBatch(List.of(dataPoint(sessionId, "main", 50, baseTimeUnixNanos + secondsToNanos(60))));
+
+    List<Double> afterRepair = orderedDeltasForSession(sessionId);
+    assertThat(afterRepair).containsExactly(100.0, 50.0, 200.0);
+    assertThat(afterRepair).allMatch(delta -> delta >= 0.0);
   }
 
   private List<Double> orderedDeltasForSession(String sessionId) {

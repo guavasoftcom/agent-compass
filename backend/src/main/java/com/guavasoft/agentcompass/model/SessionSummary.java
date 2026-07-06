@@ -43,5 +43,14 @@ public record SessionSummary(
                 + "interactive | non-interactive", example = "non-interactive") String terminalType,
 
         @Schema(description = "How the session began, from session.count start_type",
-                example = "resume") String startType) {
+                example = "resume") String startType,
+
+        @Schema(description = "The session's first meaningful user_prompt event body (bare slash commands are "
+                + "skipped in favor of the first real prompt, unless every prompt in the session is a slash "
+                + "command), whitespace-collapsed and truncated to 200 characters. Null if the session has no "
+                + "user_prompt events.",
+                example = "Add user-prompt context to the sessions API") String firstUserPrompt,
+
+        @Schema(description = "Total number of user_prompt log records for this session",
+                example = "7") long userPromptCount) {
 }

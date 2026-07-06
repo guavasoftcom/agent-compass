@@ -8,9 +8,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.model.SessionKpis;
+import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
+import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.MetricService;
 
 import java.time.Instant;
@@ -18,6 +20,7 @@ import java.util.List;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.verify;
@@ -35,6 +38,9 @@ class SessionControllerTest {
 
     @MockitoBean
     MetricService metricService;
+
+    @MockitoBean
+    LogService logService;
 
     @Test
     void tokenUsageReturnsAggregatedTotalsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
@@ -79,7 +85,9 @@ class SessionControllerTest {
                                 0L,
                                 5_400_000L,
                                 "non-interactive",
-                                "resume"),
+                                "resume",
+                                "Refactor the SessionSummary record",
+                                3L),
                         new SessionSummary(
                                 "025a8c32-26ff-409d-b704-dc19dcecbb47",
                                 1.5,
@@ -91,7 +99,9 @@ class SessionControllerTest {
                                 0L,
                                 120_000L,
                                 "interactive",
-                                "fresh")),
+                                "fresh",
+                                null,
+                                0L)),
                         42L));
 
         mockMvc.perform(get("/api/sessions"))
@@ -105,8 +115,12 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[0].tokens").value(5400000))
                 .andExpect(jsonPath("$[0].terminalType").value("non-interactive"))
                 .andExpect(jsonPath("$[0].startType").value("resume"))
+                .andExpect(jsonPath("$[0].firstUserPrompt").value("Refactor the SessionSummary record"))
+                .andExpect(jsonPath("$[0].userPromptCount").value(3))
                 .andExpect(jsonPath("$[1].sessionId").value("025a8c32-26ff-409d-b704-dc19dcecbb47"))
-                .andExpect(jsonPath("$[1].startType").value("fresh"));
+                .andExpect(jsonPath("$[1].startType").value("fresh"))
+                .andExpect(jsonPath("$[1].firstUserPrompt").value(nullValue()))
+                .andExpect(jsonPath("$[1].userPromptCount").value(0));
 
         verify(metricService).sessionsSummary(1440, null, null, 0, 25);
     }
@@ -141,5 +155,24 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.sessionsTrend").value(contains(0, 1, 3)));
 
         verify(metricService).sessionsKpis(1440);
+    }
+
+    @Test
+    void promptsDispatchesToLogServiceAndReturnsTimelineInAscendingOrder() throws Exception {
+        String sessionId = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b";
+        when(logService.promptsForSession(sessionId)).thenReturn(List.of(
+                new SessionPrompt(Instant.parse("2026-05-27T00:04:31.320Z"), "/ship", null),
+                new SessionPrompt(Instant.parse("2026-05-27T00:05:12.100Z"), "Add prompt context to the sessions API",
+                        "0102030405060708090a0b0c0d0e0f10")));
+
+        mockMvc.perform(get("/api/sessions/{sessionId}/prompts", sessionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].prompt").value("/ship"))
+                .andExpect(jsonPath("$[0].traceId").value(nullValue()))
+                .andExpect(jsonPath("$[1].traceId").value("0102030405060708090a0b0c0d0e0f10"))
+                .andExpect(jsonPath("$[1].prompt").value("Add prompt context to the sessions API"));
+
+        verify(logService).promptsForSession(sessionId);
     }
 }

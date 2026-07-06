@@ -36,7 +36,10 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `theme/colorMode.tsx` + `theme/theme.ts` — `ColorModeProvider` persists `light` | `dark` to `localStorage`; `theme.ts` maps the `colors.ts` primitives into the light/dark theme token sets and defines the `CHART_PALETTE` + `colorForIndex(index)` helper.
 - `lib/` — app-level, non-UI modules:
   - `lib/windowContext.tsx` — `WindowProvider` holds the current `WindowSelection` and `autoRefresh` flag globally so navigating between pages preserves the user's selected range. Default selection is "last 24 hours" (`{ kind: 'preset', minutes: 1440 }`).
-  - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants.
+  - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants, including `MAX_WINDOW_SPAN_MS` (mirrors the backend's `@ValidDateRange(maxDays = 30)` cap — keep the two in lockstep).
+  - `lib/resolveWindow.ts` — shared `WindowSelection` → concrete `startTimestamp`/`endTimestamp` + label resolution used by Logs and Traces; clamps preset spans to `MAX_WINDOW_SPAN_MS` so no request can exceed the backend's 30-day cap.
+  - `lib/useDebouncedValue.ts` — debounce hook; the Logs and Traces free-text search inputs run through it before the value enters a query key, so typing doesn't fire a fetch per keystroke.
+  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards.
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
 
 ## Page structure (container/presentational)
@@ -72,6 +75,7 @@ Documented deviation: `TracesPage` is data-dense enough that prop-drilling produ
 ## Routing
 
 - React Router 7, declared in `App.tsx`. Nested sections (`/tool-activity/*`) use a parent route rendering `SectionLayout` and child routes (`calls`, `reliability`, `skills-agents`) rendered via `<Outlet context={...} />`.
+- **Routes are code-split.** Every page in `App.tsx` is a `React.lazy(() => import('../pages/XxxPage'))` chunk; `AppShell` wraps the routed `<Outlet />` in `<Suspense>` (inside the `ErrorBoundary`, which also catches a failed chunk load). Declare new pages the same way. `vite.config.js` additionally splits React/MUI/Emotion into a shared `vendor` chunk.
 - `useSectionContext()` is how child pages of a `SectionLayout` read `selection` + `autoRefresh`; top-level pages read the same values from `useWindowContext()` directly.
 - Leave the legacy redirect routes (`/tool-calls → /tool-activity/calls`, etc.) in place — external links rely on them.
 

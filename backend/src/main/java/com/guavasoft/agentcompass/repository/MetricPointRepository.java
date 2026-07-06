@@ -13,18 +13,75 @@ import java.util.List;
 
 public interface MetricPointRepository extends JpaRepository<MetricPointEntity, Long> {
 
-  // Computes value_delta for exactly the given (just-inserted) rows. Called once
-  // per ingest batch, right after saveAll(). @Transactional here (REQUIRED
-  // propagation, the default) lets this join OtlpMetricService's surrounding
-  // transaction in production, while also working standalone from tests that
-  // seed metric_points directly and then replicate this ingest-time step.
-  // Because IDENTITY generation means every batch row is already persisted
-  // before this runs, the correlated "previous row" subquery sees every prior
-  // row of the SAME batch too — so multiple points for one stream inserted in a
-  // single OTLP export are chained correctly, not just chained against rows
-  // from earlier batches. previous.stream_id / inserted.stream_id come from the
-  // stored generated column (V11); the (timestamp, id) row-value comparison
-  // orders same-timestamp rows deterministically by id.
+  // Serializes concurrent ingests for the SAME stream across separate
+  // transactions (e.g. an OTLP client retry storm re-POSTing overlapping
+  // batches). Acquires a per-stream advisory transaction lock —
+  // hashtextextended(stream_id, 0) turns the stream's md5 identity into a lock
+  // key — for every distinct stream this batch touches, ordered by stream_id so
+  // two concurrent batches that both touch streams A and B always acquire them
+  // in the same order (deadlock avoidance).
+  //
+  // Must run AFTER saveAll() — stream_id is a stored GENERATED column (V11), so
+  // it only exists once the batch rows are actually persisted — and BEFORE
+  // recomputeValueDeltas(), inside the same transaction (see
+  // OtlpMetricService#ingestProtobuf). pg_advisory_xact_lock auto-releases at
+  // COMMIT, so a transaction that blocks here resumes only once the other
+  // transaction's rows are committed, and its later recomputeValueDeltas UPDATE
+  // takes a fresh READ COMMITTED snapshot that can see them — closing the
+  // "both transactions compute their delta against the same stale previous
+  // row" race.
+  //
+  // This alone is NOT sufficient: it guarantees the two recomputeValueDeltas
+  // UPDATEs run one-at-a-time, not that the second transaction's rows sort
+  // AFTER the first's in (timestamp, id) order. When they don't — or when a
+  // single later transaction simply inserts a point that arrived out of
+  // order — an already-committed row's value_delta can still have been
+  // computed against a stale predecessor. recomputeValueDeltas' successor
+  // repair (below) is what actually heals that case.
+  @Query(value = """
+      SELECT pg_advisory_xact_lock(hashtextextended(stream_id, 0))
+      FROM (
+        SELECT DISTINCT stream_id
+        FROM metric_points
+        WHERE id IN (:metricPointIds)
+        ORDER BY stream_id
+      ) AS streams
+      """, nativeQuery = true)
+  List<Object[]> lockStreamsForIngest(@Param("metricPointIds") List<Long> metricPointIds);
+
+  // Computes value_delta for the given (just-inserted) rows AND, for each of
+  // them, repairs the first pre-existing same-stream row that already sorts
+  // after it by (timestamp, id) — that row's delta was previously computed
+  // against a predecessor that is no longer the true one now that this batch
+  // landed between them. One UPDATE statement handles both: the innermost
+  // "target" set is the UNION of the inserted ids and each inserted row's
+  // immediate successor id (found via a scalar subquery, mirroring the
+  // "previous row" lookup below but walking forward); every row in that target
+  // set is then recomputed against its TRUE previous same-stream row exactly as
+  // before.
+  //
+  // Why this is needed even with lockStreamsForIngest: that lock only
+  // serializes concurrent transactions touching the same stream — it does not
+  // guarantee arrival order. Two concrete cases both corrupt a stream's
+  // increments without this repair:
+  //   (a) Out-of-order arrival: t1 and t3 are ingested (t3's delta computed vs
+  //       t1, since t2 doesn't exist yet); a later batch inserts t2. Without
+  //       repair, t3's stored delta (vs t1) silently double-counts the
+  //       t1..t2 span that t2's own new delta now also covers.
+  //   (b) Residual concurrency window: even serialized one-at-a-time by the
+  //       advisory lock, the second transaction's rows can sort BEFORE the
+  //       first transaction's already-committed rows in (timestamp, id) order
+  //       — the successor repair heals that stale successor the same way.
+  //
+  // previous.stream_id / target.stream_id come from the stored generated
+  // column (V11); the (timestamp, id) row-value comparison orders
+  // same-timestamp rows deterministically by id, both looking backward (the
+  // existing previous-row lookup) and forward (the new successor lookup).
+  //
+  // Historical rows are NOT covered by this repair — they were backfilled by
+  // V11 from what was a single-writer ingest history, and the live database is
+  // still single-writer today, so no repair migration is needed; this method
+  // only protects new ingests going forward.
   @Transactional
   @Modifying
   @Query(value = """
@@ -36,18 +93,37 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
                     THEN batch.current_value - batch.previous_value
                     ELSE batch.current_value END AS delta
         FROM (
-          SELECT inserted.id,
-                 COALESCE(inserted.value_long::double precision, inserted.value_double, 0) AS current_value,
+          SELECT target.id,
+                 COALESCE(target.value_long::double precision, target.value_double, 0) AS current_value,
                  COALESCE((
                    SELECT COALESCE(previous.value_long::double precision, previous.value_double, 0)
                    FROM metric_points previous
-                   WHERE previous.stream_id = inserted.stream_id
-                     AND (previous.timestamp, previous.id) < (inserted.timestamp, inserted.id)
+                   WHERE previous.stream_id = target.stream_id
+                     AND (previous.timestamp, previous.id) < (target.timestamp, target.id)
                    ORDER BY previous.timestamp DESC, previous.id DESC
                    LIMIT 1
                  ), 0) AS previous_value
-          FROM metric_points inserted
-          WHERE inserted.id IN (:metricPointIds)
+          FROM (
+            SELECT id, stream_id, timestamp, value_long, value_double
+            FROM metric_points
+            WHERE id IN (:metricPointIds)
+
+            UNION
+
+            SELECT successor_row.id, successor_row.stream_id, successor_row.timestamp,
+                   successor_row.value_long, successor_row.value_double
+            FROM metric_points inserted
+            JOIN metric_points successor_row
+              ON successor_row.id = (
+                   SELECT candidate.id
+                   FROM metric_points candidate
+                   WHERE candidate.stream_id = inserted.stream_id
+                     AND (candidate.timestamp, candidate.id) > (inserted.timestamp, inserted.id)
+                   ORDER BY candidate.timestamp ASC, candidate.id ASC
+                   LIMIT 1
+                 )
+            WHERE inserted.id IN (:metricPointIds)
+          ) AS target
         ) AS batch
       ) AS computed
       WHERE metric_point.id = computed.id
@@ -157,7 +233,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("endTimestamp") Instant endTimestamp);
 
   // Per-(bucket, type) token totals for the configured token-usage metric.
-  // date_bin aligns buckets to :since so the first bucket starts exactly at the
+  // date_bin aligns buckets to :start so the first bucket starts exactly at the
   // window's lower bound.
   //
   // claude_code.token.usage is a CUMULATIVE counter that Claude Code re-emits
@@ -177,28 +253,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // servable by the existing (metric_name, timestamp) index — no per-query
   // window function over the full jsonb attribute set. Because value_delta is
   // computed against the row's TRUE predecessor (in or out of this window), a
-  // stream that started before :since is no longer overcounted at the boundary
+  // stream that started before :start is no longer overcounted at the boundary
   // the way the old in-window-only LAG was (see V11 migration comment).
   // Rows are sparse — a (bucket, type) pair only appears when a stream advanced
   // there — and the service fills gaps with zero.
-  @Query(value = """
-      SELECT
-        date_bin(make_interval(secs => :bucketSeconds), timestamp, :since) AS bucket,
-        attributes ->> :tokenTypeAttribute AS token_type,
-        SUM(value_delta)::bigint AS total
-      FROM metric_points
-      WHERE metric_name = :metricName
-        AND attributes ->> :tokenTypeAttribute IS NOT NULL
-        AND timestamp >= :since
-      GROUP BY bucket, token_type
-      ORDER BY bucket, token_type
-      """, nativeQuery = true)
-  List<Object[]> aggregateTokenUsageTimeseries(
-      @Param("metricName") String metricName,
-      @Param("tokenTypeAttribute") String tokenTypeAttribute,
-      @Param("since") Instant since,
-      @Param("bucketSeconds") long bucketSeconds);
-
   @Query(value = """
       SELECT
         date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
@@ -420,15 +478,16 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // B4 perf: the current-period and prior-period totals used to be two separate
   // detoasting passes over metric_points (each ~71ms on ~197k cost.usage rows).
   // FILTER lets one pass over the combined [:priorFrom, :to] range compute both
-  // sums — each FILTER clause reproduces the exact inclusive boundary of the old
-  // two-query version (both share the ":from" instant as their common edge), so
-  // the totals are bit-for-bit identical to the former aggregateCostTotal(from,
-  // to) / aggregateCostTotal(priorFrom, from) pair.
+  // sums. The two FILTER windows are deliberately half-open on their shared edge
+  // — current = [:from, :to], prior = [:priorFrom, :from) — so a point landing
+  // exactly on :from counts in the current total only, never in both (the two
+  // windows used to both include timestamp = :from, double-counting that
+  // boundary point).
   @Query(value = """
       SELECT
         COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::double precision
           AS current_total,
-        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp <= :from), 0)::double precision
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::double precision
           AS prior_total
       FROM metric_points
       WHERE metric_name = :metricName
