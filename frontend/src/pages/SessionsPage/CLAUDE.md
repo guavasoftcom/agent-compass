@@ -4,8 +4,10 @@ Per-session cost and token explorer: four KPI stat cards plus a sortable, server
 sessions table. Two independent queries feed the page — a lightweight window-summary for the
 cards and a paged row query for the table — so paging and re-sorting do not re-run the heavy
 percentile aggregation. Each row also carries a truncated first-prompt preview; clicking a row
-expands it into a full prompt-timeline panel fetched on demand. Backend counterpart:
-`SessionController` (`backend/.../controller/SessionController.java`).
+expands it into an Aurora-styled prompt-timeline panel (per-turn model/cost/tokens/tool chips)
+fetched on demand. Backend counterpart: `SessionController`
+(`backend/.../controller/SessionController.java`); full response-shape contract in
+[SESSIONS-BACKEND.md](SESSIONS-BACKEND.md).
 
 ## Files
 
@@ -15,17 +17,34 @@ SessionsPage/
 │                           the on-demand prompt timeline), sort/pagination/expansion state,
 │                           reload and selection-change handlers
 ├── SessionsPageView.tsx    view — composes SessionsKpiStrip, SessionsTable, and the shared
-│                           TablePager; exports SessionsKpis, PaginationModel, SessionsPageViewProps
+│                           TablePager; derives windowStartMs/windowEndMs (lib/resolveWindow) for
+│                           the timeline's out-of-window dimming; exports SessionsKpis,
+│                           PaginationModel, SessionsPageViewProps
 ├── index.ts                re-exports container default
 └── components/
-    ├── sessionsFormat.ts       shared formatters: USD_FORMATTER, USD_PER_MINUTE_FORMATTER,
-    │                           formatDuration (seconds), formatTokens, formatTimestamp
-    ├── SessionsKpiStrip/       4-card StatCard grid; renders the shared LineSparkline
-    │   ├── SessionsKpiStrip.tsx  (components/LineSparkline) and the P95 caption math
+    ├── sessionsFormat.ts        shared formatters: USD_FORMATTER, USD_PER_MINUTE_FORMATTER,
+    │                            formatDuration (seconds), formatTokens (K/M compact — see the
+    │                            boundary-rounding gotcha below), formatTimestamp, and
+    │                            formatRelativeTime (Last-activity column's "Nm/Nh/Nd ago")
+    ├── SessionsKpiStrip/        4-card StatCard grid; renders the shared LineSparkline
+    │   ├── SessionsKpiStrip.tsx   (components/LineSparkline) and the P95 caption math
     │   └── index.ts
-    └── SessionsTable/          hand-built sortable table; contains DenialChip, TerminalBadge,
-        ├── SessionsTable.tsx     PromptCell, PromptCountPill, PromptTimelinePanel, SortArrow leaf
-        │                         components and the handleSort toggle + row-expand-click logic
+    ├── SessionsTable/           hand-built sortable table; contains DenialChip, TerminalBadge,
+    │   ├── SessionsTable.tsx      PromptCell, PromptCountPill, SortArrow leaf components, the
+    │   │                          Last-activity relative-time cell (Tooltip shows the absolute
+    │   │                          timestamp), the Tokens-cell TokenBreakdownTooltip hover, and
+    │   │                          the handleSort toggle + row-expand-click logic; renders
+    │   │                          PromptTimelinePanel for the expanded row
+    │   └── index.ts
+    └── PromptTimelinePanel/     Aurora glass per-turn timeline for the expanded row — genuinely
+        ├── PromptTimelinePanel.tsx  new UI (not an extraction): a gradient rail with a card per
+        │                          turn (timestamp, model chip, per-turn cost, TokenUsage w/
+        │                          breakdown tooltip, tool-call chips, optional "View trace"
+        │                          link); dims turns outside the active window with a boundary
+        │                          divider; long prompt text truncates through the shared
+        │                          AttributeValue/ExpandedValueDialog machinery. Exports
+        │                          TokenBreakdownTitle / TokenBreakdownTooltip / TokenUsage,
+        │                          reused by SessionsTable's Tokens-column hover.
         └── index.ts
 ```
 
@@ -49,11 +68,13 @@ the view takes typed props and contains no `useQuery` or context reads.
 │ └───────────────────────────────────────────────────────────────────┘   │
 │ ┌─ Paper: sessions table (calc(100vh - 320px), min 420px) ──────────┐   │
 │ │ <SessionsTable>                                                    │   │
-│ │ sticky thead: Started · Prompt · Cost · Tokens · Tool calls ·     │   │
-│ │       Denials · Active time · $/active min · Terminal · Session   │   │
+│ │ sticky thead: Started · Last activity · Prompt · Cost · Tokens ·  │   │
+│ │       Tool calls · Denials · Active time · $/active min ·          │   │
+│ │       Terminal · Session (Last activity is the default sort)      │   │
 │ │ tbody rows: PromptCell (+N pill) · DenialChip · TerminalBadge;    │   │
-│ │             click a row → inline expansion <tr> with the full     │   │
-│ │             prompt timeline (recessed panel, max-height 320px)    │   │
+│ │             Tokens cell hover → TokenBreakdownTooltip; click a    │   │
+│ │             row → inline expansion <tr> with the Aurora prompt    │   │
+│ │             timeline (PromptTimelinePanel, max-height 340px)      │   │
 │ │ ── <TablePager> (shared) ───────────────────────────────────────── │   │
 │ │ Rows per page [25 | 50 | 100]      N–M of total   [◀] [▶]         │   │
 │ └───────────────────────────────────────────────────────────────────┘   │
@@ -78,13 +99,19 @@ Fetchers live in the shared `api/endpoints.ts` (not a page-local module) and use
 `totalSessions`, `medianCostUsd`, `p95CostUsd`, `medianCostPerActiveMinuteUsd`, and
 `sessionsTrend` (new-session counts per window bucket for the sparkline).
 
-`fetchSessionPrompts` returns `SessionPromptRow[]` (`{ timestamp, prompt, traceId }`, full
-untruncated text, ascending by time, max 500 rows) — **not window-scoped**, no query params
-beyond the path segment. It only fires while a row is expanded (`enabled` gate) and has no
-`refetchInterval` (not polled). It is **not** static, though: past the global 30s `staleTime`
-(`main.tsx`), re-expanding the same row triggers a real refetch rather than only serving the
-TanStack cache — this matters because live sessions keep gaining prompts, so the timeline for an
-in-progress session can legitimately grow between expansions. It also isn't invalidated by
+`fetchSessionPrompts` returns `SessionPromptRow[]` — full untruncated text, ascending by time,
+max 500 rows, **not window-scoped**, no query params beyond the path segment. The base three
+fields are `{ timestamp, prompt, traceId }`; four more are additive/optional and drive the
+timeline's richer per-turn cards — `model`, `costUsd`, `tokens` (a `SessionTokenBreakdown`), and
+`tools` (`{ name, count }[]`) — see [SESSIONS-BACKEND.md](SESSIONS-BACKEND.md) for the exact
+per-field semantics. `SessionPromptRow` and `SessionTokenBreakdown` are the single canonical
+types (in `api/types.ts`) — `PromptTimelinePanel` imports them directly rather than declaring its
+own widening copies, so there is no cast anywhere in the data path from `fetchSessionPrompts` to
+the panel. It only fires while a row is expanded (`enabled` gate) and has no `refetchInterval`
+(not polled). It is **not** static, though: past the global 30s `staleTime` (`main.tsx`),
+re-expanding the same row triggers a real refetch rather than only serving the TanStack cache —
+this matters because live sessions keep gaining prompts, so the timeline for an in-progress
+session can legitimately grow between expansions. It also isn't invalidated by
 `onReload`/auto-refresh, since those target the summary/table queries, not this one. `prompt` is
 null for pre-capture events (prompt_text wasn't recorded) — those rows are kept, not filtered, and
 render a placeholder client-side (see the `PromptTimelinePanel` gotcha below). `traceId` is null
@@ -103,20 +130,19 @@ trace link for those rows, not a disabled placeholder.
   total is available immediately from the summary even before the first table page resolves.
 - **`keepPreviousData`**: `sessionsQuery` uses `placeholderData: keepPreviousData` so the table
   repaints in place during page flips rather than going blank.
-- **Sort**: `DEFAULT_SORT = { field: 'costUsd', direction: 'desc' }`. When the user clicks a
-  sortable header, `SessionsTable`'s `handleSort` toggles direction on the active field or
-  defaults to `'desc'` for a new field, then calls `onSortModelChange`. The container resets
-  the page to 0 and updates `sortModel`. Sortable fields are: `startTimestamp`, `costUsd`,
-  `tokens`, `activeTimeSeconds`, `costPerActiveMinuteUsd`. Non-sortable: `toolCallCount`,
-  `denialCount`, `terminalType`, `sessionId`.
-- **Pagination**: offset-based, zero-indexed (`page: 0`). `DEFAULT_PAGE_SIZE = 25`. The pager
-  footer uses a `SegmentedToggle` for rows-per-page (25/50/100) and prev/next chevron buttons.
-  Changing page size resets to page 0. `onSelectionChange` and `onReload` both reset the page to 0
-  so the user never lands on a non-existent page after a window change.
-- **Polling**: `refetchInterval = autoRefresh && selection.kind === 'preset' ? 60_000 : false`.
-  Both queries share this interval. Custom ranges have a fixed end; polling them is suppressed.
-  `isPolling` is true only when `autoRefresh`, `selection.kind === 'preset'`, and either query is
-  actively fetching.
+- **Sort**: `DEFAULT_SORT = { field: 'endTimestamp', direction: 'desc' }` — sessions land sorted
+  by most-recent activity (the Last-activity column). Recency is the operational default; cost
+  remains one click away on its own sortable column. When the user clicks a sortable header,
+  `SessionsTable`'s `handleSort` toggles direction on the active field or defaults to `'desc'`
+  for a new field, then calls `onSortModelChange`. The container resets the page to 0 and updates
+  `sortModel`. Sortable fields are: `startTimestamp`, `endTimestamp`, `costUsd`, `tokens`,
+  `activeTimeSeconds`, `costPerActiveMinuteUsd`. Non-sortable: `toolCallCount`, `denialCount`,
+  `terminalType`, `sessionId`, `firstUserPrompt`.
+- **Pagination**: offset-based, zero-indexed (`page: 0`). `DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0]`
+  (`lib/constants`, currently 25). The pager footer uses a `SegmentedToggle` for rows-per-page
+  (25/50/100) and prev/next chevron buttons. Changing page size resets to page 0.
+  `onSelectionChange` and `onReload` both reset the page to 0 so the user never lands on a
+  non-existent page after a window change.
 - **`burn` ($/active min per row)**: computed client-side in `SessionsTable` as
   `(row.costUsd / row.activeTimeSeconds) * 60`; displayed as `—` when `activeTimeSeconds` is 0.
   The summary card's `medianCostPerActiveMinuteUsd` is the backend's percentile across all
@@ -135,6 +161,15 @@ trace link for those rows, not a disabled placeholder.
   is dropped defensively rather than pointing at a stale/mismatched row. It is **not** reset by
   `onReload`/auto-refresh — those revalidate the same page and shouldn't collapse the user's open
   panel out from under them.
+- **Prompt-timeline window dimming**: `SessionsPageView` derives `windowStartMs`/`windowEndMs` by
+  calling the shared `resolveWindow(selection)` (`lib/resolveWindow`, the same helper
+  LogsPage/TracesPage use) and `Date.parse`-ing its `startTimestamp`/`endTimestamp`, then threads
+  them down through `SessionsTable` to `PromptTimelinePanel` as props. There is no page-local
+  window-bounds calculation — using the shared resolver means the dimming boundary can never
+  contradict what the summary/table queries actually counted (`resolveWindow` applies the same
+  ingest-slack + `MAX_WINDOW_SPAN_MS` clamp those queries' window params get). LogsPage itself
+  hasn't been migrated onto `resolveWindow` yet (separate tracked debt) — this page doesn't touch
+  that.
 
 ## Gotchas
 
@@ -145,7 +180,15 @@ trace link for those rows, not a disabled placeholder.
 - **`tokens` is reset-aware**: `SessionSummaryRow.tokens` is a backend-aggregated reset-aware
   total (MAX per stream then SUM across streams), not a plain SUM. The view formats it with
   `formatTokens` from `components/sessionsFormat.ts` (M/K compact) rather than the global
-  formatter used on other pages.
+  formatter used on other pages. `SessionSummaryRow.tokenBreakdown` (a `SessionTokenBreakdown`,
+  required, never null — missing kinds are `0`) is the window-scoped four-way split that backs
+  the Tokens-cell hover (`TokenBreakdownTooltip`); the backend guarantees it sums to `tokens`.
+- **`formatTokens`'s K→M boundary and zero-case are shared**, not duplicated: values in
+  `[999_500, 999_999]` round to `"1M"` (not `"1000K"` — the naive `Math.round(n/1e3)` approach)
+  because the function promotes into the M bucket whenever the K-rounded value would hit 1000.
+  `<= 0` (and non-finite) values render `"—"`. Both `SessionsTable`'s Tokens column and
+  `PromptTimelinePanel`'s per-turn `TokenUsage` call the *same* `sessionsFormat.formatTokens` —
+  there's no second copy to drift out of sync on either the boundary or the zero-case.
 - **Table box height** is `calc(100vh - BODY_CHROME_PX px)` (`BODY_CHROME_PX` = 320, top of
   `SessionsPageView.tsx`) with `minHeight: 420`. If you add or remove chrome above the table card,
   retune that constant or the table will over/under-fill the viewport.
@@ -175,7 +218,7 @@ trace link for those rows, not a disabled placeholder.
   will silently drop the count for exactly the sessions where it's the only signal left. (This
   was a real regression once — the null branch returned before the pill JSX ran — so keep the
   em-dash and the pill as siblings in one `Box`, not two separate early-return branches.)
-- **Per-prompt `prompt` (in the timeline, not the grid's `firstUserPrompt`) can also be `null`** —
+- **Per-turn `prompt` (in the timeline, not the grid's `firstUserPrompt`) can also be `null`** —
   pre-capture events where `prompt_text` wasn't recorded. `PromptTimelinePanel` keeps these rows
   (doesn't filter them out — the session's `userPromptCount` includes them) and renders a dimmed
   italic `"(prompt text not captured)"` placeholder instead of handing `null` to `AttributeValue`,
@@ -195,19 +238,27 @@ trace link for those rows, not a disabled placeholder.
   `TraceTableView`'s pattern. If you touch the table's zebra/hover styling, keep it index-driven,
   not `nth-of-type`-driven, and keep hover scoped to `tr.data-row` so it doesn't paint the
   recessed expansion panel.
-- **Expansion panel styling**: the panel background is
-  `alpha(neutralColors.white, 0.03)` (dark) / `alpha(neutralColors.inkLight, 0.025)` (light) —
-  the same recessed-surface tokens `TraceSummaryInlineView` uses — capped at `maxHeight: 320` with
-  `overflowY: 'auto'` so a 500-row prompt timeline can't blow out the table's layout.
-- **Timeline prompts reuse the `components/AttributeList` "View more" dialog machinery**, the same
-  one `LogTable` uses, rather than rendering full prompt text inline: each prompt renders through
-  `AttributeValue` (`truncate`, `inlineExpand={false}`) so anything over the shared 200-char
-  threshold collapses to a whitespace-collapsed preview + "View more" button; `attrKey` is set to
-  that prompt's `formatTimestamp(promptRow.timestamp)` so the dialog title identifies which prompt
-  is open. `PromptTimelinePanel` owns its own `expandedValue: ValueDialogState | null` state and
-  renders a single `ExpandedValueDialog` — this mirrors exactly how `AttributeList.tsx` wires
-  itself, so it stays local to the panel and nothing new threads through the container/view.
-  Import `AttributeValue`/`ValueDialogState` from `components/AttributeList/AttributeValue` and
+- **`PromptTimelinePanel` is the Aurora glass timeline, not a plain recessed list.** Its panel
+  background is a `radial-gradient` glow over an `alpha(text.primary, …)` wash (not the flat
+  `alpha(neutralColors.white/inkLight, …)` surface older revisions used), capped at
+  `maxHeight: 340` with `overflowY: 'auto'`. Each turn renders as its own bordered card with a
+  glowing rail dot, a model chip (`opus` → `primary.main`, `sonnet` → `auroraColors.cyanBright`,
+  `haiku`/unknown → `text.disabled`, keyed on the leading token so `"claude-sonnet-4-5"` matches),
+  per-turn cost, `TokenUsage` (breakdown on hover), tool-call chips (`ToolChips`, first 5 + `+N`
+  overflow), and an optional "View trace" pill-link. Turns outside the active window render at
+  `opacity: 0.45` with a "selected window starts/ends" hairline divider at each boundary crossing
+  (see the window-dimming bullet above for where `windowStartMs`/`windowEndMs` come from).
+- **Long per-turn prompt text truncates through the shared `AttributeList` "View more" dialog
+  machinery**, the same one `LogTable` uses, rather than rendering full text pre-wrapped inline:
+  each prompt renders through `AttributeValue` (`truncate`, `inlineExpand={false}`) so anything
+  over the shared 200-char threshold collapses to a whitespace-collapsed preview + "View more"
+  button; `attrKey` is set to that turn's `formatTimestamp(turn.timestamp)` (the generic
+  `sessionsFormat` formatter, not the panel's own compact `formatPromptTimestamp` used in the
+  card header) so the dialog title identifies which prompt is open. `PromptTimelinePanel` owns
+  its own `expandedValue: ValueDialogState | null` state and renders a single
+  `ExpandedValueDialog` — this mirrors exactly how `AttributeList.tsx` wires itself, so it stays
+  local to the panel and nothing new threads through the container/view. Import
+  `AttributeValue`/`ValueDialogState` from `components/AttributeList/AttributeValue` and
   `ExpandedValueDialog` from `components/AttributeList/ExpandedValueDialog` directly (not the
   barrel, which only re-exports `AttributeList`) — same import shape `LogTable.tsx` uses.
 - **Prompts are plain text, not JSON, and that's fine.** `ExpandedValueDialog` runs every value
@@ -217,15 +268,10 @@ trace link for those rows, not a disabled placeholder.
   valid (or repairable) JSON, the dialog will pretty-print it as if it were a structured
   attribute — an accepted, harmless quirk of reusing this component for plain text, not a bug to
   special-case around.
-- **Per-prompt "View trace" link**: each prompt row's timestamp line renders a compact
-  `Box component={RouterLink} to={`/traces/${promptRow.traceId}`}` (react-router `Link`, so
-  middle-click/cmd-click open in a new tab) immediately to the right of the muted mono
-  timestamp, styled as a small primary-colored text link with an `ArrowForwardIcon` — matching
-  the subtle inline-link idiom already used for "+N more" buttons, not the larger filled-chip
-  "Open in trace" affordance `LogRowDetail` uses or the gradient "Open full trace" button
-  `TraceSummaryInlineView` uses (those are heavier, page-level actions; this is a small trailing
-  action inside an already-dense per-prompt row). Rendered **only when `promptRow.traceId` is
-  non-null** — no disabled placeholder for the ~35% of prompts that predate tracing. No
-  `stopPropagation` needed: the link sits inside the expansion `<tr>`, which has no `onClick` at
-  all (only the data row does), so there's no ancestor click handler for a navigation click to
-  conflict with.
+- **Per-turn "View trace" link**: each turn card's header renders a small pill-style
+  `Box component={RouterLink} to={`/traces/${turn.traceId}`}` (react-router `Link`, so
+  middle-click/cmd-click open in a new tab) — a filled, rounded chip with an `ArrowForwardIcon`,
+  styled between the subtle inline-text-link idiom used for "+N more" buttons and the heavier
+  gradient "Open full trace" button `TraceSummaryInlineView` uses. Rendered **only when
+  `turn.traceId` is non-null** — no disabled placeholder for the ~35% of prompts that predate
+  tracing.

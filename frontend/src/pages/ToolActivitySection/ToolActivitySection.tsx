@@ -3,7 +3,7 @@ import SectionLayout, { type SectionTab } from '../../components/SectionLayout';
 const TABS: readonly SectionTab[] = [
   { to: '/tool-activity/calls', label: 'Calls' },
   { to: '/tool-activity/reliability', label: 'Reliability' },
-  { to: '/tool-activity/skills-agents', label: 'Skills & Agents' },
+  { to: '/tool-activity/skills-agents', label: 'Skills & Subagents' },
   { to: '/tool-activity/permissions', label: 'Denials' },
 ];
 

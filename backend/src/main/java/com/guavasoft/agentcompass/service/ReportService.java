@@ -5,6 +5,7 @@ import com.guavasoft.agentcompass.model.BashCommandCoverage;
 import com.guavasoft.agentcompass.model.BashCommandHotspot;
 import com.guavasoft.agentcompass.model.EditFailureLoop;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
+import com.guavasoft.agentcompass.model.PathNearMiss;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
 import com.guavasoft.agentcompass.model.ToolCallCount;
@@ -25,6 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +38,10 @@ public class ReportService {
   private static final int ERROR_MESSAGE_DISPLAY_LENGTH = 120;
   private static final long SLOW_BASH_P95_MS = 5_000L;
   private static final long OVERSIZED_BYTES_THRESHOLD = 20_000L;
+  private static final int CD_PREFIX_SUGGESTION_MIN_CALLS = 10;
+  private static final String HUNTING_LOOP_PATTERN = "hunting loop";
+  private static final String SPREAD_PATTERN = "spread across session";
+  private static final String TIGHT_CLUSTER_PATTERN = "tight cluster";
   private static final String CTX_TOOL = "tool";
   private static final String CTX_CALLS = "calls";
   private static final String CTX_AVG_MS = "avgMs";
@@ -45,13 +51,16 @@ public class ReportService {
   private static final String CTX_FILE_PATH = "filePath";
   private static final String BASH_DEDUP_KEY = "bash:";
   private static final String FILE_DEDUP_KEY = "file:";
+  private static final String SCOPE_DEDUP_KEY = "scope:";
+  private static final int OVERSIZED_SUGGESTION_LIMIT = 3;
+  private static final int SLOW_AND_LARGE_SUGGESTION_LIMIT = 2;
   private static final String SHARE_FORMAT = "%.1f%%";
   private static final String TRUNCATION_SUFFIX = "…";
 
   private final LogService logService;
   private final TuningProperties tuningProperties;
   private final Template template;
-  private final Set<String> bashAntipatternPrefixes;
+  private final Map<String, String> bashAntipatternReplacements;
 
   public ReportService(
       LogService logService,
@@ -61,7 +70,7 @@ public class ReportService {
     this.logService = logService;
     this.tuningProperties = tuningProperties;
     this.template = compiler.compile(templateResource.getContentAsString(StandardCharsets.UTF_8));
-    this.bashAntipatternPrefixes = Set.copyOf(tuningProperties.getBashAntipatternPrefixes());
+    this.bashAntipatternReplacements = Map.copyOf(tuningProperties.getBashAntipatternReplacements());
   }
 
   public String renderMarkdown(int minutes) {
@@ -109,6 +118,7 @@ public class ReportService {
           Map<String, Object> failureRow = new LinkedHashMap<>();
           failureRow.put(CTX_TOOL, failure.tool());
           failureRow.put("errorType", failure.errorType());
+          failureRow.put("errorSignature", failure.errorSignature());
           failureRow.put("exampleScope", failure.exampleScope());
           failureRow.put("exampleMessage", truncate(failure.exampleMessage(), ERROR_MESSAGE_DISPLAY_LENGTH));
           failureRow.put("count", failure.count());
@@ -138,6 +148,7 @@ public class ReportService {
           oversizedRow.put(CTX_TOOL, result.tool());
           oversizedRow.put("scope", result.scope());
           oversizedRow.put("bytes", result.bytes());
+          oversizedRow.put("occurrences", result.occurrences());
           return oversizedRow;
         })
         .toList();
@@ -169,8 +180,21 @@ public class ReportService {
 
     List<SlowAndLargeCall> slowLarge = logService.aggregateSlowAndLargeCallsInRange(start, end);
 
+    List<PathNearMiss> pathNearMisses = logService.findReadPathNearMissesInRange(start, end);
+    List<Map<String, Object>> pathNearMissesContext = pathNearMisses.stream()
+        .map(nearMiss -> {
+          Map<String, Object> nearMissRow = new LinkedHashMap<>();
+          nearMissRow.put(CTX_SESSION_ID, truncate(nearMiss.sessionId(), SESSION_ID_DISPLAY_LENGTH));
+          nearMissRow.put("failedPath", nearMiss.failedPath());
+          nearMissRow.put("nearestSuccessfulPath", nearMiss.nearestSuccessfulPath());
+          nearMissRow.put("editDistance", nearMiss.editDistance());
+          nearMissRow.put("failures", nearMiss.failures());
+          return nearMissRow;
+        })
+        .toList();
+
     List<String> suggestions = buildSuggestions(
-        bashHotspots, oversized, redundantReads, editLoops, slowLarge);
+        bashHotspots, bashCoverage, oversized, redundantReads, editLoops, slowLarge);
 
     Map<String, Object> context = new HashMap<>();
     context.put("minutes", minutesForContext);
@@ -190,6 +214,9 @@ public class ReportService {
     context.put("bashHotspots", bashHotspotsContext);
     context.put("bashCoverageWithCommand", bashCoverage.withCommand());
     context.put("bashCoverageTotal", bashCoverage.total());
+    context.put("bashCoverageCdPrefixed", bashCoverage.cdPrefixed());
+    context.put("hasPathNearMisses", !pathNearMissesContext.isEmpty());
+    context.put("pathNearMisses", pathNearMissesContext);
     context.put("hasOversized", !oversizedContext.isEmpty());
     context.put("oversized", oversizedContext);
     context.put("hasRedundantReads", !redundantReadsContext.isEmpty());
@@ -204,6 +231,17 @@ public class ReportService {
   // sentence that names a specific file path, command, or session — generic "Top
   // tool is X"
   // lines are intentionally omitted because they don't carry an actionable fix.
+  //
+  // The list must respect the same skip rules the report's "How to use" block
+  // states: only
+  // hunting-loop redundant reads (spread-across-session re-reads are normal
+  // context refresh
+  // in long sessions), no externally-determined tools (filtered upstream in the
+  // queries),
+  // and antipattern bullets name the concrete replacement tool instead of
+  // pointing at a
+  // rewrite table that doesn't exist.
+  //
   // De-duplication: when multiple signals point at the same command prefix or
   // file path
   // we append context to the existing bullet rather than emitting a fresh one, so
@@ -212,6 +250,7 @@ public class ReportService {
   // duplicating it.
   private List<String> buildSuggestions(
       List<BashCommandHotspot> bashHotspots,
+      BashCommandCoverage bashCoverage,
       List<OversizedToolResult> oversized,
       List<RedundantFileRead> redundantReads,
       List<EditFailureLoop> editLoops,
@@ -219,56 +258,76 @@ public class ReportService {
     List<String> bullets = new ArrayList<>();
     Map<String, Integer> indexByKey = new HashMap<>();
 
+    if (bashCoverage.cdPrefixed() >= CD_PREFIX_SUGGESTION_MIN_CALLS) {
+      bullets.add(String.format(
+          "%d of %d Bash commands lead with `cd <dir> && …` — prefer path-scoped invocations"
+              + " (e.g. `<tool> -f <dir>/…` or `--cwd`), and fix any AGENTS.md run/build examples that"
+              + " teach the `cd` form; the prefix hides the real command from latency attribution and"
+              + " can trigger extra permission prompts.",
+          bashCoverage.cdPrefixed(), bashCoverage.total()));
+    }
+
     for (BashCommandHotspot hotspot : bashHotspots) {
-      boolean isAntipattern = bashAntipatternPrefixes.contains(hotspot.commandPrefix());
+      String replacementTool = bashAntipatternReplacements.get(hotspot.commandPrefix());
       boolean isSlow = hotspot.p95DurationMs() >= SLOW_BASH_P95_MS;
-      if (!isAntipattern && !isSlow) {
+      if (replacementTool == null && !isSlow) {
         continue;
       }
       String bullet;
-      if (isAntipattern && isSlow) {
+      if (replacementTool != null && isSlow) {
         bullet = String.format(
-            "Bash `%s` (%d calls): dedicated-tool replacement exists AND p95 %d ms"
-                + " — see rewrites below and narrow flags / run in background.",
-            hotspot.commandPrefix(), hotspot.calls(), hotspot.p95DurationMs());
-      } else if (isAntipattern) {
+            "Bash `%s` (%d calls, p95 %d ms) — replace with `%s`; add the rule to AGENTS.md if it keeps recurring.",
+            hotspot.commandPrefix(), hotspot.calls(), hotspot.p95DurationMs(), replacementTool);
+      } else if (replacementTool != null) {
         bullet = String.format(
-            "Bash `%s` (%d calls) has a dedicated-tool replacement — see the rewrites below the hotspot table.",
-            hotspot.commandPrefix(), hotspot.calls());
+            "Bash `%s` (%d calls) — replace with `%s`; add the rule to AGENTS.md if it keeps recurring.",
+            hotspot.commandPrefix(), hotspot.calls(), replacementTool);
       } else {
         bullet = String.format(
-            "Bash `%s` is in the slow tail (p95 %d ms over %d calls); narrow flags, scope paths, or run in background.",
+            "Bash `%s` is in the slow tail (p95 %d ms over %d calls) — narrow its scope or run it in"
+                + " the background (builds and test suites are slow by nature — don't ban them).",
             hotspot.commandPrefix(), hotspot.p95DurationMs(), hotspot.calls());
       }
       indexByKey.put(BASH_DEDUP_KEY + hotspot.commandPrefix(), bullets.size());
       bullets.add(bullet);
     }
 
-    oversized.stream()
-        .filter(result -> result.bytes() >= OVERSIZED_BYTES_THRESHOLD && !result.scope().isEmpty())
-        .limit(3)
-        .forEach(result -> {
-          String key = "scope:" + result.scope();
-          indexByKey.put(key, bullets.size());
-          bullets.add(String.format(
-              "`%s` returned %d bytes via `%s` — page the read or replace dump-style output.",
-              result.tool(), result.bytes(), result.scope()));
-        });
+    int oversizedBulletCount = 0;
+    for (OversizedToolResult result : oversized) {
+      if (oversizedBulletCount >= OVERSIZED_SUGGESTION_LIMIT) {
+        break;
+      }
+      if (result.bytes() < OVERSIZED_BYTES_THRESHOLD || result.scope().isEmpty()) {
+        continue;
+      }
+      String key = SCOPE_DEDUP_KEY + result.scope();
+      if (indexByKey.containsKey(key)) {
+        continue;
+      }
+      indexByKey.put(key, bullets.size());
+      String occurrenceSuffix = result.occurrences() > 1
+          ? String.format(" × %d calls", result.occurrences())
+          : "";
+      bullets.add(String.format(
+          "`%s` returned %d bytes%s via `%s` — page the read or replace dump-style output.",
+          result.tool(), result.bytes(), occurrenceSuffix, result.scope()));
+      oversizedBulletCount++;
+    }
 
     redundantReads.stream()
+        .filter(redundantRead -> HUNTING_LOOP_PATTERN.equals(classifyReadPattern(redundantRead)))
         .limit(3)
         .forEach(redundantRead -> {
           String key = FILE_DEDUP_KEY + redundantRead.filePath();
           indexByKey.put(key, bullets.size());
           bullets.add(String.format(
-              "`%s` was read %d times in session `%s` (%s — span %d min, max gap %d min)"
-                  + " — add an AGENTS.md rule not to re-read after Edit.",
+              "`%s` was re-read %d times inside %d min in session `%s` (hunting loop) — add a rule for"
+                  + " the workflow that touches this file: read it once up front (paged if large) and"
+                  + " trust Edit/Write results instead of re-reading to verify.",
               redundantRead.filePath(),
               redundantRead.reads(),
-              truncate(redundantRead.sessionId(), SESSION_ID_DISPLAY_LENGTH),
-              classifyReadPattern(redundantRead),
               redundantRead.spanMinutes(),
-              redundantRead.maxGapMinutes()));
+              truncate(redundantRead.sessionId(), SESSION_ID_DISPLAY_LENGTH)));
         });
 
     editLoops.stream()
@@ -290,14 +349,18 @@ public class ReportService {
           }
         });
 
+    Set<Integer> bulletsWithWorstCallFact = new HashSet<>();
     slowLarge.stream()
-        .limit(2)
+        .limit(SLOW_AND_LARGE_SUGGESTION_LIMIT)
         .forEach(call -> {
           String prefix = firstToken(call.scope());
           Integer existing = prefix == null ? null : indexByKey.get(BASH_DEDUP_KEY + prefix);
           if (existing != null) {
+            String worstCallFact = bulletsWithWorstCallFact.add(existing)
+                ? " Worst single call: %d ms, %d bytes (`%s`)."
+                : " Also %d ms, %d bytes (`%s`).";
             bullets.set(existing, bullets.get(existing) + String.format(
-                " Worst single call: %d ms, %d bytes (`%s`).",
+                worstCallFact,
                 call.durationMs(),
                 call.bytes(),
                 call.scope()));
@@ -322,12 +385,12 @@ public class ReportService {
 
   private static String classifyReadPattern(RedundantFileRead redundantRead) {
     if (redundantRead.reads() >= 3 && redundantRead.maxGapMinutes() <= 5) {
-      return "hunting loop";
+      return HUNTING_LOOP_PATTERN;
     }
     if (redundantRead.maxGapMinutes() >= 30) {
-      return "spread across session";
+      return SPREAD_PATTERN;
     }
-    return "tight cluster";
+    return TIGHT_CLUSTER_PATTERN;
   }
 
   private static String formatShare(long calls, long total) {

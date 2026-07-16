@@ -9,8 +9,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionPrompt;
+import com.guavasoft.agentcompass.model.SessionPromptToolCount;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
+import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
 import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.MetricService;
@@ -87,7 +89,8 @@ class SessionControllerTest {
                                 "non-interactive",
                                 "resume",
                                 "Refactor the SessionSummary record",
-                                3L),
+                                3L,
+                                new SessionTokenBreakdown(600_000L, 1_400_000L, 400_000L, 3_000_000L)),
                         new SessionSummary(
                                 "025a8c32-26ff-409d-b704-dc19dcecbb47",
                                 1.5,
@@ -101,7 +104,8 @@ class SessionControllerTest {
                                 "interactive",
                                 "fresh",
                                 null,
-                                0L)),
+                                0L,
+                                new SessionTokenBreakdown(0L, 0L, 0L, 120_000L))),
                         42L));
 
         mockMvc.perform(get("/api/sessions"))
@@ -113,6 +117,10 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[0].activeTimeSeconds").value(1500.5))
                 .andExpect(jsonPath("$[0].wallSeconds").value(3764))
                 .andExpect(jsonPath("$[0].tokens").value(5400000))
+                .andExpect(jsonPath("$[0].tokenBreakdown.input").value(600000))
+                .andExpect(jsonPath("$[0].tokenBreakdown.output").value(1400000))
+                .andExpect(jsonPath("$[0].tokenBreakdown.cacheCreation").value(400000))
+                .andExpect(jsonPath("$[0].tokenBreakdown.cacheRead").value(3000000))
                 .andExpect(jsonPath("$[0].terminalType").value("non-interactive"))
                 .andExpect(jsonPath("$[0].startType").value("resume"))
                 .andExpect(jsonPath("$[0].firstUserPrompt").value("Refactor the SessionSummary record"))
@@ -120,7 +128,8 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[1].sessionId").value("025a8c32-26ff-409d-b704-dc19dcecbb47"))
                 .andExpect(jsonPath("$[1].startType").value("fresh"))
                 .andExpect(jsonPath("$[1].firstUserPrompt").value(nullValue()))
-                .andExpect(jsonPath("$[1].userPromptCount").value(0));
+                .andExpect(jsonPath("$[1].userPromptCount").value(0))
+                .andExpect(jsonPath("$[1].tokenBreakdown.cacheRead").value(120000));
 
         verify(metricService).sessionsSummary(1440, null, null, 0, 25);
     }
@@ -162,16 +171,36 @@ class SessionControllerTest {
         String sessionId = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b";
         when(logService.promptsForSession(sessionId)).thenReturn(List.of(
                 new SessionPrompt(Instant.parse("2026-05-27T00:04:31.320Z"), "/ship", null),
-                new SessionPrompt(Instant.parse("2026-05-27T00:05:12.100Z"), "Add prompt context to the sessions API",
-                        "0102030405060708090a0b0c0d0e0f10")));
+                new SessionPrompt(
+                        Instant.parse("2026-05-27T00:05:12.100Z"), "Add prompt context to the sessions API",
+                        "0102030405060708090a0b0c0d0e0f10",
+                        "claude-sonnet-4-5",
+                        0.8,
+                        new SessionTokenBreakdown(1840L, 3120L, 18400L, 214000L),
+                        List.of(new SessionPromptToolCount("Read", 4L), new SessionPromptToolCount("Edit", 2L)))));
 
         mockMvc.perform(get("/api/sessions/{sessionId}/prompts", sessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].prompt").value("/ship"))
                 .andExpect(jsonPath("$[0].traceId").value(nullValue()))
+                .andExpect(jsonPath("$[0].model").value(nullValue()))
+                .andExpect(jsonPath("$[0].costUsd").value(nullValue()))
+                .andExpect(jsonPath("$[0].tokens").value(nullValue()))
+                .andExpect(jsonPath("$[0].tools", hasSize(0)))
                 .andExpect(jsonPath("$[1].traceId").value("0102030405060708090a0b0c0d0e0f10"))
-                .andExpect(jsonPath("$[1].prompt").value("Add prompt context to the sessions API"));
+                .andExpect(jsonPath("$[1].prompt").value("Add prompt context to the sessions API"))
+                .andExpect(jsonPath("$[1].model").value("claude-sonnet-4-5"))
+                .andExpect(jsonPath("$[1].costUsd").value(0.8))
+                .andExpect(jsonPath("$[1].tokens.input").value(1840))
+                .andExpect(jsonPath("$[1].tokens.output").value(3120))
+                .andExpect(jsonPath("$[1].tokens.cacheCreation").value(18400))
+                .andExpect(jsonPath("$[1].tokens.cacheRead").value(214000))
+                .andExpect(jsonPath("$[1].tools", hasSize(2)))
+                .andExpect(jsonPath("$[1].tools[0].name").value("Read"))
+                .andExpect(jsonPath("$[1].tools[0].count").value(4))
+                .andExpect(jsonPath("$[1].tools[1].name").value("Edit"))
+                .andExpect(jsonPath("$[1].tools[1].count").value(2));
 
         verify(logService).promptsForSession(sessionId);
     }

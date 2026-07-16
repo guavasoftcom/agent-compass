@@ -1,28 +1,21 @@
-import { Fragment, useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
-import { Box, CircularProgress, Tooltip, Typography } from '@mui/material';
+import { Fragment } from 'react';
+import { Box, Tooltip } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import type { SxProps, Theme } from '@mui/material/styles';
-import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type {
   SessionPromptRow,
   SessionSummaryRow,
   SessionsSortModel,
 } from '../../../../api';
-import { AttributeList } from '../../../../components/AttributeList';
-import {
-  AttributeValue,
-  type ValueDialogState,
-} from '../../../../components/AttributeList/AttributeValue';
-import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
-import { neutralColors } from '../../../../theme/colors';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
+import PromptTimelinePanel, { TokenBreakdownTooltip } from '../PromptTimelinePanel';
 import {
   USD_FORMATTER,
   USD_PER_MINUTE_FORMATTER,
   formatDuration,
+  formatRelativeTime,
   formatTokens,
   formatTimestamp,
 } from '../sessionsFormat';
@@ -39,6 +32,13 @@ interface SessionColumn {
 const COLUMNS: SessionColumn[] = [
   { field: 'startTimestamp', label: 'Started', numeric: false, sortable: true },
   {
+    field: 'endTimestamp',
+    label: 'Last activity',
+    numeric: false,
+    sortable: true,
+    tip: 'When the session was most recently active (its latest captured turn / session end). Distinct from Started — a long-running or resumed session can have started well before its last activity. Default sort.',
+  },
+  {
     field: 'firstUserPrompt',
     label: 'Prompt',
     numeric: false,
@@ -51,7 +51,7 @@ const COLUMNS: SessionColumn[] = [
     label: 'Tokens',
     numeric: true,
     sortable: true,
-    tip: 'Total tokens billed to the session — input, output and cache read/creation summed (claude_code.token.usage joined on session.id). Cache reads typically dominate.',
+    tip: 'Total tokens billed to the session — input, output and cache read/creation summed (claude_code.token.usage joined on session.id). Cache reads typically dominate. Hover the value for the four-way breakdown.',
   },
   {
     field: 'toolCallCount',
@@ -300,140 +300,6 @@ const PromptCell = ({
   </Box>
 );
 
-// Expansion panel: the session's full prompt timeline, rendered beneath the
-// clicked row. Recessed/inset surface to read as a nested panel rather than
-// another table row — same alpha-over-neutral treatment TraceSummaryInline
-// uses for the trace table's expanded row. Long prompts reuse the shared
-// AttributeValue "View more" → ExpandedValueDialog machinery from
-// components/AttributeList (same pattern as LogTable) rather than rendering
-// full text inline — prompts are plain text, so the dialog's JSON-repair path
-// simply never triggers (tryParseJson bails unless the text starts with `{`
-// or `[`) and it falls back to the raw pre-wrapped string. `promptRow.prompt`
-// can itself be null (pre-capture event) — those rows are kept, not filtered,
-// but render a dimmed italic placeholder instead of handing null to
-// AttributeValue (which would stringify it to the literal text "null"), and
-// skip the View-more/dialog affordance since there's no text to expand.
-const PromptTimelinePanel = ({
-  prompts,
-  loading,
-  error,
-}: {
-  prompts: SessionPromptRow[] | null;
-  loading: boolean;
-  error: Error | null;
-}) => {
-  const [expandedValue, setExpandedValue] = useState<ValueDialogState | null>(
-    null,
-  );
-
-  return (
-    <Box
-      sx={{
-        px: 2,
-        py: 1.75,
-        maxHeight: 320,
-        overflowY: 'auto',
-        bgcolor: (t) =>
-          t.palette.mode === 'dark'
-            ? alpha(neutralColors.white, 0.03)
-            : alpha(neutralColors.inkLight, 0.025),
-      }}
-    >
-      {loading ? (
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-            py: 1,
-            color: 'text.secondary',
-          }}
-        >
-          <CircularProgress size={14} thickness={5} />
-          <Typography sx={{ fontSize: 12.5 }}>Loading prompts…</Typography>
-        </Box>
-      ) : null}
-      {!loading && error ? (
-        <Typography sx={{ fontSize: 12.5, color: 'error.main' }}>
-          {`Failed to load prompts: ${error.message}`}
-        </Typography>
-      ) : null}
-      {!loading && !error && (prompts == null || prompts.length === 0) ? (
-        <Typography sx={{ fontSize: 12.5, color: 'text.disabled' }}>
-          No prompts captured for this session.
-        </Typography>
-      ) : null}
-      {!loading && !error && prompts != null && prompts.length > 0 ? (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-          {prompts.map((promptRow, index) => (
-            <Box
-              key={`${promptRow.timestamp}-${index}`}
-              sx={{ display: 'flex', flexDirection: 'column', gap: 0.35 }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Box
-                  component="span"
-                  sx={{
-                    typography: 'mono',
-                    fontSize: 11,
-                    color: 'text.disabled',
-                  }}
-                >
-                  {formatTimestamp(promptRow.timestamp)}
-                </Box>
-                {promptRow.traceId ? (
-                  <Box
-                    component={RouterLink}
-                    to={`/traces/${promptRow.traceId}`}
-                    sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 0.35,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: 'primary.main',
-                      textDecoration: 'none',
-                      '&:hover': { textDecoration: 'underline' },
-                    }}
-                  >
-                    View trace
-                    <ArrowForwardIcon sx={{ fontSize: 12 }} />
-                  </Box>
-                ) : null}
-              </Box>
-              <Box sx={{ fontSize: 13, color: 'text.primary' }}>
-                {promptRow.prompt == null ? (
-                  <Box
-                    component="span"
-                    sx={{ fontStyle: 'italic', color: 'text.disabled' }}
-                  >
-                    (prompt text not captured)
-                  </Box>
-                ) : (
-                  <AttributeValue
-                    attrKey={formatTimestamp(promptRow.timestamp)}
-                    value={promptRow.prompt}
-                    truncate
-                    inlineExpand={false}
-                    onExpand={setExpandedValue}
-                  />
-                )}
-              </Box>
-            </Box>
-          ))}
-        </Box>
-      ) : null}
-      <ExpandedValueDialog
-        state={expandedValue}
-        onClose={() => setExpandedValue(null)}
-        renderAttributeList={(attrs) => (
-          <AttributeList attributes={attrs} truncate inlineExpand />
-        )}
-      />
-    </Box>
-  );
-};
-
 // Sort caret — points up for asc, flips for desc; only rendered on the active column.
 const SortArrow = ({ direction }: { direction: 'asc' | 'desc' }) => (
   <Box
@@ -465,6 +331,11 @@ interface SessionsTableProps {
   promptTimeline: SessionPromptRow[] | null;
   promptTimelineLoading: boolean;
   promptTimelineError: Error | null;
+  // Active dashboard window (epoch ms), forwarded to PromptTimelinePanel so it
+  // can dim turns that fall outside the selected window (the prompts endpoint
+  // returns the whole session, not just the windowed slice).
+  windowStartMs?: number;
+  windowEndMs?: number;
 }
 
 const SessionsTable = ({
@@ -478,6 +349,8 @@ const SessionsTable = ({
   promptTimeline,
   promptTimelineLoading,
   promptTimelineError,
+  windowStartMs,
+  windowEndMs,
 }: SessionsTableProps) => {
   const handleSort = (field: string) => {
     if (field === sortModel.field) {
@@ -577,6 +450,11 @@ const SessionsTable = ({
                 }}
               >
                 <Box component="td">{formatTimestamp(row.startTimestamp)}</Box>
+                <Box component="td" sx={{ whiteSpace: 'nowrap' }}>
+                  <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
+                    <Box component="span">{formatRelativeTime(row.endTimestamp)}</Box>
+                  </Tooltip>
+                </Box>
                 <Box component="td" className="prompt">
                   <PromptCell
                     prompt={row.firstUserPrompt}
@@ -587,7 +465,22 @@ const SessionsTable = ({
                   {USD_FORMATTER.format(row.costUsd)}
                 </Box>
                 <Box component="td" className="num tokens">
-                  {formatTokens(row.tokens)}
+                  {row.tokenBreakdown ? (
+                    <TokenBreakdownTooltip tokens={row.tokenBreakdown}>
+                      <Box
+                        component="span"
+                        sx={{
+                          cursor: 'help',
+                          borderBottom: (t) => `1px dotted ${t.palette.text.disabled}`,
+                          pb: '1px',
+                        }}
+                      >
+                        {formatTokens(row.tokens)}
+                      </Box>
+                    </TokenBreakdownTooltip>
+                  ) : (
+                    formatTokens(row.tokens)
+                  )}
                 </Box>
                 <Box component="td" className="num">
                   {row.toolCallCount.toLocaleString()}
@@ -617,6 +510,8 @@ const SessionsTable = ({
                       prompts={promptTimeline}
                       loading={promptTimelineLoading}
                       error={promptTimelineError}
+                      windowStartMs={windowStartMs}
+                      windowEndMs={windowEndMs}
                     />
                   </Box>
                 </Box>

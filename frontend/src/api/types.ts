@@ -154,6 +154,17 @@ export interface TokenUsageSummary {
   cost: CostSummary;
 }
 
+/**
+ * Four-way token split (reset-aware sums of claude_code.token.usage by the
+ * `type` attribute). Missing kinds are 0, never null.
+ */
+export interface SessionTokenBreakdown {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+}
+
 export interface SessionSummaryRow {
   sessionId: string;
   costUsd: number;
@@ -165,6 +176,8 @@ export interface SessionSummaryRow {
   denialCount: number;
   /** Reset-aware total tokens for the session (raw; the grid formats M/K). */
   tokens: number;
+  /** Window-scoped four-way split; the backend guarantees it sums to `tokens`. */
+  tokenBreakdown: SessionTokenBreakdown;
   terminalType: 'interactive' | 'non-interactive';
   startType: 'fresh' | 'resume';
   /**
@@ -193,6 +206,14 @@ export interface SessionPromptRow {
    * render a disabled placeholder for those, just omit the link.
    */
   traceId: string | null;
+  /** Model that served the turn (dominant by tokens). Null → chip omitted. */
+  model?: string | null;
+  /** Cost attributed to the turn (reset-aware sum). Null → cost omitted. */
+  costUsd?: number | null;
+  /** The turn's four-way token split. Null when the turn has no token points. */
+  tokens?: SessionTokenBreakdown | null;
+  /** Tool calls the turn triggered, count desc. Empty/null → "No tool calls". */
+  tools?: { name: string; count: number }[] | null;
 }
 
 export interface SessionsSortModel {

@@ -17,6 +17,7 @@ import com.guavasoft.agentcompass.model.ModelTokenShare;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
+import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.model.TokenDistribution;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
 import com.guavasoft.agentcompass.model.TraceSpanDto;
@@ -52,7 +53,16 @@ public class MetricService {
   private static final int TARGET_BUCKETS_PER_WINDOW = 40;
   private static final int SECONDS_PER_MINUTE = 60;
 
-  private static final int SESSION_TOTAL_COUNT_INDEX = 9;
+  // Column indices into aggregateSessionSummaries' Object[] rows. The four token
+  // columns replaced the former single "tokens" total (see the query's Javadoc):
+  // the row's tokens field is now derived in Java as their sum.
+  private static final int SESSION_ROW_INPUT_TOKENS_INDEX = 6;
+  private static final int SESSION_ROW_OUTPUT_TOKENS_INDEX = 7;
+  private static final int SESSION_ROW_CACHE_CREATION_TOKENS_INDEX = 8;
+  private static final int SESSION_ROW_CACHE_READ_TOKENS_INDEX = 9;
+  private static final int SESSION_ROW_TERMINAL_TYPE_INDEX = 10;
+  private static final int SESSION_ROW_START_TYPE_INDEX = 11;
+  private static final int SESSION_TOTAL_COUNT_INDEX = 12;
   private static final int SESSION_COUNTS_SESSION_ID_INDEX = 0;
   private static final int SESSION_COUNTS_TOOL_CALL_INDEX = 1;
   private static final int SESSION_COUNTS_DENIAL_INDEX = 2;
@@ -137,7 +147,8 @@ public class MetricService {
       "wallSeconds", "wall",
       "tokens", "tokens",
       "costPerActiveMinuteUsd", "costPerMinute",
-      "startTimestamp", "started");
+      "startTimestamp", "started",
+      "endTimestamp", "ended");
 
   private final MetricPointRepository metricPointRepository;
   private final MetricPointMapper metricPointMapper;
@@ -357,6 +368,11 @@ public class MetricService {
         tuningProperties.getActiveTimeMetric(),
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getSessionCountMetric(),
+        tuningProperties.getTokenTypeAttribute(),
+        INPUT_TYPE,
+        OUTPUT_TYPE,
+        CACHE_CREATION_TYPE,
+        CACHE_READ_TYPE,
         start,
         end,
         normalizeSortColumn(sortField),
@@ -388,6 +404,14 @@ public class MetricService {
         .map(row -> {
           String sessionId = (String) row[0];
           SessionCounts counts = countsBySessionId.getOrDefault(sessionId, zeroCounts);
+          SessionTokenBreakdown tokenBreakdown = new SessionTokenBreakdown(
+              row[SESSION_ROW_INPUT_TOKENS_INDEX] == null ? 0L : ((Number) row[SESSION_ROW_INPUT_TOKENS_INDEX]).longValue(),
+              row[SESSION_ROW_OUTPUT_TOKENS_INDEX] == null ? 0L
+                  : ((Number) row[SESSION_ROW_OUTPUT_TOKENS_INDEX]).longValue(),
+              row[SESSION_ROW_CACHE_CREATION_TOKENS_INDEX] == null ? 0L
+                  : ((Number) row[SESSION_ROW_CACHE_CREATION_TOKENS_INDEX]).longValue(),
+              row[SESSION_ROW_CACHE_READ_TOKENS_INDEX] == null ? 0L
+                  : ((Number) row[SESSION_ROW_CACHE_READ_TOKENS_INDEX]).longValue());
           return new SessionSummary(
               sessionId,
               row[1] == null ? 0.0 : ((Number) row[1]).doubleValue(),
@@ -397,11 +421,12 @@ public class MetricService {
               row[5] == null ? 0L : ((Number) row[5]).longValue(),
               counts.toolCallCount(),
               counts.denialCount(),
-              row[6] == null ? 0L : ((Number) row[6]).longValue(),
-              normalizeTerminalType((String) row[7]),
-              normalizeStartType((String) row[8]),
+              tokenBreakdown.total(),
+              normalizeTerminalType((String) row[SESSION_ROW_TERMINAL_TYPE_INDEX]),
+              normalizeStartType((String) row[SESSION_ROW_START_TYPE_INDEX]),
               counts.firstUserPrompt(),
-              counts.userPromptCount());
+              counts.userPromptCount(),
+              tokenBreakdown);
         })
         .toList();
   }

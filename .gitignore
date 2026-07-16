@@ -37,3 +37,12 @@
 
 # Local design docs / plan-tracking scratch (personal, not shared)
 .design-docs/
+
+# Claude Design sync state (per-user project link)
+.design-sync/
+
+# CodeGraphContext auto-generated ignore file (local indexing tool)
+.cgcignore
+
+# Personal MCP server config (machine-specific absolute paths)
+mcp.json

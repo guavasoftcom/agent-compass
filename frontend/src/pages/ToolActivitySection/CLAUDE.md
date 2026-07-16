@@ -1,7 +1,7 @@
 # Tool activity section
 
 A `SectionLayout` wrapper that groups the four tool-activity tabs — Calls, Reliability,
-Skills & Agents, and Denials — under the `/tool-activity/*` parent route with a shared
+Skills & Subagents, and Denials — under the `/tool-activity/*` parent route with a shared
 `selection` / `autoRefresh` context. It makes no backend calls of its own; all data
 fetching happens inside the child tab pages.
 

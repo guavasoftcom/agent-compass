@@ -302,12 +302,25 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // The [startTimestamp, endTimestamp] bounds use the NULL-or-compare pattern, so
   // the ?minutes= form (start only) and the ?startTimestamp=&endTimestamp= form
   // (both) flow through one query. :sortColumn is one of a service-whitelisted
-  // token set ('cost', 'active', 'wall', 'costPerMinute', 'started') and
+  // token set ('cost', 'active', 'wall', 'tokens', 'costPerMinute', 'started',
+  // 'ended') and
   // :sortDirection is 'asc' or 'desc' — both arrive normalized, never raw user
   // input, so the CASE-based ORDER BY cannot be turned into SQL injection. The
   // session_id tiebreaker makes paging deterministic across requests, and
   // COUNT(*) OVER() carries the total session count alongside the page so a
   // second count round-trip is unnecessary.
+  //
+  // token_per_session returns the four-way type breakdown directly (one
+  // SUM(value_delta) FILTER per kind) rather than a single "tokens" total: the
+  // service sums these four columns to derive SessionSummary.tokens, so the
+  // "breakdown sums to tokens" invariant holds by construction instead of relying
+  // on two independently-computed totals staying in sync. :tokenTypeAttribute and
+  // the four :xxxTokenType params are sourced from TuningProperties /
+  // MetricService's token-type constants rather than hardcoded, matching every
+  // other type-attribute lookup in this class. Rows whose type doesn't match any
+  // of the four known kinds (unexpected/future token types) are silently excluded
+  // from the breakdown and therefore from the row's total -- same trade-off the
+  // dashboard's TokenUsageSummary breakdown already makes.
   @Query(value = """
       WITH cost_per_session AS (
         SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta) AS cost_usd
@@ -330,7 +343,17 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         GROUP BY 1
       ),
       token_per_session AS (
-        SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta)::bigint AS tokens
+        SELECT
+          attributes ->> 'session.id' AS session_id,
+          COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :inputTokenType), 0)::bigint
+            AS input_tokens,
+          COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :outputTokenType), 0)::bigint
+            AS output_tokens,
+          COALESCE(SUM(value_delta)
+            FILTER (WHERE attributes ->> :tokenTypeAttribute = :cacheCreationTokenType), 0)::bigint
+            AS cache_creation_tokens,
+          COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :cacheReadTokenType), 0)::bigint
+            AS cache_read_tokens
         FROM metric_points
         WHERE metric_name = :tokenMetric
           AND attributes ->> 'session.id' IS NOT NULL
@@ -369,7 +392,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         w.first_seen,
         w.last_seen,
         EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))::bigint AS wall_seconds,
-        COALESCE(t.tokens, 0)::bigint                            AS tokens,
+        COALESCE(t.input_tokens, 0)::bigint                      AS input_tokens,
+        COALESCE(t.output_tokens, 0)::bigint                     AS output_tokens,
+        COALESCE(t.cache_creation_tokens, 0)::bigint             AS cache_creation_tokens,
+        COALESCE(t.cache_read_tokens, 0)::bigint                 AS cache_read_tokens,
         m.terminal_type,
         m.start_type,
         COUNT(*) OVER()::bigint                                  AS total_count
@@ -384,7 +410,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             WHEN 'cost'   THEN COALESCE(c.cost_usd, 0)
             WHEN 'active' THEN COALESCE(a.active_time_seconds, 0)
             WHEN 'wall'   THEN EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))
-            WHEN 'tokens' THEN COALESCE(t.tokens, 0)
+            WHEN 'tokens' THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)
+              + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)
             WHEN 'costPerMinute' THEN CASE WHEN COALESCE(a.active_time_seconds, 0) > 0
               THEN COALESCE(c.cost_usd, 0) / a.active_time_seconds * 60 END
           END
@@ -394,13 +421,16 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             WHEN 'cost'   THEN COALESCE(c.cost_usd, 0)
             WHEN 'active' THEN COALESCE(a.active_time_seconds, 0)
             WHEN 'wall'   THEN EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))
-            WHEN 'tokens' THEN COALESCE(t.tokens, 0)
+            WHEN 'tokens' THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)
+              + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)
             WHEN 'costPerMinute' THEN CASE WHEN COALESCE(a.active_time_seconds, 0) > 0
               THEN COALESCE(c.cost_usd, 0) / a.active_time_seconds * 60 END
           END
         END DESC NULLS LAST,
         CASE WHEN :sortColumn = 'started' AND :sortDirection = 'asc'  THEN w.first_seen END ASC NULLS LAST,
         CASE WHEN :sortColumn = 'started' AND :sortDirection = 'desc' THEN w.first_seen END DESC NULLS LAST,
+        CASE WHEN :sortColumn = 'ended' AND :sortDirection = 'asc'  THEN w.last_seen END ASC NULLS LAST,
+        CASE WHEN :sortColumn = 'ended' AND :sortDirection = 'desc' THEN w.last_seen END DESC NULLS LAST,
         w.session_id ASC
       LIMIT :pageSize OFFSET :pageOffset
       """, nativeQuery = true)
@@ -409,12 +439,87 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("activeTimeMetric") String activeTimeMetric,
       @Param("tokenMetric") String tokenMetric,
       @Param("sessionCountMetric") String sessionCountMetric,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("inputTokenType") String inputTokenType,
+      @Param("outputTokenType") String outputTokenType,
+      @Param("cacheCreationTokenType") String cacheCreationTokenType,
+      @Param("cacheReadTokenType") String cacheReadTokenType,
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp,
       @Param("sortColumn") String sortColumn,
       @Param("sortDirection") String sortDirection,
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset);
+
+  // ---------------------------------------------------------------------------
+  // Prompt-timeline per-turn rollups (Sessions page GET /api/sessions/{id}/prompts)
+  // ---------------------------------------------------------------------------
+  //
+  // Both queries below return raw, unaggregated rows for one session ordered by
+  // timestamp ascending. Aggregation (bucketing into turns, then summing/grouping
+  // per turn) happens in LogService by walking these rows against the session's
+  // ascending prompt timestamps -- the same "sorted merge" attribution the
+  // tool-events query uses -- rather than an in-SQL interval join, since the
+  // turn boundaries live in log_records (user_prompt) while these rows live in
+  // metric_points and the prompt list is already fetched separately.
+
+  // Cost points for one session, oldest first, bounded to
+  // [firstTurnStart, turnsEndBoundary) -- the same interval LogService buckets
+  // rows into turns against, so rows outside every turn's range (before the
+  // first prompt, or at/after the cap boundary on a truncated session) are
+  // never fetched in the first place rather than being fetched and discarded in
+  // Java. turnsEndBoundary is NULL for a non-truncated session (open-ended last
+  // turn), so the CAST(... AS timestamptz) IS NULL branch keeps that case
+  // unbounded above, matching turnIndexForTimestamp's semantics exactly.
+  // claude_code.cost.usage is a CUMULATIVE counter re-emitted per stream (full
+  // attribute identity); value_delta (V11) is already the reset-aware per-row
+  // increment, so the per-turn rollup is a plain SUM(value_delta) over the rows
+  // LogService buckets into each turn -- no read-time LAG or bucket-MAX,
+  // matching every other cost rollup in this class. Served by
+  // idx_metric_points_session_id_name_ts (V13).
+  @Query(value = """
+      SELECT timestamp, value_delta
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND attributes ->> 'session.id' = :sessionId
+        AND value_double IS NOT NULL
+        AND timestamp >= :firstTurnStart
+        AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR timestamp < :turnsEndBoundary)
+      ORDER BY timestamp ASC
+      """, nativeQuery = true)
+  List<Object[]> findCostPointsForSession(
+      @Param("metricName") String metricName,
+      @Param("sessionId") String sessionId,
+      @Param("firstTurnStart") Instant firstTurnStart,
+      @Param("turnsEndBoundary") Instant turnsEndBoundary);
+
+  // Token points for one session, oldest first, carrying the model AND type
+  // attributes so LogService can, from this single fetch, both pick the turn's
+  // dominant model (largest summed value_delta) and accumulate the turn's
+  // four-way token-type breakdown. Same value_delta reset-aware semantics and
+  // [firstTurnStart, turnsEndBoundary) bound as findCostPointsForSession, served
+  // by the same idx_metric_points_session_id_name_ts (V13) index.
+  @Query(value = """
+      SELECT
+        timestamp,
+        attributes ->> :modelAttribute     AS model,
+        attributes ->> :tokenTypeAttribute AS token_type,
+        value_delta
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND attributes ->> 'session.id' = :sessionId
+        AND attributes ->> :modelAttribute IS NOT NULL
+        AND timestamp >= :firstTurnStart
+        AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR timestamp < :turnsEndBoundary)
+      ORDER BY timestamp ASC
+      """, nativeQuery = true)
+  List<Object[]> findTokenPointsForSession(
+      @Param("metricName") String metricName,
+      @Param("sessionId") String sessionId,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("firstTurnStart") Instant firstTurnStart,
+      @Param("turnsEndBoundary") Instant turnsEndBoundary);
 
   // ---------------------------------------------------------------------------
   // Metric catalog

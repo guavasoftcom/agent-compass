@@ -22,8 +22,11 @@ import com.guavasoft.agentcompass.model.LogPage;
 import com.guavasoft.agentcompass.model.LogQueryCriteria;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
+import com.guavasoft.agentcompass.model.PathNearMiss;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
 import com.guavasoft.agentcompass.model.SessionPrompt;
+import com.guavasoft.agentcompass.model.SessionPromptToolCount;
+import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
@@ -33,11 +36,13 @@ import com.guavasoft.agentcompass.model.ToolFailureRate;
 import com.guavasoft.agentcompass.model.ToolPerformance;
 import com.guavasoft.agentcompass.model.ToolRepeatStat;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
+import com.guavasoft.agentcompass.repository.MetricPointRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -65,9 +70,32 @@ public class LogService {
   private static final int TOOL_REPEAT_LIMIT = 15;
   private static final long SLOW_AND_LARGE_MIN_DURATION_MS = 1_000L;
   private static final long SLOW_AND_LARGE_MIN_BYTES = 4_000L;
+  private static final int FAILED_READ_PATH_LIMIT = 25;
+  private static final int SUCCESSFUL_READ_PATH_LIMIT = 1_000;
+  // A retyped path differs by a transposed/dropped character or two; anything
+  // farther apart is more likely a genuinely different file than a typo.
+  private static final int NEAR_MISS_MAX_EDIT_DISTANCE = 3;
+
+  // Attribute key carrying the model that served a claude_code.token.usage point.
+  // Not on TuningProperties: mirrors MetricService.MODEL_ATTRIBUTE, a structural
+  // OTLP semantic-convention key rather than a deployment-tunable event/attribute
+  // name.
+  private static final String MODEL_ATTRIBUTE = "model";
+
+  // Raw values of the token-type attribute (TuningProperties#getTokenTypeAttribute).
+  // Mirrors MetricService's identically-named constants -- these are the actual
+  // spellings Claude Code emits (camelCase, confirmed against MetricService's
+  // existing token-usage-by-type switch), not the snake_case forms an earlier
+  // draft of the API spec guessed at.
+  private static final String INPUT_TOKEN_TYPE = "input";
+  private static final String OUTPUT_TOKEN_TYPE = "output";
+  private static final String CACHE_CREATION_TOKEN_TYPE = "cacheCreation";
+  private static final String CACHE_READ_TOKEN_TYPE = "cacheRead";
+  private static final int TOKEN_BREAKDOWN_KIND_COUNT = 4;
 
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
+  private final MetricPointRepository metricPointRepository;
   private final LogRecordMapper logRecordMapper;
   private final TuningProperties tuningProperties;
 
@@ -224,15 +252,191 @@ public class LogService {
   // Not window-scoped; result size is clamped the same way PageBounds.MAXIMUM_PAGE_SIZE
   // clamps every other list endpoint so a pathologically long session can't
   // return an unbounded number of rows.
+  //
+  // Each prompt is additionally enriched with three per-turn rollups (model,
+  // costUsd, tools), attributed by time interval since metric_points and the
+  // tool_result log events carry no trace_id: turn i spans
+  // [prompt_i.timestamp, prompt_{i+1}.timestamp), and the last turn is open-ended
+  // -- UNLESS this session has more than MAXIMUM_PAGE_SIZE prompts, in which case
+  // the "+1 probe" row fetched below closes it instead, so events belonging to a
+  // truncated (not-returned) 501st+ turn are never misattributed to the 500th.
   public List<SessionPrompt> promptsForSession(String sessionId) {
-    List<Object[]> rows = logRecordRepository.findPromptsForSession(
+    List<Object[]> probeRows = logRecordRepository.findPromptsForSession(
         sessionId,
         tuningProperties.getUserPromptEventName(),
         tuningProperties.getPromptAttribute(),
-        PageBounds.MAXIMUM_PAGE_SIZE);
-    return rows.stream()
-        .map(row -> new SessionPrompt((Instant) row[0], (String) row[1], (String) row[2]))
-        .toList();
+        PageBounds.MAXIMUM_PAGE_SIZE + 1);
+    if (probeRows.isEmpty()) {
+      return List.of();
+    }
+
+    boolean truncated = probeRows.size() > PageBounds.MAXIMUM_PAGE_SIZE;
+    List<Object[]> promptRows = truncated ? probeRows.subList(0, PageBounds.MAXIMUM_PAGE_SIZE) : probeRows;
+    Instant turnsEndBoundary = truncated ? (Instant) probeRows.get(PageBounds.MAXIMUM_PAGE_SIZE)[0] : null;
+
+    List<Instant> turnStartTimestamps = promptRows.stream().map(row -> (Instant) row[0]).toList();
+    TurnTokenRollup turnTokenRollup = resolveModelAndTokensPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+    Map<Integer, Double> costByTurn = resolveCostPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+    Map<Integer, List<SessionPromptToolCount>> toolsByTurn =
+        resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+
+    List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
+    for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
+      Object[] row = promptRows.get(turnIndex);
+      prompts.add(new SessionPrompt(
+          (Instant) row[0],
+          (String) row[1],
+          (String) row[2],
+          turnTokenRollup.modelByTurn().get(turnIndex),
+          costByTurn.get(turnIndex),
+          turnTokenRollup.tokensByTurn().get(turnIndex),
+          toolsByTurn.getOrDefault(turnIndex, List.of())));
+    }
+    return prompts;
+  }
+
+  // Turn attribution for the prompt-timeline rollups: assigns eventTimestamp to
+  // the zero-based index of the turn whose interval
+  // [turnStartTimestamps.get(i), turnStartTimestamps.get(i + 1)) contains it. The
+  // last turn is open-ended unless turnsEndBoundary is non-null (see
+  // promptsForSession), in which case it closes the last turn there instead.
+  // Returns -1 for a timestamp before the first turn or at/after
+  // turnsEndBoundary -- callers drop those rows rather than attribute them. The
+  // three enrichment queries (findCostPointsForSession, findTokenPointsForSession,
+  // findToolEventsForSession) already filter to this same
+  // [turnStartTimestamps.get(0), turnsEndBoundary) range in SQL, so in practice
+  // neither -1 branch below is reached for rows coming from them; both stay as a
+  // defensive backstop (and turnIndexForTimestamp has no other caller today) for
+  // the mixed-precision/boundary case rather than trusting the SQL bound alone.
+  //
+  // turnStartTimestamps can contain duplicate timestamps if two user_prompt
+  // events land at the identical instant (findPromptsForSession orders by
+  // timestamp ASC, id ASC to make that case deterministic); Collections.binarySearch
+  // does not document which duplicate it returns, so an event exactly on a
+  // duplicated boundary attributes to *some* one of those duplicate turns rather
+  // than a specific one -- rare enough (sub-millisecond-identical prompts) that a
+  // full dedupe pass isn't worth it here.
+  private static int turnIndexForTimestamp(
+      List<Instant> turnStartTimestamps, Instant turnsEndBoundary, Instant eventTimestamp) {
+    if (eventTimestamp.isBefore(turnStartTimestamps.get(0))) {
+      return -1;
+    }
+    if (turnsEndBoundary != null && !eventTimestamp.isBefore(turnsEndBoundary)) {
+      return -1;
+    }
+    int searchIndex = Collections.binarySearch(turnStartTimestamps, eventTimestamp);
+    return searchIndex >= 0 ? searchIndex : -searchIndex - 2;
+  }
+
+  // Per-turn cost rollup: SUM(value_delta) of the configured cost-usage metric
+  // for this session, bucketed into the turn whose interval contains each point.
+  private Map<Integer, Double> resolveCostPerTurn(
+      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
+    List<Object[]> costPointRows = metricPointRepository.findCostPointsForSession(
+        tuningProperties.getCostUsageMetric(), sessionId, turnStartTimestamps.get(0), turnsEndBoundary);
+
+    Map<Integer, Double> costByTurn = new HashMap<>();
+    for (Object[] row : costPointRows) {
+      int turnIndex = turnIndexForTimestamp(turnStartTimestamps, turnsEndBoundary, (Instant) row[0]);
+      if (turnIndex < 0 || row[1] == null) {
+        continue;
+      }
+      costByTurn.merge(turnIndex, ((Number) row[1]).doubleValue(), Double::sum);
+    }
+    return costByTurn;
+  }
+
+  // Per-turn model dominance AND token-type breakdown, from one fetch of this
+  // session's token points (carrying model, type, and value_delta per row) so the
+  // two rollups share a single query rather than fetching the same rows twice.
+  private record TurnTokenRollup(
+      Map<Integer, String> modelByTurn, Map<Integer, SessionTokenBreakdown> tokensByTurn) {}
+
+  // Sums token value_delta per (turn, model) to pick the model with the largest
+  // sum per turn, AND per (turn, type) to build the turn's four-way token
+  // breakdown -- both from the rows landing in that turn's interval. A turn with
+  // no token points has no entry in either map (the caller falls back to null).
+  private TurnTokenRollup resolveModelAndTokensPerTurn(
+      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
+    List<Object[]> tokenPointRows = metricPointRepository.findTokenPointsForSession(
+        tuningProperties.getTokenUsageMetric(), sessionId, MODEL_ATTRIBUTE, tuningProperties.getTokenTypeAttribute(),
+        turnStartTimestamps.get(0), turnsEndBoundary);
+
+    Map<Integer, Map<String, Long>> tokensByModelPerTurn = new HashMap<>();
+    Map<Integer, long[]> tokenTypeTotalsPerTurn = new HashMap<>();
+    for (Object[] row : tokenPointRows) {
+      int turnIndex = turnIndexForTimestamp(turnStartTimestamps, turnsEndBoundary, (Instant) row[0]);
+      if (turnIndex < 0) {
+        continue;
+      }
+      String model = (String) row[1];
+      String tokenType = (String) row[2];
+      long tokenValueDelta = row[3] == null ? 0L : ((Number) row[3]).longValue();
+
+      tokensByModelPerTurn
+          .computeIfAbsent(turnIndex, key -> new HashMap<>())
+          .merge(model, tokenValueDelta, Long::sum);
+
+      long[] typeTotals = tokenTypeTotalsPerTurn.computeIfAbsent(turnIndex, key -> new long[TOKEN_BREAKDOWN_KIND_COUNT]);
+      switch (tokenType == null ? "" : tokenType) {
+        case INPUT_TOKEN_TYPE -> typeTotals[0] += tokenValueDelta;
+        case OUTPUT_TOKEN_TYPE -> typeTotals[1] += tokenValueDelta;
+        case CACHE_CREATION_TOKEN_TYPE -> typeTotals[2] += tokenValueDelta;
+        case CACHE_READ_TOKEN_TYPE -> typeTotals[3] += tokenValueDelta;
+        default -> {
+          /* unrecognized/missing type -- excluded from the breakdown, same trade-off
+           * as the session row's tokenBreakdown */
+        }
+      }
+    }
+
+    Map<Integer, String> modelByTurn = new HashMap<>();
+    for (Map.Entry<Integer, Map<String, Long>> turnEntry : tokensByModelPerTurn.entrySet()) {
+      turnEntry.getValue().entrySet().stream()
+          .max(Map.Entry.<String, Long>comparingByValue().thenComparing(Map.Entry.comparingByKey()))
+          .ifPresent(dominantModel -> modelByTurn.put(turnEntry.getKey(), dominantModel.getKey()));
+    }
+
+    Map<Integer, SessionTokenBreakdown> tokensByTurn = new HashMap<>();
+    for (Map.Entry<Integer, long[]> turnEntry : tokenTypeTotalsPerTurn.entrySet()) {
+      long[] typeTotals = turnEntry.getValue();
+      tokensByTurn.put(turnEntry.getKey(),
+          new SessionTokenBreakdown(typeTotals[0], typeTotals[1], typeTotals[2], typeTotals[3]));
+    }
+    return new TurnTokenRollup(modelByTurn, tokensByTurn);
+  }
+
+  // Per-turn tool-call counts: groups tool_result events by tool name within each
+  // turn's interval, ordered by count descending then name ascending for
+  // deterministic output.
+  private Map<Integer, List<SessionPromptToolCount>> resolveToolsPerTurn(
+      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
+    List<Object[]> toolEventRows = logRecordRepository.findToolEventsForSession(
+        sessionId, tuningProperties.getToolEventName(), tuningProperties.getToolAttribute(),
+        turnStartTimestamps.get(0), turnsEndBoundary);
+
+    Map<Integer, Map<String, Long>> countsByToolPerTurn = new HashMap<>();
+    for (Object[] row : toolEventRows) {
+      int turnIndex = turnIndexForTimestamp(turnStartTimestamps, turnsEndBoundary, (Instant) row[0]);
+      if (turnIndex < 0) {
+        continue;
+      }
+      String toolName = (String) row[1];
+      countsByToolPerTurn
+          .computeIfAbsent(turnIndex, key -> new HashMap<>())
+          .merge(toolName, 1L, Long::sum);
+    }
+
+    Map<Integer, List<SessionPromptToolCount>> toolsByTurn = new HashMap<>();
+    for (Map.Entry<Integer, Map<String, Long>> turnEntry : countsByToolPerTurn.entrySet()) {
+      List<SessionPromptToolCount> toolCounts = turnEntry.getValue().entrySet().stream()
+          .map(toolEntry -> new SessionPromptToolCount(toolEntry.getKey(), toolEntry.getValue()))
+          .sorted(Comparator.comparingLong(SessionPromptToolCount::count).reversed()
+              .thenComparing(SessionPromptToolCount::name))
+          .toList();
+      toolsByTurn.put(turnEntry.getKey(), toolCounts);
+    }
+    return toolsByTurn;
   }
 
   public List<String> availableAttributePairs(
@@ -433,9 +637,10 @@ public class LogService {
         .map(row -> new ToolFailure(
             (String) row[0],
             (String) row[1],
-            row[2] == null ? "" : (String) row[2],
+            (String) row[2],
             row[3] == null ? "" : (String) row[3],
-            ((Number) row[4]).longValue()))
+            row[4] == null ? "" : (String) row[4],
+            ((Number) row[5]).longValue()))
         .toList();
   }
 
@@ -464,6 +669,7 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateOversizedToolResultsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getExternallyDeterminedTools(),
         start,
         end,
         OVERSIZED_RESULT_LIMIT);
@@ -475,7 +681,8 @@ public class LogService {
         .map(row -> new OversizedToolResult(
             (String) row[0],
             row[1] == null ? "" : (String) row[1],
-            ((Number) row[2]).longValue()))
+            ((Number) row[2]).longValue(),
+            ((Number) row[3]).longValue()))
         .toList();
   }
 
@@ -523,6 +730,7 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateSlowAndLargeCallsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getExternallyDeterminedTools(),
         start,
         end,
         SLOW_AND_LARGE_MIN_DURATION_MS,
@@ -582,10 +790,65 @@ public class LogService {
   }
 
   private static BashCommandCoverage mapBashCommandCoverage(List<Object[]> rows) {
-    Object[] row = rows.stream().findFirst().orElse(new Object[] { 0L, 0L });
+    Object[] row = rows.stream().findFirst().orElse(new Object[] { 0L, 0L, 0L });
     return new BashCommandCoverage(
         ((Number) row[0]).longValue(),
-        ((Number) row[1]).longValue());
+        ((Number) row[1]).longValue(),
+        ((Number) row[2]).longValue());
+  }
+
+  // Pairs each (session, path) Read failure with the closest path the SAME
+  // session read successfully. A small edit distance between the two almost
+  // always means the agent retyped a path (UUID-heavy scratchpad dirs are the
+  // usual victim) rather than probed a genuinely missing file. Distance 0 is
+  // skipped on purpose: fail-then-succeed on the identical path is a
+  // read-before-create race, not a typo.
+  public List<PathNearMiss> findReadPathNearMissesInRange(Instant start, Instant end) {
+    List<Object[]> failedRows = logRecordRepository.aggregateFailedReadPathsInRange(
+        tuningProperties.getToolEventName(),
+        tuningProperties.getToolAttribute(),
+        start,
+        end,
+        FAILED_READ_PATH_LIMIT);
+    if (failedRows.isEmpty()) {
+      return List.of();
+    }
+    List<Object[]> successfulRows = logRecordRepository.distinctSuccessfulReadPathsInRange(
+        tuningProperties.getToolEventName(),
+        tuningProperties.getToolAttribute(),
+        start,
+        end,
+        SUCCESSFUL_READ_PATH_LIMIT);
+
+    Map<String, List<String>> successfulPathsBySession = new HashMap<>();
+    for (Object[] successfulRow : successfulRows) {
+      successfulPathsBySession
+          .computeIfAbsent((String) successfulRow[0], sessionId -> new ArrayList<>())
+          .add((String) successfulRow[1]);
+    }
+
+    List<PathNearMiss> nearMisses = new ArrayList<>();
+    for (Object[] failedRow : failedRows) {
+      String sessionId = (String) failedRow[0];
+      String failedPath = (String) failedRow[1];
+      long failures = ((Number) failedRow[2]).longValue();
+      List<String> candidatePaths = successfulPathsBySession.getOrDefault(sessionId, List.of());
+
+      String nearestPath = null;
+      int nearestDistance = Integer.MAX_VALUE;
+      for (String candidatePath : candidatePaths) {
+        int distance = BoundedEditDistance.compute(failedPath, candidatePath, NEAR_MISS_MAX_EDIT_DISTANCE);
+        if (distance > 0 && distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestPath = candidatePath;
+        }
+      }
+      if (nearestPath != null) {
+        nearMisses.add(new PathNearMiss(sessionId, failedPath, nearestPath, nearestDistance, failures));
+      }
+    }
+    nearMisses.sort(Comparator.comparingLong(PathNearMiss::failures).reversed());
+    return nearMisses;
   }
 
   public ToolCallTimeseries aggregateToolCallsTimeseries(int minutes, int topTools) {

@@ -117,7 +117,7 @@ const SkillsAgentsPageView = ({
           centerLabel="subagent calls"
           hasData={subagentRows.length > 0}
           isLoading={isSubagentsLoading}
-          emptyLabel="No Task invocations in this window."
+          emptyLabel="No subagent invocations in this window."
         />
       </Box>
     </PageLayout>

@@ -31,14 +31,23 @@ spring:
       poll-interval: 1000ms
       quiet-period: 400ms
 tuning:
-  bash-antipattern-prefixes:
-    - cat
-    - head
-    - tail
-    - find
-    - sed
-    - awk
-    - echo
+  # First tokens of Bash commands with a dedicated-tool replacement, mapped to the
+  # replacement the tuning report names in its anti-pattern suggestions.
+  bash-antipattern-replacements:
+    cat: Read
+    head: Read (with limit)
+    tail: Read (with offset)
+    find: Glob
+    sed: Read + Edit
+    awk: Grep
+    echo: Write
+  # Tools whose latency/result size the agent cannot tune (subagents, web fetches);
+  # excluded from the report's oversized and slow-and-large offender lists.
+  externally-determined-tools:
+    - Agent
+    - Task
+    - WebSearch
+    - WebFetch
 logging:
   level:
     org.apache.tomcat.util.net: DEBUG
