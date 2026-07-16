@@ -2,6 +2,7 @@ import { Button, Paper, Typography } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
+import { groupForPath } from '../../App/navGroups';
 import type { WindowSelection } from '../../api';
 
 export interface ReportPageViewProps {
@@ -27,6 +28,7 @@ export default function ReportPageView({
 }: ReportPageViewProps) {
   return (
     <PageLayout
+      eyebrow={groupForPath('/report')}
       title="Markdown Report"
       subtitle="Paste the rendered summary back into your coding agent to tune its prompts and skills."
       error={error}

@@ -181,10 +181,14 @@ frontend/src/
       index.ts
     SessionsPage/
       CLAUDE.md
+      SESSIONS-BACKEND.md         // response-shape contract for the sessions endpoints
       SessionsPage.tsx
       SessionsPageView.tsx
       index.ts
       components/
+        PromptTimelinePanel/
+          PromptTimelinePanel.tsx // expanded-row per-turn timeline (model/cost/tokens/tools)
+          index.ts
         SessionsKpiStrip/
           SessionsKpiStrip.tsx
           index.ts

@@ -12,11 +12,16 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.model.SessionKpis;
+import com.guavasoft.agentcompass.model.SessionPrompt;
+import com.guavasoft.agentcompass.model.SessionPromptToolCount;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
+import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
+import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.MetricService;
+import com.guavasoft.agentcompass.service.PageBounds;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -47,6 +52,7 @@ class SessionsQueryIntegrationTest {
   private static final String USER_PROMPT_EVENT_NAME = "user_prompt";
   private static final String PROMPT_ATTRIBUTE = "prompt";
   private static final String TOOL_EVENT_NAME = "tool_result";
+  private static final String TOOL_ATTRIBUTE = "tool_name";
   private static final String TOOL_DECISION_EVENT_NAME = "tool_decision";
   private static final int WINDOW_MINUTES = 60;
 
@@ -62,6 +68,9 @@ class SessionsQueryIntegrationTest {
 
   @Autowired
   MetricService metricService;
+
+  @Autowired
+  LogService logService;
 
   private final List<Long> seededMetricPointIds = new ArrayList<>();
 
@@ -153,6 +162,23 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void endTimestampSortRanksSessionsByLastActivityNotCost() {
+    // Give the cheapest session (B) the most recent emission so the last-activity
+    // order (B, A, C) provably differs from the cost order (A, C, B). The seed
+    // anchors sessions at now-10m with offsets up to +90s; this row lands at
+    // now-10m+120s, comfortably past every seeded emission.
+    Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
+    saveCost("B", "opus", "main", 1.6, base.plusSeconds(120));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage descending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "desc", 0, 25);
+    assertThat(descending.items()).extracting(SessionSummary::sessionId).containsExactly("B", "A", "C");
+
+    SessionSummaryPage ascending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "asc", 0, 25);
+    assertThat(ascending.items()).extracting(SessionSummary::sessionId).containsExactly("C", "A", "B");
+  }
+
+  @Test
   void paginationReturnsRequestedSliceWhileTotalCountStaysWholeWindow() {
     SessionSummaryPage firstPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2);
     SessionSummaryPage secondPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2);
@@ -171,17 +197,64 @@ class SessionsQueryIntegrationTest {
     SessionSummary sessionA = page.items().get(0);
     assertThat(sessionA.sessionId()).isEqualTo("A");
     assertThat(sessionA.tokens()).isEqualTo(1_000_000L);
+    // A's two token points are both type='input' (400_000 -> 1_000_000, reset-aware
+    // delta 400_000 + 600_000): the whole total lands in the input bucket, and
+    // tokens is derived as the sum of the four breakdown fields (single source).
+    assertThat(sessionA.tokenBreakdown()).isEqualTo(new SessionTokenBreakdown(1_000_000L, 0L, 0L, 0L));
+    assertThat(sessionA.tokens()).isEqualTo(sessionA.tokenBreakdown().total());
     assertThat(sessionA.terminalType()).isEqualTo("non-interactive");
     assertThat(sessionA.startType()).isEqualTo("fresh");
 
     SessionSummary sessionC = page.items().stream()
         .filter(item -> "C".equals(item.sessionId())).findFirst().orElseThrow();
     assertThat(sessionC.tokens()).isEqualTo(0L);
+    // No token rows at all for C -- every kind reads 0, never null.
+    assertThat(sessionC.tokenBreakdown()).isEqualTo(new SessionTokenBreakdown(0L, 0L, 0L, 0L));
     assertThat(sessionC.terminalType()).isEqualTo("interactive");
 
     SessionSummary sessionB = page.items().stream()
         .filter(item -> "B".equals(item.sessionId())).findFirst().orElseThrow();
     assertThat(sessionB.startType()).isEqualTo("resume");
+  }
+
+  @Test
+  void tokenBreakdownSplitsByTypeWithResetAwareSumsAndSumsToTokens() {
+    Instant base = Instant.now().minus(8, ChronoUnit.MINUTES);
+    // Session I needs a cost/active-time emission to enter session_window at all
+    // (aggregateSessionSummaries' population is driven by cost/active-time, tokens
+    // only enrich it) -- mirrors how A/B/C are seeded.
+    saveCost("I", "opus", "main", 2.0, base);
+
+    // Both 'input' points share the same (session, type) attribute set, so
+    // they're one cumulative stream: value_delta telescopes to the final value
+    // (2500), not the sum of the two raw emissions (1000 + 2500).
+    saveTokenUsageWithType("I", "input", 1000.0, base);
+    saveTokenUsageWithType("I", "input", 2500.0, base.plusSeconds(30));
+    saveTokenUsageWithType("I", "output", 500.0, base.plusSeconds(15));
+    // cacheCreation resets mid-session: segment 1 climbs 0 -> 300 (delta 300);
+    // segment 2 is a lower re-emission (100 < 300), a reset counted in full
+    // (delta 100); segment 3 climbs 100 -> 400 (delta 300). Total = 300 + 100 +
+    // 300 = 700 -- the reset does not erase the real usage in segment 1.
+    saveTokenUsageWithType("I", "cacheCreation", 300.0, base.plusSeconds(20));
+    saveTokenUsageWithType("I", "cacheCreation", 100.0, base.plusSeconds(40));
+    saveTokenUsageWithType("I", "cacheCreation", 400.0, base.plusSeconds(50));
+    saveTokenUsageWithType("I", "cacheRead", 5000.0, base.plusSeconds(25));
+
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummary sessionI = page.items().stream()
+        .filter(item -> "I".equals(item.sessionId())).findFirst().orElseThrow();
+
+    assertThat(sessionI.tokenBreakdown().input()).isEqualTo(2500L);
+    assertThat(sessionI.tokenBreakdown().output()).isEqualTo(500L);
+    assertThat(sessionI.tokenBreakdown().cacheCreation()).isEqualTo(700L);
+    assertThat(sessionI.tokenBreakdown().cacheRead()).isEqualTo(5000L);
+    // tokens is computed as the sum of the four breakdown fields, so the invariant
+    // holds by construction rather than by two independently-computed totals
+    // happening to agree.
+    assertThat(sessionI.tokens()).isEqualTo(sessionI.tokenBreakdown().total());
+    assertThat(sessionI.tokens()).isEqualTo(8700L);
   }
 
   @Test
@@ -265,6 +338,149 @@ class SessionsQueryIntegrationTest {
 
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0)[2]).isNull();
+  }
+
+  @Test
+  void promptsForSessionAttributesModelCostAndToolsPerTurnInterval() {
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(300);
+    Instant turnTwoStart = turnZeroStart.plusSeconds(600);
+
+    saveUserPrompt("F", "Refactor the widget", turnZeroStart, null);
+    saveUserPrompt("F", "Add tests", turnOneStart, null);
+    saveUserPrompt("F", "Ship it", turnTwoStart, null);
+
+    // Turn 0 tool calls: Read x2, Edit x1. Turn 1: Bash x1. Turn 2 (open-ended,
+    // no fourth prompt): Write x1.
+    saveToolResult("F", "Read", turnZeroStart.plusSeconds(60));
+    saveToolResult("F", "Read", turnZeroStart.plusSeconds(120));
+    saveToolResult("F", "Edit", turnZeroStart.plusSeconds(180));
+    saveToolResult("F", "Bash", turnOneStart.plusSeconds(60));
+    saveToolResult("F", "Write", turnTwoStart.plusSeconds(60));
+
+    // Cost stream (session F, model opus, query_source main) resets mid-session:
+    // 5.0 -> 2.0 (a lower re-emission is a reset, counted in full: delta 2.0,
+    // never negative) -> 6.0 (delta 4.0). Exercises value_delta reset-awareness.
+    saveCost("F", "opus", "main", 5.0, turnZeroStart.plusSeconds(30));
+    saveCost("F", "opus", "main", 2.0, turnOneStart.plusSeconds(30));
+    saveCost("F", "opus", "main", 6.0, turnTwoStart.plusSeconds(30));
+
+    // Turn 0: opus (type=input) dominates (delta 100 > haiku's 50); haiku's
+    // stream is type=cacheRead so the turn also covers two distinct token types.
+    saveTokenUsageWithModel("F", "claude-opus", "input", 100.0, turnZeroStart.plusSeconds(15));
+    saveTokenUsageWithModel("F", "claude-haiku", "cacheRead", 50.0, turnZeroStart.plusSeconds(20));
+    // Turn 1: both models continue their own (model, type) stream -- haiku's
+    // delta (150) beats opus's (20), so haiku becomes dominant even though opus
+    // led turn 0.
+    saveTokenUsageWithModel("F", "claude-haiku", "cacheRead", 200.0, turnOneStart.plusSeconds(15));
+    saveTokenUsageWithModel("F", "claude-opus", "input", 120.0, turnOneStart.plusSeconds(20));
+    // Turn 2: only opus's input stream continues -- cacheRead is a missing kind
+    // here, so it must read 0, not be dropped from the breakdown.
+    saveTokenUsageWithModel("F", "claude-opus", "input", 130.0, turnTwoStart.plusSeconds(15));
+
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("F");
+
+    assertThat(prompts).hasSize(3);
+
+    SessionPrompt turnZero = prompts.get(0);
+    assertThat(turnZero.model()).isEqualTo("claude-opus");
+    assertThat(turnZero.costUsd()).isEqualTo(5.0);
+    assertThat(turnZero.tokens()).isEqualTo(new SessionTokenBreakdown(100L, 0L, 0L, 50L));
+    assertThat(turnZero.tools()).containsExactly(
+        new SessionPromptToolCount("Read", 2L), new SessionPromptToolCount("Edit", 1L));
+
+    SessionPrompt turnOne = prompts.get(1);
+    assertThat(turnOne.model()).isEqualTo("claude-haiku");
+    assertThat(turnOne.costUsd()).isEqualTo(2.0);
+    assertThat(turnOne.tokens()).isEqualTo(new SessionTokenBreakdown(20L, 0L, 0L, 150L));
+    assertThat(turnOne.tools()).containsExactly(new SessionPromptToolCount("Bash", 1L));
+
+    // Last turn is open-ended (no fourth prompt closes it) -- the cost/token/tool
+    // points seeded well after turnTwoStart still attribute here. cacheRead has
+    // no points in this turn, so it reads 0 rather than being omitted.
+    SessionPrompt turnTwo = prompts.get(2);
+    assertThat(turnTwo.model()).isEqualTo("claude-opus");
+    assertThat(turnTwo.costUsd()).isEqualTo(4.0);
+    assertThat(turnTwo.tokens()).isEqualTo(new SessionTokenBreakdown(10L, 0L, 0L, 0L));
+    assertThat(turnTwo.tools()).containsExactly(new SessionPromptToolCount("Write", 1L));
+  }
+
+  @Test
+  void promptsForSessionReturnsNullModelCostTokensAndEmptyToolsWhenTurnHasNoEvents() {
+    Instant timestamp = Instant.now().minus(5, ChronoUnit.MINUTES);
+    saveUserPrompt("G", "Just chatting", timestamp, null);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("G");
+
+    assertThat(prompts).hasSize(1);
+    SessionPrompt onlyTurn = prompts.get(0);
+    assertThat(onlyTurn.model()).isNull();
+    assertThat(onlyTurn.costUsd()).isNull();
+    assertThat(onlyTurn.tokens()).isNull();
+    assertThat(onlyTurn.tools()).isEmpty();
+  }
+
+  @Test
+  void promptsForSessionClosesTheLastReturnedTurnAtTheCapBoundaryInsteadOfLeavingItOpenEnded() {
+    Instant base = Instant.now().minus(2, ChronoUnit.HOURS);
+    for (int promptIndex = 0; promptIndex <= PageBounds.MAXIMUM_PAGE_SIZE; promptIndex++) {
+      saveUserPrompt("H", "prompt " + promptIndex, base.plusSeconds(promptIndex), null);
+    }
+    // Falls inside the last RETURNED turn's interval [prompt499, prompt500) --
+    // must be attributed to it.
+    saveToolResult("H", "Read", base.plusSeconds(PageBounds.MAXIMUM_PAGE_SIZE - 1).plusMillis(500));
+    // Falls at the cap boundary itself (prompt500's timestamp, the 501st prompt
+    // that is beyond the 500-row cap and therefore never returned) -- must NOT
+    // be misattributed to the last returned turn as an open-ended interval
+    // would otherwise do.
+    saveToolResult("H", "Write", base.plusSeconds(PageBounds.MAXIMUM_PAGE_SIZE));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("H");
+
+    assertThat(prompts).hasSize(PageBounds.MAXIMUM_PAGE_SIZE);
+    SessionPrompt lastReturnedTurn = prompts.get(prompts.size() - 1);
+    assertThat(lastReturnedTurn.tools()).containsExactly(new SessionPromptToolCount("Read", 1L));
+  }
+
+  private void saveToolResult(String sessionId, String toolName, Instant timestamp) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setAttributes(Map.of(
+        "event.name", TOOL_EVENT_NAME,
+        "session.id", sessionId,
+        TOOL_ATTRIBUTE, toolName));
+    logRecordRepository.save(entity);
+  }
+
+  private void saveTokenUsageWithModel(
+      String sessionId, String model, String tokenType, double value, Instant timestamp) {
+    MetricPointEntity entity = new MetricPointEntity();
+    entity.setMetricName(TOKEN_METRIC);
+    entity.setTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setValueDouble(value);
+    entity.setValueKind("double");
+    entity.setAttributes(Map.of("session.id", sessionId, "model", model, "type", tokenType));
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
+  }
+
+  // Token point without a model attribute -- used for the session-row
+  // tokenBreakdown tests, which split purely by type and don't require model.
+  private void saveTokenUsageWithType(String sessionId, String tokenType, double value, Instant timestamp) {
+    MetricPointEntity entity = new MetricPointEntity();
+    entity.setMetricName(TOKEN_METRIC);
+    entity.setTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setValueDouble(value);
+    entity.setValueKind("double");
+    entity.setAttributes(Map.of("session.id", sessionId, "type", tokenType));
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 
   private void saveUserPrompt(String sessionId, String promptText, Instant timestamp, String traceId) {

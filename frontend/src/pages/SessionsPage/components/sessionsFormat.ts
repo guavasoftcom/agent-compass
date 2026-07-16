@@ -35,19 +35,50 @@ export const formatDuration = (seconds: number): string => {
 };
 
 // Compact token formatter (raw int → "5.4M" / "820K"); matches the Cost column's
-// raw-number / client-format convention used across the Sessions page.
-export const formatTokens = (n: number): string => {
-  if (!Number.isFinite(n) || n <= 0) {
+// raw-number / client-format convention used across the Sessions page. Shared
+// by the grid's Tokens column and PromptTimelinePanel's per-turn token line so
+// both the K/M rounding and the zero-case ("—") stay in exact lockstep.
+export const formatTokens = (value: number): string => {
+  if (!Number.isFinite(value) || value <= 0) {
     return '—';
   }
-  if (n >= 1e6) {
-    return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
+  // Round-trip through the K bucket first: a value like 999,600 rounds to
+  // "1000K" if formatted directly against the 1e6 threshold, so promote
+  // anything that rounds up to 1000K into the M bucket instead.
+  const thousands = Math.round(value / 1e3);
+  if (value >= 1e6 || thousands >= 1000) {
+    return `${(value / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
   }
-  if (n >= 1e3) {
-    return `${Math.round(n / 1e3)}K`;
+  if (value >= 1e3) {
+    return `${thousands}K`;
   }
-  return `${Math.round(n)}`;
+  return `${Math.round(value)}`;
 };
 
 export const formatTimestamp = (value: string): string =>
   value ? new Date(value).toLocaleString() : '';
+
+// Relative "time ago" for the Last activity column (the default sort). Compact
+// buckets — just now / Nm / Nh / Nd ago.
+export const formatRelativeTime = (value: string): string => {
+  if (!value) {
+    return '—';
+  }
+  const secondsAgo = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (secondsAgo < 45) {
+    return 'just now';
+  }
+  if (secondsAgo < 90) {
+    return '1m ago';
+  }
+  if (secondsAgo < 3600) {
+    return `${Math.round(secondsAgo / 60)}m ago`;
+  }
+  if (secondsAgo < 5400) {
+    return '1h ago';
+  }
+  if (secondsAgo < 86400) {
+    return `${Math.round(secondsAgo / 3600)}h ago`;
+  }
+  return `${Math.round(secondsAgo / 86400)}d ago`;
+};

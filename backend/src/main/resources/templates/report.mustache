@@ -18,14 +18,15 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 ---
 
 > **How to use this report**
-> Review each section in priority order and apply fixes to `AGENTS.md`, subagent prompts, or skills as appropriate:
+> Work the sections in priority order. Every fix lands in `AGENTS.md`, a directory `CLAUDE.md`, a subagent prompt, or a skill:
 >
-> 1. **Failures** — add an `AGENTS.md` rule for each `(tool, error_type)` pair. Quote the exact command or scope in the rule.
-> 2. **Redundant reads — hunting loops only** — add a rule to read the full file once before editing. Skip rows where pattern is *spread across session*.
-> 3. **Suggestions** — apply each unless already covered by a rule above.
-> 4. **Bash antipatterns** — replace with the named dedicated tool.
+> 1. **Failures** — write one rule per recurring *root cause* (not per raw error type: a generic `ShellError` bucket covers unrelated causes). Quote the failing *pattern* — a command shape, a flag, a tool misuse — never a session-specific path; scratchpad paths are dead by the next session. Rows with root cause `other` need manual triage before any rule is written.
+> 2. **Path near-misses** — almost always a retyped path. One rule fixes the class: copy file paths verbatim from prior tool results (especially into subagent prompts); never retype long UUID/scratchpad paths.
+> 3. **Redundant reads** — only **hunting loop** rows warrant a rule; *tight cluster* and *spread across session* re-reads are usually normal context refresh in long sessions.
+> 4. **Suggestions** — already filtered to respect the skip rules above; apply each unless an existing rule covers it.
+> 5. **Bash command hotspots** — antipattern suggestions name the dedicated replacement tool. `cd`-prefixes are stripped before grouping, so slow rows are genuinely slow commands: narrow their scope or run them in the background.
 >
-> Skip: *spread across session* redundant reads, tools with p95 < 2× avg latency, and oversized results from external sources (WebSearch, WebFetch, Agent).
+> **Not defects — don't write rules against these:** long `Agent` calls that return short summaries (that is the ideal delegation shape), image/screenshot reads (image bytes don't cost context like text, and can't be paged), and slow builds or test suites (slow by nature — background them instead).
 
 ---
 
@@ -34,19 +35,33 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 
 Total failed tool calls: **{{totalFailures}}**.
 
-| Tool | Error type | Example scope | Example message | Count |
-|---|---|---|---|---:|
+| Tool | Error type | Root cause | Example scope | Example message | Count |
+|---|---|---|---|---|---:|
 {{#failures}}
-| `{{tool}}` | `{{errorType}}` | `{{exampleScope}}` | {{exampleMessage}} | {{count}} |
+| `{{tool}}` | `{{errorType}}` | `{{errorSignature}}` | `{{exampleScope}}` | {{exampleMessage}} | {{count}} |
 {{/failures}}
 
-Repeated failures of the same `(tool, error_type)` pair are the highest-signal tuning input — they usually indicate the agent is misusing a tool, hitting a missing dependency, or fighting a permission. Address them in `AGENTS.md` or a skill before chasing usage-mix issues.
+*Root cause* is derived from the raw error message, so one coarse error type splits into rule-sized groups (`command-not-found`, `missing-path`, `permission-denied`, `timeout`, `old-string-mismatch`). Write one rule per recurring root cause. `other` is a catch-all: read those failures individually before writing anything — one blanket rule over a mixed bucket usually bans the wrong thing.
 
 {{/hasFailures}}
+{{#hasPathNearMisses}}
+## Path near-misses (likely typos)
+
+Failed reads whose path sits within a few edits of a path the **same session** read successfully — almost always a retyped path, with UUID-heavy scratchpad directories the usual victim. (Fail-then-succeed on an *identical* path is excluded; that's a read-before-create race, not a typo.)
+
+| Session | Failed path | Nearest successful path | Edit distance | Failed attempts |
+|---|---|---|---:|---:|
+{{#pathNearMisses}}
+| `{{sessionId}}` | `{{failedPath}}` | `{{nearestSuccessfulPath}}` | {{editDistance}} | {{failures}} |
+{{/pathNearMisses}}
+
+Fix: add a rule to copy paths verbatim from prior tool results — especially when briefing subagents — instead of retyping them.
+
+{{/hasPathNearMisses}}
 {{#hasRedundantReads}}
 ## Redundant file reads
 
-Files read more than once in the same session. Re-reading after an `Edit` is usually wasted — `Edit` already errors loudly on failure, so the harness state is trustworthy.
+Files read more than once in the same session.
 
 | Session | File | Reads | Span (min) | Max gap (min) | Pattern |
 |---|---|---:|---:|---:|---|
@@ -54,7 +69,7 @@ Files read more than once in the same session. Re-reading after an `Edit` is usu
 | `{{sessionId}}` | `{{filePath}}` | {{reads}} | {{spanMinutes}} | {{maxGapMinutes}} | {{pattern}} |
 {{/redundantReads}}
 
-`Pattern` distinguishes a tight **hunting loop** (≥ 3 reads, max gap ≤ 5 min — the agent is retrying) from a **spread across session** (max gap ≥ 30 min — incidental re-reads, often benign) and a **tight cluster** in between. Hunting loops are the high-priority targets; *spread across session* rows usually don't need an `AGENTS.md` rule.
+`Pattern` distinguishes a tight **hunting loop** (≥ 3 reads, max gap ≤ 5 min — the agent is retrying or re-verifying) from **spread across session** (max gap ≥ 30 min — re-reads after long gaps, usually legitimate context refresh) and a **tight cluster** in between. Only hunting loops warrant a rule. Caveat: multi-agent workflows show up here too — five subagents each reading the same diff once looks like five reads in one session and is working as intended; check whether the session fanned out before writing a rule.
 
 {{/hasRedundantReads}}
 {{#hasEditLoops}}
@@ -74,7 +89,7 @@ Mitigations: provide more context in `old_string` (full lines including indentat
 {{#hasSuggestions}}
 ## Suggestions
 
-Concrete tuning candidates, derived from the sections below.
+Concrete tuning candidates derived from the sections in this report, pre-filtered to the skip rules in the header (hunting loops only, no externally-determined tools, no image reads).
 
 {{#suggestions}}
 - {{.}}
@@ -84,9 +99,9 @@ Concrete tuning candidates, derived from the sections below.
 {{#hasBashHotspots}}
 ## Bash command hotspots
 
-Bash calls grouped by leading command. Use this to spot shell patterns that could be replaced by a dedicated tool, narrowed in scope, or removed entirely.
+Bash calls grouped by leading command. Leading `cd <dir> && ` prefixes are stripped before grouping, so each row's latency belongs to the command that actually ran — a slow `./mvnw` row is a slow Maven build, not a slow `cd`.
 
-Coverage: **{{bashCoverageWithCommand}} of {{bashCoverageTotal}}** Bash calls in this window had a captured `tool_input.command`. Calls without one bucket under `unknown` and aren't tunable from this report.
+Coverage: **{{bashCoverageWithCommand}} of {{bashCoverageTotal}}** Bash calls in this window had a captured `tool_input.command`; **{{bashCoverageCdPrefixed}}** of them carried a `cd` prefix. A high `cd`-prefix share is its own signal — check whether `AGENTS.md` run/build examples teach the `cd dir && …` form and rewrite them path-scoped.
 
 | Command | Calls | Avg ms | p95 ms | Avg result bytes |
 |---|---:|---:|---:|---:|
@@ -104,7 +119,7 @@ Coverage: **{{bashCoverageWithCommand}} of {{bashCoverageTotal}}** Bash calls in
 | `{{tool}}` | {{calls}} | {{avgMs}} | {{p95Ms}} | {{avgOut}} |
 {{/performance}}
 
-Latency tails (p95) tend to surface tools that occasionally do heavy work — long shell commands, slow MCP servers, large file reads. If a tool's p95 is much higher than its average, consider whether the agent could narrow its inputs (smaller globs, shorter shell pipelines, paged reads).
+Latency tails (p95) surface tools that occasionally do heavy work — long shell commands, slow MCP servers, large file reads. If a tool's p95 is much higher than its average, consider whether the agent could narrow its inputs (smaller globs, shorter shell pipelines, paged reads). `Agent` is the exception: subagents legitimately run for many minutes and return a short summary — high latency here is delegation working, not a defect.
 
 {{/hasPerformance}}
 ## Tool call mix
@@ -120,15 +135,15 @@ Total tool calls: **{{total}}**.
 {{#hasOversized}}
 ## Oversized tool results
 
-The largest individual tool results in the window. Each row is one call — payloads this size dominate context cost and often indicate an unscoped read or shell dump.
+The largest tool results in the window. Identical calls (same tool, scope, and size) are grouped — *Calls* shows how many times that exact payload was pulled into context, so the true context cost of a row is Bytes × Calls. Payloads this size usually indicate an unscoped read or shell dump. Externally-determined results (`Agent`, `WebSearch`, `WebFetch`) and image/binary reads are excluded at the query level, so every row here is tunable.
 
-| Tool | Scope | Bytes |
-|---|---|---:|
+| Tool | Scope | Bytes | Calls |
+|---|---|---:|---:|
 {{#oversized}}
-| `{{tool}}` | `{{scope}}` | {{bytes}} |
+| `{{tool}}` | `{{scope}}` | {{bytes}} | {{occurrences}} |
 {{/oversized}}
 
-Suggestions: pipe long command output through a summarizer, skip lockfiles, paginate `Read`, or replace dump-style commands with targeted queries. Results from `WebSearch`, `WebFetch`, and `Agent` are externally determined — ignore those rows.
+Suggestions: paginate `Read` (offset/limit), skip lockfiles and generated files, or replace dump-style commands with targeted queries.
 
 {{/hasOversized}}
 {{/hasRows}}

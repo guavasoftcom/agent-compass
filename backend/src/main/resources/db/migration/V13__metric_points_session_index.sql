@@ -1,0 +1,21 @@
+-- Session-id expression index on metric_points, mirroring V3's
+-- idx_log_records_session_id_ts for log_records.
+--
+-- Without this index, the prompt-timeline's per-turn enrichment queries
+-- (MetricPointRepository#findCostPointsForSession /
+-- #findTokenPointsForSession) have nothing to walk but the V2 jsonb_path_ops
+-- GIN index -- which only serves `@>` containment, never `->>` equality -- so
+-- every prompt-panel row expand scanned the full history of the cost/token
+-- metric (~1M+ token rows live at time of writing). Composite on
+-- (session id, metric_name, timestamp) so both the session filter and the
+-- metric_name filter are covered by the index prefix, with timestamp trailing
+-- to also serve the queries' [firstTurnStart, turnsEndBoundary) range bound
+-- and ORDER BY timestamp ASC.
+--
+-- NOTE: if applying this out-of-band to a live database (rather than via a
+-- fresh Flyway migrate), build it CONCURRENTLY instead to avoid taking a
+-- table-locking write outage on metric_points:
+--   CREATE INDEX CONCURRENTLY idx_metric_points_session_id_name_ts
+--       ON metric_points ((attributes ->> 'session.id'), metric_name, timestamp);
+CREATE INDEX idx_metric_points_session_id_name_ts
+    ON metric_points ((attributes ->> 'session.id'), metric_name, timestamp);

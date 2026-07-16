@@ -25,6 +25,21 @@ satisfies every rule below.
   access fails to compile. Import `Theme` from `@mui/material/styles` and annotate
   the parameter `(t: Theme)`.
 
+## Module layout / import paths (Vite fails to resolve otherwise)
+
+- Cross-cutting app modules live under `src/lib/` — NOT at the `src/` root. From a
+  page file (`src/pages/<Name>Page/*.tsx`) import them as:
+  `'../../lib/constants'` (`WINDOWS`, `WindowOption`), `'../../lib/windowContext'`
+  (`useWindowContext`), `'../../lib/resolveWindow'`, `'../../lib/format'`.
+  NEVER `'../../constants'` or `'../../windowContext'` — those files don't exist and
+  every Sessions regeneration so far has shipped this exact broken import.
+- Theme tokens: `'../../theme/colors'` / `'../../theme/typography'` (no barrel).
+- Page-local leaf components live in a folder with an `index.ts` barrel
+  (`components/<Name>/<Name>.tsx` + `index.ts`). Re-export EVERY named export the
+  page imports (components AND types), not just the default.
+- Import only what is used — an unused `Typography` (or any unused import) fails the
+  ESLint build.
+
 ## ESLint (the build fails otherwise)
 
 - Braces on every `if` / `else` / `for` / `while` body, even one-liners:

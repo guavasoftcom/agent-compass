@@ -52,5 +52,13 @@ public record SessionSummary(
                 example = "Add user-prompt context to the sessions API") String firstUserPrompt,
 
         @Schema(description = "Total number of user_prompt log records for this session",
-                example = "7") long userPromptCount) {
+                example = "7") long userPromptCount,
+
+        @Schema(description = "This session's tokens split by type over the window. tokens is computed as the "
+                + "sum of these four fields (single source, so the two always reconcile within this response). "
+                + "Not guaranteed to equal the sum of the per-turn tokens on GET /api/sessions/{id}/prompts: this "
+                + "field is window-scoped while the prompt timeline is whole-session and drops points outside "
+                + "any captured turn's interval (pre-first-prompt, or beyond the 500-turn cap) -- the same "
+                + "accepted trade-off as costUsd there.")
+        SessionTokenBreakdown tokenBreakdown) {
 }

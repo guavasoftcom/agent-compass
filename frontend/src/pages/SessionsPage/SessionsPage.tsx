@@ -15,7 +15,9 @@ import SessionsPageView, {
 } from './SessionsPageView';
 
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
-const DEFAULT_SORT: SessionsSortModel = { field: 'costUsd', direction: 'desc' };
+// Sessions land sorted by most-recent activity (recency = the operational default;
+// cost is one click away on its sortable column). Maps to the existing `endTimestamp`.
+const DEFAULT_SORT: SessionsSortModel = { field: 'endTimestamp', direction: 'desc' };
 
 const EMPTY_KPIS: SessionsKpis = {
   totalSessions: 0,
@@ -33,8 +35,7 @@ export default function SessionsPage() {
     pageSize: DEFAULT_PAGE_SIZE,
   });
   const [sortModel, setSortModel] = useState<SessionsSortModel>(DEFAULT_SORT);
-  // Prompt-timeline row expansion: only one session's prompts are shown at a
-  // time, so this is a single id rather than a Set.
+  // Prompt-timeline row expansion: only one session's prompts are shown at a time.
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
 
   const selectionKey =
@@ -67,16 +68,18 @@ export default function SessionsPage() {
     placeholderData: keepPreviousData,
   });
 
-  // Full prompt timeline for the expanded row only; not window-scoped and not
-  // polled (no refetchInterval). It still revalidates on its own once the
-  // default 30s staleTime elapses (set globally in main.tsx) and the row is
-  // re-expanded, which matters for live sessions that keep gaining prompts —
-  // this is a cached-then-revalidate read, not a permanently static one.
+  // Full, untruncated prompt timeline for the expanded session. Fires only while
+  // a row is open (enabled gate); not polled. Re-expanding refetches past the
+  // global staleTime so a live session's growing timeline stays current.
   const sessionPromptsQuery = useQuery({
     queryKey: ['session-prompts', expandedSessionId],
     queryFn: () => fetchSessionPrompts(expandedSessionId as string),
     enabled: expandedSessionId !== null,
   });
+
+  const handleToggleExpand = (sessionId: string) => {
+    setExpandedSessionId((previous) => (previous === sessionId ? null : sessionId));
+  };
 
   const handleReload = () => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
@@ -84,6 +87,9 @@ export default function SessionsPage() {
     sessionsQuery.refetch();
   };
 
+  // An expanded row rarely maps to the same position after a window/sort/page
+  // change, so drop the open panel defensively on each. onReload is intentionally
+  // NOT reset — it revalidates the same page and shouldn't collapse the panel.
   const handleSelectionChange = (next: WindowSelection) => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
     setExpandedSessionId(null);
@@ -99,10 +105,6 @@ export default function SessionsPage() {
   const handlePaginationModelChange = (next: PaginationModel) => {
     setExpandedSessionId(null);
     setPaginationModel(next);
-  };
-
-  const handleToggleExpand = (sessionId: string) => {
-    setExpandedSessionId((previous) => (previous === sessionId ? null : sessionId));
   };
 
   const isPolling =

@@ -179,33 +179,62 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end);
 
-  // Per-(tool, error_type) failure counts over tool_result events. success is
-  // stored as a
-  // JSON boolean; ->>'success' returns text, so compare to the string 'false'.
-  // error_type is
-  // only present on failures — COALESCE keeps unlabeled failures grouped under
+  // Per-(tool, error_type, root cause) failure counts over tool_result events.
+  // success is
+  // stored as a JSON boolean; ->>'success' returns text, so compare to the string
+  // 'false'.
+  // error_type is only present on failures — COALESCE keeps unlabeled failures
+  // grouped under
   // 'unknown'.
-  // exampleScope and exampleMessage are picked via MIN(...) over the matching
-  // rows: any
-  // single failing call gives the reader enough context (the specific command or
-  // file path
-  // and the raw error string) without bloating the report with every variant.
+  //
+  // error_signature splits coarse error_type buckets (a generic ShellError covers
+  // dozens of
+  // unrelated root causes) into rule-sized groups derived from the raw error
+  // message. The
+  // regex literals live here rather than TuningProperties because @Query native
+  // SQL cannot
+  // read Spring properties at query-parse time — same trade-off as
+  // derive_log_severity().
+  // 'other' deliberately stays a catch-all: the report tells readers those rows
+  // need manual
+  // triage instead of a single blanket rule.
+  //
+  // exampleScope is picked via MIN(...) over the matching rows; exampleMessage
+  // prefers the
+  // smallest NON-EMPTY message (MIN over NULLIF) so a blank-error row can't mask
+  // a useful one.
   @Query(value = """
+      WITH failure_events AS (
+        SELECT
+          COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+          COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
+          COALESCE(attributes ->> 'error', '')               AS error_message,
+          COALESCE(
+            (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+            (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+            '')                                              AS scope
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND attributes ->> 'success' = 'false'
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
-        MIN(COALESCE(
-              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-              ''))                                          AS example_scope,
-        MIN(COALESCE(attributes ->> 'error', ''))           AS example_message,
-        COUNT(*)                                            AS failures
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> 'success' = 'false'
-        AND timestamp >= :start
-        AND timestamp <= :end
-      GROUP BY tool, error_type
+        tool,
+        error_type,
+        CASE
+          WHEN error_message ~* 'command not found'                                  THEN 'command-not-found'
+          WHEN error_message ~* 'no such file or directory|does not exist|cannot find' THEN 'missing-path'
+          WHEN error_message ~* 'permission denied|operation not permitted|not allowed' THEN 'permission-denied'
+          WHEN error_message ~* 'timed out|timeout'                                  THEN 'timeout'
+          WHEN error_message ~* 'string to replace not found|old_string'             THEN 'old-string-mismatch'
+          ELSE 'other'
+        END                            AS error_signature,
+        MIN(scope)                     AS example_scope,
+        MIN(NULLIF(error_message, '')) AS example_message,
+        COUNT(*)                       AS failures
+      FROM failure_events
+      GROUP BY tool, error_type, error_signature
       ORDER BY failures DESC
       """, nativeQuery = true)
   List<Object[]> aggregateToolFailuresInRange(
@@ -465,25 +494,40 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // avoid an invalid jsonb cast, then parse and split_part on the first space.
   // Rows that
   // didn't capture a tool_input bucket under 'unknown'.
+  //
+  // Leading `cd <dir> && ` / `cd <dir>; ` / newline-chained `cd <dir>` prefixes
+  // are stripped
+  // before taking the first token: agents habitually prefix real commands with
+  // cd, which
+  // would otherwise charge the real command's latency to a meaningless 'cd'
+  // bucket (a 27 s
+  // `cd backend && ./mvnw verify` is a slow Maven build, not a slow cd). The (…)+
+  // group
+  // strips repeated chains; \n is a character-entry escape Postgres ARE accepts
+  // inside
+  // bracket expressions, so multi-line commands re-bucket correctly too.
   @Query(value = """
+      WITH bash_calls AS (
+        SELECT
+          ltrim(regexp_replace(
+            (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+            '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
+            ''))                                        AS command,
+          (attributes ->> 'duration_ms')::numeric            AS duration_ms,
+          (attributes ->> 'tool_result_size_bytes')::numeric AS result_bytes
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND attributes ->> :toolAttribute = 'Bash'
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
       SELECT
-        COALESCE(
-          NULLIF(
-            split_part(
-              (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-              ' ',
-              1),
-            ''),
-          'unknown')                                                                       AS command_prefix,
-        COUNT(*)                                                                            AS calls,
-        ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                 AS avg_ms,
-        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
-        ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                      AS avg_out
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> :toolAttribute = 'Bash'
-        AND timestamp >= :start
-        AND timestamp <= :end
+        COALESCE(NULLIF(split_part(command, ' ', 1), ''), 'unknown') AS command_prefix,
+        COUNT(*)                                                      AS calls,
+        ROUND(AVG(duration_ms))                                       AS avg_ms,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)) AS p95_ms,
+        ROUND(AVG(result_bytes))                                      AS avg_out
+      FROM bash_calls
       GROUP BY command_prefix
       ORDER BY calls DESC
       LIMIT :hotspotLimit
@@ -500,24 +544,59 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // tool_input JSON string; fall through to '' so callers can still see the byte
   // count even
   // when tool_input wasn't captured.
+  //
+  // Two row classes are excluded because they are not tunable and would crowd
+  // actionable
+  // rows out of the LIMIT: tools whose result size is externally determined
+  // (Agent,
+  // WebSearch, …, caller-supplied), and image/binary reads — an agent reading a
+  // screenshot
+  // is desirable behavior, the bytes don't translate to context tokens the way
+  // text does,
+  // and an image can't be paged.
+  //
+  // Identical (tool, scope, bytes) calls collapse into one row with an occurrence
+  // count: the
+  // same file re-read nine times used to fill nine LIMIT slots while carrying one
+  // row of
+  // information. The command-branch scope strips leading cd chains with the same
+  // regex as
+  // the hotspot bucketing so re-runs of `cd x && <cmd>` and plain `<cmd>` group
+  // together.
   @Query(value = """
+      WITH sized_calls AS (
+        SELECT
+          COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
+          COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+                   ltrim(regexp_replace(
+                     (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                     '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
+                     '')),
+                   '')                                            AS scope,
+          ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+          AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
+          AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
+              !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
-        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                 '')                                            AS scope,
-        ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
-        AND timestamp >= :start
-        AND timestamp <= :end
+        tool,
+        scope,
+        bytes,
+        COUNT(*) AS occurrences
+      FROM sized_calls
+      GROUP BY tool, scope, bytes
       ORDER BY bytes DESC
       LIMIT :resultLimit
       """, nativeQuery = true)
   List<Object[]> aggregateOversizedToolResultsInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("resultLimit") int resultLimit);
@@ -606,11 +685,30 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // This is the cross-cut the per-tool summaries hide: a call can be average on
   // each axis
   // alone yet dominate context cost when both stack.
+  //
+  // Externally-determined tools are excluded: a subagent (Agent) running 30+
+  // minutes and
+  // returning a short summary is the ideal delegation shape, not an offender, and
+  // web
+  // results are sized by the remote site — neither is tunable from AGENTS.md.
+  // Image/binary
+  // reads are excluded for the same reason as in the oversized query: the read is
+  // desirable
+  // and can't be paged.
+  //
+  // The command-branch scope strips leading cd chains with the same regex as the
+  // hotspot
+  // bucketing, so the report attributes a worst-call fact to the command that
+  // actually ran
+  // (`./mvnw verify`), never back to a `cd` bucket.
   @Query(value = """
       SELECT
         COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
         COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-                 (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                 ltrim(regexp_replace(
+                   (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                   '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
+                   '')),
                  '')                                       AS scope,
         ((attributes ->> 'duration_ms')::numeric)::bigint            AS duration_ms,
         ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
@@ -618,6 +716,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE attributes ->> 'event.name' = :eventName
         AND attributes ->> 'duration_ms' IS NOT NULL
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
+        AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
+            !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
         AND (attributes ->> 'duration_ms')::numeric >= :minDurationMs
         AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
         AND timestamp >= :start
@@ -629,6 +730,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateSlowAndLargeCallsInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("minDurationMs") long minDurationMs,
@@ -641,11 +743,16 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // total. Lets
   // the report state the denominator instead of silently lumping uninstrumented
   // calls into
-  // 'unknown'.
+  // 'unknown'. cd_prefixed counts commands that lead with `cd …` — the hotspot
+  // query strips
+  // those prefixes before bucketing, and a high share is its own tuning signal
+  // (AGENTS.md
+  // command examples teaching `cd dir && …` instead of path-scoped invocations).
   @Query(value = """
       SELECT
         COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' IS NOT NULL) AS with_command,
-        COUNT(*)                                                                                          AS total
+        COUNT(*)                                                                                          AS total,
+        COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' ~ '^\\s*cd\\s') AS cd_prefixed
       FROM log_records
       WHERE attributes ->> 'event.name' = :eventName
         AND attributes ->> :toolAttribute = 'Bash'
@@ -657,6 +764,63 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
+
+  // Failed Read calls grouped by (session, file_path) — the raw material for the
+  // path
+  // near-miss (typo) detection in the tuning report. The service pairs each row
+  // against the
+  // distinct successfully-read paths of the same session and keeps the pairs
+  // within a small
+  // edit distance; the distance math stays in Java to avoid a fuzzystrmatch
+  // extension
+  // dependency (and its 255-char levenshtein limit — scratchpad paths run long).
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> 'session.id', 'unknown')                 AS session_id,
+        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
+        COUNT(*)                                                          AS failures
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Read'
+        AND attributes ->> 'success' = 'false'
+        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY session_id, file_path
+      ORDER BY failures DESC
+      LIMIT :failedReadLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateFailedReadPathsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("failedReadLimit") int failedReadLimit);
+
+  // Distinct (session, file_path) pairs that Read succeeded on — the comparison
+  // set for the
+  // path near-miss detection. Capped defensively; a window busy enough to exceed
+  // the cap
+  // still yields useful (if incomplete) matches.
+  @Query(value = """
+      SELECT DISTINCT
+        COALESCE(attributes ->> 'session.id', 'unknown')                 AS session_id,
+        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> :toolAttribute = 'Read'
+        AND attributes ->> 'success' = 'true'
+        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND timestamp >= :start
+        AND timestamp <= :end
+      LIMIT :pathLimit
+      """, nativeQuery = true)
+  List<Object[]> distinctSuccessfulReadPathsInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("pathLimit") int pathLimit);
 
   // Consecutive same-tool repeats per session, scoped by file_path / command /
   // (no scope).
@@ -855,6 +1019,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // span's trace id; the nested NULLIF normalizes both the empty string and the
   // all-zero placeholder trace id (pre-tracing sessions) down to SQL NULL so the
   // service never has to special-case either sentinel value.
+  // id ASC is a tiebreaker for the rare case of two user_prompt rows sharing an
+  // identical timestamp (e.g. sub-millisecond-identical ingests): it makes the
+  // row order -- and therefore LogService#turnIndexForTimestamp's turn
+  // boundaries, which are built directly from this ordering -- deterministic
+  // across requests instead of depending on incidental heap/plan order.
   @Query(value = """
       SELECT
         lr.timestamp                                                     AS event_timestamp,
@@ -863,7 +1032,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       FROM log_records lr
       WHERE lr.attributes ->> 'event.name' = :eventName
         AND lr.attributes ->> 'session.id' = :sessionId
-      ORDER BY lr.timestamp ASC
+      ORDER BY lr.timestamp ASC, lr.id ASC
       LIMIT :promptLimit
       """, nativeQuery = true)
   List<Object[]> findPromptsForSession(
@@ -871,6 +1040,36 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("eventName") String eventName,
       @Param("promptAttribute") String promptAttribute,
       @Param("promptLimit") int promptLimit);
+
+  // Every tool_result event for one session, oldest first, feeding the prompt
+  // timeline's per-turn "tools" rollup. Not aggregated here: the caller
+  // (LogService) buckets each row into its owning turn by comparing this
+  // timestamp against the session's ascending prompt timestamps, then groups
+  // by tool name per turn — the same "walk the sorted rows" idiom used for the
+  // per-turn cost and token/model rollups, so the three per-turn signals share
+  // one attribution strategy. Bounded to [firstTurnStart, turnsEndBoundary) --
+  // same rationale and NULL-or-compare semantics as
+  // MetricPointRepository#findCostPointsForSession -- so a long or resume-heavy
+  // session's tool_result history isn't scanned in full on every prompt-panel
+  // expand.
+  @Query(value = """
+      SELECT
+        lr.timestamp                     AS event_timestamp,
+        lr.attributes ->> :toolAttribute  AS tool_name
+      FROM log_records lr
+      WHERE lr.attributes ->> 'event.name' = :toolEventName
+        AND lr.attributes ->> 'session.id' = :sessionId
+        AND lr.attributes ->> :toolAttribute IS NOT NULL
+        AND lr.timestamp >= :firstTurnStart
+        AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR lr.timestamp < :turnsEndBoundary)
+      ORDER BY lr.timestamp ASC
+      """, nativeQuery = true)
+  List<Object[]> findToolEventsForSession(
+      @Param("sessionId") String sessionId,
+      @Param("toolEventName") String toolEventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("firstTurnStart") Instant firstTurnStart,
+      @Param("turnsEndBoundary") Instant turnsEndBoundary);
 
   // =========================================================================
   // Logs-page aggregation queries (histogram, facets, cursor paging, offset

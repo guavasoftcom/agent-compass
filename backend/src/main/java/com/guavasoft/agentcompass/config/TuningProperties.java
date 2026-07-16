@@ -1,6 +1,7 @@
 package com.guavasoft.agentcompass.config;
 
 import java.util.List;
+import java.util.Map;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -200,12 +201,28 @@ public class TuningProperties {
 
   /**
    * First tokens of Bash commands that have a dedicated tool replacement in the
-   * configured coding agent. Matched against each hotspot's commandPrefix to
-   * generate anti-pattern suggestions in the tuning report.
-   * Defaults reflect Claude Code's tool inventory (Read, Write, Edit).
+   * configured coding agent, mapped to the replacement to name in the tuning
+   * report's anti-pattern suggestions. Matched against each hotspot's
+   * commandPrefix. Defaults reflect Claude Code's tool inventory.
    */
-  private List<String> bashAntipatternPrefixes = List.of(
-      "cat", "head", "tail", "find", "sed", "awk", "echo");
+  private Map<String, String> bashAntipatternReplacements = Map.of(
+      "cat", "Read",
+      "head", "Read (with limit)",
+      "tail", "Read (with offset)",
+      "find", "Glob",
+      "sed", "Read + Edit",
+      "awk", "Grep",
+      "echo", "Write");
+
+  /**
+   * Tools whose latency and result size are externally determined — subagents
+   * that legitimately run long and return short summaries, and web tools whose
+   * payload the remote site controls. Excluded from the tuning report's
+   * oversized-result and slow-and-large offender lists because nothing in
+   * AGENTS.md can tune them.
+   */
+  private List<String> externallyDeterminedTools = List.of(
+      "Agent", "Task", "WebSearch", "WebFetch");
 
   // -------------------------------------------------------------------------
   // Derived-severity classification defaults

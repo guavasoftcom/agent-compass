@@ -76,7 +76,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - `GET /api/metrics` — raw metric points, offset-paged (`page`/`size`, size clamped to 500, `totalCount` in the body); plus `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
 - `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`.
 - `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, and `/api/traces/{traceId}/logs` cross-signal log linkage.
-- `GET /api/sessions` — session list, with `/summary` and `/token-usage`.
+- `GET /api/sessions` — session list, with `/summary`, `/token-usage`, and `/{sessionId}/prompts` (per-session prompt timeline with per-turn model / cost / token / tool rollups).
 
 ### Report
 
@@ -91,7 +91,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 
 - **Tool Usage** — tabbed section: call mix and latency, reliability (failure rates, denials, repeats), skills & subagents.
 - **Token Usage** — token composition, per-model breakdown, and cost.
-- **Sessions** — session list with summary KPIs and per-session token usage.
+- **Sessions** — session list with summary KPIs, per-session token usage, and a first-prompt preview per row; rows expand into a per-turn prompt timeline (model, cost, token breakdown, tool calls).
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
 - **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body; rows expand to an inline span summary, with a full per-trace span detail (waterfall) and cross-signal logs.

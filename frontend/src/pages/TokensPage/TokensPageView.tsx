@@ -206,6 +206,7 @@ const TokensPageView = ({
 
   return (
     <PageLayout
+      eyebrow="Activity"
       title="Token Usage"
       subtitle={
         'Spend, token volume and composition over the selected window. The cache-read ratio '

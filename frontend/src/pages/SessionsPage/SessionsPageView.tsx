@@ -2,6 +2,7 @@ import { Paper } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import TablePager from '../../components/TablePager';
+import { resolveWindow } from '../../lib/resolveWindow';
 import SessionsKpiStrip from './components/SessionsKpiStrip';
 import SessionsTable from './components/SessionsTable';
 import type {
@@ -44,6 +45,7 @@ export interface SessionsPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
+  // Prompt-timeline row expansion (single open row at a time).
   expandedSessionId: string | null;
   onToggleExpand: (sessionId: string) => void;
   promptTimeline: SessionPromptRow[] | null;
@@ -80,6 +82,15 @@ const SessionsPageView = ({
 }: SessionsPageViewProps) => {
   const showLoading = isLoading && rows.length === 0;
   const showEmpty = !isLoading && rows.length === 0;
+
+  // Bounds of the active window, so the prompt timeline can dim turns that
+  // fall outside it (the /prompts endpoint returns the whole session, not
+  // just the windowed slice). Derived from the same resolveWindow helper
+  // LogsPage/TracesPage use, so dimming can't contradict what the data
+  // fetches actually counted.
+  const resolvedWindow = resolveWindow(selection);
+  const windowStartMs = Date.parse(resolvedWindow.startTimestamp);
+  const windowEndMs = Date.parse(resolvedWindow.endTimestamp);
 
   return (
     <PageLayout
@@ -128,6 +139,8 @@ const SessionsPageView = ({
             promptTimeline={promptTimeline}
             promptTimelineLoading={promptTimelineLoading}
             promptTimelineError={promptTimelineError}
+            windowStartMs={windowStartMs}
+            windowEndMs={windowEndMs}
           />
         </div>
         <TablePager

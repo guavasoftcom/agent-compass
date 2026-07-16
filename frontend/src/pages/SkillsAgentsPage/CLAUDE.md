@@ -1,4 +1,4 @@
-# Skills & Agents page
+# Skills & Subagents page
 
 A section tab under [Tool Usage (`/tool-activity`)](../ToolActivitySection/ToolActivitySection.tsx)
 that shows skill and subagent invocation breakdowns for the selected window: four KPI tiles plus
@@ -74,8 +74,10 @@ the skill or subagent identifier; `calls` is the invocation count.
 - **`ToolCallRow.tool`** carries a different semantic on each endpoint: skill identifier on
   `/skill-usage`, subagent identifier on `/subagent-usage`. The field is reused for both
   because the backend notes "Reuses the `ToolCallCount` shape".
-- **Empty state wording** differs intentionally: skills show `"No Skill invocations in this
-  window."` while subagents show `"No Task invocations in this window."` — "Task" is the
-  user-facing label for the subagent-dispatch tool.
+- **Empty state wording**: skills show `"No Skill invocations in this window."` and subagents
+  show `"No subagent invocations in this window."` — both use the same "subagent" vocabulary as
+  the rest of the page. (The subagent empty state previously read "No Task invocations" — "Task"
+  was the old name for the subagent-dispatch tool, now named `Agent` in the backend's
+  `subagentToolName`; don't reintroduce it.)
 - **`IdentifierRowWithShare`** is exported from `SkillsAgentsPageView.tsx` (not from `index.ts`);
   the container imports it directly via the named import path.
