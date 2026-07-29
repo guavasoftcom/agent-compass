@@ -92,6 +92,12 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
 the UI, so they need no sort support. Other existing sortable fields (`startTimestamp`,
 `costUsd`, `activeTimeSeconds`, `costPerActiveMinuteUsd`) are unchanged.
 
+> **Later addition — `cacheEfficiency` sort.** The *Cache eff.* column
+> (`cacheRead / (input + cacheCreation + cacheRead)`, derived client-side from `tokenBreakdown`)
+> is sortable server-side via `sort=cacheEfficiency&direction=desc|asc`. The backend's `ORDER BY`
+> uses the identical ratio and orders sessions with no input-side tokens `NULLS LAST` (they render
+> as "—"). No new response field — the row already carries `tokenBreakdown`.
+
 > **Default sort changed** from `costUsd desc` to **`endTimestamp desc`** (most recently active
 > first) — recency is the operational landing state; cost remains one click away on its column.
 > `endTimestamp` should reflect the session's **latest captured activity** (max event time for

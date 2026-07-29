@@ -146,6 +146,7 @@ public class MetricService {
       "activeTimeSeconds", "active",
       "wallSeconds", "wall",
       "tokens", "tokens",
+      "cacheEfficiency", "cacheEfficiency",
       "costPerActiveMinuteUsd", "costPerMinute",
       "startTimestamp", "started",
       "endTimestamp", "ended");

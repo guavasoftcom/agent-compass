@@ -69,7 +69,8 @@ the view takes typed props and contains no `useQuery` or context reads.
 │ ┌─ Paper: sessions table (calc(100vh - 320px), min 420px) ──────────┐   │
 │ │ <SessionsTable>                                                    │   │
 │ │ sticky thead: Started · Last activity · Prompt · Cost · Tokens ·  │   │
-│ │       Tool calls · Denials · Active time · $/active min ·          │   │
+│ │       Cache eff. · Tool calls · Denials · Active time · $/active   │   │
+│ │       min ·                                                        │   │
 │ │       Terminal · Session (Last activity is the default sort)      │   │
 │ │ tbody rows: PromptCell (+N pill) · DenialChip · TerminalBadge;    │   │
 │ │             Tokens cell hover → TokenBreakdownTooltip; click a    │   │
@@ -136,8 +137,8 @@ trace link for those rows, not a disabled placeholder.
   `SessionsTable`'s `handleSort` toggles direction on the active field or defaults to `'desc'`
   for a new field, then calls `onSortModelChange`. The container resets the page to 0 and updates
   `sortModel`. Sortable fields are: `startTimestamp`, `endTimestamp`, `costUsd`, `tokens`,
-  `activeTimeSeconds`, `costPerActiveMinuteUsd`. Non-sortable: `toolCallCount`, `denialCount`,
-  `terminalType`, `sessionId`, `firstUserPrompt`.
+  `cacheEfficiency`, `activeTimeSeconds`, `costPerActiveMinuteUsd`. Non-sortable:
+  `toolCallCount`, `denialCount`, `terminalType`, `sessionId`, `firstUserPrompt`.
 - **Pagination**: offset-based, zero-indexed (`page: 0`). `DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0]`
   (`lib/constants`, currently 25). The pager footer uses a `SegmentedToggle` for rows-per-page
   (25/50/100) and prev/next chevron buttons. Changing page size resets to page 0.
@@ -192,6 +193,17 @@ trace link for those rows, not a disabled placeholder.
 - **Table box height** is `calc(100vh - BODY_CHROME_PX px)` (`BODY_CHROME_PX` = 320, top of
   `SessionsPageView.tsx`) with `minHeight: 420`. If you add or remove chrome above the table card,
   retune that constant or the table will over/under-fill the viewport.
+- **Cache-efficiency column is derived, not a DTO field.** `cacheEfficiencyRatio` /
+  `formatCacheEfficiency` (in `components/sessionsFormat.ts`) compute `cacheRead / (input +
+  cacheCreation + cacheRead)` from the row's `tokenBreakdown` — output tokens are excluded (they're
+  generated, never cached). There is no `cacheEfficiency` field on `SessionSummaryRow`; the column
+  is derived client-side exactly like the `$/active min` burn cell. It is nonetheless **sortable
+  server-side**: the header maps to the backend's whitelisted `cacheEfficiency` sort token
+  (`MetricService.SORT_COLUMNS_BY_FIELD`), whose `ORDER BY` uses the identical ratio and sorts
+  sessions with no input-side tokens `NULLS LAST` — the same rows `CacheEfficiencyCell` renders as
+  "—". If you change the ratio's definition, change both sides in lockstep or the visible order
+  stops matching the visible values. Bands: ≥85% `success.main`, ≥60% `text.primary`, else
+  `warning.main`; colors come from the theme palette, never hard-coded hex.
 - **`DenialChip` threshold**: 0 → dimmed text, 1–3 → amber, 4+ → red. Colors come from
   `theme.palette.warning.main` / `theme.palette.error.main` — never hard-coded hex.
 - **`startType` field** is present on `SessionSummaryRow` but not rendered in the table. Resume

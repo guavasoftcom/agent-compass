@@ -302,8 +302,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // The [startTimestamp, endTimestamp] bounds use the NULL-or-compare pattern, so
   // the ?minutes= form (start only) and the ?startTimestamp=&endTimestamp= form
   // (both) flow through one query. :sortColumn is one of a service-whitelisted
-  // token set ('cost', 'active', 'wall', 'tokens', 'costPerMinute', 'started',
-  // 'ended') and
+  // token set ('cost', 'active', 'wall', 'tokens', 'cacheEfficiency',
+  // 'costPerMinute', 'started', 'ended') and
   // :sortDirection is 'asc' or 'desc' — both arrive normalized, never raw user
   // input, so the CASE-based ORDER BY cannot be turned into SQL injection. The
   // session_id tiebreaker makes paging deterministic across requests, and
@@ -412,6 +412,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             WHEN 'wall'   THEN EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))
             WHEN 'tokens' THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)
               + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)
+            WHEN 'cacheEfficiency' THEN CASE
+              WHEN COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
+                + COALESCE(t.cache_read_tokens, 0) > 0
+              THEN COALESCE(t.cache_read_tokens, 0)::double precision
+                / (COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
+                  + COALESCE(t.cache_read_tokens, 0)) END
             WHEN 'costPerMinute' THEN CASE WHEN COALESCE(a.active_time_seconds, 0) > 0
               THEN COALESCE(c.cost_usd, 0) / a.active_time_seconds * 60 END
           END
@@ -423,6 +429,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             WHEN 'wall'   THEN EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))
             WHEN 'tokens' THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)
               + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)
+            WHEN 'cacheEfficiency' THEN CASE
+              WHEN COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
+                + COALESCE(t.cache_read_tokens, 0) > 0
+              THEN COALESCE(t.cache_read_tokens, 0)::double precision
+                / (COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
+                  + COALESCE(t.cache_read_tokens, 0)) END
             WHEN 'costPerMinute' THEN CASE WHEN COALESCE(a.active_time_seconds, 0) > 0
               THEN COALESCE(c.cost_usd, 0) / a.active_time_seconds * 60 END
           END

@@ -258,6 +258,40 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void cacheEfficiencySortRanksSessionsByCacheReadShareWithUndefinedLast() {
+    Instant base = Instant.now().minus(7, ChronoUnit.MINUTES);
+    // P: 9000 cacheRead of 10000 input-side tokens -> 90% cache efficiency.
+    saveCost("P", "opus", "main", 1.0, base);
+    saveTokenUsageWithType("P", "input", 1000.0, base);
+    saveTokenUsageWithType("P", "cacheRead", 9000.0, base.plusSeconds(5));
+    // Q: 2000 cacheRead of 10000 input-side (2000 read + 6000 input + 2000 creation) -> 20%.
+    saveCost("Q", "opus", "main", 1.0, base);
+    saveTokenUsageWithType("Q", "input", 6000.0, base);
+    saveTokenUsageWithType("Q", "cacheCreation", 2000.0, base.plusSeconds(3));
+    saveTokenUsageWithType("Q", "cacheRead", 2000.0, base.plusSeconds(5));
+    // R: cost only, no token rows -> zero input-side tokens -> efficiency undefined.
+    saveCost("R", "opus", "main", 1.0, base);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<String> descending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "desc", 0, 25)
+        .items().stream().map(SessionSummary::sessionId).toList();
+    // Seed session A has 1,000,000 input tokens but zero cacheRead -> 0% efficiency
+    // (defined, not null), so the defined-efficiency order highest-first is P, Q, A.
+    assertThat(descending).containsSubsequence("P", "Q", "A");
+    // Sessions with no input-side tokens (B, C, R) have undefined efficiency and sort
+    // last regardless of direction (ORDER BY ... NULLS LAST on both asc and desc).
+    assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("R"));
+    assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("B"));
+    assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("C"));
+
+    List<String> ascending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "asc", 0, 25)
+        .items().stream().map(SessionSummary::sessionId).toList();
+    // Ascending flips the defined order to A (0%), Q (20%), P (90%); nulls still last.
+    assertThat(ascending).containsSubsequence("A", "Q", "P");
+    assertThat(ascending.indexOf("P")).isLessThan(ascending.indexOf("R"));
+  }
+
+  @Test
   void kpisComputePercentilesOverTheWholeWindow() {
     SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES);
 

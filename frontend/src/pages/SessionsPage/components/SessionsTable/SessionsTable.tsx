@@ -7,6 +7,7 @@ import type {
   SessionPromptRow,
   SessionSummaryRow,
   SessionsSortModel,
+  SessionTokenBreakdown,
 } from '../../../../api';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
@@ -14,6 +15,8 @@ import PromptTimelinePanel, { TokenBreakdownTooltip } from '../PromptTimelinePan
 import {
   USD_FORMATTER,
   USD_PER_MINUTE_FORMATTER,
+  cacheEfficiencyRatio,
+  formatCacheEfficiency,
   formatDuration,
   formatRelativeTime,
   formatTokens,
@@ -52,6 +55,13 @@ const COLUMNS: SessionColumn[] = [
     numeric: true,
     sortable: true,
     tip: 'Total tokens billed to the session — input, output and cache read/creation summed (claude_code.token.usage joined on session.id). Cache reads typically dominate. Hover the value for the four-way breakdown.',
+  },
+  {
+    field: 'cacheEfficiency',
+    label: 'Cache eff.',
+    numeric: true,
+    sortable: true,
+    tip: "Share of the session's input-side tokens (input + cache creation + cache read) served from the prompt cache. Higher is cheaper — cache reads are billed at a fraction of fresh input. Blank when the session recorded no input-side tokens.",
   },
   {
     field: 'toolCallCount',
@@ -96,7 +106,7 @@ const COLUMNS: SessionColumn[] = [
 const tableSx: SxProps<Theme> = {
   width: '100%',
   borderCollapse: 'collapse',
-  minWidth: 1260,
+  minWidth: 1360,
   fontFamily: fontFamilies.body,
   '& thead th': {
     typography: 'eyebrowSm',
@@ -184,6 +194,59 @@ const DenialChip = ({ count }: { count: number }) => {
     >
       {count}
     </Box>
+  );
+};
+
+// Cache efficiency bands: at/above STRONG reads calm-positive (green), below WEAK draws
+// the eye (amber) as a low-reuse / more-expensive session; in between stays neutral.
+const CACHE_EFFICIENCY_STRONG = 0.85;
+const CACHE_EFFICIENCY_WEAK = 0.6;
+
+// Cache-efficiency cell: percentage of a session's input-side tokens served from cache,
+// colored by band, with the exact ratio + raw cached/total on hover. Renders "—" when
+// the session logged no input-side tokens (ratio undefined — the same rows the backend
+// sorts NULLS LAST on the cacheEfficiency column).
+const CacheEfficiencyCell = ({
+  breakdown,
+}: {
+  breakdown: SessionTokenBreakdown | null;
+}) => {
+  const ratio = cacheEfficiencyRatio(breakdown);
+  if (ratio == null || breakdown == null) {
+    return (
+      <Box component="span" sx={{ color: 'text.disabled' }}>
+        —
+      </Box>
+    );
+  }
+  const color =
+    ratio >= CACHE_EFFICIENCY_STRONG
+      ? 'success.main'
+      : ratio >= CACHE_EFFICIENCY_WEAK
+        ? 'text.primary'
+        : 'warning.main';
+  const inputSideTokens =
+    breakdown.input + breakdown.cacheCreation + breakdown.cacheRead;
+  return (
+    <Tooltip
+      title={`${(ratio * 100).toFixed(1)}% of input-side tokens from cache (${formatTokens(breakdown.cacheRead)} of ${formatTokens(inputSideTokens)})`}
+      placement="top"
+      arrow
+    >
+      <Box
+        component="span"
+        sx={{
+          color,
+          fontWeight: 600,
+          fontVariantNumeric: 'tabular-nums',
+          cursor: 'help',
+          borderBottom: (t) => `1px dotted ${t.palette.text.disabled}`,
+          pb: '1px',
+        }}
+      >
+        {formatCacheEfficiency(ratio)}
+      </Box>
+    </Tooltip>
   );
 };
 
@@ -481,6 +544,9 @@ const SessionsTable = ({
                   ) : (
                     formatTokens(row.tokens)
                   )}
+                </Box>
+                <Box component="td" className="num">
+                  <CacheEfficiencyCell breakdown={row.tokenBreakdown} />
                 </Box>
                 <Box component="td" className="num">
                   {row.toolCallCount.toLocaleString()}
