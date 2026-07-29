@@ -27,7 +27,7 @@ frontend/src/
   lib/                             // app-level, non-UI modules
     constants.ts                   // WINDOWS, PAGE_SIZE_OPTIONS, MS_PER_* factors, MAX_WINDOW_SPAN_MS
     format.ts                      // formatCompact (12.3K / 4.5M) shared by trend cards
-    resolveWindow.ts               // WindowSelection → concrete start/end + label (Logs + Traces)
+    resolveWindow.ts               // WindowSelection → concrete start/end + label (Logs + Traces + Sessions)
     sampleData.ts                  // createSampleRng(seed) + latency() for the VITE_*_SAMPLE stores
     useDebouncedValue.ts           // debounce hook for the Logs/Traces search inputs
     windowContext.tsx              // WindowProvider — global WindowSelection + autoRefresh
@@ -195,7 +195,7 @@ frontend/src/
         SessionsTable/
           SessionsTable.tsx
           index.ts
-        sessionsFormat.ts         // shared formatters (USD / duration / tokens / timestamp)
+        sessionsFormat.ts         // shared formatters (USD / duration / tokens / cache efficiency / timestamp)
     SkillsAgentsPage/
       CLAUDE.md
       SkillsAgentsPage.tsx

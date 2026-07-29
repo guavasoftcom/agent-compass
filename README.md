@@ -20,7 +20,7 @@ End-to-end flow:
 
 - JDK 21+ (the backend compiles with `--release 21`)
 - No Maven install required — use the bundled wrapper (`./mvnw` / `./mvnw.cmd`), pinned to Maven 3.9.9
-- Node 20+ and Yarn (Berry — Yarn 4)
+- Node 20+ (CI builds on 22) and Yarn Berry — the exact version is pinned by the `packageManager` field in [frontend/package.json](frontend/package.json), so `corepack enable` is enough; no global Yarn install needed
 - Docker (for the Postgres compose service and for running the Testcontainers integration test)
 
 ## Run
@@ -91,7 +91,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 
 - **Tool Usage** — tabbed section: call mix and latency, reliability (failure rates, denials, repeats), skills & subagents.
 - **Token Usage** — token composition, per-model breakdown, and cost.
-- **Sessions** — session list with summary KPIs, per-session token usage, and a first-prompt preview per row; rows expand into a per-turn prompt timeline (model, cost, token breakdown, tool calls).
+- **Sessions** — session list with summary KPIs, per-session token usage, cache efficiency, and a first-prompt preview per row; rows expand into a per-turn prompt timeline (model, cost, token breakdown, tool calls).
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
 - **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body; rows expand to an inline span summary, with a full per-trace span detail (waterfall) and cross-signal logs.
@@ -99,12 +99,18 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 
 ## Tests
 
-The backend ships with Testcontainers-backed integration tests that spin up a real Postgres, push hand-built OTLP export requests to the `/v1/*` ingest endpoints, and assert the `/api/*` aggregations. Requires Docker running.
+The backend ships with Testcontainers-backed integration tests that spin up a real Postgres, push hand-built OTLP export requests to the `/v1/*` ingest endpoints, and assert the `/api/*` aggregations. Requires Docker running. The frontend has a Vitest suite with tests colocated next to the modules they cover.
 
 ```sh
-cd backend
-./mvnw verify
+# Backend — checkstyle + unit + Testcontainers integration tests.
+cd backend && ./mvnw verify
+
+# Frontend — vitest (bare `yarn test` is watch mode; test:coverage enforces the 80% thresholds).
+cd frontend && yarn test --run
+cd frontend && yarn test:coverage
 ```
+
+[.github/workflows/pull-request.yml](.github/workflows/pull-request.yml) runs the same checks on every pull request — `./mvnw verify` on JDK 21, plus frontend lint / typecheck / test / build on Node 22.
 
 ## Why this stack
 
