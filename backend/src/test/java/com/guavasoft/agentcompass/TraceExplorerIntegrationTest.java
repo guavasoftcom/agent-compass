@@ -76,6 +76,13 @@ class TraceExplorerIntegrationTest {
     private static final long   SEED_OUTPUT_TOKENS = 800L;
     private static final long   EXPECTED_TOTAL_TOKENS = SEED_INPUT_TOKENS + SEED_OUTPUT_TOKENS;
 
+    /**
+     * Sub-microsecond offset used to build a window finer than a Postgres
+     * {@code timestamptz} can store — the precision the histogram bucket origin has
+     * to be normalized to.
+     */
+    private static final int SUB_MICROSECOND_NANOS = 37;
+
     @BeforeEach
     void seedSpans() {
         spanRepository.deleteAll();
@@ -147,6 +154,23 @@ class TraceExplorerIntegrationTest {
         long bucketErrorSum = buckets.stream().mapToLong(TraceHistogramBucket::error).sum();
         assertThat(bucketOkSum + bucketErrorSum).isEqualTo(histogram.total());
         assertThat(bucketErrorSum).isEqualTo(histogram.errorCount());
+    }
+
+    @Test
+    void histogramPopulatesBucketsWhenWindowIsFinerThanPostgresPrecision() {
+        // The seeded window is hour-aligned, which is why the other histogram tests
+        // never caught this: a window carrying sub-microsecond nanos is truncated by
+        // Postgres, so the date_bin origin and the Java-side zero-fill walk have to be
+        // normalized to the same precision or every bucket comes back zero.
+        TraceQueryCriteria subMicrosecondWindow = TraceQueryCriteria.of(
+                windowStart.plusNanos(SUB_MICROSECOND_NANOS), windowEnd,
+                null, null, null, null, null, null);
+        TraceHistogram histogram = service.histogram(subMicrosecondWindow, 48);
+
+        long bucketSum = histogram.buckets().stream()
+                .mapToLong(bucket -> bucket.ok() + bucket.error())
+                .sum();
+        assertThat(bucketSum).isEqualTo(histogram.total()).isEqualTo(4L);
     }
 
     @Test

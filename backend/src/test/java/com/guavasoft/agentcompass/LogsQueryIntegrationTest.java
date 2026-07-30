@@ -63,6 +63,15 @@ class LogsQueryIntegrationTest {
     private Instant windowStart;
     private Instant windowEnd;
 
+    /**
+     * Deliberate sub-microsecond offset on the window start, so the histogram tests
+     * exercise a window finer than a Postgres {@code timestamptz} can store.
+     * Without it the suite cannot reproduce the all-zero-bucket bug on macOS, where
+     * {@code Instant.now()} is only microsecond-precision — CI runs on Linux, whose
+     * nanosecond clock hit it on every run.
+     */
+    private static final int SUB_MICROSECOND_NANOS = 37;
+
     // Row-offset constants (seconds from windowStart) for the eight seed rows.
     private static final int OFFSET_REJECT_DECISION     = 0;
     private static final int OFFSET_SUCCESS_FALSE       = 300;
@@ -104,7 +113,7 @@ class LogsQueryIntegrationTest {
     @BeforeEach
     void seed() {
         repository.deleteAll();
-        windowStart = Instant.now().minus(60, ChronoUnit.MINUTES);
+        windowStart = Instant.now().minus(60, ChronoUnit.MINUTES).plusNanos(SUB_MICROSECOND_NANOS);
         windowEnd = Instant.now();
 
         // Row 1 — ERROR via decision='reject' (tool_decision event).
