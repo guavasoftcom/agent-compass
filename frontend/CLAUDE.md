@@ -37,7 +37,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
 - `lib/` — app-level, non-UI modules:
   - `lib/windowContext.tsx` — `WindowProvider` holds the current `WindowSelection` and `autoRefresh` flag globally so navigating between pages preserves the user's selected range. Default selection is "last 24 hours" (`{ kind: 'preset', minutes: 1440 }`).
   - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants, including `MAX_WINDOW_SPAN_MS` (mirrors the backend's `@ValidDateRange(maxDays = 30)` cap — keep the two in lockstep).
-  - `lib/resolveWindow.ts` — shared `WindowSelection` → concrete `startTimestamp`/`endTimestamp` + label resolution used by Logs and Traces; clamps preset spans to `MAX_WINDOW_SPAN_MS` so no request can exceed the backend's 30-day cap.
+  - `lib/resolveWindow.ts` — shared `WindowSelection` → concrete `startTimestamp`/`endTimestamp` + label resolution used by Logs, Traces, and Sessions; clamps preset spans to `MAX_WINDOW_SPAN_MS` so no request can exceed the backend's 30-day cap.
   - `lib/useDebouncedValue.ts` — debounce hook; the Logs and Traces free-text search inputs run through it before the value enters a query key, so typing doesn't fire a fetch per keystroke.
   - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards.
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
@@ -98,9 +98,17 @@ yarn dev                   # Vite on :5173, proxies /api → :8080
 yarn build                 # production build
 yarn typecheck             # tsc --noEmit
 yarn lint                  # eslint .
+yarn test --run            # vitest (bare `yarn test` is watch mode)
+yarn test:coverage         # vitest run --coverage
 ```
 
-Package manager is Yarn (Berry — Yarn 4). The stray `package-lock.json` is legacy — don't `npm install`.
+Tests are Vitest, colocated as `<name>.test.ts(x)` next to the module they cover. `vite.config.js`
+declares 80% coverage thresholds that the suite doesn't meet yet, which is why CI runs
+`yarn test --run` and not `yarn test:coverage` — new tests should close that gap, not lower the bar.
+
+Package manager is Yarn Berry, pinned by the `packageManager` field in `package.json` and resolved
+through Corepack (`corepack enable`) — don't install Yarn globally or bump the pin casually, since
+CI resolves the same field. The stray `package-lock.json` is legacy — don't `npm install`.
 
 ## Skills
 

@@ -9,6 +9,9 @@
 /frontend/dist/
 /frontend/coverage/
 
+# Yarn local install state (machine-specific; yarn.lock is the shared artifact)
+/frontend/.yarn/install-state.gz
+
 # Logs
 *.log
 

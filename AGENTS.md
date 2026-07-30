@@ -14,7 +14,7 @@ OTLP/HTTP telemetry sink → Postgres (`jsonb`) → markdown tuning report + Rea
   - `service/`, `controller/` — aggregation, dashboard JSON, markdown report. Per-domain controllers (`LogsController`, `MetricsController`, `SessionController`, `ToolActivityController`, `TracesController`, `ReportController`) serve the React app under `/api`.
   - `model/` — record DTOs (Lombok `@Data @Builder` on older shapes); MapStruct mappers in `mapper/` (`spring` component model) handle entity → DTO.
   - `config/` — `TuningProperties` (overridable event/attribute/metric names), `OpenApiConfig`, etc.
-- `frontend/` — React 19 + Vite 8 + MUI 9 (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` / `@mui/x-data-grid` / `@mui/x-tree-view`), TanStack Query v5, React Router 7. Package manager is Yarn (Berry — Yarn 4); a stray `package-lock.json` is legacy — don't `npm install`. See [frontend/CLAUDE.md](frontend/CLAUDE.md) for conventions; each `frontend/src/pages/<Name>Page/` folder also has its own `CLAUDE.md` covering that page's files, data flow, and gotchas.
+- `frontend/` — React 19 + Vite 8 + MUI 9 (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` / `@mui/x-data-grid` / `@mui/x-tree-view`), TanStack Query v5, React Router 7. Package manager is Yarn Berry, pinned by the `packageManager` field in `frontend/package.json` and resolved through Corepack — don't install Yarn globally, and a stray `package-lock.json` is legacy, so never `npm install`. See [frontend/CLAUDE.md](frontend/CLAUDE.md) for conventions; each `frontend/src/pages/<Name>Page/` folder also has its own `CLAUDE.md` covering that page's files, data flow, and gotchas.
 
 ## Run / build / test
 
@@ -34,7 +34,15 @@ cd frontend && yarn install && yarn dev
 cd frontend && yarn build
 cd frontend && yarn typecheck
 cd frontend && yarn lint
+
+# Frontend tests (Vitest; bare `yarn test` is watch mode).
+cd frontend && yarn test --run
+cd frontend && yarn test:coverage   # enforces the 80% thresholds in vite.config.js
 ```
+
+`.github/workflows/pull-request.yml` runs all of the above on every pull request (`./mvnw verify`
+on JDK 21, frontend lint/typecheck/test/build on Node 22). It runs `yarn test --run` rather than
+`yarn test:coverage` — the suite doesn't meet the coverage thresholds yet.
 
 ## Conventions
 
@@ -55,6 +63,8 @@ shape; override for other agents.
 - `tuning.tool-event-name` (default `tool_result`) — `event.name` value marking a tool invocation.
 - `tuning.tool-attribute` (default `tool_name`) — attribute key carrying the tool name.
 - `tuning.tool-span-scope` / `tuning.tool-span-name` — OTLP instrumentation scope + span name for per-tool latency.
+- `tuning.tool-execution-span-name` / `tuning.llm-request-span-name` plus `tuning.tool-call-id-attribute` / `tuning.request-id-attribute` — the leaf spans that time a single tool run or LLM request, and the attribute keys their logs share with them. Trace-detail log correlation re-points logs off the coarse interaction-root span onto the exact leaf. `tuning.api-request-event-name` / `api-request-body-event-name` / `prompt-id-attribute` / `event-sequence-attribute` recover the request id for the request-payload log, which carries only a turn-level prompt id.
+- `tuning.user-prompt-event-name` (default `user_prompt`) and `tuning.prompt-attribute` (default `prompt`) — the once-per-turn log carrying the raw prompt text; drive the Sessions grid's prompt column and the per-session prompt timeline.
 - `tuning.token-usage-metric` (default `claude_code.token.usage`) and `tuning.token-type-attribute` (default `type`) — drive the Tokens & cache page.
 - `tuning.skill-tool-name` / `tuning.skill-name-attribute` and `tuning.subagent-tool-name` / `tuning.subagent-type-attribute` — drive the Skills & agents page (the inner attribute is looked up flat first, then under `tool_input`).
 - `tuning.cost-usage-metric` (default `claude_code.cost.usage`) and `tuning.active-time-metric` (default `claude_code.active_time.total`) — drive the Sessions page. Claude Code emits these (and token usage) as cumulative counters split per stream (full attribute set); ingest precomputes reset-aware per-row increments into `metric_points.value_delta`, so all rollups are plain `SUM(value_delta)` — see the data conventions in [backend/CLAUDE.md](backend/CLAUDE.md).

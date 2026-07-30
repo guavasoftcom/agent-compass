@@ -1,0 +1,87 @@
+name: Pull Request
+
+on:
+  pull_request:
+  # Lets the same checks be re-run manually from the Actions tab.
+  workflow_dispatch:
+
+# A new push to a PR branch makes the in-flight run obsolete.
+concurrency:
+  group: pull-request-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Java 21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # Runs checkstyle (bound to the validate phase) and the Testcontainers
+      # integration tests; ubuntu-latest ships a running Docker daemon, which
+      # those tests need to start Postgres.
+      - name: Build, check and test
+        working-directory: backend
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Upload test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: |
+            backend/target/surefire-reports/
+            backend/target/checkstyle-result.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  frontend:
+    name: Frontend (Node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must precede setup-node: its yarn cache lookup shells out to `yarn`,
+      # and corepack is what resolves that to the pinned Yarn 4.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: yarn install --immutable
+
+      - name: Lint
+        working-directory: frontend
+        run: yarn lint
+
+      - name: Typecheck
+        working-directory: frontend
+        run: yarn typecheck
+
+      # `yarn test` alone is vitest in watch mode, hence --run. Not test:coverage:
+      # that also enforces the 80% thresholds in vite.config.js, which the suite
+      # does not currently meet — swap it in once coverage is there.
+      - name: Test
+        working-directory: frontend
+        run: yarn test --run
+
+      - name: Build
+        working-directory: frontend
+        run: yarn build
