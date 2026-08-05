@@ -20,7 +20,7 @@ Boot 4 differs from 3.x in ways that bit this project during the upgrade — kee
 - `controller/` — per-domain REST controllers for the React app under `/api`: `LogsController`, `MetricsController`, `SessionController`, `ToolActivityController`, `TracesController`; `ReportController` serves the markdown report. `ApiExceptionHandler` (`@RestControllerAdvice`) maps bare-`@RequestParam` `ConstraintViolationException`s to 400 (class-level `@Validated` throws them raw, which would otherwise surface as 500s).
 - `validation/` — `@ValidDateRange` + `DateRangeValidator` cap custom `startTimestamp`/`endTimestamp` ranges at 30 days; any param object exposing the pair implements `DateRangeBounds` so the one constraint covers it (`TimeWindowParams` via record accessors, `TraceFilterParams` explicitly).
 - `model/` — record DTOs (Lombok `@Data @Builder` on older shapes like `ToolCallCount` / `TraceSummary`); MapStruct mappers in `mapper/` (`spring` component model, `lombok-mapstruct-binding` keeps them compatible) handle entity → DTO mapping for `LogRecord` / `Span` / `EventRow`.
-- `config/` — `TuningProperties` (overridable event/attribute/metric names), `OpenApiConfig`, `MustacheConfig`.
+- `config/` — `TuningProperties` (overridable event/attribute/metric names), `OpenApiConfig`, `MustacheConfig`, `SinglePageApplicationConfig`.
 
 ## Naming
 
@@ -45,6 +45,7 @@ Boot 4 differs from 3.x in ways that bit this project during the upgrade — kee
 - When both Spring's `@RequestBody` and Swagger's `@RequestBody` are needed, import Spring's and fully-qualify Swagger's (it's documentation metadata, used less in code).
 - Don't return JPA entities from controllers — map to a record (or the legacy `@Data` DTO) through MapStruct first.
 - OTLP ingest controllers consume `application/x-protobuf` and respond with the matching `ExportXxxServiceResponse` protobuf body, returning `400` with a `partialSuccess.errorMessage` set on `InvalidProtocolBufferException`.
+- **The backend also serves the SPA.** `SinglePageApplicationConfig` registers a `/**` resource handler over `spring.web.resources.static-locations` (the released image points that at the Vite bundle it copied in beside the jar; a plain `spring-boot:run` keeps the classpath defaults and serves nothing). Unresolved extension-less paths fall back to `index.html` so React Router's history-mode URLs work; paths with a file extension, and anything under the `SERVER_ROUTED_PREFIXES` list, stay 404 rather than answering a missing asset with HTML. **Adding a server-side route outside `/api` means adding its prefix to that list** — otherwise a mistyped URL under it returns the SPA instead of a 404.
 
 ## Data
 

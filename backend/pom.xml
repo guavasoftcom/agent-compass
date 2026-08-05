@@ -237,6 +237,18 @@
             </exclude>
           </excludes>
         </configuration>
+        <!-- This project does not inherit spring-boot-starter-parent, which is
+             what normally binds `repackage` to the package phase. Without this
+             execution `mvn package` produces a plain, non-executable jar — fine
+             for `spring-boot:run`, but the Docker image ships the jar. -->
+        <executions>
+          <execution>
+            <id>repackage</id>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

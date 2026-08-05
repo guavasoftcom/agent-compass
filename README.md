@@ -40,6 +40,8 @@ yarn dev
 
 Open <http://localhost:5173> for the dashboard, or <http://localhost:8080/swagger-ui.html> for the OpenAPI / Swagger UI.
 
+To run the released image instead of the dev servers — API and dashboard in one container, on one port — see [docs/local-docker-deployment.md](docs/local-docker-deployment.md) and the [docker-compose.yml](docker-compose.yml) beside it.
+
 Flyway creates and migrates the schema on startup (`backend/src/main/resources/db/migration/`); Hibernate runs with `ddl-auto=validate` and fails fast if the entity model and DB drift.
 
 If you'd rather use an existing Postgres (no Docker), set `SPRING_DATASOURCE_URL` / `SPRING_DATASOURCE_USERNAME` / `SPRING_DATASOURCE_PASSWORD` env vars before starting the backend — see [backend/.env.example](backend/.env.example). The compose support backs off when explicit datasource properties are present.
@@ -54,6 +56,8 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 # Optional: speed up debugging
 export OTEL_METRIC_EXPORT_INTERVAL=10000
 ```
+
+For Claude Code specifically, telemetry is off until you enable it, and metrics, logs, and traces each have their own exporter switch — [docs/local-docker-deployment.md](docs/local-docker-deployment.md#point-claude-code-at-it) has the full set (including the `~/.claude/settings.json` form), what each one feeds in the dashboard, and how to verify data is flowing.
 
 Claude Code emits its tool-decision counter as `claude_code.code_edit_tool.decision` with a `tool` attribute. The defaults in `application.yml` and the report endpoint assume this. If your agent emits a different metric name or attribute key, override via:
 
@@ -111,6 +115,35 @@ cd frontend && yarn test:coverage
 ```
 
 [.github/workflows/pull-request.yml](.github/workflows/pull-request.yml) runs the same checks on every pull request — `./mvnw verify` on JDK 21, plus frontend lint / typecheck / test / build on Node 22.
+
+## Release: Docker image
+
+[.github/workflows/release.yml](.github/workflows/release.yml) cuts a release and publishes a single image to GHCR that serves both halves of the app — the Spring Boot API plus the built frontend — on port 8080 inside the container. Run it manually from the Actions tab (`patch` / `minor` / `major`) on `main`; it re-runs the pull-request gates, bumps `frontend/package.json` + `backend/pom.xml`, commits, tags `v<version>`, pushes the image as `:<tag>` and `:latest`, and creates the GitHub Release.
+
+It commits, tags, and releases with the job-scoped `GITHUB_TOKEN` — no secrets to create. The one setup step is a `Release` environment restricted to `main` (Settings → Environments), which is what stops the workflow being dispatched from another branch. Note that `GITHUB_TOKEN` can't push to a protected `main`: if you add branch protection later, the workflow header explains the switch to a GitHub App token.
+
+The workflow does all the building — `yarn build`, then `./mvnw package` — and the [Dockerfile](Dockerfile) only copies the resulting artifacts in. The frontend bundle ships as plain files at `/app/static` beside the jar (`SPRING_WEB_RESOURCES_STATIC_LOCATIONS` points Spring at them) rather than being folded into `backend/src/main/resources`, so build output never lands in the backend source tree. [SinglePageApplicationConfig](backend/src/main/java/com/guavasoft/agentcompass/config/SinglePageApplicationConfig.java) adds the history-mode fallback so React Router deep links like `/traces/{traceId}` resolve to `index.html`, while unmatched `/api/**` paths still 404.
+
+No backend URL is baked into the bundle: the frontend fetches relative `/api/...` paths and the backend serves the SPA, so the API is always on the page's own origin. The workflow fails the build if a `localhost:8080` / `localhost:5173` reference ever appears in `dist/`, which would point users' browsers at their own machine.
+
+Postgres is not part of the image — pass its connection details at run time ([docs/local-docker-deployment.md](docs/local-docker-deployment.md) wraps this in a compose stack):
+
+```sh
+docker run --rm -p 18080:8080 \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/coding_agent_tuning \
+  -e SPRING_DATASOURCE_USERNAME=postgres \
+  -e SPRING_DATASOURCE_PASSWORD=postgres \
+  ghcr.io/guavasoftcom/agent-compass:latest
+```
+
+To build the same image locally, produce the artifacts first (the Dockerfile deliberately doesn't):
+
+```sh
+cd frontend && yarn build && cd ../backend && ./mvnw clean package -DskipTests && cd ..
+docker build -t agent-compass:local .
+```
+
+The Dockerfile defaults to `backend/target/*.jar` and `frontend/dist`, so no `--build-arg` is needed — and `clean` keeps the glob unambiguous once version bumps leave older jars behind.
 
 ## Why this stack
 
