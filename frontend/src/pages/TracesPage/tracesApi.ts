@@ -14,8 +14,8 @@
 // ./traceDerivations, and the synthetic store in ./tracesSampleData. All three
 // are re-exported here so existing `from '…/tracesApi'` imports keep working.
 
-import type { SpanRow } from '../../api';
-import { fetchTraceSpans } from '../../api';
+import type { SpanRow, TraceRow } from '../../api';
+import { fetchTraceSpans, fetchTraceSummary } from '../../api';
 import { getJson } from '../../api/http';
 import type {
   TraceCursor,
@@ -33,6 +33,7 @@ import {
   sampleHistogram,
   samplePage,
   sampleSpans,
+  sampleTraceSummary,
 } from './tracesSampleData';
 
 export * from './traceTypes';
@@ -106,4 +107,15 @@ export const fetchSpansForTrace = (traceId: string): Promise<SpanRow[]> => {
     return sampleSpans(traceId);
   }
   return fetchTraceSpans(traceId);
+};
+
+// One trace's aggregate row — the trace detail header's source for
+// `firstUserPrompt`, which the spans response can't carry. Resolves to null on a
+// 404 (unknown trace id) so the header just omits the prompt row instead of
+// failing the page; the waterfall query owns the real not-found state.
+export const fetchTraceSummaryOrNull = (traceId: string): Promise<TraceRow | null> => {
+  if (USE_SAMPLE_DATA) {
+    return sampleTraceSummary(traceId);
+  }
+  return fetchTraceSummary(traceId).catch(() => null);
 };

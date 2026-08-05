@@ -39,7 +39,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants, including `MAX_WINDOW_SPAN_MS` (mirrors the backend's `@ValidDateRange(maxDays = 30)` cap — keep the two in lockstep).
   - `lib/resolveWindow.ts` — shared `WindowSelection` → concrete `startTimestamp`/`endTimestamp` + label resolution used by Logs, Traces, and Sessions; clamps preset spans to `MAX_WINDOW_SPAN_MS` so no request can exceed the backend's 30-day cap.
   - `lib/useDebouncedValue.ts` — debounce hook; the Logs and Traces free-text search inputs run through it before the value enters a query key, so typing doesn't fire a fetch per keystroke.
-  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards.
+  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, and `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents).
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
 
 ## Page structure (container/presentational)

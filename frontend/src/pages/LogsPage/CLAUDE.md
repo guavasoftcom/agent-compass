@@ -61,7 +61,8 @@ All fetchers live in `logsApi.ts` (not `api.ts`) and share `buildLogsQuery(filte
 query string.
 
 `filters` (a `LogsFilters`) bundles the resolved `startTimestamp`/`endTimestamp` (or the local
-zoom range, if set) together with the facet selections, search text, and hidden-severity set;
+zoom range, if set) together with the facet selections and search text. The legend mute
+(`hidden`) is deliberately **not** in it — see "Legend mute" below;
 `filtersKey = JSON.stringify(filters)` is the single combined cache key — there is no separate
 `windowKey`/`filterPartsKey` split. Because `startTimestamp`/`endTimestamp` only change when
 `resolveWindow` re-resolves (see "Data flow" below), `filtersKey` stays stable between
@@ -69,17 +70,15 @@ auto-refresh ticks the same way a hand-built window key would.
 
 | Component / hook                                | Query key                                | Fetcher → endpoint |
 |---------------------------------------------------|-------------------------------------------|--------------------|
-| `LogsPageView` (`useQuery`, `histogramQuery`)      | `['log-histogram', filtersKey]`           | `fetchLogHistogram(facetFilters, 50)` → `GET /api/logs/histogram?…&buckets=50` |
-| `LogsPageView` (`useQuery`, `facetsQuery`)         | `['log-facets', filtersKey]`               | `fetchLogFacets(facetFilters)` → `GET /api/logs/facets?…` |
+| `LogsPageView` (`useQuery`, `histogramQuery`)      | `['log-histogram', filtersKey]`           | `fetchLogHistogram(filters, 50)` → `GET /api/logs/histogram?…&buckets=50` |
+| `LogsPageView` (`useQuery`, `facetsQuery`)         | `['log-facets', filtersKey]`               | `fetchLogFacets(filters)` → `GET /api/logs/facets?…` |
 | `LogsPageView` (`useQuery`, `tableQuery`)          | `['log-table', filtersKey, page, pageSize]` | `fetchLogsPage(filters, page, pageSize)` → `GET /api/logs?…&page=N&size=M` (`enabled: view === 'table'`) |
 | `LogsPageView` (`resetStream`/`loadMore`, plain `useState`, NOT a TanStack query) | — | `fetchLogsCursor(filters, { cursor, limit: 60 })` → `GET /api/logs?…&limit=60[&before=ts,id]` |
 | `LogsPageView` (tail `setInterval`, 1.5 s, plain state prepend) | — | `fetchLogsCursor(filters, { after, limit: 20 })` → `GET /api/logs?…&after=ts,id&limit=20` |
 
-`histogramQuery`/`facetsQuery` call `fetchLogHistogram`/`fetchLogFacets` with `facetFilters`
-(`filters` with `hiddenSeverity` forced to `[]`, since the legend mute is client-side only), but
-their query *key* is still `filtersKey` (built from `filters`, not `facetFilters`) — toggling a
-legend/facet severity therefore still busts and refetches both, even though the response
-wouldn't have changed. The stream (`resetStream`/`loadMore`) and the live tail are plain
+All three `useQuery` calls take `filters` directly; there is no separate `facetFilters` object
+any more (it existed only to strip the legend mute, which no longer lives in `filters`). The
+stream (`resetStream`/`loadMore`) and the live tail are plain
 `useState`/`useCallback`/`useEffect` in `LogsPageView`, not `useQuery`/`useInfiniteQuery` — there
 is no `['log-stream', …]` TanStack cache entry; `LogStream` (the component) is a pure
 presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props and calls
@@ -118,8 +117,8 @@ presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props an
   and the local zoom range.
 - **Stable query key**: because `startTimestamp`/`endTimestamp` come from `LogsPage.tsx`'s
   memoized `resolved` (not recomputed on every render), `filtersKey = JSON.stringify(filters)`
-  does NOT change between auto-refresh ticks — only when the selection, zoom, facets, search,
-  or hidden-severity set actually change. So the cache is never invalidated by the passage of
+  does NOT change between auto-refresh ticks — only when the selection, zoom, facets, or search
+  actually change. So the cache is never invalidated by the passage of
   time alone; `['log-histogram', filtersKey]` / `['log-facets', filtersKey]` /
   `['log-table', filtersKey, page, pageSize]` are the three TanStack keys (see the API table
   above — the stream/tail fetches aren't TanStack-cached at all).
@@ -132,14 +131,21 @@ presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props an
   `placeholderData` override is needed or present). The table also refetches on every
   filter/window/page change; it is not otherwise excluded from the 60 s interval, since the
   invalidate call above hits `['log-table', …]` regardless of `view`.
-- **Unified severity selection**: the histogram legend chips and the facet rail severity
-  checkboxes are two surfaces over a single `sel.severity` set in `LogsPageView`. Clicking
-  either calls `toggleFacet('severity', s)` — there is no separate mute state.
+- **Two separate severity surfaces.** The facet rail's severity checkboxes drive `sel.severity`,
+  which is a real filter: it goes into `filters`, is serialized by `buildLogsQuery`, and narrows
+  the stream/table rows. The histogram legend chips drive a *separate* `hidden` set via
+  `toggleSeverity`, and that one is **presentation-only** — it dims series in
+  `LogHistogramChart` and nothing else.
+- **Legend mute (`hidden`) never reaches an endpoint.** `buildLogsQuery` doesn't serialize it, so
+  there is no request it could change. It is therefore kept out of `filters` (and so out of
+  `filtersKey`): folding it in would re-key all three queries and trip the `[filtersKey, view]`
+  stream-reset effect, collapsing every expanded row and re-pulling the stream on a click that
+  alters no request parameter. `logsSampleData.ts` doesn't apply it either, so `VITE_LOGS_SAMPLE`
+  matches live behavior. If the mute should ever actually filter rows, that needs a backend
+  param — don't reintroduce it as a client-side field on `LogsFilters`.
 - **Histogram severity**: the histogram never sends `severity` to the server — all four series
-  are always present in the response. Client-side, `LogsPageView` derives a `hiddenSeverities`
-  set as the complement of `sel.severity` (empty when no severities are selected, meaning all
-  series are visible) and passes it to `LogHistogramChart` as `hidden`. Unselected severities
-  appear dimmed.
+  are always present in the response, and the muting is applied client-side by
+  `LogHistogramChart` from the `hidden` prop.
 - **Facet counts stay stable**: the `count('severity', …)` call in the sample engine (and the
   server's `/api/logs/facets` endpoint) excludes the severity filter for the severity facet
   itself — so the rail shows total counts per severity regardless of which severities are
@@ -177,7 +183,13 @@ presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props an
   with `filters` via an effect, so async callbacks see fresh values without re-binding) and
   calls `fetchLogsCursor(filtersRef.current, { after: newestRef.current, limit: 20 })`
   directly — **not** through TanStack Query — then prepends any new rows into the
-  `loaded` `useState` array, bumps `streamTotal`, and calls `histogramQuery.refetch()`.
+  `loaded` `useState` array, bumps `streamTotal`, and calls `refetchHistogramRef.current()`.
+  - **The tail effect's deps are `[autoRefresh, view]` and must stay that way.** Everything the
+    tick reads goes through a ref *including the histogram refetch*, which is why
+    `refetchHistogramRef` exists at all: TanStack Query returns a new result object on every
+    render, so listing `histogramQuery` here would clear and recreate the 1.5 s interval on
+    every render and the tick would never fire while the user is typing in the search box or
+    toggling facets.
   - **`endTimestamp` is NOT refreshed per tick.** `filtersRef.current.endTimestamp` is whatever
     `LogsPage.tsx`'s `resolveWindow` memo last produced for the current selection (see "Data
     flow" above) — the tail does not call `resolveWindow` itself. The tail still surfaces

@@ -8,6 +8,20 @@ export interface ToolCallRow {
   calls: number;
 }
 
+/**
+ * One skill or subagent row from `/api/tool-activity/skill-usage` and
+ * `/subagent-usage`. `tool` carries the skill or subagent identifier (the
+ * endpoints reuse the field name), and `byModel` splits `calls` by the model
+ * that made the call — values sum to `calls`, and models with no calls are
+ * omitted rather than sent as `0`. Keys are the same model ids used by the
+ * Token Usage page's `byModel` rows.
+ */
+export interface IdentifierUsageRow {
+  tool: string;
+  calls: number;
+  byModel: Record<string, number>;
+}
+
 export interface LogRow {
   id: number;
   timestamp: string;
@@ -33,6 +47,12 @@ export interface TraceRow {
   // Sum of token usage across the trace's spans (input + output + cache-read +
   // cache-creation); 0 when no span carries token attributes.
   totalTokens: number;
+  // The user prompt that initiated this trace, whitespace-collapsed and truncated
+  // to 200 chars — mirrors SessionSummaryRow.firstUserPrompt. Null when the trace
+  // is not rooted in a conversational turn (tool / model / mcp / compaction-rooted
+  // traces have no prompt of their own) or when prompt-body capture was disabled
+  // while the trace was recorded.
+  firstUserPrompt: string | null;
 }
 
 export interface SpanEvent {

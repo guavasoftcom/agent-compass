@@ -137,6 +137,9 @@ const ToolChips = ({ tools }: { tools: { name: string; count: number }[] | null 
 };
 
 interface PromptTimelinePanelProps {
+  // Displayed in the panel header so it's clear which session this timeline
+  // belongs to (matches the row it was expanded from).
+  sessionId?: string;
   prompts: SessionPromptRow[] | null;
   loading: boolean;
   error: Error | null;
@@ -229,13 +232,16 @@ export const TokenBreakdownTooltip = ({ tokens, children }: { tokens: SessionTok
   </Tooltip>
 );
 
-// "12K tokens · 394K cached" with the full breakdown on hover. Exported so the
-// SessionsPage grid can reuse the same hover affordance on the Tokens cell.
+// "12K tokens" with the full breakdown (input/output/cache creation/cache read) on
+// hover. Aurora sync: the combined total replaces the old "· N cached" caption —
+// the per-kind split still lives one hover away via TokenBreakdownTooltip.
+// Exported so the SessionsPage grid can reuse the same hover affordance on the
+// Tokens cell.
 export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | undefined }) => {
   if (!tokens) {
     return null;
   }
-  const working = tokens.input + tokens.output + tokens.cacheCreation;
+  const total = tokens.input + tokens.output + tokens.cacheCreation + tokens.cacheRead;
   return (
     <TokenBreakdownTooltip tokens={tokens}>
       <Box
@@ -254,9 +260,8 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
           '&::before': { content: '""', width: 3, height: 3, borderRadius: '50%', bgcolor: 'text.disabled' },
         }}
       >
-        <Box component="b" sx={{ fontWeight: 700, color: 'text.primary' }}>{formatTokens(working)}</Box>
+        <Box component="b" sx={{ fontWeight: 700, color: 'text.primary' }}>{formatTokens(total)}</Box>
         &nbsp;tokens
-        <Box component="span" sx={{ color: 'text.disabled' }}>{`· ${formatTokens(tokens.cacheRead)} cached`}</Box>
       </Box>
     </TokenBreakdownTooltip>
   );
@@ -270,7 +275,7 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
 // "View more" → ExpandedValueDialog machinery from components/AttributeList
 // (same pattern as LogTable and the grid's own row detail) rather than
 // rendering full text pre-wrapped inline.
-const PromptTimelinePanel = ({ prompts, loading, error, windowStartMs, windowEndMs }: PromptTimelinePanelProps) => {
+const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs, windowEndMs }: PromptTimelinePanelProps) => {
   const [expandedValue, setExpandedValue] = useState<ValueDialogState | null>(null);
 
   const panelSx = {
@@ -342,6 +347,23 @@ const PromptTimelinePanel = ({ prompts, loading, error, windowStartMs, windowEnd
         <Box component="span" sx={{ color: 'text.disabled', fontWeight: 600, letterSpacing: '0.5px' }}>
           {`${prompts.length} prompt${prompts.length === 1 ? '' : 's'}`}
         </Box>
+        {sessionId ? (
+          <Box
+            component="span"
+            sx={{
+              ml: 'auto',
+              fontFamily: fontFamilies.mono,
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: 0,
+              textTransform: 'none',
+              color: 'text.disabled',
+            }}
+          >
+            Session{' '}
+            <Box component="b" sx={{ color: 'text.secondary', fontWeight: 600 }}>{sessionId}</Box>
+          </Box>
+        ) : null}
       </Box>
 
       <Box

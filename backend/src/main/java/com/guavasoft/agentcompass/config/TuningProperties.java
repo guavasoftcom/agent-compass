@@ -143,6 +143,24 @@ public class TuningProperties {
   private String subagentTypeAttribute = "subagent_type";
 
   /**
+   * Attribute key on an {@link #apiRequestEventName} log record carrying the
+   * model that served the turn. Same values as the {@code model} attribute on
+   * the token-usage metric streams, so the per-model breakdowns on
+   * /api/tool-activity and /api/sessions/token-usage share a key space.
+   */
+  private String modelAttribute = "model";
+
+  /**
+   * Attribute key present on {@link #apiRequestEventName} log records emitted
+   * from inside a subagent run. Its absence is what marks a main-loop turn,
+   * which is how the subagent-usage aggregation finds the turn that dispatched
+   * an {@link #subagentToolName} tool call. Claude Code collapses project-local
+   * agents to {@code custom} here, so the value itself is not a usable subagent
+   * identifier — only its presence is meaningful.
+   */
+  private String agentNameAttribute = "agent.name";
+
+  /**
    * OTLP metric name carrying per-(session, model, query_source) cumulative USD
    * spend. The
    * Sessions aggregation takes MAX per stream then sums across streams.

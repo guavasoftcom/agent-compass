@@ -165,9 +165,10 @@ timeline stays current.
 - **`tokens`** *(NEW)* — the turn's token usage split by kind:
   `{ input, output, cacheCreation, cacheRead }` (map `cache_read`→`cacheRead`,
   `cache_creation`→`cacheCreation`), summed from the turn's `claude_code.token.usage` points
-  grouped by `type`. The card shows **input + output + cacheCreation** as the primary
-  "working tokens" figure and **cacheRead** as a muted "· N cached" secondary, with the full
-  four-way split (+ total) on hover. **The session row's `tokenBreakdown` must equal the sum
+  grouped by `type`. The card shows **input + output + cacheCreation + cacheRead** as one
+  combined total (the Aurora sync replaced the earlier "working tokens" figure plus muted
+  "· N cached" secondary), with the full four-way split on hover. The field contract below is
+  unchanged either way. **The session row's `tokenBreakdown` must equal the sum
   of its turns' `tokens`** so the grid figure and the timeline reconcile. Raw integers; missing
   kinds are `0`. May be null as a whole (the token line is then omitted).
 - **`tools`** *(NEW)* — the tool calls the turn triggered, as `{ name, count }` objects

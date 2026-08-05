@@ -255,84 +255,90 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // identifier
   // entirely bucket under 'unknown' so callers see them rather than silently
   // dropping the count.
+  // The second dimension is the model that dispatched the call. tool_result rows
+  // carry no model attribute at all — only api_request rows do — so the model is
+  // resolved by walking back to the last main-loop api_request in the same
+  // session at or before the tool_result. That row is the assistant turn that
+  // emitted the tool_use: api_requests made from inside a subagent run are
+  // excluded (they carry :agentNameAttribute), otherwise the subagent's own
+  // turns, which happen while the dispatching tool call is still in flight,
+  // would shadow the dispatcher. Calls whose dispatching turn cannot be found
+  // (a session whose first rows predate retention) bucket under 'unknown'.
+  // Rows are ordered so that every row for one identifier arrives together, with
+  // identifiers sorted by their total call count descending.
   @Query(value = """
+      WITH subagent_calls AS (
+        SELECT
+          COALESCE(
+            NULLIF(attributes ->> :innerAttribute, ''),
+            NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
+            'unknown')                                                 AS identifier,
+          attributes ->> 'session.id'                                  AS session_id,
+          timestamp                                                    AS dispatched_at
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND attributes ->> :toolAttribute = :toolName
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
       SELECT
-        COALESCE(
-          NULLIF(attributes ->> :innerAttribute, ''),
-          NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
-          'unknown')                                                   AS identifier,
+        subagent_calls.identifier                                      AS identifier,
+        COALESCE(dispatching_turn.model, 'unknown')                    AS model,
         COUNT(*)                                                       AS calls
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> :toolAttribute = :toolName
-        AND timestamp >= :since
-      GROUP BY identifier
-      ORDER BY calls DESC
+      FROM subagent_calls
+      LEFT JOIN LATERAL (
+        SELECT NULLIF(main_loop_turn.attributes ->> :modelAttribute, '') AS model
+        FROM log_records main_loop_turn
+        WHERE main_loop_turn.attributes ->> 'event.name' = :apiRequestEventName
+          AND main_loop_turn.attributes ->> 'session.id' = subagent_calls.session_id
+          AND NOT jsonb_exists(main_loop_turn.attributes, :agentNameAttribute)
+          AND main_loop_turn.timestamp <= subagent_calls.dispatched_at
+        ORDER BY main_loop_turn.timestamp DESC
+        LIMIT 1
+      ) dispatching_turn ON TRUE
+      GROUP BY identifier, model
+      ORDER BY SUM(COUNT(*)) OVER (PARTITION BY identifier) DESC, identifier, calls DESC
       """, nativeQuery = true)
-  List<Object[]> aggregateToolInvocationsByInnerAttribute(
+  List<Object[]> aggregateToolInvocationsByInnerAttributeAndModelInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
       @Param("toolName") String toolName,
       @Param("innerAttribute") String innerAttribute,
-      @Param("since") Instant since);
-
-  @Query(value = """
-      SELECT
-        COALESCE(
-          NULLIF(attributes ->> :innerAttribute, ''),
-          NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
-          'unknown')                                                   AS identifier,
-        COUNT(*)                                                       AS calls
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND attributes ->> :toolAttribute = :toolName
-        AND timestamp >= :start
-        AND timestamp <= :end
-      GROUP BY identifier
-      ORDER BY calls DESC
-      """, nativeQuery = true)
-  List<Object[]> aggregateToolInvocationsByInnerAttributeInRange(
-      @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
-      @Param("toolName") String toolName,
-      @Param("innerAttribute") String innerAttribute,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("agentNameAttribute") String agentNameAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
-  // Counts skill invocations, grouped by the skill-name attribute. Skills are
-  // emitted as api_request events (not tool_result), so there is no tool_name
-  // filter here — only the event name and the presence of the skill attribute.
+  // Counts skill invocations, grouped by the skill-name attribute and the model
+  // that served the turn. Skills are emitted as api_request events (not
+  // tool_result), so there is no tool_name filter here — only the event name and
+  // the presence of the skill attribute. Those same rows carry the model
+  // attribute directly, so no correlation is needed on this side. Row ordering
+  // matches aggregateToolInvocationsByInnerAttributeAndModelInRange.
   @Query(value = """
+      WITH skill_calls AS (
+        SELECT
+          COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown') AS identifier,
+          COALESCE(NULLIF(attributes ->> :modelAttribute, ''), 'unknown') AS model
+        FROM log_records
+        WHERE attributes ->> 'event.name' = :eventName
+          AND jsonb_exists(attributes, :skillAttribute)
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
       SELECT
-        COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown') AS identifier,
-        COUNT(*)                                                         AS calls
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND jsonb_exists(attributes, :skillAttribute)
-        AND timestamp >= :since
-      GROUP BY identifier
-      ORDER BY calls DESC
+        identifier                                                      AS identifier,
+        model                                                           AS model,
+        COUNT(*)                                                        AS calls
+      FROM skill_calls
+      GROUP BY identifier, model
+      ORDER BY SUM(COUNT(*)) OVER (PARTITION BY identifier) DESC, identifier, calls DESC
       """, nativeQuery = true)
-  List<Object[]> aggregateSkillInvocations(
+  List<Object[]> aggregateSkillInvocationsByModelInRange(
       @Param("eventName") String eventName,
       @Param("skillAttribute") String skillAttribute,
-      @Param("since") Instant since);
-
-  @Query(value = """
-      SELECT
-        COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown') AS identifier,
-        COUNT(*)                                                         AS calls
-      FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
-        AND jsonb_exists(attributes, :skillAttribute)
-        AND timestamp >= :start
-        AND timestamp <= :end
-      GROUP BY identifier
-      ORDER BY calls DESC
-      """, nativeQuery = true)
-  List<Object[]> aggregateSkillInvocationsInRange(
-      @Param("eventName") String eventName,
-      @Param("skillAttribute") String skillAttribute,
+      @Param("modelAttribute") String modelAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -1040,6 +1046,43 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("eventName") String eventName,
       @Param("promptAttribute") String promptAttribute,
       @Param("promptLimit") int promptLimit);
+
+  // Initiating user prompt per trace, for the Traces list rows and the trace
+  // detail summary. Claude Code stamps each user_prompt log with the
+  // claude_code.interaction root span's trace id in the top-level trace_id
+  // column -- the same correlation findPromptsForSession relies on to link a
+  // turn to its trace -- so a trace's prompt is just its earliest user_prompt
+  // log. DISTINCT ON collapses to one row per trace; the ORDER BY id tiebreaker
+  // makes the pick deterministic when two user_prompt rows share a timestamp,
+  // matching findPromptsForSession.
+  // Unlike aggregateSessionCounts there is deliberately no slash-command
+  // deprioritization: that heuristic exists to find the first *meaningful*
+  // prompt among a session's many turns, whereas a trace has exactly one
+  // initiating turn -- if that turn was '/ship' then '/ship' IS this trace's
+  // prompt, not a placeholder to skip past.
+  // Whitespace (including embedded newlines from multi-line prompts) collapses
+  // to single spaces and the result truncates to :previewLength characters, both
+  // in SQL so the service never handles untruncated prompt text.
+  // Traces absent from the result are the two null cases the caller defaults:
+  // traces not rooted in a conversational turn carry no user_prompt log at all,
+  // and traces recorded with prompt-body capture disabled carry the log but no
+  // prompt text (NULL after NULLIF).
+  @Query(value = """
+      SELECT DISTINCT ON (lr.trace_id)
+        lr.trace_id                                                                   AS trace_id,
+        left(regexp_replace(lr.attributes ->> :promptAttribute, '\\s+', ' ', 'g'),
+             :previewLength)                                                          AS first_user_prompt
+      FROM log_records lr
+      WHERE lr.trace_id IN :traceIds
+        AND lr.attributes ->> 'event.name' = :userPromptEventName
+        AND NULLIF(lr.attributes ->> :promptAttribute, '') IS NOT NULL
+      ORDER BY lr.trace_id, lr.timestamp ASC, lr.id ASC
+      """, nativeQuery = true)
+  List<Object[]> findFirstUserPromptByTraceIds(
+      @Param("traceIds") Collection<String> traceIds,
+      @Param("userPromptEventName") String userPromptEventName,
+      @Param("promptAttribute") String promptAttribute,
+      @Param("previewLength") int previewLength);
 
   // Every tool_result event for one session, oldest first, feeding the prompt
   // timeline's per-turn "tools" rollup. Not aggregated here: the caller

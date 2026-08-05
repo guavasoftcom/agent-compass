@@ -27,6 +27,7 @@ import com.guavasoft.agentcompass.model.LogHistogram;
 import com.guavasoft.agentcompass.model.LogPage;
 import com.guavasoft.agentcompass.model.LogPaginationParams;
 import com.guavasoft.agentcompass.model.LogQueryCriteria;
+import com.guavasoft.agentcompass.model.RequiredTimeWindowParams;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.service.LogService;
 
@@ -64,7 +65,7 @@ public class LogsController {
             @RequestParam(required = false, defaultValue = "50")
             @Min(MINIMUM_HISTOGRAM_BUCKETS) @Max(MAXIMUM_HISTOGRAM_BUCKETS) int buckets,
             @ModelAttribute LogFilterParams logFilterParams,
-            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+            @Valid @ModelAttribute RequiredTimeWindowParams timeWindowParams) {
         LogQueryCriteria criteria = LogQueryCriteria.of(
                 timeWindowParams.startTimestamp(),
                 timeWindowParams.endTimestamp(),
@@ -72,7 +73,7 @@ public class LogsController {
                 List.of(),
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
-                logFilterParams.getQuery());
+                logFilterParams.getQ());
         return logService.histogram(criteria, buckets);
     }
 
@@ -102,7 +103,7 @@ public class LogsController {
                 severity,
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
-                logFilterParams.getQuery());
+                logFilterParams.getQ());
         return logService.facets(criteria);
     }
 
@@ -144,7 +145,7 @@ public class LogsController {
                 severity,
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
-                logFilterParams.getQuery());
+                logFilterParams.getQ());
 
         if (logPaginationParams.isOffsetMode()) {
             LogPage logPage = logService.offsetPage(criteria, logPaginationParams.getPage(), logPaginationParams.getSize());

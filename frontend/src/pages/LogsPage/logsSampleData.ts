@@ -236,9 +236,6 @@ const matches = (r: SampleRow, f: LogsFilters, exclude: FacetKey | 'q' | null): 
   if (!inWindow(r, f)) {
     return false;
   }
-  if (f.hiddenSeverity && f.hiddenSeverity.includes(r._sev)) {
-    return false;
-  }
   if (exclude !== 'q' && f.q) {
     const hay = `${r.body} ${JSON.stringify(r.attributes)}`.toLowerCase();
     if (!hay.includes(f.q.toLowerCase())) {
@@ -279,7 +276,7 @@ export const sampleHistogram = async (f: LogsFilters, target: number): Promise<L
     DEBUG: 0,
   }));
   // histogram applies all filters except severity (legend toggles client-side)
-  const hf: LogsFilters = { ...f, severity: [], hiddenSeverity: [] };
+  const hf: LogsFilters = { ...f, severity: [] };
   STORE.forEach((r) => {
     if (!matches(r, hf, 'severity')) {
       return;

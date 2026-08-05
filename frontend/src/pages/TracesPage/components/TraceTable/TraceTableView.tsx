@@ -6,6 +6,7 @@ import type { TraceRow } from '../../../../api';
 import {
   formatDuration,
   formatTokens,
+  promptOf,
   serviceOf,
   tokensOf,
 } from '../../tracesApi';
@@ -55,6 +56,11 @@ export interface TraceTableViewProps {
   onPageSizeChange: (pageSize: number) => void;
 }
 
+// Aurora sync: added a Prompt column (the trace's initiating user prompt, via
+// promptOf() → TraceRow.firstUserPrompt; null renders "—").
+// Column count bumped to 10; the expanded-row colSpan below must match.
+const COLUMN_COUNT = 10;
+
 const TraceTableView = ({
   rows,
   total,
@@ -88,12 +94,13 @@ const TraceTableView = ({
       <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <Box
           component="table"
-          sx={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}
+          sx={{ width: '100%', borderCollapse: 'collapse', minWidth: 1160 }}
         >
           <Box component="thead">
             <Box component="tr">
               <TableHeaderCell>Start</TableHeaderCell>
               <TableHeaderCell>Root span</TableHeaderCell>
+              <TableHeaderCell>Prompt</TableHeaderCell>
               <TableHeaderCell>Service</TableHeaderCell>
               <TableHeaderCell align="right">Duration</TableHeaderCell>
               <TableHeaderCell align="right">Spans</TableHeaderCell>
@@ -107,6 +114,7 @@ const TraceTableView = ({
             {rows.map((trace, i) => {
               const isExpanded = expanded.has(trace.traceId);
               const serviceName = serviceOf(trace.rootSpanName);
+              const prompt = promptOf(trace);
               return (
                 <Fragment key={trace.traceId}>
                   <Box
@@ -161,6 +169,22 @@ const TraceTableView = ({
                       }}
                     >
                       {trace.rootSpanName}
+                    </Box>
+                    <Box
+                      component="td"
+                      title={prompt ?? undefined}
+                      sx={{
+                        ...cellSx,
+                        fontSize: 12.5,
+                        color: prompt ? 'text.primary' : 'text.disabled',
+                        fontStyle: prompt ? 'normal' : 'italic',
+                        maxWidth: 260,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {prompt ?? '—'}
                     </Box>
                     <Box
                       component="td"
@@ -264,7 +288,7 @@ const TraceTableView = ({
                     <Box component="tr">
                       <Box
                         component="td"
-                        colSpan={9}
+                        colSpan={COLUMN_COUNT}
                         sx={{ p: 0, borderBottom: 1, borderColor: 'divider' }}
                       >
                         <TraceSummaryInline trace={trace} />

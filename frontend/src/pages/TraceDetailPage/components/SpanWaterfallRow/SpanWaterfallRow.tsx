@@ -27,133 +27,95 @@ interface Props {
   onSelect: (spanId: string) => void;
 }
 
-// Billable-token and cache-read pills shown after the span name.
-const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => (
-  <>
-    {tokens.input + tokens.output + tokens.cacheCreate > 0 ? (
-      <Tooltip
-        arrow
-        placement="top"
-        title={
-          <Box sx={{ py: 0.5, typography: 'mono' }}>
-            <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
-              {formatTokens(tokens.input + tokens.output + tokens.cacheCreate)}
+// Aurora sync: combined billable + cache-read into a single total badge (the
+// two separate pills duplicated the same figures shown in the span detail
+// dock's Tokens section). Full breakdown, including cache read, stays one
+// hover away in the tooltip.
+const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
+  const total = tokens.input + tokens.output + tokens.cacheCreate + tokens.cacheRead;
+  if (total <= 0) {
+    return null;
+  }
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      title={
+        <Box sx={{ py: 0.5, typography: 'mono' }}>
+          <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
+            {formatTokens(total)} total tokens
+          </Box>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: 'auto auto',
+              columnGap: 1.5,
+              rowGap: 0.3,
+              fontSize: 11,
+            }}
+          >
+            <Box component="span" sx={{ opacity: 0.75 }}>
+              Input
             </Box>
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: 'auto auto',
-                columnGap: 1.5,
-                rowGap: 0.3,
-                fontSize: 11,
-              }}
-            >
-              <Box component="span" sx={{ opacity: 0.75 }}>
-                Input
-              </Box>
-              <Box component="span" sx={{ textAlign: 'right' }}>
-                {formatTokens(tokens.input)}
-              </Box>
-              <Box component="span" sx={{ opacity: 0.75 }}>
-                Cache creation
-              </Box>
-              <Box component="span" sx={{ textAlign: 'right' }}>
-                {formatTokens(tokens.cacheCreate)}
-              </Box>
-              <Box component="span" sx={{ opacity: 0.75 }}>
-                Output
-              </Box>
-              <Box component="span" sx={{ textAlign: 'right' }}>
-                {formatTokens(tokens.output)}
-              </Box>
+            <Box component="span" sx={{ textAlign: 'right' }}>
+              {formatTokens(tokens.input)}
+            </Box>
+            <Box component="span" sx={{ opacity: 0.75 }}>
+              Output
+            </Box>
+            <Box component="span" sx={{ textAlign: 'right' }}>
+              {formatTokens(tokens.output)}
+            </Box>
+            <Box component="span" sx={{ opacity: 0.75 }}>
+              Cache creation
+            </Box>
+            <Box component="span" sx={{ textAlign: 'right' }}>
+              {formatTokens(tokens.cacheCreate)}
+            </Box>
+            <Box component="span" sx={{ opacity: 0.75 }}>
+              Cache read
+            </Box>
+            <Box component="span" sx={{ textAlign: 'right' }}>
+              {formatTokens(tokens.cacheRead)}
             </Box>
           </Box>
-        }
+        </Box>
+      }
+    >
+      <Box
+        component="span"
+        sx={{
+          ml: 0.9,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.4,
+          px: 0.75,
+          height: 17,
+          borderRadius: '5px',
+          color: 'warning.main',
+          bgcolor: (t) => alpha(t.palette.warning.main, 0.16),
+          typography: 'mono',
+          fontSize: 10,
+          fontWeight: 600,
+          flexShrink: 0,
+        }}
       >
         <Box
-          component="span"
-          sx={{
-            ml: 0.9,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 0.4,
-            px: 0.75,
-            height: 17,
-            borderRadius: '5px',
-            color: 'warning.main',
-            bgcolor: (t) => alpha(t.palette.warning.main, 0.16),
-            typography: 'mono',
-            fontSize: 10,
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
+          component="svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          sx={{ width: 10, height: 10 }}
         >
-          <Box
-            component="svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            sx={{ width: 10, height: 10 }}
-          >
-            <circle cx="12" cy="12" r="8" />
-            <circle cx="12" cy="12" r="3" fill="currentColor" />
-          </Box>
-          {formatTokens(tokens.input + tokens.output + tokens.cacheCreate)}
+          <circle cx="12" cy="12" r="8" />
+          <circle cx="12" cy="12" r="3" fill="currentColor" />
         </Box>
-      </Tooltip>
-    ) : null}
-    {tokens.cacheRead > 0 ? (
-      <Tooltip
-        arrow
-        placement="top"
-        title={
-          <Box sx={{ py: 0.5, typography: 'mono' }}>
-            <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
-              {tokens.cacheRead.toLocaleString()} cache read
-            </Box>
-            <Box sx={{ fontSize: 10, opacity: 0.7 }}>
-              Billed at ~1/10 the input rate, so kept separate
-            </Box>
-          </Box>
-        }
-      >
-        <Box
-          component="span"
-          sx={{
-            ml: 0.9,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 0.4,
-            px: 0.75,
-            height: 17,
-            borderRadius: '5px',
-            color: (t) =>
-              `color-mix(in srgb, ${t.palette.info.main} 88%, ${t.palette.text.secondary})`,
-            bgcolor: (t) => alpha(t.palette.info.main, 0.14),
-            typography: 'mono',
-            fontSize: 10,
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
-        >
-          <Box
-            component="svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            sx={{ width: 10, height: 10 }}
-          >
-            <ellipse cx="12" cy="5" rx="8" ry="3" />
-            <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
-          </Box>
-          {formatTokens(tokens.cacheRead)}
-        </Box>
-      </Tooltip>
-    ) : null}
-  </>
-);
+        {formatTokens(total)}
+      </Box>
+    </Tooltip>
+  );
+};
 
 const SpanWaterfallRow = ({
   span,
@@ -173,6 +135,12 @@ const SpanWaterfallRow = ({
 }: Props) => {
   const theme = useTheme();
   const tokens = tokenBreakdownForSpan(span);
+  // Aurora sync: dropped the per-row `kind` pill (nearly every span is
+  // `internal`, so it repeated without informing — `kind` still shows once in
+  // the detail dock's meta grid) and replaced it with the span's tool name,
+  // which is what actually distinguishes one tool-call row from the next.
+  const toolNameAttribute = span.attributes?.['tool_name'];
+  const toolName = typeof toolNameAttribute === 'string' ? toolNameAttribute : '';
   const isError = span.statusCode === 'error';
   const barBackground = isError
     ? theme.palette.error.main
@@ -277,30 +245,6 @@ const SpanWaterfallRow = ({
         >
           {indexLabel}
         </Box>
-        {span.kind ? (
-          <Box
-            component="span"
-            sx={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              height: 16,
-              px: 0.75,
-              mr: 0.9,
-              borderRadius: '4px',
-              bgcolor: (t) =>
-                t.palette.mode === 'dark'
-                  ? alpha(neutralColors.white, 0.08)
-                  : alpha(neutralColors.inkLight, 0.08),
-              color: 'text.disabled',
-              typography: 'mono',
-              fontSize: 9.5,
-              fontWeight: 500,
-              flexShrink: 0,
-            }}
-          >
-            {span.kind}
-          </Box>
-        ) : null}
         <Box
           component="span"
           sx={{
@@ -314,6 +258,27 @@ const SpanWaterfallRow = ({
         >
           {span.name}
         </Box>
+        {toolName ? (
+          <Box
+            component="span"
+            sx={{
+              ml: 0.9,
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: 17,
+              px: 0.75,
+              borderRadius: '5px',
+              color: 'info.main',
+              bgcolor: (t) => alpha(t.palette.info.main, 0.15),
+              typography: 'mono',
+              fontSize: 10,
+              fontWeight: 600,
+              flexShrink: 0,
+            }}
+          >
+            {toolName}
+          </Box>
+        ) : null}
         <SpanTokenBadges tokens={tokens} />
         {isError ? (
           <Box

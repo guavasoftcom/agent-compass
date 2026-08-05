@@ -27,6 +27,10 @@ export interface TraceDetailPageViewProps {
   selfTimeNanosBySpanId: Map<string, number>;
   logsBySpanId: Map<string, LogRow[]>;
   sessionId: string | null;
+  // TraceRow.firstUserPrompt for this trace. Null hides the header's Prompt row
+  // entirely (traces rooted in a tool / model / mcp / compaction span have no
+  // prompt of their own, and prompt-body capture can be off).
+  firstUserPrompt: string | null;
 }
 
 const TraceDetailPageView = ({
@@ -43,6 +47,7 @@ const TraceDetailPageView = ({
   selfTimeNanosBySpanId,
   logsBySpanId,
   sessionId,
+  firstUserPrompt,
 }: TraceDetailPageViewProps) => {
   const waterfallRef = useRef<HTMLDivElement>(null);
 
@@ -208,6 +213,7 @@ const TraceDetailPageView = ({
         earliestStartMs={earliest}
         totalMs={totalMs}
         errorCount={errorSpans.length}
+        firstUserPrompt={firstUserPrompt}
       />
 
       {/* waterfall card */}

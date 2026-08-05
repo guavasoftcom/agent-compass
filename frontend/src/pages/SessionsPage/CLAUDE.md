@@ -29,7 +29,7 @@ SessionsPage/
     ├── SessionsKpiStrip/        4-card StatCard grid; renders the shared LineSparkline
     │   ├── SessionsKpiStrip.tsx   (components/LineSparkline) and the P95 caption math
     │   └── index.ts
-    ├── SessionsTable/           hand-built sortable table; contains DenialChip, TerminalBadge,
+    ├── SessionsTable/           hand-built sortable table; contains DenialChip,
     │   ├── SessionsTable.tsx      PromptCell, PromptCountPill, SortArrow leaf components, the
     │   │                          Last-activity relative-time cell (Tooltip shows the absolute
     │   │                          timestamp), the Tokens-cell TokenBreakdownTooltip hover, and
@@ -40,7 +40,9 @@ SessionsPage/
         ├── PromptTimelinePanel.tsx  new UI (not an extraction): a gradient rail with a card per
         │                          turn (timestamp, model chip, per-turn cost, TokenUsage w/
         │                          breakdown tooltip, tool-call chips, optional "View trace"
-        │                          link); dims turns outside the active window with a boundary
+        │                          link); header shows the prompt count plus the optional
+        │                          sessionId prop (right-aligned) so the expanded panel names
+        │                          the session; dims turns outside the active window with a boundary
         │                          divider; long prompt text truncates through the shared
         │                          AttributeValue/ExpandedValueDialog machinery. Exports
         │                          TokenBreakdownTitle / TokenBreakdownTooltip / TokenUsage,
@@ -70,9 +72,8 @@ the view takes typed props and contains no `useQuery` or context reads.
 │ │ <SessionsTable>                                                    │   │
 │ │ sticky thead: Started · Last activity · Prompt · Cost · Tokens ·  │   │
 │ │       Cache eff. · Tool calls · Denials · Active time · $/active   │   │
-│ │       min ·                                                        │   │
-│ │       Terminal · Session (Last activity is the default sort)      │   │
-│ │ tbody rows: PromptCell (+N pill) · DenialChip · TerminalBadge;    │   │
+│ │       min (Last activity is the default sort)                      │   │
+│ │ tbody rows: PromptCell (+N pill) · DenialChip;                     │   │
 │ │             Tokens cell hover → TokenBreakdownTooltip; click a    │   │
 │ │             row → inline expansion <tr> with the Aurora prompt    │   │
 │ │             timeline (PromptTimelinePanel, max-height 340px)      │   │
@@ -138,7 +139,10 @@ trace link for those rows, not a disabled placeholder.
   for a new field, then calls `onSortModelChange`. The container resets the page to 0 and updates
   `sortModel`. Sortable fields are: `startTimestamp`, `endTimestamp`, `costUsd`, `tokens`,
   `cacheEfficiency`, `activeTimeSeconds`, `costPerActiveMinuteUsd`. Non-sortable:
-  `toolCallCount`, `denialCount`, `terminalType`, `sessionId`, `firstUserPrompt`.
+  `toolCallCount`, `denialCount`, `firstUserPrompt`. The `terminalType` and `sessionId`
+  columns were dropped in the Aurora sessions/traces sync — both fields are still on
+  `SessionSummaryRow`, and `sessionId` now shows in the expanded `PromptTimelinePanel`
+  header instead of its own column.
 - **Pagination**: offset-based, zero-indexed (`page: 0`). `DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0]`
   (`lib/constants`, currently 25). The pager footer uses a `SegmentedToggle` for rows-per-page
   (25/50/100) and prev/next chevron buttons. Changing page size resets to page 0.
@@ -256,7 +260,9 @@ trace link for those rows, not a disabled placeholder.
   `maxHeight: 340` with `overflowY: 'auto'`. Each turn renders as its own bordered card with a
   glowing rail dot, a model chip (`opus` → `primary.main`, `sonnet` → `auroraColors.cyanBright`,
   `haiku`/unknown → `text.disabled`, keyed on the leading token so `"claude-sonnet-4-5"` matches),
-  per-turn cost, `TokenUsage` (breakdown on hover), tool-call chips (`ToolChips`, first 5 + `+N`
+  per-turn cost, `TokenUsage` (one combined `input + output + cacheCreation + cacheRead` total
+  since the Aurora sync — the old "· N cached" secondary is gone, and the four-way split is one
+  hover away via `TokenBreakdownTooltip`), tool-call chips (`ToolChips`, first 5 + `+N`
   overflow), and an optional "View trace" pill-link. Turns outside the active window render at
   `opacity: 0.45` with a "selected window starts/ends" hairline divider at each boundary crossing
   (see the window-dimming bullet above for where `windowStartMs`/`windowEndMs` come from).

@@ -14,6 +14,7 @@ import com.guavasoft.agentcompass.model.EditFailureLoop;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.HistogramBucket;
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
+import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.model.LogCursor;
 import com.guavasoft.agentcompass.model.LogCursorPage;
 import com.guavasoft.agentcompass.model.LogFacets;
@@ -463,7 +464,7 @@ public class LogService {
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         since);
-    return mapIdentifierCounts(rows);
+    return mapToolCallCounts(rows);
   }
 
   public List<ToolCallCount> aggregateToolCallsInRange(Instant start, Instant end) {
@@ -472,7 +473,7 @@ public class LogService {
         tuningProperties.getToolAttribute(),
         start,
         end);
-    return mapIdentifierCounts(rows);
+    return mapToolCallCounts(rows);
   }
 
   public List<ToolPerformance> aggregateToolPerformanceInRange(Instant start, Instant end) {
@@ -504,56 +505,70 @@ public class LogService {
     return mapToolFailures(rows);
   }
 
-  public List<ToolCallCount> aggregateSkillUsage(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateSkillInvocations(
-        tuningProperties.getSkillEventName(),
-        tuningProperties.getSkillNameAttribute(),
-        since);
-    return mapIdentifierCounts(rows);
+  public List<IdentifierUsageCount> aggregateSkillUsage(int minutes) {
+    Instant end = Instant.now();
+    return aggregateSkillUsageInRange(end.minus(Duration.ofMinutes(minutes)), end);
   }
 
-  public List<ToolCallCount> aggregateSkillUsageInRange(Instant start, Instant end) {
-    List<Object[]> rows = logRecordRepository.aggregateSkillInvocationsInRange(
+  public List<IdentifierUsageCount> aggregateSkillUsageInRange(Instant start, Instant end) {
+    List<Object[]> rows = logRecordRepository.aggregateSkillInvocationsByModelInRange(
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
+        tuningProperties.getModelAttribute(),
         start,
         end);
-    return mapIdentifierCounts(rows);
+    return mapIdentifierUsageCounts(rows);
   }
 
-  public List<ToolCallCount> aggregateSubagentUsage(int minutes) {
-    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    List<Object[]> rows = logRecordRepository.aggregateToolInvocationsByInnerAttribute(
+  public List<IdentifierUsageCount> aggregateSubagentUsage(int minutes) {
+    Instant end = Instant.now();
+    return aggregateSubagentUsageInRange(end.minus(Duration.ofMinutes(minutes)), end);
+  }
+
+  public List<IdentifierUsageCount> aggregateSubagentUsageInRange(Instant start, Instant end) {
+    List<Object[]> rows = logRecordRepository.aggregateToolInvocationsByInnerAttributeAndModelInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         tuningProperties.getSubagentToolName(),
         tuningProperties.getSubagentTypeAttribute(),
-        since);
-    return mapIdentifierCounts(rows);
-  }
-
-  public List<ToolCallCount> aggregateSubagentUsageInRange(Instant start, Instant end) {
-    List<Object[]> rows = logRecordRepository.aggregateToolInvocationsByInnerAttributeInRange(
-        tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
-        tuningProperties.getSubagentToolName(),
-        tuningProperties.getSubagentTypeAttribute(),
+        tuningProperties.getApiRequestEventName(),
+        tuningProperties.getModelAttribute(),
+        tuningProperties.getAgentNameAttribute(),
         start,
         end);
-    return mapIdentifierCounts(rows);
+    return mapIdentifierUsageCounts(rows);
   }
 
-  // Identifier counts reuse the ToolCallCount shape: the "tool" field carries the
-  // skill or
-  // subagent identifier so the frontend can render both views with the same
-  // components.
-  private static List<ToolCallCount> mapIdentifierCounts(List<Object[]> rows) {
+  private static List<ToolCallCount> mapToolCallCounts(List<Object[]> rows) {
     return rows.stream()
         .map(row -> ToolCallCount.builder()
             .tool((String) row[0])
             .calls(((Number) row[1]).longValue())
             .build())
+        .toList();
+  }
+
+  // Pivots (identifier, model, calls) rows into one IdentifierUsageCount per
+  // identifier. The "tool" field carries the skill or subagent identifier so the
+  // frontend can render both views with the same components. The query already
+  // groups every row of one identifier together and sorts identifiers by their
+  // total call count descending, so a LinkedHashMap preserves that order and the
+  // per-model maps stay sorted by call count within each row.
+  private static List<IdentifierUsageCount> mapIdentifierUsageCounts(List<Object[]> rows) {
+    Map<String, Map<String, Long>> callsByIdentifierAndModel = new LinkedHashMap<>();
+    for (Object[] row : rows) {
+      String identifier = (String) row[0];
+      String model = (String) row[1];
+      long calls = ((Number) row[2]).longValue();
+      callsByIdentifierAndModel
+          .computeIfAbsent(identifier, key -> new LinkedHashMap<>())
+          .merge(model, calls, Long::sum);
+    }
+    return callsByIdentifierAndModel.entrySet().stream()
+        .map(entry -> new IdentifierUsageCount(
+            entry.getKey(),
+            entry.getValue().values().stream().mapToLong(Long::longValue).sum(),
+            entry.getValue()))
         .toList();
   }
 

@@ -19,6 +19,16 @@ public record TraceQueryCriteria(
         String[] sessions,
         String fullTextQuery) {
 
+    /**
+     * Normalizes the window to Postgres's microsecond resolution — see
+     * {@link QueryWindowPrecision}, without which the histogram zero-fill cannot
+     * match the buckets {@code date_bin} returns.
+     */
+    public TraceQueryCriteria {
+        startTimestamp = QueryWindowPrecision.toDatabasePrecision(startTimestamp);
+        endTimestamp = QueryWindowPrecision.toDatabasePrecision(endTimestamp);
+    }
+
     /** Convenience factory that coerces null lists to empty arrays. */
     public static TraceQueryCriteria of(
             Instant startTimestamp,

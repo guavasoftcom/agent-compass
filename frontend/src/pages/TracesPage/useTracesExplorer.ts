@@ -66,8 +66,11 @@ const useTracesExplorer = ({
   const [zoom, setZoom] = useState<ZoomRange | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Live tail and Auto-refresh are one linked switch (Stream-only).
-  const tail = autoRefresh && view === 'stream' && zoom == null;
+  // Live tail and Auto-refresh are one linked switch (Stream-only, newest-first only).
+  // The tail cursor is the row at the head of the stream, which is only the *newest* trace
+  // under sort='new'. Under any other sort the head is the slowest/most-errored/etc trace, so
+  // polling `after=<that row>` would prepend unrelated traces and silently break the ordering.
+  const tail = autoRefresh && view === 'stream' && zoom == null && sort === 'new';
 
   // stream cursor-paging state
   const [streamRows, setStreamRows] = useState<TraceRow[]>([]);
@@ -121,6 +124,11 @@ const useTracesExplorer = ({
   const streamCursorRef = useRef(streamCursor);
   const streamHasMoreRef = useRef(streamHasMore);
   const streamLoadingRef = useRef(streamLoading);
+  const streamRowsRef = useRef(streamRows);
+  // TanStack Query hands back a new result object on every render, so keeping the query itself
+  // in an effect dep array retriggers that effect constantly. Only the refetch function is
+  // needed here, and it goes through a ref for the same reason.
+  const refetchHistogramRef = useRef(histogramQuery.refetch);
   const requestSequence = useRef(0);
   useEffect(() => {
     filtersRef.current = filters;
@@ -128,6 +136,8 @@ const useTracesExplorer = ({
     streamCursorRef.current = streamCursor;
     streamHasMoreRef.current = streamHasMore;
     streamLoadingRef.current = streamLoading;
+    streamRowsRef.current = streamRows;
+    refetchHistogramRef.current = histogramQuery.refetch;
   });
 
   const resetStream = useCallback(async () => {
@@ -188,17 +198,22 @@ const useTracesExplorer = ({
       return undefined;
     }
     const interval = window.setInterval(async () => {
-      const newest = streamRows[0] ? { ts: streamRows[0].startTimestamp, id: streamRows[0].traceId } : null;
+      const loadedRows = streamRowsRef.current;
+      const newest = loadedRows[0] ? { ts: loadedRows[0].startTimestamp, id: loadedRows[0].traceId } : null;
       const result = await fetchTracesCursor(filtersRef.current, { sort: sortRef.current, after: newest, limit: TAIL_PAGE });
-      const freshRows = result.items.filter((candidate) => !streamRows.some((existing) => existing.traceId === candidate.traceId));
+      const loadedTraceIds = new Set(streamRowsRef.current.map((existing) => existing.traceId));
+      const freshRows = result.items.filter((candidate) => !loadedTraceIds.has(candidate.traceId));
       if (freshRows.length) {
         setStreamRows((previous) => [...freshRows, ...previous]);
         setStreamTotal((previous) => previous + freshRows.length);
-        void histogramQuery.refetch();
+        void refetchHistogramRef.current();
       }
     }, TAIL_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [tail, streamRows, histogramQuery]);
+    // Everything the tick reads comes from a ref, so `tail` is genuinely the only dep. Listing
+    // `streamRows`/`histogramQuery` here would clear and rebuild the interval on every render
+    // and the 1.5s tick would never fire while the user is typing or toggling facets.
+  }, [tail]);
 
   const toggleFacet = (key: FacetKey, value: string) => {
     setFacetSelections((previous) => {
@@ -264,12 +279,14 @@ const useTracesExplorer = ({
   };
 
   const totalCount = view === 'stream' ? streamTotal : tableQuery.data?.totalCount ?? 0;
-  const tailLocked = view === 'table' || zoom != null;
+  const tailLocked = view === 'table' || zoom != null || sort !== 'new';
   const tailTip = view === 'table'
     ? 'Live tail is available in the Stream view only'
     : zoom != null
       ? 'Live tail is unavailable while zoomed into a time range'
-      : undefined;
+      : sort !== 'new'
+        ? 'Live tail is available under the Newest first sort only'
+        : undefined;
 
   return {
     // filter state

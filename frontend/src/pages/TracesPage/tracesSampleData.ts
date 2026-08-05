@@ -57,6 +57,22 @@ const OPS: Record<string, OpCfg> = {
   'context.compaction': { lo: 900, hi: 8400, err: 0.02, w: 5 },
 };
 
+// Prompt previews for the Prompt column. Only conversational-turn roots get one —
+// tool / model / mcp / compaction-rooted traces have no prompt of their own, and
+// the live API returns null for them (see TraceRow.firstUserPrompt).
+const PROMPT_BEARING_OPS = ['session.turn', 'subagent.run'];
+const SAMPLE_PROMPTS = [
+  'Refactor the Aurora theme overlay so it applies cleanly over the MUI palette',
+  'Why is the sessions grid re-fetching on every keystroke?',
+  'Add a firstUserPrompt field to the Traces API, mirroring Sessions',
+  '/ship',
+  'Walk the token rollup end to end and tell me where the double-count creeps in',
+  'The trace detail waterfall collapses the wrong subtree when I zoom — fix it',
+];
+// A slice of prompt-bearing traces predate prompt-body capture, so their prompt is
+// null even though the root IS a conversational turn.
+const PROMPT_CAPTURE_DISABLED_RATE = 0.15;
+
 const NOW = Date.now();
 const WINDOW_MS = 24 * MS_PER_HOUR;
 const T0 = NOW - WINDOW_MS;
@@ -95,6 +111,8 @@ const STORE: SampleTrace[] = (() => {
     const heavy = op === 'session.turn' || op === 'subagent.run';
     const modelBearing = heavy || op === 'model.completion' || op === 'context.compaction';
     const totalTokens = modelBearing ? ri(heavy ? 40000 : 6000, heavy ? 540000 : 95000) : 0;
+    const promptBearing = PROMPT_BEARING_OPS.includes(op) && rnd() > PROMPT_CAPTURE_DISABLED_RATE;
+    const firstUserPrompt = promptBearing ? pick(SAMPLE_PROMPTS) : null;
     rows.push({
       traceId: hx(32),
       rootSpanId: hx(16),
@@ -105,6 +123,7 @@ const STORE: SampleTrace[] = (() => {
       durationNanos: ms * 1e6,
       errorCount,
       totalTokens,
+      firstUserPrompt,
       _ts: startMs,
       _ms: ms,
       _status: errorCount > 0 ? 'error' : 'ok',
@@ -284,6 +303,12 @@ export const samplePage = async (
 // Seeded by traceId so the same trace always expands to the same shape.
 const TOOLS = ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob', 'WebFetch', 'Task'];
 const MCP = ['github.search_issues', 'github.create_pr', 'linear.list_issues', 'postgres.query'];
+export const sampleTraceSummary = async (traceId: string): Promise<TraceRow | null> => {
+  await latency(60);
+  const t = STORE.find((r) => r.traceId === traceId);
+  return t ? stripInternal(t) : null;
+};
+
 export const sampleSpans = async (traceId: string): Promise<SpanRow[]> => {
   await latency(120);
   const t = STORE.find((r) => r.traceId === traceId);

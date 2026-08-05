@@ -6,6 +6,7 @@
 import { getJson, getText, listWithTotalCount, windowQueryParams } from './http';
 import type {
   HookExecutionRow,
+  IdentifierUsageRow,
   ListResult,
   LogRow,
   SessionKpis,
@@ -20,6 +21,7 @@ import type {
   ToolLatencyRow,
   ToolRepeatStatRow,
   TokenUsageSummary,
+  TraceRow,
   WindowSelection,
 } from './types';
 
@@ -41,14 +43,14 @@ export const fetchToolCallsTimeseries = (
 
 export const fetchSkillUsage = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },
-): Promise<ToolCallRow[]> => {
+): Promise<IdentifierUsageRow[]> => {
   const params = windowQueryParams(selection);
   return getJson(`/api/tool-activity/skill-usage?${params.toString()}`);
 };
 
 export const fetchSubagentUsage = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },
-): Promise<ToolCallRow[]> => {
+): Promise<IdentifierUsageRow[]> => {
   const params = windowQueryParams(selection);
   return getJson(`/api/tool-activity/subagent-usage?${params.toString()}`);
 };
@@ -126,6 +128,12 @@ export const fetchTraceSpans = (traceId: string): Promise<SpanRow[]> =>
 
 export const fetchTraceLogs = (traceId: string): Promise<LogRow[]> =>
   getJson(`/api/traces/${encodeURIComponent(traceId)}/logs`);
+
+// Aggregate row for one trace — same shape as a Traces list row, including
+// firstUserPrompt. Not window-scoped, so a permalinked trace always resolves;
+// 404s when no spans carry the trace id.
+export const fetchTraceSummary = (traceId: string): Promise<TraceRow> =>
+  getJson(`/api/traces/${encodeURIComponent(traceId)}/summary`);
 
 export const fetchReportMarkdown = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },

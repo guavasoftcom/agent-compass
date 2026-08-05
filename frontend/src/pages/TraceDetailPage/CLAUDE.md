@@ -67,8 +67,9 @@ TraceDetailPage/
     │   ├── TraceDetailHeader.tsx      container — derives serviceLabels + totalTokens, renders view
     │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb + IdChip row
     │   │                             + SummaryStrip (Duration/Spans/Errors/Services/Tokens/Root span/Started)
-    │   ├── SummaryStrip.tsx           bordered flex row of labeled metric cells with dividers;
-    │   │                             tooltip fires only when the value element overflows
+    │   ├── SummaryStrip.tsx           bordered panel: an optional "Prompt" header row (hairline-divided,
+    │   │                             hidden when no prompt) above a flex row of labeled metric cells
+    │   │                             with dividers; tooltip fires only when the value element overflows
     │   ├── IdChip.tsx                 click-to-copy chip for traceId and sessionId (uses useCopyToClipboard)
     │   ├── useCopyToClipboard.ts      transient "copied" flag with auto-reset after 1200 ms
     │   └── index.ts
@@ -82,8 +83,9 @@ TraceDetailPage/
     │   │                             double-click resets to full trace; exports ZoomView { s, e }
     │   └── index.ts
     ├── SpanWaterfallRow/
-    │   ├── SpanWaterfallRow.tsx       single row: index badge + kind badge + span name + SpanTokenBadges
-    │   │                             (billable-token pill + cache-read pill) + error/descendant-error/log-count
+    │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + tool_name chip + SpanTokenBadges
+    │   │                             (one combined total-token pill; the four-way split, cache read
+    │   │                             included, is in its hover tooltip) + error/descendant-error/log-count
     │   │                             pills + timeline bar + duration label; pure component (no view split)
     │   └── index.ts
     └── SpanDetailDock/
@@ -91,7 +93,9 @@ TraceDetailPage/
         │                             col 1: meta grid + self-time bar + status message + TokensSection
         │                             col 2: SpanAttributesColumn (Tool group + Attributes group)
         │                             col 3: SpanEventsList + log entries (LogEntry)
-        ├── TokensSection.tsx          input/output/cache_creation table + cache_read dashed row
+        ├── TokensSection.tsx          input/output/cache_creation/cache_read table — cache_read is a
+        │                             plain row like the rest (no dashed-off "~1/10 rate" line); the
+        │                             section-header count is the total across all four
         ├── SpanAttributesColumn.tsx   filters redundant keys; splits tool-related attrs into a
         │                             "Tool" group (tinted blue) vs plain "Attributes" group
         ├── SpanEventsList.tsx         timestamped span event cards (T+offset from span start)
@@ -112,7 +116,9 @@ TraceDetailPage/
 ┌─ TraceDetailHeaderView ──────────────────────────────────────────────────────────┐
 │ Observability                                                                    │
 │ Traces › Trace detail   [trace: 0102…] [session: abc…]                          │
-│ ┌──────┬───────┬────────┬──────────┬────────┬──────────────┬─────────┐          │
+│ ┌────────────────────────────────────────────────────────────────────┐          │
+│ │ PROMPT   Refactor the Aurora theme overlay so it applies cleanly…  │  ← only when
+│ ├──────┬───────┬────────┬──────────┬────────┬──────────────┬─────────┤    firstUserPrompt
 │ │Durat.│ Spans │ Errors │ Services │ Tokens │  Root span   │ Started │  ← SummaryStrip
 │ └──────┴───────┴────────┴──────────┴────────┴──────────────┴─────────┘          │
 └──────────────────────────────────────────────────────────────────────────────────┘
@@ -127,11 +133,11 @@ TraceDetailPage/
 ├─ Axis (time tick labels at 0 / 25 / 50 / 75 / 100%) ────────────────────────────┤
 │ Span                    │  0ms    125ms   250ms   375ms   500ms                 │
 ├─ Body (overflowY auto, overflowX hidden) ────────────────────────────────────────┤
-│ ▶ [1] INTERNAL  claude_code.session  ●tokens  ●●●●●         [████████] 500ms   │
-│   · [2] CLIENT  claude_code.llm_request  ●2.4k      [████] 310ms              │
-│   · [3] INTERNAL  claude_code.tool.execution         [██] 45ms  error          │
-│   · [4] INTERNAL  claude_code.tool.execution    [█] 12ms  +1 below  2 logs     │
-│   · [5] INTERNAL  claude_code.tool.execution        [██] 38ms                  │
+│ ▶ [1] claude_code.session  ●tokens  ●●●●●                   [████████] 500ms   │
+│   · [2] claude_code.llm_request  ●2.4k              [████] 310ms              │
+│   · [3] claude_code.tool.execution  [Bash]           [██] 45ms  error          │
+│   · [4] claude_code.tool.execution  [Read]      [█] 12ms  +1 below  2 logs     │
+│   · [5] claude_code.tool.execution  [Grep]          [██] 38ms                  │
 │   (scroll continues …)                                                           │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
@@ -152,25 +158,28 @@ TraceDetailPage/
 │ │  input          1,800     │                                                  │
 │ │  output           600     │                                                  │
 │ │  cache_creation     0     │                                                  │
-│ │  cache_read     1,200 ~1/10 rate                                             │
+│ │  cache_read     1,200     │                                                  │
 │ └───────────────────────────┘                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Who calls which API
 
-Both fetchers live in the shared `api/` barrel (`from '../../api'`); spans are additionally
-wrapped by `tracesApi.fetchSpansForTrace` for sample-data compatibility.
+All three fetchers live in the shared `api/` barrel (`from '../../api'`); spans and the summary
+are additionally wrapped by `tracesApi` (`fetchSpansForTrace` / `fetchTraceSummaryOrNull`) for
+sample-data compatibility.
 
 | Source                                      | Query key                        | Fetcher → endpoint                                          |
 |---------------------------------------------|----------------------------------|------------------------------------------------------------|
 | `TraceDetailPage` (`useQuery`)              | `['trace-spans', traceId]`       | `fetchSpansForTrace(traceId)` → `GET /api/traces/{traceId}` |
 | `TraceDetailPage` (`useQuery`, eager)       | `['trace-logs', traceId]`        | `fetchTraceLogs(traceId)` → `GET /api/traces/{traceId}/logs` |
+| `TraceDetailPage` (`useQuery`)              | `['trace-summary', traceId]`     | `fetchTraceSummaryOrNull(traceId)` → `GET /api/traces/{traceId}/summary` |
 
-Both queries are enabled only when `traceId` is truthy (`enabled: Boolean(traceId)`).
-Neither query polls — this page has no `WindowSelection`, no auto-refresh, and no
+All three queries are enabled only when `traceId` is truthy (`enabled: Boolean(traceId)`).
+None of them poll — this page has no `WindowSelection`, no auto-refresh, and no
 `refetchInterval`. The logs query is intentionally eager (not gated on a span being selected)
-so the dock's Logs section has data the moment the user first selects a span.
+so the dock's Logs section has data the moment the user first selects a span. The summary query
+feeds exactly one thing, the header's Prompt row (`firstUserPrompt`) — see Gotchas.
 
 `TraceSummaryInline` in `TracesPage` uses `['trace-inline-spans', traceId]` (a different key)
 for the same spans endpoint — the two caches are separate.
@@ -276,8 +285,26 @@ increases height), and clamps to `[150px, 72% viewport]`.
 
 ## Gotchas
 
+- **The SummaryStrip Prompt row has its own query.** `SummaryStrip` renders it from the optional
+  `prompt` prop, threaded up as `firstUserPrompt` through `TraceDetailHeaderView` /
+  `TraceDetailHeader` / `TraceDetailPageView` from a **third** page query,
+  `['trace-summary', traceId]` → `fetchTraceSummaryOrNull` → `GET /api/traces/{id}/summary`.
+  That endpoint exists because the prompt is a trace-level field and the spans endpoint returns
+  a bare array that can't carry one; the fetcher swallows its 404 to `null` so an unknown trace
+  id is the waterfall query's error to report, not this one's. Everything else in the header
+  stays derived from the spans already in hand — don't migrate the other tiles onto this query.
+  Absent/null hides the row entirely (no "—" placeholder), which is the normal state for traces
+  rooted in a tool/model/mcp/compaction span and for traces recorded with prompt-body capture
+  off (see the same gotcha in [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md)).
+- **`kind` is deliberately not on the waterfall row.** Nearly every real Claude Code span is
+  `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
+  mcp-client spans differ — so a per-row pill repeated the same word down the whole trace
+  without conveying anything. `kind` is unchanged on `SpanRow` and still shown once in the
+  dock's meta grid, where the client/server distinction reads. Its slot now carries the span's
+  `attributes['tool_name']` as an info-colored chip after the span name, which is what actually
+  tells one tool-call row from the next. Don't re-add the kind pill.
 - **No window context.** This page does not use `useWindowContext()` or `useSectionContext()`.
-  It has no `WindowSelector`, no auto-refresh, and no polling. The two query keys are keyed only
+  It has no `WindowSelector`, no auto-refresh, and no polling. The three query keys are keyed only
   on `traceId`; staleTime and refetchOnWindowFocus from the global `QueryClient` apply.
 - **`key={traceId}` on the view.** `TraceDetailPage` passes `key={traceId}` to
   `TraceDetailPageView` so all view state (collapsed, selected, zoom) resets cleanly when

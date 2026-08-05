@@ -30,6 +30,7 @@ import com.guavasoft.agentcompass.model.TraceHistogram;
 import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TracePaginationParams;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
+import com.guavasoft.agentcompass.model.TraceSummary;
 import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
 import com.guavasoft.agentcompass.service.TraceService;
@@ -112,7 +113,7 @@ public class TracesController {
         return traceExplorerService.offsetPage(
                 criteria,
                 tracePaginationParams.getSort(),
-                tracePaginationParams.getPage(),
+                tracePaginationParams.resolvedPage(),
                 tracePaginationParams.getSize());
     }
 
@@ -142,6 +143,28 @@ public class TracesController {
                 tracePaginationParams.getAfter(),
                 tracePaginationParams.getLimit());
         return ResponseEntity.ok(cursorPage);
+    }
+
+    @GetMapping("/{traceId}/summary")
+    @Operation(
+            summary = "Aggregate summary of a single trace (the trace detail header row)",
+            description = "Returns the same TraceSummary shape the list endpoints return — span/error counts, "
+                    + "duration, root span, session, token total, and firstUserPrompt — for one trace. "
+                    + "Not window-scoped, so a permalinked trace always resolves. "
+                    + "404 when no spans carry the given trace id.")
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Summary of the requested trace",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = TraceSummary.class))),
+            @ApiResponse(responseCode = "404", description = "No spans exist for that trace id", content = @Content())})
+    public ResponseEntity<TraceSummary> traceSummary(
+            @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)",
+                    example = "0102030405060708090a0b0c0d0e0f10")
+            @PathVariable String traceId) {
+        return ResponseEntity.of(traceExplorerService.traceSummary(traceId));
     }
 
     @GetMapping("/{traceId}")

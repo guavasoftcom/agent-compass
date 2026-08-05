@@ -115,6 +115,11 @@ const LogsPageView = ({
   // user stops typing instead of on every keystroke.
   const debouncedSearch = useDebouncedValue(search);
 
+  // `hidden` (the histogram legend mute) is deliberately NOT part of this object. It dims
+  // series in LogHistogramChart and nothing else: buildLogsQuery never serializes it, so it
+  // reaches no endpoint. Folding it in here would put it in `filtersKey`, which keys all three
+  // queries and drives the stream-reset effect below — muting a severity would then collapse
+  // every expanded row and re-pull the stream for a change that alters no request parameter.
   const filters = useMemo<LogsFilters>(
     () => ({
       startTimestamp: zoom ? zoom.startTimestamp : startTimestamp,
@@ -123,25 +128,18 @@ const LogsPageView = ({
       event: [...sel.event],
       tool: [...sel.tool],
       q: debouncedSearch || undefined,
-      hiddenSeverity: [...hidden],
     }),
-    [zoom, startTimestamp, endTimestamp, sel, debouncedSearch, hidden],
+    [zoom, startTimestamp, endTimestamp, sel, debouncedSearch],
   );
   const filtersKey = JSON.stringify(filters);
 
-  // facets ignore the legend mute so severity totals stay stable
-  const facetFilters = useMemo<LogsFilters>(
-    () => ({ ...filters, hiddenSeverity: [] }),
-    [filters],
-  );
-
   const histogramQuery = useQuery({
     queryKey: ['log-histogram', filtersKey],
-    queryFn: () => fetchLogHistogram(facetFilters, 50),
+    queryFn: () => fetchLogHistogram(filters, 50),
   });
   const facetsQuery = useQuery({
     queryKey: ['log-facets', filtersKey],
-    queryFn: () => fetchLogFacets(facetFilters),
+    queryFn: () => fetchLogFacets(filters),
   });
   const tableQuery = useQuery({
     queryKey: ['log-table', filtersKey, page, pageSize],
@@ -157,6 +155,10 @@ const LogsPageView = ({
   const loadingRef = useRef(streamLoading);
   const reqId = useRef(0);
   const newestRef = useRef<LogCursor | null>(null);
+  // TanStack Query hands back a new result object on every render, so keeping the query itself
+  // in an effect dep array retriggers that effect constantly. Only refetch is needed below, and
+  // it goes through a ref for the same reason.
+  const refetchHistogramRef = useRef(histogramQuery.refetch);
   useEffect(() => {
     filtersRef.current = filters;
     cursorRef.current = cursor;
@@ -165,6 +167,7 @@ const LogsPageView = ({
     newestRef.current = loaded[0]
       ? { ts: loaded[0].timestamp, id: loaded[0].id }
       : null;
+    refetchHistogramRef.current = histogramQuery.refetch;
   });
 
   const resetStream = useCallback(async () => {
@@ -238,11 +241,14 @@ const LogsPageView = ({
       if (res.items.length) {
         setLoaded((prev) => [...res.items, ...prev]);
         setStreamTotal((t) => t + res.items.length);
-        void histogramQuery.refetch();
+        void refetchHistogramRef.current();
       }
     }, TAIL_INTERVAL_MS);
     return () => window.clearInterval(iv);
-  }, [autoRefresh, view, histogramQuery]);
+    // Everything the tick reads comes from a ref, so these two are genuinely the only deps.
+    // Listing `histogramQuery` here would clear and rebuild the interval on every render and
+    // the 1.5s tick would never fire while the user is typing or toggling facets.
+  }, [autoRefresh, view]);
 
   const toggleFacet = (key: FacetKey, value: string) => {
     setSel((prev) => {

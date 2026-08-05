@@ -74,8 +74,8 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 
 - `GET /api/logs` — log records, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/logs/histogram` (severity histogram), `/api/logs/facets` (filter-rail counts), and `/api/logs/attributes` / `/attribute-keys` / `/attribute-values` autocomplete.
 - `GET /api/metrics` — raw metric points, offset-paged (`page`/`size`, size clamped to 500, `totalCount` in the body); plus `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
-- `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`.
-- `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, and `/api/traces/{traceId}/logs` cross-signal log linkage.
+- `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`. `skill-usage` and `subagent-usage` rows carry a `byModel` split of their call count.
+- `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, `/api/traces/{traceId}/summary` (one trace's aggregate row, including the user prompt that initiated it), and `/api/traces/{traceId}/logs` cross-signal log linkage.
 - `GET /api/sessions` — session list, with `/summary`, `/token-usage`, and `/{sessionId}/prompts` (per-session prompt timeline with per-turn model / cost / token / tool rollups).
 
 ### Report

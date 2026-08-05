@@ -32,6 +32,9 @@ interface SessionColumn {
   tip?: string;
 }
 
+// Aurora sync: Terminal and Session columns removed from this listing (per
+// design review) — the session id is still available in the expanded prompt
+// timeline header if needed.
 const COLUMNS: SessionColumn[] = [
   { field: 'startTimestamp', label: 'Started', numeric: false, sortable: true },
   {
@@ -89,14 +92,6 @@ const COLUMNS: SessionColumn[] = [
     sortable: true,
     tip: 'Burn rate: cost divided by active time, per minute. Independent of how long the session sat idle — surfaces sessions that spend more per minute of actual work.',
   },
-  {
-    field: 'terminalType',
-    label: 'Terminal',
-    numeric: false,
-    sortable: false,
-    tip: 'Whether the session ran in an interactive TTY or a non-interactive (piped / CI / scripted) context — from the terminal.type attribute.',
-  },
-  { field: 'sessionId', label: 'Session', numeric: false, sortable: false },
 ];
 
 // Hand-built table styled to match the Aurora mockup exactly (Sora uppercase
@@ -106,7 +101,7 @@ const COLUMNS: SessionColumn[] = [
 const tableSx: SxProps<Theme> = {
   width: '100%',
   borderCollapse: 'collapse',
-  minWidth: 1360,
+  minWidth: 1080,
   fontFamily: fontFamilies.body,
   '& thead th': {
     typography: 'eyebrowSm',
@@ -143,12 +138,6 @@ const tableSx: SxProps<Theme> = {
     fontSize: '14px',
   },
   '& td.tokens': { fontWeight: 600 },
-  '& td.session': {
-    typography: 'mono',
-    fontSize: '12.5px',
-    letterSpacing: '-0.2px',
-    color: 'text.secondary',
-  },
   '& td.prompt': {
     whiteSpace: 'nowrap',
     maxWidth: 320,
@@ -249,44 +238,6 @@ const CacheEfficiencyCell = ({
     </Tooltip>
   );
 };
-
-// Interactive / non-interactive pill for the Terminal column.
-const TerminalBadge = ({ interactive }: { interactive: boolean }) => (
-  <Box
-    component="span"
-    sx={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 0.75,
-      height: 22,
-      px: 1,
-      borderRadius: radii.lg,
-      fontFamily: fontFamilies.display,
-      fontSize: 11,
-      fontWeight: 600,
-      letterSpacing: 0.2,
-      color: interactive ? 'primary.main' : 'text.secondary',
-      bgcolor: (t) =>
-        interactive
-          ? alpha(t.palette.primary.main, 0.12)
-          : alpha(
-              t.palette.text.primary,
-              t.palette.mode === 'dark' ? 0.08 : 0.06,
-            ),
-    }}
-  >
-    <Box
-      component="span"
-      sx={{
-        width: 6,
-        height: 6,
-        borderRadius: '50%',
-        bgcolor: interactive ? 'primary.main' : 'text.disabled',
-      }}
-    />
-    {interactive ? 'Interactive' : 'Non-interactive'}
-  </Box>
-);
 
 // Small dimmed "+N" pill after the truncated prompt text: N additional prompts
 // beyond the one shown. Muted/neutral tone (unlike DenialChip's severity tint)
@@ -560,19 +511,12 @@ const SessionsTable = ({
                 <Box component="td" className="num">
                   {burn == null ? '—' : USD_PER_MINUTE_FORMATTER.format(burn)}
                 </Box>
-                <Box component="td">
-                  <TerminalBadge
-                    interactive={row.terminalType === 'interactive'}
-                  />
-                </Box>
-                <Box component="td" className="session">
-                  {row.sessionId}
-                </Box>
               </Box>
               {isExpanded ? (
                 <Box component="tr">
                   <Box component="td" colSpan={COLUMNS.length} sx={{ p: 0 }}>
                     <PromptTimelinePanel
+                      sessionId={row.sessionId}
                       prompts={promptTimeline}
                       loading={promptTimelineLoading}
                       error={promptTimelineError}

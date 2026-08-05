@@ -67,7 +67,7 @@ TracesPage/
 ├── tracesApi.ts              the 5 fetch* functions + USE_SAMPLE_DATA; re-exports traceTypes +
 │                             traceDerivations so `from './tracesApi'` stays the single import surface
 ├── traceTypes.ts             shared types (TracesFilters, TraceHistogram, TraceFacets, cursors, …) — no runtime
-├── traceDerivations.ts       serviceOf/statusOf/durationMsOf/tokensOf/formatTokens/formatDuration/quantile/
+├── traceDerivations.ts       serviceOf/statusOf/durationMsOf/tokensOf/promptOf/formatTokens/formatDuration/quantile/
 │                             durationBucketOf/DURATION_BUCKETS/NANOS_PER_MILLI + buildTracesQuery (shared by fetchers + sample)
 ├── tokenBreakdown.ts         tokenBreakdownForSpan(span) → per-span input/output/cacheCreate/cacheRead
 │                             token split; also imported across TraceDetailPage
@@ -115,6 +115,11 @@ TracesPage/
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+Both bodies carry a **Prompt** column — the trace's initiating user prompt, truncated to one
+ellipsized line with the full text on hover. Stream: between Operation and Latency
+(`minmax(180px,1fr)` in `GRID_TEMPLATE_COLUMNS`). Table: between Root span and Service
+(`maxWidth: 260`).
+
 ## Who calls which API
 
 All fetchers live in `tracesApi.ts` (not the shared `api/index.ts`) and share `buildTracesQuery(filters)` for the
@@ -157,11 +162,21 @@ substituted for the window range when a zoom is active.
   in-flight page can't clobber a newer reset. **Manual reload does NOT refresh the stream** — it
   invalidates `trace-histogram`/`trace-facets`/`trace-table` only; the live tail keeps the stream
   current.
-- **Live tail** = `autoRefresh && view === 'stream' && zoom == null`. When active, the hook polls
-  `fetchTracesCursor({after: newest, limit: 20})` every 1.5 s and *prepends* genuinely new rows
-  (deduped by `traceId`), bumps `streamTotal`, and refetches the histogram. `tailLocked` is true in
-  Table view or while zoomed; `tailTip` explains why. The toolbar pill and the PageActions
-  auto-refresh toggle are the same flag (`autoRefreshDisabled={tailLocked}`).
+- **Live tail** = `autoRefresh && view === 'stream' && zoom == null && sort === 'new'`. When
+  active, the hook polls `fetchTracesCursor({after: newest, limit: 20})` every 1.5 s and
+  *prepends* genuinely new rows (deduped by `traceId`), bumps `streamTotal`, and refetches the
+  histogram. `tailLocked` is true in Table view, while zoomed, or under any sort but "Newest
+  first"; `tailTip` explains why. The toolbar pill and the PageActions auto-refresh toggle are
+  the same flag (`autoRefreshDisabled={tailLocked}`).
+  - **The sort gate is load-bearing.** The tail cursor is `streamRows[0]`, which is only the
+    newest trace under `sort='new'`. Under "Slowest first" the head row is the slowest trace, so
+    polling `after=<that row>` would prepend unrelated fast traces above the slowest ones and
+    silently break the ordering. Widening the gate means deriving a per-sort tail cursor first.
+  - **The tail effect's only dep is `[tail]` and must stay that way.** Everything the tick reads
+    goes through a ref (`streamRowsRef`, `filtersRef`, `sortRef`, and `refetchHistogramRef` —
+    which exists because TanStack Query returns a new result object on every render). Listing
+    `streamRows`/`histogramQuery` would clear and recreate the 1.5 s interval on every render, so
+    the tick would never fire while the user is typing in the search box or toggling facets.
 - **Preset polling**: separately, the provider runs a 60 s `reloadTraces` interval when
   `autoRefresh && selection.kind === 'preset'` — this refreshes histogram/facets (and table when
   mounted). So Stream view gets 1.5 s tail; Table view gets 60 s refetch.
@@ -177,6 +192,18 @@ substituted for the window range when a zoom is active.
 
 ## Gotchas
 
+- **The Prompt column is legitimately "—" for most rows.** `promptOf(trace)` reads
+  `TraceRow.firstUserPrompt` — a real field on both list endpoints now (`TraceSummary` in
+  `TraceExplorerService`, batch-filled from the `user_prompt` log correlated to the trace by
+  `trace_id`, mirroring `SessionSummaryRow.firstUserPrompt`). It is `null` — italic muted "—" —
+  for the two cases the backend can't fill: traces rooted in a tool/model/mcp/compaction span
+  have no prompt of their own, and prompt-body capture may have been off when the trace was
+  recorded. So an all-"—" column on a tool-heavy window is correct, not a wiring bug.
+  Unlike `tokensOf` / `TraceRowTokens`, `promptOf` needs no widening cast, and
+  `tracesSampleData.ts` synthesizes the field (prompt-bearing roots only).
+- **`TraceTableView`'s `COLUMN_COUNT` must match the header cells** — it's the `colSpan` on the
+  expanded `TraceSummaryInline` row. Adding or removing a column means bumping it (currently 10)
+  and rechecking the table's `minWidth: 1160`.
 - **Don't "fix" the context back to props.** The 47-prop view was the problem this solves; see the
   Architecture section. If you split the context value for re-render perf, keep slices stable.
 - The context file exports a hook beside its provider, so it trips

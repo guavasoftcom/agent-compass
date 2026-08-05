@@ -17,6 +17,11 @@ export interface TraceDetailHeaderViewProps {
   spanCount: number;
   serviceLabels: string[];
   totalTokens: number;
+  // Aurora sync: the trace's first user prompt, shown as a header row inside
+  // the summary panel above the KPI tiles. Requires a `firstUserPrompt` field
+  // on TraceRow (populated from the root/first prompt-bearing span, mirroring
+  // SessionSummaryRow.firstUserPrompt) — null/undefined hides the row.
+  firstUserPrompt?: string | null;
 }
 
 const TraceDetailHeaderView = ({
@@ -29,6 +34,7 @@ const TraceDetailHeaderView = ({
   spanCount,
   serviceLabels,
   totalTokens,
+  firstUserPrompt,
 }: TraceDetailHeaderViewProps) => {
   const summary: SummaryItem[] = [
     {
@@ -184,7 +190,7 @@ const TraceDetailHeaderView = ({
           </Box>
         </Box>
       </Box>
-      <SummaryStrip items={summary} />
+      <SummaryStrip items={summary} prompt={firstUserPrompt} />
     </Box>
   );
 };
