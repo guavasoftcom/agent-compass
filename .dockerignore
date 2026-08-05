@@ -1,0 +1,8 @@
+# The Dockerfile only consumes prebuilt artifacts — the Spring Boot jar and the
+# Vite bundle — so deny everything by default and re-include exactly what's needed.
+
+**
+
+!Dockerfile
+!backend/target/*.jar
+!frontend/dist

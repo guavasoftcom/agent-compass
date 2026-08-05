@@ -14,6 +14,7 @@ OTLP/HTTP telemetry sink → Postgres (`jsonb`) → markdown tuning report + Rea
   - `service/`, `controller/` — aggregation, dashboard JSON, markdown report. Per-domain controllers (`LogsController`, `MetricsController`, `SessionController`, `ToolActivityController`, `TracesController`, `ReportController`) serve the React app under `/api`.
   - `model/` — record DTOs (Lombok `@Data @Builder` on older shapes); MapStruct mappers in `mapper/` (`spring` component model) handle entity → DTO.
   - `config/` — `TuningProperties` (overridable event/attribute/metric names), `OpenApiConfig`, etc.
+- Root `Dockerfile` / `.dockerignore` / `docker-compose.yml` — the released image and the stack that runs it locally. The Dockerfile builds nothing: it copies in a prebuilt jar and Vite bundle. See [docs/local-docker-deployment.md](docs/local-docker-deployment.md).
 - `frontend/` — React 19 + Vite 8 + MUI 9 (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` / `@mui/x-data-grid` / `@mui/x-tree-view`), TanStack Query v5, React Router 7. Package manager is Yarn Berry, pinned by the `packageManager` field in `frontend/package.json` and resolved through Corepack — don't install Yarn globally, and a stray `package-lock.json` is legacy, so never `npm install`. See [frontend/CLAUDE.md](frontend/CLAUDE.md) for conventions; each `frontend/src/pages/<Name>Page/` folder also has its own `CLAUDE.md` covering that page's files, data flow, and gotchas.
 
 ## Run / build / test
@@ -26,6 +27,11 @@ cd backend && ./mvnw spring-boot:run
 
 # Backend tests (includes Testcontainers integration tests — Docker must be running).
 cd backend && ./mvnw verify
+
+# Executable jar (spring-boot:repackage is bound to package). `clean` matters: a
+# stale jar from an earlier version leaves two in target/, which the release
+# workflow's single-jar resolver rejects.
+cd backend && ./mvnw clean package -DskipTests
 
 # Frontend dev (port 5173, /api and /v1 proxied to :8080).
 cd frontend && yarn install && yarn dev
@@ -43,6 +49,12 @@ cd frontend && yarn test:coverage   # enforces the 80% thresholds in vite.config
 `.github/workflows/pull-request.yml` runs all of the above on every pull request (`./mvnw verify`
 on JDK 21, frontend lint/typecheck/test/build on Node 22). It runs `yarn test --run` rather than
 `yarn test:coverage` — the suite doesn't meet the coverage thresholds yet.
+
+`.github/workflows/release.yml` cuts releases: manual dispatch from `main` with a semver bump, re-running
+the pull-request gates, bumping `frontend/package.json` + `backend/pom.xml`, tagging `v<version>`, and
+pushing a multi-arch image to `ghcr.io/<owner>/<repo>`. It builds the frontend and jar itself and hands
+both to the Dockerfile — the SPA is never copied into `backend/src/main/resources`, so build output
+stays out of the backend source tree.
 
 ## Conventions
 
@@ -80,6 +92,11 @@ export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 export OTEL_METRIC_EXPORT_INTERVAL=10000   # optional, speeds up debugging
 ```
+
+Claude Code needs more than this — telemetry is off by default and metrics, logs, and traces have
+separate exporter switches. [docs/local-docker-deployment.md](docs/local-docker-deployment.md) has the
+full settings block, what each variable feeds in the dashboard, and the container's port (the dev
+backend is `:8080`, the compose stack `:18080`, and they are separate databases).
 
 ## Things to avoid
 

@@ -1,0 +1,65 @@
+# Local deployment of the released Agent Compass image: the Spring Boot API and
+# the dashboard SPA in one container, plus the Postgres it persists into.
+# See docs/local-docker-deployment.md for the walkthrough.
+#
+# This is NOT the development stack. backend/docker-compose.yml is what
+# `./mvnw spring-boot:run` starts, and it owns a separate Postgres volume — the
+# project name below deliberately differs so neither stack can drop the other's
+# data. The docs explain how to point this stack at the dev volume instead.
+name: agent-compass
+
+services:
+  postgres:
+    image: postgres:16
+    # Same tuning as the dev stack: the dashboard's histogram/facet/autocomplete
+    # queries rescan the recent log_records window + GIN indexes and sort heavily,
+    # so keep that working set resident and let sorts finish in memory. work_mem
+    # is per-sort, and this DB has one client.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-coding_agent_tuning}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Deliberately not published: the app reaches Postgres over the compose
+    # network, and leaving 5432 free avoids clashing with the dev stack's
+    # Postgres. Uncomment to attach psql or a GUI client from the host.
+    # ports:
+    #   - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-coding_agent_tuning}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    # Override to run an image you built yourself:
+    #   AGENT_COMPASS_IMAGE=agent-compass:local docker compose up -d
+    image: ${AGENT_COMPASS_IMAGE:-ghcr.io/guavasoftcom/agent-compass:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The image ships no datasource defaults on purpose — application.yml falls
+      # back to localhost, which resolves to the container itself.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-coding_agent_tuning}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      JAVA_OPTS: ${JAVA_OPTS:-}
+    # Serves both the dashboard and /api on one port; OTLP ingest lands on the
+    # same port under /v1/*. Published on 18080 rather than 8080: the dev
+    # backend already owns 8080, and 80/8080 are the first ports anything else
+    # on the machine grabs. The container still listens on 8080 internally.
+    ports:
+      - "${APP_PORT:-18080}:8080"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

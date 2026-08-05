@@ -1,0 +1,269 @@
+# Pushes the version-bump commit + tag and creates the GitHub Release using the
+# job-scoped GITHUB_TOKEN — no App, no secrets to rotate.
+#
+# Setup:
+#   1. Create an Environment named "Release" (Settings → Environments).
+#      Under "Deployment branches", choose "Selected branches" and add `main`.
+#      GitHub itself will reject runs dispatched from any other branch.
+#
+# Two caveats come with GITHUB_TOKEN, both fine today:
+#   - A protected `main` will reject its push. Rulesets and classic branch
+#     protection can only grant bypass to users/teams/Apps, never to
+#     `github-actions[bot]`, so protecting `main` means switching this workflow
+#     to a GitHub App token (actions/create-github-app-token) instead.
+#   - Pushes made with it deliberately do not trigger other workflows. This
+#     workflow builds and publishes the image itself, so nothing downstream is
+#     waiting on the tag push — but a future tag-triggered workflow would never
+#     fire.
+#
+# After cutting the release this workflow builds a single Docker image that
+# serves the API and the SPA together on port 8080, and pushes it to
+# ghcr.io/<owner>/<repo>:<tag> + :latest. Auth uses the job-scoped GITHUB_TOKEN
+# with `packages: write` — no new secrets required. The image itself does no
+# building: the Dockerfile copies in the jar and the Vite bundle produced here.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump to apply"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Cut release
+    runs-on: ubuntu-latest
+    environment: Release
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Refuse to run outside main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "Releases can only be cut from refs/heads/main (got ${{ github.ref }})." >&2
+            exit 1
+          fi
+
+      # persist-credentials keeps the GITHUB_TOKEN on the origin remote so the
+      # version-bump commit and tag can be pushed later in the job.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      # -------------------------------------------------------------------
+      # Same gates as pull-request.yml — refuse to cut a release that wouldn't
+      # pass PR review. If any of these fail the workflow stops before any
+      # version-bump commit, tag, or release is created.
+      # -------------------------------------------------------------------
+
+      # Must precede setup-node: its yarn cache lookup shells out to `yarn`,
+      # and corepack is what resolves that to the pinned Yarn 4.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify backend (checkstyle + Testcontainers tests)
+        working-directory: backend
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --immutable
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: yarn lint
+
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: yarn typecheck
+
+      # `yarn test` alone is vitest in watch mode, hence --run. Not test:coverage:
+      # that also enforces the 80% thresholds in vite.config.js, which the suite
+      # does not currently meet — swap it in once coverage is there.
+      - name: Test frontend
+        working-directory: frontend
+        run: yarn test --run
+
+      # No VITE_* backend-URL variable is set on purpose. The API client uses
+      # same-origin relative paths ("/api/..."), and the image's backend serves
+      # the SPA, so the browser always reaches the API on whatever host the
+      # container runs. Setting one here would freeze a hostname into the bundle.
+      - name: Build frontend
+        working-directory: frontend
+        run: yarn build
+
+      # Guard against a future change reintroducing a hardcoded dev backend URL.
+      # The bare "http://localhost" string react-router uses as an internal
+      # fallback base is fine; a bundled reference to a backend/dev-server port
+      # is not — it would resolve to the user's own machine, not the container.
+      - name: Verify no localhost backend URL is baked into the bundle
+        working-directory: frontend
+        run: |
+          if grep -rqE 'localhost:(8080|5173)|127\.0\.0\.1:(8080|5173)' dist; then
+            echo "::error::Built frontend bundle references a localhost backend URL; it would not resolve inside the image."
+            grep -roE '.{40}(localhost|127\.0\.0\.1):(8080|5173).{40}' dist
+            exit 1
+          fi
+
+      # -------------------------------------------------------------------
+      # Version bump, commit, tag
+      # -------------------------------------------------------------------
+
+      - name: Compute next version
+        id: bump
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./frontend/package.json').version")
+          IFS='.' read -r major minor patch <<< "$current"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          next="${major}.${minor}.${patch}"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$next"       >> "$GITHUB_OUTPUT"
+          echo "tag=v$next"       >> "$GITHUB_OUTPUT"
+          echo "Bumping $current → $next"
+
+      - name: Fail if tag already exists
+        run: |
+          if git rev-parse "refs/tags/${{ steps.bump.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.bump.outputs.tag }} already exists." >&2
+            exit 1
+          fi
+
+      # `yarn version` rewrites only package.json's version field. npm's
+      # equivalent would also rewrite the legacy package-lock.json, which isn't
+      # staged below — the lockfile version would then drift silently.
+      - name: Update frontend/package.json
+        working-directory: frontend
+        run: yarn version "${{ steps.bump.outputs.next }}"
+
+      - name: Update backend/pom.xml
+        working-directory: backend
+        run: ./mvnw -q -B versions:set -DnewVersion="${{ steps.bump.outputs.next }}-SNAPSHOT" -DgenerateBackupPoms=false
+
+      # 41898282 is GitHub's own user id for `github-actions[bot]`; pairing it
+      # with the noreply address is what makes the commit show the bot's avatar
+      # and link to its profile.
+      - name: Commit version bump
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json backend/pom.xml
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — versions already at target." >&2
+            exit 1
+          fi
+          git commit -m "chore(release): ${{ steps.bump.outputs.tag }}"
+          git push origin HEAD:${{ github.ref_name }}
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Tag release
+        run: |
+          git tag -a "${{ steps.bump.outputs.tag }}" -m "Release ${{ steps.bump.outputs.tag }}"
+          git push origin "${{ steps.bump.outputs.tag }}"
+
+      # -------------------------------------------------------------------
+      # Image: package the jar + the SPA bundle built above, publish to GHCR
+      # -------------------------------------------------------------------
+
+      # Repackage so the jar's internal version matches the just-pushed tag.
+      # `clean` is required, not tidiness: the verify step above already built a
+      # jar at the OLD version, and target/ would then hold two, which the jar
+      # resolver below rejects — after the commit and tag have already been
+      # pushed.
+      #
+      # The SPA is deliberately NOT copied into backend/src/main/resources: it
+      # ships as plain files beside the jar and the image points Spring at them
+      # (SPRING_WEB_RESOURCES_STATIC_LOCATIONS), keeping build output out of the
+      # backend source tree. Tests already passed in the verify step above.
+      - name: Repackage jar with bumped version
+        working-directory: backend
+        run: ./mvnw --batch-mode --no-transfer-progress -DskipTests clean package
+
+      # The jar name carries the just-bumped version, so resolve it rather than
+      # hardcoding it; fail loudly if the build produced anything but one jar.
+      - name: Resolve jar path
+        id: jar
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          jars=(backend/target/*.jar)
+          if [ ${#jars[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one jar in backend/target, found ${#jars[@]}: ${jars[*]}"
+            exit 1
+          fi
+          echo "path=${jars[0]}" >> "$GITHUB_OUTPUT"
+
+      # Both are required for the multi-platform build below: the runner's
+      # default docker driver can only build for its own architecture, and the
+      # Dockerfile's RUN layer (user creation) has to be emulated for arm64.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # arm64 matters here: the local-deployment docs target developer
+          # machines, and an amd64-only image runs under emulation on Apple
+          # Silicon.
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            JAR_FILE=${{ steps.jar.outputs.path }}
+            FRONTEND_DIST=frontend/dist
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.bump.outputs.tag }}
+            ghcr.io/${{ github.repository }}:latest
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.bump.outputs.tag }}" \
+            --target "${{ steps.commit.outputs.sha }}" \
+            --title "${{ steps.bump.outputs.tag }}" \
+            --generate-notes
