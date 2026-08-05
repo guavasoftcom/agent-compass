@@ -38,8 +38,16 @@ public class LogFilterParams {
             example = "Bash")
     private List<String> tool;
 
+    /**
+     * Full-text search term. Bound as {@code q} — the wire name the frontend's
+     * {@code buildLogsQuery} emits and the name {@link TraceFilterParams} already uses for the
+     * same concept. Spring binds by field name, so this one deliberately breaks the
+     * spelled-out-names rule: renaming it re-breaks the wire contract, and a mismatch here
+     * fails silently (the criteria coerce null to {@code ""}, which every query treats as
+     * "no full-text filter").
+     */
     @Parameter(
             description = "Full-text search over log body and serialised attributes",
             example = "old_string not unique")
-    private String query;
+    private String q;
 }

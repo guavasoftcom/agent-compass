@@ -486,4 +486,93 @@ class LogsControllerTest {
         assertThat(capturedCriteria.tools()).isEmpty();
         assertThat(capturedCriteria.severities()).isEmpty();
     }
+
+    // -------------------------------------------------------------------------
+    // Full-text param binds as 'q'
+    //
+    // The field was previously named 'query', which no client sends. The mismatch failed
+    // silently: LogQueryCriteria.of coerces a null term to "", and every ':fullTextQuery = '''
+    // branch in the SQL then short-circuits, so rows/histogram/facets all came back unfiltered
+    // rather than erroring.
+    // -------------------------------------------------------------------------
+
+    @Test
+    void logsBindsFullTextSearchTermFromQueryParam() throws Exception {
+        Instant start = Instant.parse("2026-06-01T00:00:00Z");
+        Instant end = Instant.parse("2026-06-02T00:00:00Z");
+        when(logService.cursorPage(any(LogQueryCriteria.class), isNull(), isNull(), anyInt()))
+                .thenReturn(new LogCursorPage(List.of(), null, false, 0L));
+
+        ArgumentCaptor<LogQueryCriteria> criteriaCaptor =
+                ArgumentCaptor.forClass(LogQueryCriteria.class);
+
+        mockMvc.perform(get("/api/logs")
+                .param("startTimestamp", start.toString())
+                .param("endTimestamp", end.toString())
+                .param("q", "old_string not unique"))
+                .andExpect(status().isOk());
+
+        verify(logService).cursorPage(criteriaCaptor.capture(), isNull(), isNull(), anyInt());
+        assertThat(criteriaCaptor.getValue().fullTextQuery()).isEqualTo("old_string not unique");
+    }
+
+    @Test
+    void histogramBindsFullTextSearchTermFromQueryParam() throws Exception {
+        Instant start = Instant.parse("2026-06-01T00:00:00Z");
+        Instant end = Instant.parse("2026-06-02T00:00:00Z");
+        when(logService.histogram(any(LogQueryCriteria.class), anyInt()))
+                .thenReturn(new LogHistogram(1800000L, List.of()));
+
+        ArgumentCaptor<LogQueryCriteria> criteriaCaptor =
+                ArgumentCaptor.forClass(LogQueryCriteria.class);
+
+        mockMvc.perform(get("/api/logs/histogram")
+                .param("startTimestamp", start.toString())
+                .param("endTimestamp", end.toString())
+                .param("q", "tool_result"))
+                .andExpect(status().isOk());
+
+        verify(logService).histogram(criteriaCaptor.capture(), anyInt());
+        assertThat(criteriaCaptor.getValue().fullTextQuery()).isEqualTo("tool_result");
+    }
+
+    @Test
+    void facetsBindsFullTextSearchTermFromQueryParam() throws Exception {
+        Instant start = Instant.parse("2026-06-01T00:00:00Z");
+        Instant end = Instant.parse("2026-06-02T00:00:00Z");
+        when(logService.facets(any(LogQueryCriteria.class)))
+                .thenReturn(new LogFacets(List.of(), List.of(), List.of()));
+
+        ArgumentCaptor<LogQueryCriteria> criteriaCaptor =
+                ArgumentCaptor.forClass(LogQueryCriteria.class);
+
+        mockMvc.perform(get("/api/logs/facets")
+                .param("startTimestamp", start.toString())
+                .param("endTimestamp", end.toString())
+                .param("q", "Bash"))
+                .andExpect(status().isOk());
+
+        verify(logService).facets(criteriaCaptor.capture());
+        assertThat(criteriaCaptor.getValue().fullTextQuery()).isEqualTo("Bash");
+    }
+
+    // -------------------------------------------------------------------------
+    // Histogram requires both window bounds
+    //
+    // date_bin is anchored on the window start and the zero-fill spans [start, end], so a
+    // missing bound NPEs in the bucket-width picker before any SQL runs. It has to be a 400.
+    // -------------------------------------------------------------------------
+
+    @Test
+    void histogramRejectsMissingWindowBounds() throws Exception {
+        mockMvc.perform(get("/api/logs/histogram"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void histogramRejectsWindowWithOnlyStartTimestamp() throws Exception {
+        mockMvc.perform(get("/api/logs/histogram")
+                .param("startTimestamp", "2026-06-01T00:00:00Z"))
+                .andExpect(status().isBadRequest());
+    }
 }

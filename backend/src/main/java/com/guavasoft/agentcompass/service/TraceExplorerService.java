@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.TraceCursor;
 import com.guavasoft.agentcompass.model.TraceCursorPage;
@@ -13,6 +14,7 @@ import com.guavasoft.agentcompass.model.TraceHistogramBucket;
 import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
 import com.guavasoft.agentcompass.model.TraceSummary;
+import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import java.time.Duration;
@@ -21,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Aggregation service for the Trace Explorer page: histogram, facets, cursor-paged
@@ -72,7 +75,15 @@ public class TraceExplorerService {
             long totalTokens) {
     }
 
+    /**
+     * Preview length for {@link TraceSummary#getFirstUserPrompt()}, matching the
+     * Sessions grid's prompt preview so the two columns truncate identically.
+     */
+    private static final int PROMPT_PREVIEW_LENGTH = 200;
+
     private final SpanRepository spanRepository;
+    private final LogRecordRepository logRecordRepository;
+    private final TuningProperties tuningProperties;
 
     // =========================================================================
     // Histogram
@@ -261,6 +272,13 @@ public class TraceExplorerService {
             TraceQueryCriteria criteria, String sort, int pageLimit) {
         List<Object[]> rows;
         switch (sort) {
+            case SORT_OLD:
+                rows = spanRepository.traceListSortOldCursor(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageLimit);
+                break;
             case SORT_SLOW:
                 rows = spanRepository.traceListSortSlowCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
@@ -315,6 +333,14 @@ public class TraceExplorerService {
         }
         List<Object[]> rows;
         switch (sort) {
+            case SORT_OLD:
+                rows = spanRepository.traceListSortOldBefore(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        cursor.ts(), cursor.id(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageLimit);
+                break;
             case SORT_SLOW:
                 rows = spanRepository.traceListSortSlowBefore(
                         criteria.startTimestamp(), criteria.endTimestamp(),
@@ -375,6 +401,14 @@ public class TraceExplorerService {
         }
         List<Object[]> rows;
         switch (sort) {
+            case SORT_OLD:
+                rows = spanRepository.traceListSortOldAfter(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        cursor.ts(), cursor.id(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageLimit);
+                break;
             case SORT_SLOW:
                 rows = spanRepository.traceListSortSlowAfter(
                         criteria.startTimestamp(), criteria.endTimestamp(),
@@ -555,6 +589,26 @@ public class TraceExplorerService {
     }
 
     // =========================================================================
+    // Single trace
+    // =========================================================================
+
+    /**
+     * Aggregate summary for one trace, for the trace detail page's header. Same
+     * {@link TraceSummary} shape the list endpoints return — including
+     * {@code firstUserPrompt} — so both surfaces read one field name.
+     *
+     * <p>Not window-scoped: a permalinked trace resolves regardless of the window
+     * currently selected in the UI. Empty when no spans carry the trace id.
+     */
+    public Optional<TraceSummary> traceSummary(String traceId) {
+        List<Object[]> rows = spanRepository.traceSummaryById(traceId);
+        if (rows.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(toTraceSummaries(rows).get(0));
+    }
+
+    // =========================================================================
     // Row mapping
     // =========================================================================
 
@@ -590,8 +644,47 @@ public class TraceExplorerService {
                 .build();
     }
 
-    private static List<TraceSummary> toTraceSummaries(List<Object[]> rows) {
-        return rows.stream().map(TraceExplorerService::toTraceSummary).toList();
+    /**
+     * Maps the raw list rows and stamps each one's {@code firstUserPrompt} in a single
+     * follow-up query for the whole page — the same batch-enrich shape the Sessions grid
+     * uses for its prompt context, rather than a per-row lookup or a tenth copy of the
+     * prompt join across all twenty trace-list queries.
+     */
+    private List<TraceSummary> toTraceSummaries(List<Object[]> rows) {
+        List<TraceSummary> summaries = rows.stream().map(TraceExplorerService::toTraceSummary).toList();
+        return withFirstUserPrompts(summaries);
+    }
+
+    /**
+     * Fills {@link TraceSummary#setFirstUserPrompt(String)} on every summary whose trace has
+     * an initiating user prompt. Traces missing from the lookup keep a null prompt: either
+     * they are not rooted in a conversational turn, or prompt-body capture was off when they
+     * were recorded.
+     */
+    private List<TraceSummary> withFirstUserPrompts(List<TraceSummary> summaries) {
+        if (summaries.isEmpty()) {
+            return summaries;
+        }
+        List<String> traceIds = summaries.stream().map(TraceSummary::getTraceId).toList();
+        Map<String, String> promptByTraceId = findFirstUserPrompts(traceIds);
+        for (TraceSummary summary : summaries) {
+            summary.setFirstUserPrompt(promptByTraceId.get(summary.getTraceId()));
+        }
+        return summaries;
+    }
+
+    /** Column order from {@code findFirstUserPromptByTraceIds}: trace_id(0), first_user_prompt(1). */
+    private Map<String, String> findFirstUserPrompts(List<String> traceIds) {
+        List<Object[]> promptRows = logRecordRepository.findFirstUserPromptByTraceIds(
+                traceIds,
+                tuningProperties.getUserPromptEventName(),
+                tuningProperties.getPromptAttribute(),
+                PROMPT_PREVIEW_LENGTH);
+        Map<String, String> promptByTraceId = new HashMap<>();
+        for (Object[] promptRow : promptRows) {
+            promptByTraceId.put((String) promptRow[0], blankToNull((String) promptRow[1]));
+        }
+        return promptByTraceId;
     }
 
     private static String blankToNull(String value) {

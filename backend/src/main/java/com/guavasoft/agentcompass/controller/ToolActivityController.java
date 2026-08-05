@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
+import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
@@ -185,19 +186,20 @@ public class ToolActivityController {
 
     @GetMapping("/skill-usage")
     @Operation(
-            summary = "Per-skill invocation counts over the window",
+            summary = "Per-skill invocation counts over the window, split by model",
             description = "Counts tool_result events for the configured skill-dispatch tool (default "
                     + "'Skill'), grouped by the skill identifier attribute. The identifier is read from "
                     + "the flat attribute first and falls back to the same key inside tool_input. "
                     + "Skills that never trigger have descriptions that don't match what the agent looks "
-                    + "for. Reuses the ToolCallCount shape — the 'tool' field carries the skill identifier.")
+                    + "for. The 'tool' field carries the skill identifier; 'byModel' splits the count by "
+                    + "the model that served the turn, read straight off the same log records.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per distinct skill observed in the window, sorted by calls desc",
             content = @Content(
                     mediaType = "application/json",
-                    array = @ArraySchema(schema = @Schema(implementation = ToolCallCount.class)))))
-    public List<ToolCallCount> skillUsage(
+                    array = @ArraySchema(schema = @Schema(implementation = IdentifierUsageCount.class)))))
+    public List<IdentifierUsageCount> skillUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
@@ -208,19 +210,23 @@ public class ToolActivityController {
 
     @GetMapping("/subagent-usage")
     @Operation(
-            summary = "Per-subagent invocation counts over the window",
+            summary = "Per-subagent invocation counts over the window, split by dispatching model",
             description = "Counts tool_result events for the configured subagent-dispatch tool "
                     + "(default 'Agent'), grouped by the subagent-type attribute (with fallback to the "
                     + "tool_input field of the same name). Subagents that get called for trivial work "
-                    + "belong as inline tool sequences in AGENTS.md instead. Reuses the ToolCallCount "
-                    + "shape — the 'tool' field carries the subagent identifier.")
+                    + "belong as inline tool sequences in AGENTS.md instead. The 'tool' field carries "
+                    + "the subagent identifier; 'byModel' splits the count by the model that dispatched "
+                    + "the call. Those tool_result rows carry no model attribute, so the model comes "
+                    + "from the last main-loop api_request in the same session at or before the call — "
+                    + "the turn that emitted the tool_use. Calls whose dispatching turn is not in the "
+                    + "data bucket under 'unknown'.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per distinct subagent observed in the window, sorted by calls desc",
             content = @Content(
                     mediaType = "application/json",
-                    array = @ArraySchema(schema = @Schema(implementation = ToolCallCount.class)))))
-    public List<ToolCallCount> subagentUsage(
+                    array = @ArraySchema(schema = @Schema(implementation = IdentifierUsageCount.class)))))
+    public List<IdentifierUsageCount> subagentUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {

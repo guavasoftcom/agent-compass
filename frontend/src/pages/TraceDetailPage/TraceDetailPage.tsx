@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTraceLogs } from '../../api';
 import type { LogRow } from '../../api';
-import { fetchSpansForTrace } from '../TracesPage/tracesApi';
+import { fetchSpansForTrace, fetchTraceSummaryOrNull } from '../TracesPage/tracesApi';
 import { NANOS_PER_MILLI } from '../TracesPage/tracesApi';
 import {
   buildSpanDepths,
@@ -34,6 +34,16 @@ export default function TraceDetailPage() {
   const { data: logsData } = useQuery({
     queryKey: ['trace-logs', traceId],
     queryFn: () => fetchTraceLogs(traceId!),
+    enabled: Boolean(traceId),
+  });
+
+  // The trace's aggregate row, fetched purely for `firstUserPrompt` — the spans
+  // response is an array and can't carry a trace-level field. Deliberately not
+  // folded into the header's other numbers, which stay derived from the spans
+  // already in hand.
+  const { data: traceSummary } = useQuery({
+    queryKey: ['trace-summary', traceId],
+    queryFn: () => fetchTraceSummaryOrNull(traceId!),
     enabled: Boolean(traceId),
   });
 
@@ -165,6 +175,7 @@ export default function TraceDetailPage() {
       selfTimeNanosBySpanId={selfTimeNanosBySpanId}
       logsBySpanId={logsBySpanId}
       sessionId={sessionId}
+      firstUserPrompt={traceSummary?.firstUserPrompt ?? null}
     />
   );
 }

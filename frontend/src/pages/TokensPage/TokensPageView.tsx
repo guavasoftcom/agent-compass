@@ -11,7 +11,7 @@ import type { TokenUsageSummary, WindowSelection } from '../../api';
 import TokenSummaryCards from './components/TokenSummaryCards';
 import TokenByModelCard from './components/TokenByModelCard';
 import TokenCompositionCard from './components/TokenCompositionCard';
-import { formatCompact } from '../../lib/format';
+import { formatCompact, shortModelName } from '../../lib/format';
 
 export interface TokensPageViewProps {
   selection: WindowSelection;
@@ -25,16 +25,6 @@ export interface TokensPageViewProps {
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
 }
-
-// Short, human display name for a model id, e.g. "claude-sonnet-4" → "Sonnet 4".
-const shortModelName = (model: string): string => {
-  const parts = model.replace(/^claude-/, '').split('-');
-  if (parts.length === 0 || parts[0] === '') {
-    return model;
-  }
-  const [family, ...rest] = parts;
-  return [family.charAt(0).toUpperCase() + family.slice(1), ...rest].join(' ');
-};
 
 const ratioBandColor = (
   ratio: number,

@@ -3,9 +3,12 @@ import PageLayout from '../../components/PageLayout';
 import StatCard from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
 import { colorForIndex } from '../../theme/theme';
-import type { ToolCallRow } from '../../api';
+import type { ChartCardLegendItem } from '../../components/ChartCard';
+import ModelBreakdownCard from './components/ModelBreakdownCard';
+import type { ModelBreakdownRow } from './components/ModelBreakdownCard';
+import type { IdentifierRowWithShare } from './skillsAgentsDerivations';
 
-export type IdentifierRowWithShare = ToolCallRow & { share: number };
+export type { IdentifierRowWithShare };
 
 export interface SkillsAgentsPageViewProps {
   skillRows: IdentifierRowWithShare[];
@@ -14,6 +17,10 @@ export interface SkillsAgentsPageViewProps {
   subagentRows: IdentifierRowWithShare[];
   subagentTotal: number;
   isSubagentsLoading: boolean;
+  skillModelRows: ModelBreakdownRow[];
+  skillModelLegendItems: ChartCardLegendItem[];
+  subagentModelRows: ModelBreakdownRow[];
+  subagentModelLegendItems: ChartCardLegendItem[];
   error: Error | null;
 }
 
@@ -40,6 +47,10 @@ const SkillsAgentsPageView = ({
   subagentRows,
   subagentTotal,
   isSubagentsLoading,
+  skillModelRows,
+  skillModelLegendItems,
+  subagentModelRows,
+  subagentModelLegendItems,
   error,
 }: SkillsAgentsPageViewProps) => {
   const topSkill = skillRows[0] ?? null;
@@ -116,6 +127,33 @@ const SkillsAgentsPageView = ({
           centerValue={subagentTotal.toLocaleString()}
           centerLabel="subagent calls"
           hasData={subagentRows.length > 0}
+          isLoading={isSubagentsLoading}
+          emptyLabel="No subagent invocations in this window."
+        />
+      </Box>
+
+      {/* Same pairing, split by the model behind each call */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+          gap: 2,
+          alignItems: 'stretch',
+        }}
+      >
+        <ModelBreakdownCard
+          title="Skills by model"
+          subtitle="Skill invocations split by the model that made the call."
+          rows={skillModelRows}
+          legendItems={skillModelLegendItems}
+          isLoading={isSkillsLoading}
+          emptyLabel="No Skill invocations in this window."
+        />
+        <ModelBreakdownCard
+          title="Subagents by model"
+          subtitle="Subagent invocations split by the model that dispatched the call."
+          rows={subagentModelRows}
+          legendItems={subagentModelLegendItems}
           isLoading={isSubagentsLoading}
           emptyLabel="No subagent invocations in this window."
         />

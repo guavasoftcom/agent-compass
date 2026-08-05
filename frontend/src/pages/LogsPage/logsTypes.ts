@@ -21,8 +21,6 @@ export interface LogsFilters {
   tool?: string[];
   /** full-text over body + serialized attributes */
   q?: string;
-  /** legend-muted severities — applied to histogram + stream, never to facet counts */
-  hiddenSeverity?: Severity[];
 }
 
 export interface HistogramBucket {

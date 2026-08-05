@@ -7,6 +7,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
+import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolDenialCount;
 import com.guavasoft.agentcompass.model.ToolFailureRate;
@@ -16,6 +17,7 @@ import com.guavasoft.agentcompass.service.TraceService;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -56,15 +58,18 @@ class ToolActivityControllerTest {
     @Test
     void skillUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
         when(logService.aggregateSkillUsage(anyInt())).thenReturn(List.of(
-                ToolCallCount.builder().tool("verify").calls(4L).build(),
-                ToolCallCount.builder().tool("ship").calls(1L).build()));
+                new IdentifierUsageCount("verify", 4L, Map.of("claude-opus-4-8", 3L, "claude-sonnet-4-6", 1L)),
+                new IdentifierUsageCount("ship", 1L, Map.of("claude-opus-4-8", 1L))));
 
         mockMvc.perform(get("/api/tool-activity/skill-usage"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].tool").value("verify"))
                 .andExpect(jsonPath("$[0].calls").value(4))
-                .andExpect(jsonPath("$[1].tool").value("ship"));
+                .andExpect(jsonPath("$[0].byModel.['claude-opus-4-8']").value(3))
+                .andExpect(jsonPath("$[0].byModel.['claude-sonnet-4-6']").value(1))
+                .andExpect(jsonPath("$[1].tool").value("ship"))
+                .andExpect(jsonPath("$[1].byModel.['claude-opus-4-8']").value(1));
 
         verify(logService).aggregateSkillUsage(1440);
     }
@@ -72,13 +77,14 @@ class ToolActivityControllerTest {
     @Test
     void subagentUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
         when(logService.aggregateSubagentUsage(anyInt())).thenReturn(List.of(
-                ToolCallCount.builder().tool("Explore").calls(7L).build()));
+                new IdentifierUsageCount("Explore", 7L, Map.of("claude-opus-4-8", 7L))));
 
         mockMvc.perform(get("/api/tool-activity/subagent-usage"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].tool").value("Explore"))
-                .andExpect(jsonPath("$[0].calls").value(7));
+                .andExpect(jsonPath("$[0].calls").value(7))
+                .andExpect(jsonPath("$[0].byModel.['claude-opus-4-8']").value(7));
 
         verify(logService).aggregateSubagentUsage(1440);
     }

@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.TraceCursorPage;
+import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
 import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
@@ -175,5 +176,55 @@ class TracesControllerTest {
                 .andExpect(jsonPath("$[1].parentSpanId").value("1112131415161718"));
 
         verify(traceService).spansForTrace("0102030405060708090a0b0c0d0e0f10");
+    }
+
+    // -------------------------------------------------------------------------
+    // Window bounds are required on every trace endpoint
+    //
+    // Every trace query pins the window with a bare BETWEEN and has no IS NULL branch, so a
+    // missing bound either NPEs in the histogram bucketer or silently matches zero rows.
+    // -------------------------------------------------------------------------
+
+    @Test
+    void histogramRejectsMissingWindowBounds() throws Exception {
+        mockMvc.perform(get("/api/traces/histogram"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void facetsRejectsMissingWindowBounds() throws Exception {
+        mockMvc.perform(get("/api/traces/facets"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void tracesCursorPageRejectsWindowWithOnlyStartTimestamp() throws Exception {
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // -------------------------------------------------------------------------
+    // Malformed pagination params
+    //
+    // The offset handler is selected by @GetMapping(params = "page"), which matches on param
+    // PRESENCE — so a bare '?page=' routes here while binding null. Unboxing that directly was
+    // an NPE, i.e. a 500 on a malformed request.
+    // -------------------------------------------------------------------------
+
+    @Test
+    void tracesOffsetPageTreatsEmptyPageParamAsFirstPage() throws Exception {
+        when(traceExplorerService.offsetPage(
+                any(TraceQueryCriteria.class), eq("new"), eq(0), anyInt()))
+                .thenReturn(new TracePage(List.of(), 0L));
+
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", "2026-06-11T00:00:00Z")
+                        .param("endTimestamp", "2026-06-12T00:00:00Z")
+                        .param("page", ""))
+                .andExpect(status().isOk());
+
+        verify(traceExplorerService).offsetPage(
+                any(TraceQueryCriteria.class), eq("new"), eq(0), anyInt());
     }
 }

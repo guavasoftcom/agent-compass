@@ -10,6 +10,7 @@ import {
   durationMsOf,
   formatDuration,
   formatTokens,
+  promptOf,
   quantile,
   serviceOf,
   statusOf,
@@ -19,8 +20,11 @@ import TraceSummaryInline from '../TraceSummaryInline';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
 
+// Aurora sync: inserted a Prompt column (minmax(180px,1fr)) between Operation
+// and Latency — the trace's initiating user prompt, via promptOf() →
+// TraceRow.firstUserPrompt; null renders "—".
 const GRID_TEMPLATE_COLUMNS =
-  '4px 112px minmax(170px,1.35fr) 188px 78px 56px 74px 150px 24px';
+  '4px 112px minmax(150px,0.9fr) minmax(180px,1fr) 188px 78px 56px 74px 150px 24px';
 
 const clockTime = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-US', { hour12: false });
@@ -130,6 +134,7 @@ const TraceStreamView = ({
         <span />
         <HeaderCell>Start</HeaderCell>
         <HeaderCell>Operation</HeaderCell>
+        <HeaderCell>Prompt</HeaderCell>
         <HeaderCell>Latency</HeaderCell>
         <HeaderCell align="right">Duration</HeaderCell>
         <HeaderCell align="right">Spans</HeaderCell>
@@ -177,6 +182,7 @@ const TraceStreamView = ({
           const fillPercent = Math.max(3, latencyFillPercent(durationMs));
           const isSlow = durationMs >= p95;
           const serviceName = serviceOf(trace.rootSpanName);
+          const prompt = promptOf(trace);
           return (
             <Box key={trace.traceId}>
               <Box
@@ -281,6 +287,20 @@ const TraceStreamView = ({
                       {trace.errorCount}
                     </Box>
                   ) : null}
+                </Box>
+                <Box
+                  title={prompt ?? undefined}
+                  sx={{
+                    fontSize: 12.5,
+                    color: prompt ? 'text.primary' : 'text.disabled',
+                    fontStyle: prompt ? 'normal' : 'italic',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    minWidth: 0,
+                  }}
+                >
+                  {prompt ?? '—'}
                 </Box>
                 <Box
                   sx={{ display: 'flex', alignItems: 'center', height: '100%' }}

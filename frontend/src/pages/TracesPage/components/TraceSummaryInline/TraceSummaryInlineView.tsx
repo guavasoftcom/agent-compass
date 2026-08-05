@@ -36,6 +36,9 @@ export interface TraceSummaryModel {
   tokenTotals: TokenComposition;
   calls: number;
   maxDepth: number;
+  // Aurora sync: count of tool/MCP spans in the trace — replaces the KPI strip's
+  // "Tokens" tile (which duplicated the Token composition section's total below it).
+  toolCalls: number;
 }
 
 export interface TraceSummaryInlineViewProps {
@@ -112,11 +115,7 @@ const TraceSummaryInlineView = ({
               label="Duration"
               value={formatDuration(model.totalMs * 1e6)}
             />
-            <Tile
-              label="Tokens"
-              value={formatTokens(model.tokenTotals.total)}
-              cap={callLabel}
-            />
+            <Tile label="Tool calls" value={String(model.toolCalls)} />
             <Tile label="Depth" value={`${model.maxDepth}`} unit="levels" />
             <Tile
               label="Errors"

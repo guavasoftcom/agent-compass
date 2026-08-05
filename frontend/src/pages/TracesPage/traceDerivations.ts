@@ -34,6 +34,28 @@ export const serviceOf = (rootSpanName: string | null | undefined): string => {
   const hit = SERVICE_BY_PREFIX.find(([prefix]) => operation.startsWith(prefix));
   return hit ? hit[1] : 'claude_code';
 };
+// Sub-spans the SDK nests *under* a tool-call span rather than emitting per call:
+// `claude_code.tool.execution` (the run itself) and `claude_code.tool.blocked_on_user`
+// (the permission wait). Both are ~1:1 with their parent, so counting them as calls
+// triples the real figure.
+const TOOL_SUBSPAN_OPERATIONS = new Set(['tool.execution', 'tool.blocked_on_user']);
+
+// One entry per actual tool/MCP invocation. Real Claude Code names the call span
+// `claude_code.tool` and hangs the sub-spans above off it; the sample store uses the
+// bare operation form (`tool.execute`, `tool.Read`, `mcp.connect`). Strip the
+// `claude_code.` prefix first — same normalization `serviceOf` does — so both shapes
+// go through one rule.
+export const isToolCallSpan = (spanName: string | null | undefined): boolean => {
+  if (!spanName) {
+    return false;
+  }
+  const operation = spanName.toLowerCase().replace(/^claude_code\./, '');
+  if (TOOL_SUBSPAN_OPERATIONS.has(operation)) {
+    return false;
+  }
+  return operation === 'tool' || /^(tool|mcp)\./.test(operation);
+};
+
 export const statusOf = (t: TraceRow): TraceStatus => (t.errorCount > 0 ? 'error' : 'ok');
 export const durationMsOf = (t: TraceRow): number => t.durationNanos / 1_000_000;
 
@@ -43,6 +65,12 @@ export const NANOS_PER_MILLI = 1_000_000;
 
 export const tokensOf = (t: TraceRow): number =>
   (t as TraceRow & TraceRowTokens).totalTokens ?? 0;
+
+// The trace's initiating user prompt. Null for traces rooted in a tool / model /
+// mcp / compaction span (no prompt of their own) and for traces recorded with
+// prompt-body capture disabled; both render as "—".
+export const promptOf = (t: TraceRow): string | null => t.firstUserPrompt ?? null;
+
 export const formatTokens = (n: number): string => {
   if (n >= 1e6) {
     return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;

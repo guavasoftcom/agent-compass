@@ -10,6 +10,9 @@ interface Props {
   earliestStartMs: number;
   totalMs: number;
   errorCount: number;
+  // Aurora sync: TraceRow.firstUserPrompt (pending backend field) — see
+  // TraceDetailHeaderView's doc comment.
+  firstUserPrompt?: string | null;
 }
 
 // Container: aggregates the per-span summary data (unique services, total
@@ -22,6 +25,7 @@ const TraceDetailHeader = ({
   earliestStartMs,
   totalMs,
   errorCount,
+  firstUserPrompt,
 }: Props) => {
   const serviceLabels = [...new Set(spans.map((s) => s.scopeName ?? '—'))].map(
     (scopeName) => scopeName.replace('claude_code.', ''),
@@ -42,6 +46,7 @@ const TraceDetailHeader = ({
       spanCount={spans.length}
       serviceLabels={serviceLabels}
       totalTokens={totalTokens}
+      firstUserPrompt={firstUserPrompt}
     />
   );
 };

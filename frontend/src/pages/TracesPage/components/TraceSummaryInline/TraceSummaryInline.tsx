@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import type { SpanRow, TraceRow } from '../../../../api';
-import { fetchSpansForTrace, serviceOf } from '../../tracesApi';
+import { fetchSpansForTrace, isToolCallSpan, serviceOf } from '../../tracesApi';
 import { serviceColor } from '../traceColors';
 import { tokenBreakdownForSpan } from '../../tokenBreakdown';
 import TraceSummaryInlineView, {
@@ -130,6 +130,9 @@ const TraceSummaryInline = ({ trace }: TraceSummaryInlineProps) => {
     const maxDepth =
       spans.reduce((m, span) => Math.max(m, depthOf(span)), 0) + 1;
 
+    // Tool/MCP invocations — surfaced as the KPI strip's "Tool calls" tile.
+    const toolCalls = spans.filter((span) => isToolCallSpan(span.name)).length;
+
     return {
       totalMs,
       shownOperations,
@@ -137,6 +140,7 @@ const TraceSummaryInline = ({ trace }: TraceSummaryInlineProps) => {
       tokenTotals,
       calls,
       maxDepth,
+      toolCalls,
     };
   }, [spans]);
 

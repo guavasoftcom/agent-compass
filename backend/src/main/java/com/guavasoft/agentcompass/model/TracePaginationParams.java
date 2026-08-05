@@ -51,4 +51,17 @@ public class TracePaginationParams {
     public boolean isOffsetMode() {
         return page != null;
     }
+
+    /**
+     * The 0-based offset page, with a null {@code page} resolved to the first page.
+     *
+     * <p>{@code page} has to stay boxed so {@link #isOffsetMode()} can distinguish "absent" from
+     * "0", but the traces endpoint selects its offset handler with
+     * {@code @GetMapping(params = "page")}, which matches on param *presence* — so a bare
+     * {@code ?page=} routes to offset mode while binding null (Spring converts an empty string to
+     * null for boxed types). Unboxing that directly is an NPE, i.e. a 500 on a malformed request.
+     */
+    public int resolvedPage() {
+        return page == null ? 0 : page;
+    }
 }

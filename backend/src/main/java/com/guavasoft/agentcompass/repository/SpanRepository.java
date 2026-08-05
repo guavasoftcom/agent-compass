@@ -974,6 +974,329 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
+    // Cursor list — first page for sort=old (mirrors traceListSortNew with the ordering flipped).
+    // Without this the cursor dispatch fell through to sort=new and Stream mode silently served
+    // newest-first for sort=old.
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+            )
+            SELECT trace_id, min_start, max_end, error_count, span_count,
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+            FROM traces
+            WHERE (
+              cardinality(CAST(:statuses AS text[])) = 0
+              OR status = ANY(CAST(:statuses AS text[]))
+            )
+            AND (
+              cardinality(CAST(:operations AS text[])) = 0
+              OR root_span_name = ANY(CAST(:operations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:services AS text[])) = 0
+              OR service = ANY(CAST(:services AS text[]))
+            )
+            AND (
+              cardinality(CAST(:durations AS text[])) = 0
+              OR duration_bucket = ANY(CAST(:durations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:sessions AS text[])) = 0
+              OR session_id = ANY(CAST(:sessions AS text[]))
+            )
+            AND (
+              :fullTextQuery = ''
+              OR trace_id ILIKE '%' || :fullTextQuery || '%'
+              OR session_id ILIKE '%' || :fullTextQuery || '%'
+              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+            )
+            ORDER BY min_start ASC, trace_id ASC
+            LIMIT :pageLimit
+            """, nativeQuery = true)
+    List<Object[]> traceListSortOldCursor(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageLimit") int pageLimit);
+
+    // Cursor list — scroll-back page for sort=old. "Scroll back" means "further along the sort
+    // order", which for an ascending list is later in time:
+    // rows where (min_start, trace_id) > (cursorTs, cursorTraceId)
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+            )
+            SELECT trace_id, min_start, max_end, error_count, span_count,
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+            FROM traces
+            WHERE (min_start, trace_id) > (CAST(:cursorTs AS timestamptz), :cursorTraceId)
+            AND (
+              cardinality(CAST(:statuses AS text[])) = 0
+              OR status = ANY(CAST(:statuses AS text[]))
+            )
+            AND (
+              cardinality(CAST(:operations AS text[])) = 0
+              OR root_span_name = ANY(CAST(:operations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:services AS text[])) = 0
+              OR service = ANY(CAST(:services AS text[]))
+            )
+            AND (
+              cardinality(CAST(:durations AS text[])) = 0
+              OR duration_bucket = ANY(CAST(:durations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:sessions AS text[])) = 0
+              OR session_id = ANY(CAST(:sessions AS text[]))
+            )
+            AND (
+              :fullTextQuery = ''
+              OR trace_id ILIKE '%' || :fullTextQuery || '%'
+              OR session_id ILIKE '%' || :fullTextQuery || '%'
+              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+            )
+            ORDER BY min_start ASC, trace_id ASC
+            LIMIT :pageLimit
+            """, nativeQuery = true)
+    List<Object[]> traceListSortOldBefore(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("cursorTs") Instant cursorTs,
+            @Param("cursorTraceId") String cursorTraceId,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageLimit") int pageLimit);
+
+    // Live tail for sort=old: rows above the head of an ascending list, i.e.
+    // (min_start, trace_id) < (cursorTs, cursorTraceId).
+    // The LIMIT has to keep the rows ADJACENT to the head — the newest of the older rows — so the
+    // inner select orders DESC and the outer one restores ascending order. Selecting them in
+    // ascending order directly would take the oldest N and leave a permanent gap under the head.
+    // Caveat: TraceExplorerService.buildCursorPage still trims an over-full page with
+    // subList(0, limit), which drops from the head-adjacent end again. That trim is shared with
+    // sort=new and the logs tail and has not been reworked.
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+            )
+            SELECT * FROM (
+              SELECT trace_id, min_start, max_end, error_count, span_count,
+                     root_span_name, session_id, root_span_id, duration_ms, total_tokens
+              FROM traces
+              WHERE (min_start, trace_id) < (CAST(:cursorTs AS timestamptz), :cursorTraceId)
+              AND (
+                cardinality(CAST(:statuses AS text[])) = 0
+                OR status = ANY(CAST(:statuses AS text[]))
+              )
+              AND (
+                cardinality(CAST(:operations AS text[])) = 0
+                OR root_span_name = ANY(CAST(:operations AS text[]))
+              )
+              AND (
+                cardinality(CAST(:services AS text[])) = 0
+                OR service = ANY(CAST(:services AS text[]))
+              )
+              AND (
+                cardinality(CAST(:durations AS text[])) = 0
+                OR duration_bucket = ANY(CAST(:durations AS text[]))
+              )
+              AND (
+                cardinality(CAST(:sessions AS text[])) = 0
+                OR session_id = ANY(CAST(:sessions AS text[]))
+              )
+              AND (
+                :fullTextQuery = ''
+                OR trace_id ILIKE '%' || :fullTextQuery || '%'
+                OR session_id ILIKE '%' || :fullTextQuery || '%'
+                OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+              )
+              ORDER BY min_start DESC, trace_id DESC
+              LIMIT :pageLimit
+            ) adjacent_to_head
+            ORDER BY min_start ASC, trace_id ASC
+            """, nativeQuery = true)
+    List<Object[]> traceListSortOldAfter(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("cursorTs") Instant cursorTs,
+            @Param("cursorTraceId") String cursorTraceId,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageLimit") int pageLimit);
+
     // sort=slow: duration_ms DESC, trace_id DESC
     @Query(value = """
             WITH trace_agg AS (
@@ -3296,4 +3619,52 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("fullTextQuery") String fullTextQuery,
             @Param("pageSize") int pageSize,
             @Param("pageOffset") int pageOffset);
+
+    // Single-trace summary for the trace detail page — the same aggregate the list
+    // queries build, keyed on one trace id instead of a window + filter set, and
+    // emitted in the identical column order so TraceExplorerService#toTraceSummary
+    // maps both. Deliberately NOT window-scoped: a permalinked trace has to resolve
+    // regardless of the window the user last had selected.
+    // trace_roots mirrors the list queries' root resolution, including the
+    // in-flight fallback: (parent_span_id IS NULL) DESC prefers a real root but
+    // falls back to the earliest span when only children have been exported.
+    // Returns an empty list when no spans carry the trace id.
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.trace_id = :traceId
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id = :traceId
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            )
+            SELECT
+              a.trace_id,
+              a.min_start,
+              a.max_end,
+              a.error_count,
+              a.span_count,
+              COALESCE(rt.root_span_name, '')         AS root_span_name,
+              COALESCE(rt.session_id, '')             AS session_id,
+              COALESCE(rt.root_span_id, '')           AS root_span_id,
+              EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+              a.total_tokens
+            FROM trace_agg a
+            LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+            """, nativeQuery = true)
+    List<Object[]> traceSummaryById(@Param("traceId") String traceId);
 }

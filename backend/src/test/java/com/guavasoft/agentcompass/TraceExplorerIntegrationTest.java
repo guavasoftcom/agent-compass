@@ -9,6 +9,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.TraceCursor;
@@ -19,6 +20,7 @@ import com.guavasoft.agentcompass.model.TraceHistogramBucket;
 import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
 import com.guavasoft.agentcompass.model.TraceSummary;
+import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
 
@@ -52,6 +54,9 @@ class TraceExplorerIntegrationTest {
     SpanRepository spanRepository;
 
     @Autowired
+    LogRecordRepository logRecordRepository;
+
+    @Autowired
     TraceExplorerService service;
 
     private Instant windowStart;
@@ -83,9 +88,21 @@ class TraceExplorerIntegrationTest {
      */
     private static final int SUB_MICROSECOND_NANOS = 37;
 
+    // Prompt-context fixtures. TRACE_SESSION_OK's prompt is multi-line and longer
+    // than the preview length, so it covers whitespace collapse (the newline/tab
+    // run becomes one space) and 200-char truncation: 50 A's + 1 space + 149 B's.
+    private static final String ATTR_EVENT_NAME = "event.name";
+    private static final String ATTR_PROMPT = "prompt";
+    private static final String USER_PROMPT_EVENT_NAME = "user_prompt";
+    private static final int PROMPT_PREVIEW_LENGTH = 200;
+    private static final String MULTI_LINE_PROMPT = "A".repeat(50) + "\n \t \n" + "B".repeat(250);
+    private static final String EXPECTED_COLLAPSED_TRUNCATED_PROMPT = "A".repeat(50) + " " + "B".repeat(149);
+    private static final String SLASH_COMMAND_PROMPT = "/ship";
+
     @BeforeEach
     void seedSpans() {
         spanRepository.deleteAll();
+        logRecordRepository.deleteAll();
 
         // Window: 60 minutes
         windowStart = Instant.now().truncatedTo(ChronoUnit.HOURS).minusSeconds(3600);
@@ -121,6 +138,18 @@ class TraceExplorerIntegrationTest {
         // Earliest span name is "tool.partial"; that span should be used as the stand-in root.
         Instant t5Start = windowStart.plusSeconds(1800);
         addInFlightTrace(TRACE_IN_FLIGHT, t5Start, t5Start.plusSeconds(3));
+
+        // Prompt context, correlated to traces by log_records.trace_id:
+        // - TRACE_SESSION_OK: one multi-line prompt (collapse + truncation coverage).
+        // - TRACE_IN_FLIGHT: a bare slash command followed by a later prompt; the
+        //   earliest wins, with no slash-command deprioritization (unlike Sessions).
+        // - TRACE_MODEL_ERROR: a user_prompt event with no prompt attribute, i.e.
+        //   prompt-body capture was disabled -> null.
+        // - TRACE_TOOL_OK: no user_prompt event at all -> null.
+        addUserPromptLog(TRACE_SESSION_OK, MULTI_LINE_PROMPT, t1Start);
+        addUserPromptLog(TRACE_IN_FLIGHT, SLASH_COMMAND_PROMPT, t5Start);
+        addUserPromptLog(TRACE_IN_FLIGHT, "Follow-up in the same trace", t5Start.plusSeconds(1));
+        addUserPromptLog(TRACE_MODEL_ERROR, null, t3Start);
     }
 
     // -------------------------------------------------------------------------
@@ -356,6 +385,66 @@ class TraceExplorerIntegrationTest {
         assertThat(firstPage.hasMore()).isTrue();
         assertThat(firstPage.nextCursor()).isNotNull();
     }
+
+    // -------------------------------------------------------------------------
+    // Cursor paging — sort=old
+    //
+    // sort=old had a case in the offset dispatch only; all three cursor dispatches fell
+    // through to the sort=new default, so Stream mode silently served newest-first.
+    // -------------------------------------------------------------------------
+
+    @Test
+    void cursorInitialPageSortOldReturnsAllFourTracesOldestFirst() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TraceCursorPage page = service.cursorPage(criteria, "old", null, null, 60);
+
+        assertThat(page.totalCount()).isEqualTo(4);
+        assertThat(page.items()).hasSize(4);
+        assertThat(page.hasMore()).isFalse();
+        // oldest first — the exact reverse of the sort=new ordering above
+        assertThat(page.items().get(0).getTraceId()).isEqualTo(TRACE_SESSION_OK);
+        assertThat(page.items().get(3).getTraceId()).isEqualTo(TRACE_MODEL_ERROR);
+    }
+
+    @Test
+    void cursorScrollBackSortOldReturnsNewerRows() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        // First page of size 1 leaves the cursor on the OLDEST trace under sort=old
+        TraceCursorPage firstPage = service.cursorPage(criteria, "old", null, null, 1);
+
+        assertThat(firstPage.items()).hasSize(1);
+        assertThat(firstPage.items().get(0).getTraceId()).isEqualTo(TRACE_SESSION_OK);
+        assertThat(firstPage.hasMore()).isTrue();
+
+        TraceCursor cursor = firstPage.nextCursor();
+        String beforeParam = cursor.ts().toString() + "," + cursor.id();
+
+        // "Scroll back" means further along the sort order, which for an ascending list is
+        // later in time — the 3 newer traces, still oldest-first.
+        TraceCursorPage nextPage = service.cursorPage(criteria, "old", beforeParam, null, 60);
+        assertThat(nextPage.items()).hasSize(3);
+        assertThat(nextPage.items().get(2).getTraceId()).isEqualTo(TRACE_MODEL_ERROR);
+        List<String> nextPageIds = nextPage.items().stream()
+                .map(TraceSummary::getTraceId).toList();
+        assertThat(nextPageIds).doesNotContain(TRACE_SESSION_OK);
+    }
+
+    @Test
+    void cursorLiveTailSortOldReturnsEmptyWhenNothingOlder() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TraceCursorPage firstPage = service.cursorPage(criteria, "old", null, null, 1);
+        TraceCursor cursor = firstPage.nextCursor();
+        String afterParam = cursor.ts().toString() + "," + cursor.id();
+
+        // Nothing sorts above the head of an ascending list here
+        TraceCursorPage tailPage = service.cursorPage(criteria, "old", null, afterParam, 60);
+        assertThat(tailPage.items()).isEmpty();
+    }
+
+    // NOTE: a tail poll whose limit is smaller than the number of waiting rows still drops the
+    // rows adjacent to the head. traceListSortOldAfter selects the right SET, but
+    // buildCursorPage's "+1 probe then subList(0, limit)" trims from the wrong end. That trim is
+    // shared with sort=new and with the logs tail, so it is not fixed here.
 
     // -------------------------------------------------------------------------
     // Offset paging
@@ -740,9 +829,128 @@ class TraceExplorerIntegrationTest {
         assertThat(histogram.total()).isEqualTo(4);
     }
 
+    // -------------------------------------------------------------------------
+    // firstUserPrompt
+    // -------------------------------------------------------------------------
+
+    @Test
+    void firstUserPromptCollapsesWhitespaceAndTruncatesToPreviewLength() {
+        TracePage page = service.offsetPage(fullWindowCriteria(), "new", 0, 25);
+
+        TraceSummary sessionTrace = traceFrom(page, TRACE_SESSION_OK);
+        assertThat(sessionTrace.getFirstUserPrompt()).isEqualTo(EXPECTED_COLLAPSED_TRUNCATED_PROMPT);
+        assertThat(sessionTrace.getFirstUserPrompt()).hasSize(PROMPT_PREVIEW_LENGTH);
+    }
+
+    @Test
+    void firstUserPromptTakesEarliestPromptWhenTraceCarriesSeveral() {
+        TracePage page = service.offsetPage(fullWindowCriteria(), "new", 0, 25);
+
+        // The in-flight trace carries a bare slash command first, then a follow-up.
+        // Unlike the Sessions grid there is no slash-command deprioritization: a
+        // trace has one initiating turn, so the earliest prompt wins as-is.
+        assertThat(traceFrom(page, TRACE_IN_FLIGHT).getFirstUserPrompt()).isEqualTo(SLASH_COMMAND_PROMPT);
+    }
+
+    @Test
+    void firstUserPromptNullWhenTraceIsNotRootedInAConversationalTurn() {
+        TracePage page = service.offsetPage(fullWindowCriteria(), "new", 0, 25);
+
+        // Tool-rooted: no user_prompt log carries this trace id at all.
+        assertThat(traceFrom(page, TRACE_TOOL_OK).getFirstUserPrompt()).isNull();
+    }
+
+    @Test
+    void firstUserPromptNullWhenPromptBodyCaptureWasDisabled() {
+        TracePage page = service.offsetPage(fullWindowCriteria(), "new", 0, 25);
+
+        // The user_prompt log exists but carries no prompt text (capture off).
+        assertThat(traceFrom(page, TRACE_MODEL_ERROR).getFirstUserPrompt()).isNull();
+    }
+
+    @Test
+    void cursorPageCarriesTheSameFirstUserPromptAsTheOffsetPage() {
+        TraceCursorPage cursorPage = service.cursorPage(fullWindowCriteria(), "new", null, null, 60);
+
+        TraceSummary sessionTrace = cursorPage.items().stream()
+                .filter(item -> TRACE_SESSION_OK.equals(item.getTraceId()))
+                .findFirst().orElseThrow();
+        assertThat(sessionTrace.getFirstUserPrompt()).isEqualTo(EXPECTED_COLLAPSED_TRUNCATED_PROMPT);
+    }
+
+    // -------------------------------------------------------------------------
+    // Single-trace summary (trace detail header)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void traceSummaryReturnsTheSameShapeAsAListRowIncludingThePrompt() {
+        TraceSummary summary = service.traceSummary(TRACE_SESSION_OK).orElseThrow();
+
+        assertThat(summary.getTraceId()).isEqualTo(TRACE_SESSION_OK);
+        assertThat(summary.getRootSpanName()).isEqualTo("session.turn");
+        assertThat(summary.getSessionId()).isEqualTo(SESSION_ID_ONE);
+        assertThat(summary.getSpanCount()).isEqualTo(2L);
+        assertThat(summary.getErrorCount()).isZero();
+        assertThat(summary.getTotalTokens()).isEqualTo(EXPECTED_TOTAL_TOKENS);
+        assertThat(summary.getFirstUserPrompt()).isEqualTo(EXPECTED_COLLAPSED_TRUNCATED_PROMPT);
+    }
+
+    @Test
+    void traceSummaryResolvesTracesOutsideTheSelectedWindow() {
+        // Not window-scoped — a permalinked trace must resolve regardless of window.
+        assertThat(service.traceSummary(TRACE_OUTSIDE_WIN)).isPresent();
+    }
+
+    @Test
+    void traceSummaryEmptyForUnknownTraceId() {
+        assertThat(service.traceSummary("99999999999999999999999999999999")).isEmpty();
+    }
+
+    @Test
+    void traceSummaryFallsBackToEarliestSpanAsRootForInFlightTraces() {
+        TraceSummary summary = service.traceSummary(TRACE_IN_FLIGHT).orElseThrow();
+
+        assertThat(summary.getRootSpanName()).isEqualTo("tool.partial");
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    private static TraceSummary traceFrom(TracePage page, String traceId) {
+        return page.items().stream()
+                .filter(item -> traceId.equals(item.getTraceId()))
+                .findFirst().orElseThrow();
+    }
+
+    /**
+     * Seeds one {@code user_prompt} log record correlated to a trace the way Claude
+     * Code emits it: the prompt text lives in the {@code prompt} attribute and the
+     * owning trace id in the top-level {@code trace_id} column. A null
+     * {@code promptText} models prompt-body capture being disabled — the event is
+     * still emitted, it just carries no prompt.
+     */
+    private void addUserPromptLog(String traceId, String promptText, Instant timestamp) {
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(ATTR_EVENT_NAME, USER_PROMPT_EVENT_NAME);
+        attributes.put(ATTR_SESSION_ID, SESSION_ID_ONE);
+        if (promptText != null) {
+            attributes.put(ATTR_PROMPT, promptText);
+        }
+
+        LogRecordEntity logRecord = new LogRecordEntity();
+        logRecord.setTimestamp(timestamp);
+        logRecord.setObservedTimestamp(timestamp);
+        logRecord.setBody("");
+        logRecord.setScopeName("com.anthropic.claude_code.events");
+        logRecord.setTraceId(traceId);
+        logRecord.setSpanId(traceId.substring(0, 16));
+        logRecord.setAttributes(attributes);
+        logRecord.setResourceAttributes(null);
+        logRecord.setScopeAttributes(null);
+        logRecord.setReceivedAt(Instant.now());
+        logRecordRepository.save(logRecord);
+    }
 
     private TraceQueryCriteria fullWindowCriteria() {
         return TraceQueryCriteria.of(

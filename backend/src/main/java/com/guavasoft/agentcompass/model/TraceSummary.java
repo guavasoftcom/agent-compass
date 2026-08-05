@@ -51,4 +51,13 @@ public class TraceSummary {
             + "(input + output + cache-read + cache-creation, first-present key per category). "
             + "0 when no span carries token attributes.", example = "5400000")
     private long totalTokens;
+
+    @Schema(description = "The user prompt that initiated this trace, whitespace-collapsed and truncated to 200 "
+            + "characters. Taken from the earliest user_prompt log record correlated to this trace by trace_id, "
+            + "mirroring SessionSummary.firstUserPrompt. Null in two cases: the trace is not rooted in a "
+            + "conversational turn (tool / model / mcp / compaction-rooted traces carry no user_prompt log of "
+            + "their own), or prompt-body capture was disabled when the trace was recorded (the user_prompt log "
+            + "exists but carries no prompt text).",
+            example = "Add a firstUserPrompt field to the Traces API", nullable = true)
+    private String firstUserPrompt;
 }
