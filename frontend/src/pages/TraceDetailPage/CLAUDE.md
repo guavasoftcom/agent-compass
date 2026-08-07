@@ -38,9 +38,11 @@ SpanDetailDock     ──  bottom dock for the selected span (single-file, multi
 
 - `fetchSpansForTrace` from `../TracesPage/tracesApi` — wraps `fetchTraceSpans` from the shared
   `api/` with sample-data support.
-- `NANOS_PER_MILLI`, `formatDuration`, `formatTokens` from `../TracesPage/tracesApi`.
+- `NANOS_PER_MILLI`, `formatDuration`, `formatTokens`, `formatUsd` from `../TracesPage/tracesApi`.
 - `tokenBreakdownForSpan` from `../TracesPage/tokenBreakdown` — extracts `input / output /
   cacheCreate / cacheRead` counts from any span's attribute bag.
+- `isToolCallSpan` from `../TracesPage/traceDerivations` — the header's Tool calls tile counts
+  spans through the same rule the Traces page uses, so the two never disagree.
 - `spanColor` from `../TracesPage/components/traceColors` — maps span name to a service hue
   (used by the minimap); see [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md) for the
   hue-to-service mapping.
@@ -61,17 +63,26 @@ TraceDetailPage/
 │                               and MUI chip color; used by LogEntry and SpanDetailDock
 ├── attrFormat.ts               attrValueAsString(v) — objects → JSON, null/undefined →
 │                               literal string, primitives → String()
+├── spanCost.ts                 costOfSpan(span) → SpanRow.costUsd, a per-span cost breakdown figure
+│                               (0 when none was logged against it) — NOT the source of the header's
+│                               Cost KPI, which reads the backend-authoritative trace total instead
 ├── index.ts                    re-exports TraceDetailPage as default
 └── components/
     ├── TraceDetailHeader/
-    │   ├── TraceDetailHeader.tsx      container — derives serviceLabels + totalTokens, renders view
-    │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb + IdChip row
-    │   │                             + SummaryStrip (Duration/Spans/Errors/Services/Tokens/Root span/Started)
-    │   ├── SummaryStrip.tsx           bordered panel: an optional "Prompt" header row (hairline-divided,
-    │   │                             hidden when no prompt) above a flex row of labeled metric cells
-    │   │                             with dividers; tooltip fires only when the value element overflows
-    │   ├── IdChip.tsx                 click-to-copy chip for traceId and sessionId (uses useCopyToClipboard)
-    │   ├── useCopyToClipboard.ts      transient "copied" flag with auto-reset after 1200 ms
+    │   ├── TraceDetailHeader.tsx      container — memoizes serviceLabels, the four-way token breakdown,
+    │   │                             and model-call/tool-call counts in one pass over spans; max depth
+    │   │                             comes from the page's depthBySpanId and cost from the trace-summary
+    │   │                             query (traceCostUsd), both threaded down rather than recomputed here
+    │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb (no id chips)
+    │   │                             + SummaryStrip, whose KPI tiles are Cost/Duration/Spans/
+    │   │                             Tool calls/Depth/Errors (Cost leads, gradient-emphasized)
+    │   ├── SummaryStrip.tsx           collapsible "Overview" panel: header (click to collapse) +
+    │   │                             optional "Prompt" row + the KPI tile row + TokenCompositionCard
+    │   │                             (stacked bar + 4-item legend, "N% cached" chip, model-call
+    │   │                             count, total cost) +
+    │   │                             MetaFooter (full trace/session ids, root span, services, started).
+    │   │                             Tooltip fires only when a value element overflows; the collapse
+    │   │                             choice persists in localStorage
     │   └── index.ts
     ├── WaterfallToolbar/
     │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens legend
@@ -115,13 +126,24 @@ TraceDetailPage/
 ```
 ┌─ TraceDetailHeaderView ──────────────────────────────────────────────────────────┐
 │ Observability                                                                    │
-│ Traces › Trace detail   [trace: 0102…] [session: abc…]                          │
-│ ┌────────────────────────────────────────────────────────────────────┐          │
+│ Traces › Trace detail                                                            │
+│ ┌─ SummaryStrip: "Overview" ─────────────────────────────────────────┐          │
+│ │ ▾ OVERVIEW                                                          │  ← click to
+│ ├────────────────────────────────────────────────────────────────────┤    collapse
 │ │ PROMPT   Refactor the Aurora theme overlay so it applies cleanly…  │  ← only when
-│ ├──────┬───────┬────────┬──────────┬────────┬──────────────┬─────────┤    firstUserPrompt
-│ │Durat.│ Spans │ Errors │ Services │ Tokens │  Root span   │ Started │  ← SummaryStrip
-│ └──────┴───────┴────────┴──────────┴────────┴──────────────┴─────────┘          │
+│ ├──────┬────────┬───────┬────────────┬───────┬────────┬──────────────┤    firstUserPrompt
+│ │ Cost │Duration│ Spans │ Tool calls │ Depth │ Errors │              │  ← KPI tiles
+│ ├────────────────────────────────────────────────────────────────────┤
+│ │ TOKEN COMPOSITION 1.2M [96% cached] 3 model calls · $0.42          │
+│ │ ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇        │
+│ │ ■ Cache read 1.1M   ■ Input 42K   ■ Cache creation 9K  ■ Output 3K │
+│ ├────────────────────────────────────────────────────────────────────┤
+│ │ TRACE ID 0102…  SESSION abc…  ROOT SPAN ■ …  SERVICES 2  STARTED … │  ← MetaFooter
+│ └────────────────────────────────────────────────────────────────────┘          │
 └──────────────────────────────────────────────────────────────────────────────────┘
+
+Collapsed, the whole panel is one line: `▸ OVERVIEW   $0.42 · 4.2s · 31 spans ·
+12 tool calls · 1.2M tokens · 2 errors`.
 
 ┌─ Waterfall card (flex column, rounded border, bgcolor paper) ────────────────────┐
 │ WaterfallToolbar: ≡ Span waterfall  [ok ■] [error ■] [tokens ■]  [Expand all]  │
@@ -179,7 +201,9 @@ All three queries are enabled only when `traceId` is truthy (`enabled: Boolean(t
 None of them poll — this page has no `WindowSelection`, no auto-refresh, and no
 `refetchInterval`. The logs query is intentionally eager (not gated on a span being selected)
 so the dock's Logs section has data the moment the user first selects a span. The summary query
-feeds exactly one thing, the header's Prompt row (`firstUserPrompt`) — see Gotchas.
+feeds two things: the header's Prompt row (`firstUserPrompt`) and the header's Cost KPI
+(`traceCostUsd`, from `TraceRow.totalCostUsd`) — see Gotchas and the Cost section below. Every
+other header figure (tokens, span/tool counts, depth) stays derived from the spans query.
 
 `TraceSummaryInline` in `TracesPage` uses `['trace-inline-spans', traceId]` (a different key)
 for the same spans endpoint — the two caches are separate.
@@ -200,7 +224,9 @@ Three derived maps are computed once in the container's `useMemo` pool:
 
 - `spanIndices` (`buildSpanIndices`) — 1-based DFS counter for the index badge on each row.
 - `depthBySpanId` (`buildSpanDepths`) — number of ancestors for each span; capped at 4 for
-  minimap stagger, used directly for the waterfall indent (`pl: 10 + depth * 15`).
+  minimap stagger, used directly for the waterfall indent (`pl: 10 + depth * 15`), and also
+  threaded into `TraceDetailHeader` (`Math.max(...depthBySpanId.values()) + 1`) for the Depth KPI
+  tile — one depth algorithm for the whole page, not a second walker in the header.
 - `descendantErrorCounts` — recursive count of `statusCode === 'error'` spans below each span;
   shown as "+N below" in warning color on collapsed parent rows.
 
@@ -210,7 +236,42 @@ overlapping children count only once. Leaf spans retain their full duration as s
 result drives the self-time progress bar in the dock's left column.
 
 `sessionId` is extracted from the root span's `attributes['session.id']` or
-`resourceAttributes['session.id']`, surfaced in the header's `IdChip` row.
+`resourceAttributes['session.id']`, surfaced as plain text in the Overview panel's meta footer.
+
+### Cost
+
+The header's Cost KPI (and the Token composition card's cost line) reads `TraceRow.totalCostUsd`
+from the **`trace-summary`** query (`traceCostUsd` prop, threaded `TraceDetailPage` →
+`TraceDetailPageView` → `TraceDetailHeader`) — the same backend-authoritative total the Traces list
+Cost column shows, from the `trace_costs` view (`V14`: the summed `cost_usd` of the `api_request`
+logs Claude Code stamped with that trace id). `traceCostUsd` is `null` while the summary query
+hasn't resolved yet or resolved with no cost; `TraceDetailHeader` treats both the same (`?? 0`),
+which renders as "—" through `formatUsd`.
+
+**This is deliberately not summed client-side from the spans.** Spans (`GET
+/api/traces/{traceId}`) and the cost-bearing `api_request` logs arrive over separate OTLP
+endpoints, so a client-side sum of `costOfSpan(span)` (`spanCost.ts`) over the spans in hand can
+land on a different, and specifically lower, number than the trace's real total — e.g. when the
+spans haven't finished ingesting yet, or a request logged without a span id still counts toward
+the trace total but has no span to attribute it to. `costOfSpan` still exists as a per-span
+breakdown figure (its own read of `SpanRow.costUsd`, filled from the sibling `span_costs` view) —
+it's just not the source of the trace-level KPI anymore.
+
+Two consequences worth remembering:
+
+- **The cost lands on the span that issued the request** — the `claude_code.interaction` root, or a
+  `tool.execution` span for a request made inside a tool run — **not on the `llm_request` child.** So a
+  waterfall row can show tokens with no cost, and the root row carries most of the trace's spend.
+- **There is no client-side estimate.** An earlier revision priced the span's tokens at published
+  per-model rates; it ran 2-3x off real spend and disagreed with the Sessions page, which reports what
+  Claude Code actually billed. A trace whose requests predate trace-id correlation totals 0 and renders
+  "—" rather than a fabricated number.
+- **Tokens and cost can disagree while ingestion is in flight.** `TokenCompositionCard` shows "Token
+  counts aren't available yet for this trace." (with the cost line still shown) rather than "no model
+  calls" when `tokenBreakdown.total <= 0` but `totalCostUsd > 0` — spans (which carry token
+  attributes) and cost-bearing request logs land at different times, so a trace can briefly have a
+  real cost with no token-bearing spans yet. "No model tokens — this trace made no model calls." is
+  reserved for when both are absent.
 
 ### Log bucketing
 
@@ -285,17 +346,38 @@ increases height), and clamps to `[150px, 72% viewport]`.
 
 ## Gotchas
 
-- **The SummaryStrip Prompt row has its own query.** `SummaryStrip` renders it from the optional
-  `prompt` prop, threaded up as `firstUserPrompt` through `TraceDetailHeaderView` /
-  `TraceDetailHeader` / `TraceDetailPageView` from a **third** page query,
-  `['trace-summary', traceId]` → `fetchTraceSummaryOrNull` → `GET /api/traces/{id}/summary`.
-  That endpoint exists because the prompt is a trace-level field and the spans endpoint returns
-  a bare array that can't carry one; the fetcher swallows its 404 to `null` so an unknown trace
-  id is the waterfall query's error to report, not this one's. Everything else in the header
-  stays derived from the spans already in hand — don't migrate the other tiles onto this query.
-  Absent/null hides the row entirely (no "—" placeholder), which is the normal state for traces
+- **The SummaryStrip Prompt row (and the Cost KPI) have their own query.** `SummaryStrip` renders
+  the prompt from the optional `prompt` prop, threaded up as `firstUserPrompt` through
+  `TraceDetailHeaderView` / `TraceDetailHeader` / `TraceDetailPageView` from a **third** page
+  query, `['trace-summary', traceId]` → `fetchTraceSummaryOrNull` → `GET /api/traces/{id}/summary`.
+  The same query's `totalCostUsd` field feeds `traceCostUsd`, the Cost KPI's only source (see the
+  Cost section) — don't re-derive it from the spans query. That endpoint exists because the prompt
+  is a trace-level field and the spans endpoint returns a bare array that can't carry one; the
+  fetcher swallows its 404 to `null` so an unknown trace
+  id is the waterfall query's error to report, not this one's. Every other header tile — tokens,
+  span/tool counts, depth — stays derived from the spans already in hand; don't migrate those onto
+  this query, and don't migrate Cost back off it. Prompt's absent/null hides the row entirely (no
+  "—" placeholder), which is the normal state for traces
   rooted in a tool/model/mcp/compaction span and for traces recorded with prompt-body capture
   off (see the same gotcha in [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md)).
+- **The Overview panel's collapse state persists across page loads.** `SummaryStrip` reads
+  `localStorage['trace-detail-overview-collapsed']` in a `useState` lazy initializer (not an
+  effect — `react-hooks/set-state-in-effect` is an ESLint error here) and writes it back through
+  a guarded setter, the same shape `theme/colorMode.tsx` uses. A user who collapsed the panel on
+  one trace sees it collapsed on the next one; that's intended (the point is recovering vertical
+  space for the waterfall), so don't key the storage entry per trace.
+- **The cache hit-rate chip excludes output tokens.** `cacheHitRatePercent` in `SummaryStrip.tsx`
+  is `cacheRead / (cacheRead + input + cacheCreate)` — the share of *input-side* tokens served from
+  the prompt cache. Output tokens are generated and never cacheable, so including them would
+  deflate the rate with a denominator the cache can't influence. Returns `null` (chip hidden, no
+  "—" placeholder) when the trace logged no input-side tokens. Nothing is fetched for it; it's
+  derived from the `TokenBreakdown` the header already computes. Its violet tint resolves through
+  `tokenComposition.cacheRead` + `primary.main`, matching the cache-read bar segment right below
+  it — not MUI's default `info` palette, which is an unrelated blue in this theme.
+- **The trace/session ids are plain text now, not copy chips.** The Aurora cost sync removed
+  `IdChip.tsx` and its `useCopyToClipboard.ts` hook (nothing else imported them) and moved both
+  ids, un-truncated, into the meta footer. Re-adding a copy affordance means bringing back a
+  component, not flipping a prop.
 - **`kind` is deliberately not on the waterfall row.** Nearly every real Claude Code span is
   `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace

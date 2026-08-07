@@ -47,6 +47,12 @@ export interface TraceRow {
   // Sum of token usage across the trace's spans (input + output + cache-read +
   // cache-creation); 0 when no span carries token attributes.
   totalTokens: number;
+  // Model spend for this trace in USD — the summed `cost_usd` of the api_request
+  // logs correlated to it by trace id, i.e. the same figure the Sessions prompt
+  // timeline shows for the turn that owns this trace. 0 both when the trace
+  // issued no model request and when its requests predate trace-id correlation;
+  // both render as "—".
+  totalCostUsd: number;
   // The user prompt that initiated this trace, whitespace-collapsed and truncated
   // to 200 chars — mirrors SessionSummaryRow.firstUserPrompt. Null when the trace
   // is not rooted in a conversational turn (tool / model / mcp / compaction-rooted
@@ -77,6 +83,11 @@ export interface SpanRow {
   attributes: Record<string, unknown> | null;
   events: SpanEvent[] | null;
   resourceAttributes: Record<string, unknown> | null;
+  // Cost attributed to this span in USD: the summed `cost_usd` of the
+  // api_request logs Claude Code stamped with this span id (the span active when
+  // the request was issued — the interaction root or a tool.execution span, not
+  // the llm_request child). 0 for spans no request was logged against.
+  costUsd?: number | null;
 }
 
 export interface ListResult<T> {

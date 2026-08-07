@@ -44,7 +44,7 @@ public class TracePaginationParams {
     @Parameter(
             description = "Sort order: new (start desc), old (start asc), slow (duration desc), "
                     + "fast (duration asc), spans (spanCount desc), err (errorCount desc then start desc), "
-                    + "tokens (totalTokens desc)",
+                    + "tokens (totalTokens desc), cost (totalCostUsd desc)",
             example = "new")
     private String sort = "new";
 

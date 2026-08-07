@@ -1084,6 +1084,25 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("promptAttribute") String promptAttribute,
       @Param("previewLength") int previewLength);
 
+  // Per-trace model spend for the given traces, straight off the trace_costs
+  // view (V14) — the summed cost_usd of the api_request logs stamped with each
+  // trace id. This is the SAME authoritative figure TraceSummary.totalCostUsd
+  // resolves to (the trace-list queries re-run the identical predicates via a
+  // LEFT JOIN LATERAL for pushdown rather than joining this view directly, but
+  // it's the same rows/grouping), which is the point: the Sessions prompt
+  // timeline reuses it so a turn's cost and the cost shown on the trace that
+  // turn links to are one number, not two estimates of one number -- though
+  // LogService#applyTraceCorrelatedCosts still has to bill each trace's number
+  // to only one turn when several turns share a trace. Traces with no
+  // correlated request log are simply absent from the result.
+  // Returns (trace_id, cost_usd).
+  @Query(value = """
+      SELECT trace_id, cost_usd
+      FROM trace_costs
+      WHERE trace_id IN :traceIds
+      """, nativeQuery = true)
+  List<Object[]> findCostByTraceIds(@Param("traceIds") Collection<String> traceIds);
+
   // Every tool_result event for one session, oldest first, feeding the prompt
   // timeline's per-turn "tools" rollup. Not aggregated here: the caller
   // (LogService) buckets each row into its owning turn by comparing this

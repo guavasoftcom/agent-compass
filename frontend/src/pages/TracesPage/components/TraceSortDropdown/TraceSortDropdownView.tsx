@@ -12,6 +12,7 @@ const SORTS: Array<{ id: TraceSortKey; label: string }> = [
   { id: 'fast', label: 'Fastest first' },
   { id: 'spans', label: 'Most spans' },
   { id: 'tokens', label: 'Most tokens' },
+  { id: 'cost', label: 'Highest cost' },
   { id: 'err', label: 'Errors first' },
 ];
 

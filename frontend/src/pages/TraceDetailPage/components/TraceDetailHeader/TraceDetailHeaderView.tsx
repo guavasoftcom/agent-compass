@@ -1,11 +1,11 @@
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, Typography } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import { formatDuration, formatTokens } from '../../../TracesPage/tracesApi';
+import { formatDuration, formatUsd } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
-import IdChip from './IdChip';
 import SummaryStrip, { type SummaryItem } from './SummaryStrip';
 import { fontFamilies } from '../../../../theme/typography';
+import type { TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
 
 export interface TraceDetailHeaderViewProps {
   traceId: string;
@@ -16,7 +16,11 @@ export interface TraceDetailHeaderViewProps {
   errorCount: number;
   spanCount: number;
   serviceLabels: string[];
-  totalTokens: number;
+  tokenBreakdown: TokenBreakdown;
+  modelCallCount: number;
+  toolCallCount: number;
+  maximumDepth: number;
+  totalCostUsd: number;
   // Aurora sync: the trace's first user prompt, shown as a header row inside
   // the summary panel above the KPI tiles. Requires a `firstUserPrompt` field
   // on TraceRow (populated from the root/first prompt-bearing span, mirroring
@@ -24,6 +28,12 @@ export interface TraceDetailHeaderViewProps {
   firstUserPrompt?: string | null;
 }
 
+// Aurora sync: the breadcrumb no longer carries copy-to-clipboard IdChips — the
+// trace and session ids moved into the Overview panel's meta footer as full,
+// un-truncated plain text, alongside Services / Root span / Started (see
+// SummaryStrip). What's left up here is the five at-a-glance KPI tiles, Cost
+// leading and gradient-emphasized; the old single "Tokens" tile became the
+// richer Token composition card inside the panel.
 const TraceDetailHeaderView = ({
   traceId,
   sessionId,
@@ -33,17 +43,55 @@ const TraceDetailHeaderView = ({
   errorCount,
   spanCount,
   serviceLabels,
-  totalTokens,
+  tokenBreakdown,
+  modelCallCount,
+  toolCallCount,
+  maximumDepth,
+  totalCostUsd,
   firstUserPrompt,
 }: TraceDetailHeaderViewProps) => {
+  const durationLabel = formatDuration(totalMs * 1e6);
+  const costLabel = formatUsd(totalCostUsd);
+  const startedAtLabel = new Date(earliestStartMs).toLocaleTimeString('en-US', {
+    hour12: false,
+  });
+
   const summary: SummaryItem[] = [
+    {
+      label: 'Cost',
+      monospace: true,
+      emphasis: true,
+      value: costLabel,
+      title: costLabel,
+    },
     {
       label: 'Duration',
       monospace: true,
-      value: formatDuration(totalMs * 1e6),
-      title: formatDuration(totalMs * 1e6),
+      value: durationLabel,
+      title: durationLabel,
     },
     { label: 'Spans', value: spanCount, title: String(spanCount) },
+    { label: 'Tool calls', value: toolCallCount, title: String(toolCallCount) },
+    {
+      label: 'Depth',
+      value: (
+        <>
+          {maximumDepth}{' '}
+          <Box
+            component="small"
+            sx={{
+              fontFamily: fontFamilies.body,
+              fontSize: 12,
+              fontWeight: 500,
+              color: 'text.secondary',
+            }}
+          >
+            levels
+          </Box>
+        </>
+      ),
+      title: `${maximumDepth} levels`,
+    },
     {
       label: 'Errors',
       value: (
@@ -57,73 +105,6 @@ const TraceDetailHeaderView = ({
       title: errorCount
         ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
         : 'No errors',
-    },
-    {
-      label: 'Services',
-      value: (
-        <>
-          {serviceLabels.length}{' '}
-          <Box
-            component="small"
-            sx={{
-              fontFamily: fontFamilies.body,
-              fontSize: 12,
-              fontWeight: 500,
-              color: 'text.secondary',
-            }}
-          >
-            {serviceLabels.join(' · ')}
-          </Box>
-        </>
-      ),
-      title: `${serviceLabels.length}: ${serviceLabels.join(', ')}`,
-    },
-    {
-      label: 'Tokens',
-      monospace: true,
-      value: formatTokens(totalTokens),
-      title: `${totalTokens.toLocaleString()} tokens`,
-    },
-    {
-      label: 'Root span',
-      value: (
-        <Box
-          component="span"
-          sx={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 1,
-            minWidth: 0,
-          }}
-        >
-          <Box
-            sx={{
-              width: 9,
-              height: 9,
-              borderRadius: '3px',
-              flexShrink: 0,
-              bgcolor: spanColor(rootName),
-            }}
-          />
-          <Box
-            component="span"
-            sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-          >
-            {rootName}
-          </Box>
-        </Box>
-      ),
-      title: rootName,
-    },
-    {
-      label: 'Started',
-      monospace: true,
-      value: new Date(earliestStartMs).toLocaleTimeString('en-US', {
-        hour12: false,
-      }),
-      title: new Date(earliestStartMs).toLocaleString('en-US', {
-        hour12: false,
-      }),
     },
   ];
 
@@ -185,12 +166,26 @@ const TraceDetailHeaderView = ({
             >
               Trace detail
             </Typography>
-            <IdChip label="trace" value={traceId} />
-            {sessionId ? <IdChip label="session" value={sessionId} /> : null}
           </Box>
         </Box>
       </Box>
-      <SummaryStrip items={summary} prompt={firstUserPrompt} />
+      <SummaryStrip
+        items={summary}
+        prompt={firstUserPrompt}
+        tokenBreakdown={tokenBreakdown}
+        modelCallCount={modelCallCount}
+        totalCostUsd={totalCostUsd}
+        traceId={traceId}
+        sessionId={sessionId}
+        rootName={rootName}
+        rootColor={spanColor(rootName)}
+        serviceLabels={serviceLabels}
+        startedAtLabel={startedAtLabel}
+        durationLabel={durationLabel}
+        spanCount={spanCount}
+        toolCallCount={toolCallCount}
+        errorCount={errorCount}
+      />
     </Box>
   );
 };

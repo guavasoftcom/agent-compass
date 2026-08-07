@@ -5,7 +5,6 @@
 import type { TraceRow } from '../../api';
 import type {
   DurationBucket,
-  TraceRowTokens,
   TraceStatus,
   TracesFilters,
 } from './traceTypes';
@@ -63,8 +62,12 @@ export const durationMsOf = (t: TraceRow): number => t.durationNanos / 1_000_000
 // spanTree helpers too.
 export const NANOS_PER_MILLI = 1_000_000;
 
-export const tokensOf = (t: TraceRow): number =>
-  (t as TraceRow & TraceRowTokens).totalTokens ?? 0;
+export const tokensOf = (t: TraceRow): number => t.totalTokens ?? 0;
+
+// The trace's total model spend in USD, mirroring `tokensOf` above. Traces that
+// made no model calls return 0, which the Cost column renders as "—" through
+// `formatUsd`.
+export const costOfTrace = (t: TraceRow): number => t.totalCostUsd ?? 0;
 
 // The trace's initiating user prompt. Null for traces rooted in a tool / model /
 // mcp / compaction span (no prompt of their own) and for traces recorded with
@@ -79,6 +82,25 @@ export const formatTokens = (n: number): string => {
     return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}K`;
   }
   return String(n);
+};
+
+// USD formatter for the Traces list and Trace Detail cost figures. A single
+// trace usually costs well under a dollar, so sub-dollar amounts get 3 decimals
+// rather than all rounding to "$0.00"; dollar-plus amounts use the usual 2.
+// Real sub-millidollar spend (e.g. cheap Haiku calls) would round to "$0.000"
+// at 3 decimals and read as a genuine zero next to the `costUsd > 0` styling
+// checks that key off this same value, so anything below half a mil-dollar
+// renders as the distinct "<$0.001" instead — still visibly non-zero, but not
+// a fabricated extra decimal of precision. "—" stays reserved for the
+// zero/absent state.
+export const formatUsd = (n: number): string => {
+  if (!Number.isFinite(n) || n <= 0) {
+    return '—';
+  }
+  if (n < 0.0005) {
+    return '<$0.001';
+  }
+  return n < 1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`;
 };
 
 export const DURATION_BUCKETS: DurationBucket[] = [

@@ -7,9 +7,11 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { gradients } from '../../../../theme/colors';
 import type { TraceRow } from '../../../../api';
 import {
+  costOfTrace,
   durationMsOf,
   formatDuration,
   formatTokens,
+  formatUsd,
   promptOf,
   quantile,
   serviceOf,
@@ -22,9 +24,11 @@ import { radii } from '../../../../theme/theme';
 
 // Aurora sync: inserted a Prompt column (minmax(180px,1fr)) between Operation
 // and Latency — the trace's initiating user prompt, via promptOf() →
-// TraceRow.firstUserPrompt; null renders "—".
+// TraceRow.firstUserPrompt; null renders "—" — and a Cost column (74px) between
+// Duration and Spans — the trace's total model spend, via costOfTrace() →
+// TraceRow.totalCostUsd; "—" when the trace made no model calls.
 const GRID_TEMPLATE_COLUMNS =
-  '4px 112px minmax(150px,0.9fr) minmax(180px,1fr) 188px 78px 56px 74px 150px 24px';
+  '4px 112px minmax(150px,0.9fr) minmax(180px,1fr) 188px 78px 74px 56px 74px 150px 24px';
 
 const clockTime = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-US', { hour12: false });
@@ -137,6 +141,7 @@ const TraceStreamView = ({
         <HeaderCell>Prompt</HeaderCell>
         <HeaderCell>Latency</HeaderCell>
         <HeaderCell align="right">Duration</HeaderCell>
+        <HeaderCell align="right">Cost</HeaderCell>
         <HeaderCell align="right">Spans</HeaderCell>
         <HeaderCell align="right">Tokens</HeaderCell>
         <HeaderCell>Session</HeaderCell>
@@ -183,6 +188,7 @@ const TraceStreamView = ({
           const isSlow = durationMs >= p95;
           const serviceName = serviceOf(trace.rootSpanName);
           const prompt = promptOf(trace);
+          const costUsd = costOfTrace(trace);
           return (
             <Box key={trace.traceId}>
               <Box
@@ -354,6 +360,17 @@ const TraceStreamView = ({
                   }}
                 >
                   {formatDuration(trace.durationNanos)}
+                </Box>
+                <Box
+                  sx={{
+                    typography: 'mono',
+                    fontSize: 12.5,
+                    textAlign: 'right',
+                    fontWeight: costUsd > 0 ? 600 : 400,
+                    color: costUsd > 0 ? 'text.primary' : 'text.disabled',
+                  }}
+                >
+                  {formatUsd(costUsd)}
                 </Box>
                 <Box
                   sx={{

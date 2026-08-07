@@ -67,8 +67,9 @@ TracesPage/
 ├── tracesApi.ts              the 5 fetch* functions + USE_SAMPLE_DATA; re-exports traceTypes +
 │                             traceDerivations so `from './tracesApi'` stays the single import surface
 ├── traceTypes.ts             shared types (TracesFilters, TraceHistogram, TraceFacets, cursors, …) — no runtime
-├── traceDerivations.ts       serviceOf/statusOf/durationMsOf/tokensOf/promptOf/formatTokens/formatDuration/quantile/
-│                             durationBucketOf/DURATION_BUCKETS/NANOS_PER_MILLI + buildTracesQuery (shared by fetchers + sample)
+├── traceDerivations.ts       serviceOf/statusOf/durationMsOf/tokensOf/costOfTrace/promptOf/formatTokens/formatUsd/
+│                             formatDuration/quantile/durationBucketOf/DURATION_BUCKETS/NANOS_PER_MILLI +
+│                             buildTracesQuery (shared by fetchers + sample)
 ├── tokenBreakdown.ts         tokenBreakdownForSpan(span) → per-span input/output/cacheCreate/cacheRead
 │                             token split; also imported across TraceDetailPage
 ├── tracesSampleData.ts       VITE_TRACES_SAMPLE synthetic store + in-memory query engine (sampleHistogram/
@@ -119,6 +120,12 @@ Both bodies carry a **Prompt** column — the trace's initiating user prompt, tr
 ellipsized line with the full text on hover. Stream: between Operation and Latency
 (`minmax(180px,1fr)` in `GRID_TEMPLATE_COLUMNS`). Table: between Root span and Service
 (`maxWidth: 260`).
+
+Both also carry a **Cost** column between Duration and Spans — the trace's total model spend
+(`costOfTrace` → `TraceRow.totalCostUsd`, rendered through `formatUsd`), bold when non-zero and a
+dimmed "—" when the trace made no model calls. It pairs with the **"Highest cost"** sort
+(`sort=cost`), which the backend serves from the same `total_cost_usd` aggregate the column
+displays.
 
 ## Who calls which API
 
@@ -199,11 +206,24 @@ substituted for the window range when a zoom is active.
   for the two cases the backend can't fill: traces rooted in a tool/model/mcp/compaction span
   have no prompt of their own, and prompt-body capture may have been off when the trace was
   recorded. So an all-"—" column on a tool-heavy window is correct, not a wiring bug.
-  Unlike `tokensOf` / `TraceRowTokens`, `promptOf` needs no widening cast, and
-  `tracesSampleData.ts` synthesizes the field (prompt-bearing roots only).
+  `promptOf` needs no widening cast, and `tracesSampleData.ts` synthesizes the field
+  (prompt-bearing roots only).
+- **Cost is reported, not estimated — and is shared with the Sessions page.** `TraceRow.totalCostUsd` is the
+  summed `cost_usd` of the `api_request` logs Claude Code stamped with that trace id (`trace_costs` view,
+  `V14`). The Sessions prompt timeline reads the same view for a turn that has a trace, so a prompt's cost and
+  its trace's cost are the same number by construction — but only for the one turn the backend bills it to:
+  several turns in a row can share a trace (e.g. a bare slash command immediately followed by its real
+  prompt), and the backend attributes the trace's cost to the earliest of them only, not to every turn that
+  carries the trace id. An earlier revision priced span tokens at published rates instead; it ran 2-3x off and
+  disagreed with Sessions, so don't reintroduce a client- or server-side rate table.
+- **A "—" in the Cost column is not always "no model calls".** It also means the trace's requests were logged
+  without a trace id, which older Claude Code builds did (locally: none in the last eight weeks, ~19% across
+  all history). Those requests belong to no trace and are deliberately not back-filled by a time-window guess —
+  overlapping traces in one session would each claim the same request and inflate the total (measured at +20%
+  on one local session).
 - **`TraceTableView`'s `COLUMN_COUNT` must match the header cells** — it's the `colSpan` on the
-  expanded `TraceSummaryInline` row. Adding or removing a column means bumping it (currently 10)
-  and rechecking the table's `minWidth: 1160`.
+  expanded `TraceSummaryInline` row. Adding or removing a column means bumping it (currently 11)
+  and rechecking the table's `minWidth: 1230`.
 - **Don't "fix" the context back to props.** The 47-prop view was the problem this solves; see the
   Architecture section. If you split the context value for re-render perf, keep slices stable.
 - The context file exports a hook beside its provider, so it trips

@@ -50,6 +50,9 @@ class SessionsQueryIntegrationTest {
   private static final String SESSION_COUNT_METRIC = "claude_code.session.count";
   private static final String TOKEN_METRIC = "claude_code.token.usage";
   private static final String USER_PROMPT_EVENT_NAME = "user_prompt";
+  private static final String API_REQUEST_EVENT_NAME = "api_request";
+  private static final String TRACE_TURN_ZERO = "1111000000000000111100000000000a";
+  private static final String TRACE_TURN_ONE = "2222000000000000222200000000000b";
   private static final String PROMPT_ATTRIBUTE = "prompt";
   private static final String TOOL_EVENT_NAME = "tool_result";
   private static final String TOOL_ATTRIBUTE = "tool_name";
@@ -442,6 +445,78 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void promptsForSessionReportsTheTurnTraceOwnCostRatherThanTheTimeBucketedMetric() {
+    // The turn's requests are logged against its trace, but the cost counter for
+    // the second request only lands after the NEXT prompt was typed -- the skew
+    // that made a prompt's cost disagree with the trace it links to. Time
+    // bucketing would bill turn 0 for 3.0 and turn 1 for 7.0; the trace ids say
+    // both requests belong to turn 0.
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(300);
+
+    saveUserPrompt("T", "Refactor the widget", turnZeroStart, TRACE_TURN_ZERO);
+    saveUserPrompt("T", "Ship it", turnOneStart, TRACE_TURN_ONE);
+
+    saveApiRequest("T", TRACE_TURN_ZERO, 3.0, turnZeroStart.plusSeconds(30));
+    saveApiRequest("T", TRACE_TURN_ZERO, 7.0, turnZeroStart.plusSeconds(290));
+    saveApiRequest("T", TRACE_TURN_ONE, 2.0, turnOneStart.plusSeconds(30));
+
+    saveCost("T", "opus", "main", 3.0, turnZeroStart.plusSeconds(30));
+    saveCost("T", "opus", "main", 10.0, turnOneStart.plusSeconds(5));
+    saveCost("T", "opus", "main", 12.0, turnOneStart.plusSeconds(30));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("T");
+
+    assertThat(prompts).hasSize(2);
+    // Both of turn 0's requests count toward turn 0, not the turn the counter
+    // happened to tick in -- and each turn's figure is exactly its trace's total.
+    assertThat(prompts.get(0).costUsd()).isEqualTo(10.0);
+    assertThat(prompts.get(1).costUsd()).isEqualTo(2.0);
+  }
+
+  @Test
+  void promptsForSessionBillsATraceSharedByTwoTurnsOnlyToTheFirstOfThem() {
+    // A bare slash command immediately followed by its real prompt can land on
+    // the SAME trace (Claude Code hasn't closed the claude_code.interaction
+    // span yet) -- turn-to-trace is not 1:1. Billing the trace's cost to both
+    // turns would double it; the fix bills it once, to the earlier turn.
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(1);
+
+    saveUserPrompt("S", "/ship", turnZeroStart, TRACE_TURN_ZERO);
+    saveUserPrompt("S", "Follow-up in the same trace", turnOneStart, TRACE_TURN_ZERO);
+
+    saveApiRequest("S", TRACE_TURN_ZERO, 5.0, turnZeroStart.plusSeconds(2));
+    saveCost("S", "opus", "main", 5.0, turnZeroStart.plusSeconds(2));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("S");
+
+    assertThat(prompts).hasSize(2);
+    assertThat(prompts.get(0).costUsd()).isEqualTo(5.0);
+    // Not 5.0 again -- the trace's cost is not repeated onto the later turn
+    // that shares it, so summing per-turn costs still equals trace_costs'
+    // total for the trace (5.0), not double it.
+    assertThat(prompts.get(1).costUsd()).isNull();
+  }
+
+  @Test
+  void promptsForSessionKeepsTheMetricBucketedCostForTurnsWithNoCorrelatedTrace() {
+    // Pre-correlation turns (no trace id, or no api_request log carrying one)
+    // have no trace to contradict, so the counter-derived value stands.
+    Instant turnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
+    saveUserPrompt("U", "Older client, no trace stamped", turnStart, null);
+    saveCost("U", "opus", "main", 6.0, turnStart.plusSeconds(30));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("U");
+
+    assertThat(prompts).hasSize(1);
+    assertThat(prompts.get(0).costUsd()).isEqualTo(6.0);
+  }
+
+  @Test
   void promptsForSessionReturnsNullModelCostTokensAndEmptyToolsWhenTurnHasNoEvents() {
     Instant timestamp = Instant.now().minus(5, ChronoUnit.MINUTES);
     saveUserPrompt("G", "Just chatting", timestamp, null);
@@ -527,6 +602,26 @@ class SessionsQueryIntegrationTest {
         "event.name", USER_PROMPT_EVENT_NAME,
         "session.id", sessionId,
         PROMPT_ATTRIBUTE, promptText));
+    logRecordRepository.save(entity);
+  }
+
+  /**
+   * Seeds one {@code api_request} log the way Claude Code emits it: the request's
+   * own cost in {@code cost_usd}, and the trace/span that was active when it was
+   * issued in the top-level columns. This is what {@code trace_costs} (V14)
+   * aggregates, so it is also what the Traces pages read.
+   */
+  private void saveApiRequest(String sessionId, String traceId, double costUsd, Instant timestamp) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setSpanId(traceId.substring(0, 16));
+    entity.setAttributes(Map.of(
+        "event.name", API_REQUEST_EVENT_NAME,
+        "session.id", sessionId,
+        "cost_usd", String.valueOf(costUsd)));
     logRecordRepository.save(entity);
   }
 

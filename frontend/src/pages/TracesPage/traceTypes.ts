@@ -6,7 +6,15 @@ import type { FacetValue, TraceRow } from '../../api';
 
 export type TraceStatus = 'ok' | 'error';
 export type FacetKey = 'status' | 'operation' | 'service' | 'duration' | 'session';
-export type TraceSortKey = 'new' | 'old' | 'slow' | 'fast' | 'spans' | 'tokens' | 'err';
+export type TraceSortKey =
+  | 'new'
+  | 'old'
+  | 'slow'
+  | 'fast'
+  | 'spans'
+  | 'tokens'
+  | 'cost'
+  | 'err';
 
 export interface TracesFilters {
   startTimestamp: string;
@@ -63,13 +71,10 @@ export interface TracesListResult {
   totalCount: number;
 }
 
-// `totalTokens` is an additive field the Traces list endpoints should return
-// (sum of token usage across the trace's spans). The base TraceRow type doesn't
-// carry it yet, so we read it through a widening cast; sample mode synthesizes
-// it. See BACKEND.md ("Traces page · token total").
-export interface TraceRowTokens {
-  totalTokens?: number;
-}
+// `totalTokens` and `totalCostUsd` are plain fields on TraceRow (see
+// api/types.ts) — the sum of token usage, and of model spend in USD, across the
+// trace's spans. Both list endpoints return them and sample mode synthesizes
+// them, so no widening cast is needed to read either.
 
 export interface DurationBucket {
   id: string;

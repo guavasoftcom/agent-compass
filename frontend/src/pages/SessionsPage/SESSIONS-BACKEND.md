@@ -159,9 +159,21 @@ timeline stays current.
   model chip's label + accent dot on the leading tier token, so `"claude-sonnet-4-5"`,
   `"sonnet"`, etc. all resolve (Opus → violet, Sonnet → cyan, Haiku/other → muted). May be
   null (chip omitted).
-- **`costUsd`** *(NEW)* — cost attributed to this turn (sum of `claude_code.cost.usage`, or
-  token-derived cost, for the turn's interaction). Raw number; the UI formats `$0.00`. May be
-  null (cost omitted).
+- **`costUsd`** *(NEW)* — cost attributed to this turn. Raw number; the UI formats `$0.00`. May
+  be null (cost omitted). When the turn carries a `traceId`, this is that trace's own cost —
+  the summed `cost_usd` of the `api_request` logs stamped with the trace id (the `trace_costs`
+  view, `V14`), which is exactly what the Traces pages show for the same trace, so the two
+  surfaces never disagree — **for the one turn the backend bills it to.** Several turns in a row
+  can share a trace (e.g. a bare slash command immediately followed by its real prompt before
+  Claude Code closes the interaction span); the backend attributes the trace's cost to the
+  earliest of those turns only, and every later turn sharing the same `traceId` renders `null`
+  here rather than repeating the figure — so summing `costUsd` down the timeline still equals the
+  session's real spend instead of double-counting a shared trace. Turns with no trace (or whose
+  requests predate trace-id correlation) keep the older attribution: the `claude_code.cost.usage`
+  points whose timestamp falls inside the turn's interval. The difference from the trace-id path
+  is only in *bucketing* — both count the same requests — but a request completing after the next
+  prompt was typed gets billed to the wrong turn under time bucketing, which is why the trace id
+  wins when it exists.
 - **`tokens`** *(NEW)* — the turn's token usage split by kind:
   `{ input, output, cacheCreation, cacheRead }` (map `cache_read`→`cacheRead`,
   `cache_creation`→`cacheCreation`), summed from the turn's `claude_code.token.usage` points

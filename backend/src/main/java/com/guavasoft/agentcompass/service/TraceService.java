@@ -13,7 +13,9 @@ import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -22,13 +24,31 @@ public class TraceService {
 
   private static final double NANOS_PER_MILLI = 1_000_000.0d;
 
+  // Default Span.costUsd for a span no api_request log was ever stamped
+  // against -- matches the COALESCE(..., 0) the removed @Formula used.
+  private static final double DEFAULT_SPAN_COST_USD = 0.0d;
+
   private final SpanRepository spanRepository;
   private final SpanMapper spanMapper;
   private final TuningProperties tuningProperties;
 
   public List<Span> spansForTrace(String traceId) {
     List<SpanEntity> spanEntities = spanRepository.findByTraceIdOrderByStartTimestampAsc(traceId);
-    return spanMapper.toSpans(spanEntities);
+    List<Span> spans = spanMapper.toSpans(spanEntities);
+    applySpanCosts(traceId, spans);
+    return spans;
+  }
+
+  // One grouped query for the whole trace instead of one correlated subquery
+  // per span -- see SpanRepository#findSpanCostsForTrace.
+  private void applySpanCosts(String traceId, List<Span> spans) {
+    Map<String, Double> costBySpanId = new HashMap<>();
+    for (Object[] costRow : spanRepository.findSpanCostsForTrace(traceId)) {
+      costBySpanId.put((String) costRow[0], ((Number) costRow[1]).doubleValue());
+    }
+    for (Span span : spans) {
+      span.setCostUsd(costBySpanId.getOrDefault(span.getSpanId(), DEFAULT_SPAN_COST_USD));
+    }
   }
 
   public List<ToolLatency> aggregateToolLatency(int minutes) {

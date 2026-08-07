@@ -86,6 +86,13 @@ interface SampleTrace extends TraceRow {
   totalTokens: number;
 }
 
+// Blended $/token used to synthesize `totalCostUsd` from `totalTokens`: Sonnet
+// rates weighted by a realistic Claude Code mix (cache-read dominant), i.e.
+// ~$1.21 per 1M tokens. Live, cost is not derived from tokens at all — it is the
+// `cost_usd` Claude Code reports per api_request (see BACKEND.md) — but sample
+// mode has no request logs to sum, so a plausible figure stands in.
+const BLENDED_USD_PER_TOKEN = 1.2075 / 1e6;
+
 const diurnal = (frac: number) => {
   const h = frac * 24;
   const g = (c: number, sd: number) => Math.exp(-((h - c) * (h - c)) / (2 * sd * sd));
@@ -123,6 +130,7 @@ const STORE: SampleTrace[] = (() => {
       durationNanos: ms * 1e6,
       errorCount,
       totalTokens,
+      totalCostUsd: totalTokens * BLENDED_USD_PER_TOKEN,
       firstUserPrompt,
       _ts: startMs,
       _ms: ms,
@@ -181,6 +189,7 @@ const SORTS: Record<TraceSortKey, (a: SampleTrace, b: SampleTrace) => number> = 
   fast: (a, b) => a._ms - b._ms,
   spans: (a, b) => b.spanCount - a.spanCount,
   tokens: (a, b) => b.totalTokens - a.totalTokens || b._ts - a._ts,
+  cost: (a, b) => b.totalCostUsd - a.totalCostUsd || b._ts - a._ts,
   err: (a, b) => b.errorCount - a.errorCount || b._ts - a._ts,
 };
 
@@ -352,9 +361,15 @@ export const sampleSpans = async (traceId: string): Promise<SpanRow[]> => {
     attributes: { 'session.id': t.sessionId, ...extraAttrs },
     events: null,
     resourceAttributes: { 'service.name': 'claude-code' },
+    costUsd: 0,
   });
   const rootId = t.rootSpanId ?? hx(16);
-  spans.push(mk(rootId, null, op, 'server', 0, totalMs, false));
+  // The whole trace's cost sits on the root span, mirroring live data: Claude
+  // Code stamps its api_request logs with the span that was active when the
+  // request was issued, which for a conversational turn is the interaction root.
+  // Keeping the sum over spans equal to the row's totalCostUsd is what lets the
+  // detail page and the list agree in sample mode too.
+  spans.push({ ...mk(rootId, null, op, 'server', 0, totalMs, false), costUsd: t.totalCostUsd });
   const childCount = Math.min(t.spanCount - 1, op === 'session.turn' || op === 'subagent.run' ? ri(5, 9) : ri(2, 4));
   const head = totalMs * 0.02;
   const span = (totalMs * 0.94) / Math.max(1, childCount);

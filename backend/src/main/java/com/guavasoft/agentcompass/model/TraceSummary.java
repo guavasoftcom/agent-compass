@@ -52,6 +52,14 @@ public class TraceSummary {
             + "0 when no span carries token attributes.", example = "5400000")
     private long totalTokens;
 
+    @Schema(description = "Total model spend for this trace in USD: the summed cost_usd of the api_request logs "
+            + "Claude Code stamped with this trace id (the trace_costs view). This is the same per-request figure "
+            + "the Sessions prompt timeline reports for the turn that owns the trace, so the two always agree. "
+            + "0 when the trace issued no model request, and also when its requests predate trace-id "
+            + "correlation — the frontend renders both as \"—\".",
+            example = "0.42")
+    private double totalCostUsd;
+
     @Schema(description = "The user prompt that initiated this trace, whitespace-collapsed and truncated to 200 "
             + "characters. Taken from the earliest user_prompt log record correlated to this trace by trace_id, "
             + "mirroring SessionSummary.firstUserPrompt. Null in two cases: the trace is not rooted in a "

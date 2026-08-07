@@ -69,8 +69,26 @@ public class TuningProperties {
    * Value of {@code event.name} for the LLM-request log that carries
    * {@link #requestIdAttribute}. Used to pair an {@link #apiRequestBodyEventName}
    * log (which lacks its own request id) to its request via event ordering.
+   *
+   * <p>This event name and {@link #apiRequestCostAttribute} are also mirrored in
+   * SQL by the {@code span_costs} / {@code trace_costs} views ({@code V14}) and
+   * by the equivalent {@code LEFT JOIN LATERAL} predicates {@code SpanRepository}
+   * runs directly against {@code log_records} for pushdown in the trace-list
+   * queries, which together are where every trace-level and span-level cost
+   * figure comes from — the same SQL-mirrors-configuration arrangement
+   * {@code derive_log_severity()} ({@code V6}) has. Overriding either property
+   * means a migration that redefines those views plus an update to the lateral
+   * predicates, or the Traces pages will read cost from the wrong rows.
    */
   private String apiRequestEventName = "api_request";
+
+  /**
+   * Attribute key on an {@link #apiRequestEventName} log carrying that request's
+   * cost in USD — the per-request figure that accumulates into
+   * {@link #costUsageMetric}. Source of truth for trace and span cost; see the
+   * mirroring note above.
+   */
+  private String apiRequestCostAttribute = "cost_usd";
 
   /**
    * Value of {@code event.name} for the LLM request-payload log. It carries only

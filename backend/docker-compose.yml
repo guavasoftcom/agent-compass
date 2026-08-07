@@ -9,6 +9,10 @@ services:
     # rescan the recent log_records window + GIN indexes and sort/aggregate
     # heavily, so keep that working set resident and let sorts finish in memory.
     # work_mem is per-sort: 16MB is safe here because this DB has one client.
+    # Parallel-query hash tables live in /dev/shm; Docker's 64MB default is too
+    # small for parallel joins over log_records ("could not resize shared memory
+    # segment"). This is a tmpfs cap, not a reservation.
+    shm_size: 1g
     command:
       - postgres
       - -c

@@ -32,6 +32,27 @@ Stop it, keeping your telemetry data:
 docker compose down
 ```
 
+## Upgrade to a newer release
+
+The default image reference is `:latest`, so upgrading is a pull plus a recreate:
+
+```sh
+docker compose pull app
+docker compose up -d app
+```
+
+`pull` fetches the newer image; `up -d` notices the image changed and recreates only the `app` container (Postgres and the data volume are untouched). Flyway applies any new migrations on the first boot of the new version, so give it a few seconds before refreshing the dashboard.
+
+If you pinned a release tag through `AGENT_COMPASS_IMAGE` (see *Configuration*), `pull` will just re-fetch the pinned version — update the tag first:
+
+```sh
+AGENT_COMPASS_IMAGE=ghcr.io/guavasoftcom/agent-compass:v1.1.0 docker compose up -d
+```
+
+(compose pulls a missing image on `up` by itself). Put the variable in a `.env` file next to the compose file rather than the shell if you want the pin to survive future `docker compose` invocations.
+
+Superseded images accumulate on disk; `docker image prune` clears the untagged leftovers when you care.
+
 ## Point Claude Code at it
 
 Claude Code emits telemetry only when you turn it on, and each signal — metrics, logs (events), traces — has its own exporter switch. The dashboard uses all three: metrics drive Tokens/Insights, logs drive Tool Activity and the log explorer, traces drive the Traces pages. Turning on only metrics leaves most of the UI empty.
