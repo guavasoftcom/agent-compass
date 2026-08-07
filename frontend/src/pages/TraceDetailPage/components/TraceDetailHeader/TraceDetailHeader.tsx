@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import type { SpanRow } from '../../../../api';
-import { tokenBreakdownForSpan } from '../../../TracesPage/tokenBreakdown';
+import { tokenBreakdownForSpan, type TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
+import { isToolCallSpan } from '../../../TracesPage/traceDerivations';
 import TraceDetailHeaderView from './TraceDetailHeaderView';
 
 interface Props {
@@ -10,13 +12,35 @@ interface Props {
   earliestStartMs: number;
   totalMs: number;
   errorCount: number;
+  // The page's `buildSpanDepths` memo (ancestor count per span, 0 for roots).
+  // Reused here instead of a second depth walker so the KPI's Depth tile and
+  // the waterfall's indentation always agree, including on orphan spans.
+  depthBySpanId: Map<string, number>;
+  // Backend-authoritative trace cost from the `['trace-summary', traceId]`
+  // query (`TraceRow.totalCostUsd`) — the same total the Traces list Cost
+  // column shows. Null while that query hasn't resolved yet, or when it
+  // resolved with no cost; the Cost KPI renders the same "no cost" placeholder
+  // either way. Deliberately NOT re-derived by summing per-span costs here:
+  // spans and cost-bearing request logs arrive over separate OTLP endpoints,
+  // so a client-side sum can land on a different number than the list.
+  traceCostUsd: number | null;
   // Aurora sync: TraceRow.firstUserPrompt (pending backend field) — see
   // TraceDetailHeaderView's doc comment.
   firstUserPrompt?: string | null;
 }
 
-// Container: aggregates the per-span summary data (unique services, total
-// tokens) and hands plain values to the presentational view.
+interface HeaderAggregates {
+  serviceLabels: string[];
+  tokenBreakdown: TokenBreakdown;
+  modelCallCount: number;
+  toolCallCount: number;
+}
+
+// Container: aggregates the per-span summary data (unique services, the
+// four-way token breakdown, model- and tool-call counts) in a single memoized
+// pass over `spans`, and hands plain values to the presentational view. Cost
+// and max depth are threaded down rather than recomputed here — see the
+// `traceCostUsd` / `depthBySpanId` prop docs above.
 const TraceDetailHeader = ({
   traceId,
   sessionId,
@@ -25,15 +49,59 @@ const TraceDetailHeader = ({
   earliestStartMs,
   totalMs,
   errorCount,
+  depthBySpanId,
+  traceCostUsd,
   firstUserPrompt,
 }: Props) => {
-  const serviceLabels = [...new Set(spans.map((s) => s.scopeName ?? '—'))].map(
-    (scopeName) => scopeName.replace('claude_code.', ''),
-  );
-  const totalTokens = spans.reduce(
-    (runningTotal, s) => runningTotal + tokenBreakdownForSpan(s).total,
-    0,
-  );
+  const aggregates = useMemo<HeaderAggregates>(() => {
+    const serviceLabels = new Set<string>();
+    const tokenBreakdown: TokenBreakdown = {
+      input: 0,
+      output: 0,
+      cacheCreate: 0,
+      cacheRead: 0,
+      total: 0,
+    };
+    let modelCallCount = 0;
+    let toolCallCount = 0;
+    for (const span of spans) {
+      serviceLabels.add((span.scopeName ?? '—').replace('claude_code.', ''));
+      // A span "made a model call" exactly when it carries token attributes —
+      // derived from the same pass that sums the four-way breakdown, rather
+      // than a second `tokenBreakdownForSpan` pass just to test `.total > 0`.
+      const spanTokens = tokenBreakdownForSpan(span);
+      tokenBreakdown.input += spanTokens.input;
+      tokenBreakdown.output += spanTokens.output;
+      tokenBreakdown.cacheCreate += spanTokens.cacheCreate;
+      tokenBreakdown.cacheRead += spanTokens.cacheRead;
+      tokenBreakdown.total += spanTokens.total;
+      if (spanTokens.total > 0) {
+        modelCallCount += 1;
+      }
+      if (isToolCallSpan(span.name)) {
+        toolCallCount += 1;
+      }
+    }
+    return {
+      serviceLabels: [...serviceLabels],
+      tokenBreakdown,
+      modelCallCount,
+      toolCallCount,
+    };
+  }, [spans]);
+
+  // Depth of the deepest span, 1-indexed (a trace with only a root span is
+  // depth 1) — derived from the page's shared `depthBySpanId` map so there is
+  // one depth algorithm for the whole page.
+  const maximumDepth = useMemo(() => {
+    let deepestAncestorCount = -1;
+    for (const ancestorCount of depthBySpanId.values()) {
+      if (ancestorCount > deepestAncestorCount) {
+        deepestAncestorCount = ancestorCount;
+      }
+    }
+    return deepestAncestorCount < 0 ? 0 : deepestAncestorCount + 1;
+  }, [depthBySpanId]);
 
   return (
     <TraceDetailHeaderView
@@ -44,8 +112,12 @@ const TraceDetailHeader = ({
       totalMs={totalMs}
       errorCount={errorCount}
       spanCount={spans.length}
-      serviceLabels={serviceLabels}
-      totalTokens={totalTokens}
+      serviceLabels={aggregates.serviceLabels}
+      tokenBreakdown={aggregates.tokenBreakdown}
+      modelCallCount={aggregates.modelCallCount}
+      toolCallCount={aggregates.toolCallCount}
+      maximumDepth={maximumDepth}
+      totalCostUsd={traceCostUsd ?? 0}
       firstUserPrompt={firstUserPrompt}
     />
   );

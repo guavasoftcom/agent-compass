@@ -81,4 +81,12 @@ public class SpanEntity {
 
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
+
+    // Cost is deliberately NOT mapped here. It used to be a @Formula that ran
+    // one correlated subquery against span_costs per row (measured ~25ms of a
+    // 33ms trace load across 1,282 spans) even for callers that never read it
+    // (LogService#resolveLeafSpans, MetricService#buildTraceSpans). Callers
+    // that need it (TraceService#spansForTrace, the only Span-DTO consumer)
+    // fetch it with one grouped query per trace instead; see
+    // SpanRepository#findSpanCostsForTrace.
 }

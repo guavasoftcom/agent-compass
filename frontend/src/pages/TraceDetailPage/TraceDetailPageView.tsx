@@ -31,6 +31,10 @@ export interface TraceDetailPageViewProps {
   // entirely (traces rooted in a tool / model / mcp / compaction span have no
   // prompt of their own, and prompt-body capture can be off).
   firstUserPrompt: string | null;
+  // TraceRow.totalCostUsd from the `['trace-summary', traceId]` query — the
+  // backend-authoritative trace cost. Null while that query hasn't resolved
+  // yet, or resolved with no cost; the header's Cost KPI treats both the same.
+  traceCostUsd: number | null;
 }
 
 const TraceDetailPageView = ({
@@ -48,6 +52,7 @@ const TraceDetailPageView = ({
   logsBySpanId,
   sessionId,
   firstUserPrompt,
+  traceCostUsd,
 }: TraceDetailPageViewProps) => {
   const waterfallRef = useRef<HTMLDivElement>(null);
 
@@ -213,6 +218,8 @@ const TraceDetailPageView = ({
         earliestStartMs={earliest}
         totalMs={totalMs}
         errorCount={errorSpans.length}
+        depthBySpanId={depthBySpanId}
+        traceCostUsd={traceCostUsd}
         firstUserPrompt={firstUserPrompt}
       />
 

@@ -12,6 +12,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.model.FacetValue;
+import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.TraceCursor;
 import com.guavasoft.agentcompass.model.TraceCursorPage;
 import com.guavasoft.agentcompass.model.TraceFacets;
@@ -23,6 +24,7 @@ import com.guavasoft.agentcompass.model.TraceSummary;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
+import com.guavasoft.agentcompass.service.TraceService;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -31,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * Integration tests for {@link TraceExplorerService} against a real Postgres
@@ -59,6 +62,9 @@ class TraceExplorerIntegrationTest {
     @Autowired
     TraceExplorerService service;
 
+    @Autowired
+    TraceService traceService;
+
     private Instant windowStart;
     private Instant windowEnd;
 
@@ -80,6 +86,22 @@ class TraceExplorerIntegrationTest {
     private static final long   SEED_INPUT_TOKENS  = 1200L;
     private static final long   SEED_OUTPUT_TOKENS = 800L;
     private static final long   EXPECTED_TOTAL_TOKENS = SEED_INPUT_TOKENS + SEED_OUTPUT_TOKENS;
+
+    // Cost comes from api_request log records, not from token pricing: two
+    // requests are seeded against TRACE_SESSION_OK's root span, one against its
+    // child span, and one request carrying no trace/span id at all (the
+    // pre-correlation shape) that must therefore reach no trace.
+    private static final String API_REQUEST_EVENT_NAME = "api_request";
+    private static final String ATTR_COST_USD = "cost_usd";
+    private static final double SEED_ROOT_REQUEST_COST_ONE = 0.25;
+    private static final double SEED_ROOT_REQUEST_COST_TWO = 0.4;
+    private static final double SEED_CHILD_REQUEST_COST = 0.1;
+    private static final double SEED_UNCORRELATED_REQUEST_COST = 9.99;
+    private static final double EXPECTED_ROOT_SPAN_COST_USD =
+            SEED_ROOT_REQUEST_COST_ONE + SEED_ROOT_REQUEST_COST_TWO;
+    private static final double EXPECTED_TOTAL_COST_USD =
+            EXPECTED_ROOT_SPAN_COST_USD + SEED_CHILD_REQUEST_COST;
+    private static final double COST_TOLERANCE_USD = 1e-9;
 
     /**
      * Sub-microsecond offset used to build a window finer than a Postgres
@@ -150,6 +172,20 @@ class TraceExplorerIntegrationTest {
         addUserPromptLog(TRACE_IN_FLIGHT, SLASH_COMMAND_PROMPT, t5Start);
         addUserPromptLog(TRACE_IN_FLIGHT, "Follow-up in the same trace", t5Start.plusSeconds(1));
         addUserPromptLog(TRACE_MODEL_ERROR, null, t3Start);
+
+        // Cost context: api_request logs carrying cost_usd, stamped with the span
+        // that was active when the request was issued. Two land on
+        // TRACE_SESSION_OK's root span and one on its child, so the trace total
+        // and the sum of its spans' costs must both come out the same. The last
+        // one carries no trace/span id (older Claude Code builds) and must
+        // therefore be attributed to no trace at all.
+        addApiRequestLog(TRACE_SESSION_OK, TRACE_SESSION_OK.substring(0, 16),
+                SEED_ROOT_REQUEST_COST_ONE, t1Start.plusSeconds(1));
+        addApiRequestLog(TRACE_SESSION_OK, TRACE_SESSION_OK.substring(0, 16),
+                SEED_ROOT_REQUEST_COST_TWO, t1Start.plusSeconds(2));
+        addApiRequestLog(TRACE_SESSION_OK, TRACE_SESSION_OK.substring(16, 32),
+                SEED_CHILD_REQUEST_COST, t1Start.plusSeconds(3));
+        addApiRequestLog(null, null, SEED_UNCORRELATED_REQUEST_COST, t1Start.plusSeconds(4));
     }
 
     // -------------------------------------------------------------------------
@@ -763,6 +799,140 @@ class TraceExplorerIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
+    // totalCostUsd field, per-span costUsd, and sort=cost
+    // -------------------------------------------------------------------------
+
+    @Test
+    void totalCostUsdSumsTheTraceOwnRequestLogs() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TracePage page = service.offsetPage(criteria, "new", 0, 25);
+
+        TraceSummary sessionTrace = page.items().stream()
+                .filter(item -> TRACE_SESSION_OK.equals(item.getTraceId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("TRACE_SESSION_OK not found in page"));
+
+        assertThat(sessionTrace.getTotalCostUsd())
+                .isCloseTo(EXPECTED_TOTAL_COST_USD, within(COST_TOLERANCE_USD));
+    }
+
+    @Test
+    void totalCostUsdIgnoresRequestLogsThatCarryNoTraceId() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TracePage page = service.offsetPage(criteria, "new", 0, 25);
+
+        double attributedCost = page.items().stream()
+                .mapToDouble(TraceSummary::getTotalCostUsd)
+                .sum();
+
+        // The uncorrelated request is the largest cost in the fixture; if window
+        // or session proximity ever leaked it onto a trace, this would jump.
+        assertThat(attributedCost).isCloseTo(EXPECTED_TOTAL_COST_USD, within(COST_TOLERANCE_USD));
+    }
+
+    @Test
+    void totalCostUsdIsZeroForTracesWithNoRequestLogs() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TracePage page = service.offsetPage(criteria, "new", 0, 25);
+
+        List<TraceSummary> requestlessTraces = page.items().stream()
+                .filter(item -> !TRACE_SESSION_OK.equals(item.getTraceId()))
+                .toList();
+
+        assertThat(requestlessTraces).isNotEmpty();
+        for (TraceSummary requestlessTrace : requestlessTraces) {
+            assertThat(requestlessTrace.getTotalCostUsd())
+                    .as("totalCostUsd for traceId %s", requestlessTrace.getTraceId())
+                    .isEqualTo(0.0);
+        }
+    }
+
+    @Test
+    void spanCostUsdSumsAcrossTheTraceToTheTraceTotal() {
+        // TraceService#spansForTrace, not the raw repository/entity: costUsd is no
+        // longer an entity @Formula, it's filled in from one grouped per-trace
+        // query (SpanRepository#findSpanCostsForTrace) after mapping to the DTO.
+        List<Span> spans = traceService.spansForTrace(TRACE_SESSION_OK);
+
+        Span rootSpan = spans.stream()
+                .filter(span -> span.getParentSpanId() == null)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("root span not found"));
+        Span childSpan = spans.stream()
+                .filter(span -> span.getParentSpanId() != null)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("child span not found"));
+
+        // Each span carries the requests logged against it...
+        assertThat(rootSpan.getCostUsd()).isCloseTo(EXPECTED_ROOT_SPAN_COST_USD, within(COST_TOLERANCE_USD));
+        assertThat(childSpan.getCostUsd()).isCloseTo(SEED_CHILD_REQUEST_COST, within(COST_TOLERANCE_USD));
+        // ...and the trace detail page's client-side sum lands on the same total
+        // the list endpoints report, because every request log seeded on this
+        // trace also carries a span id (see totalCostUsdIgnoresRequestLogsThatCarryNoTraceId
+        // / the span_costs-vs-trace_costs asymmetry note on TraceService for the
+        // general case, where that would NOT hold).
+        double summedSpanCost = spans.stream().mapToDouble(Span::getCostUsd).sum();
+        assertThat(summedSpanCost).isCloseTo(EXPECTED_TOTAL_COST_USD, within(COST_TOLERANCE_USD));
+    }
+
+    @Test
+    void spanCostUsdIsZeroForSpansWithNoRequestLog() {
+        List<Span> spans = traceService.spansForTrace(TRACE_TOOL_OK);
+
+        assertThat(spans).isNotEmpty();
+        for (Span span : spans) {
+            assertThat(span.getCostUsd())
+                    .as("costUsd for spanId %s", span.getSpanId())
+                    .isEqualTo(0.0);
+        }
+    }
+
+    @Test
+    void sortCostPlacesHighestCostTraceFirst() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TraceCursorPage page = service.cursorPage(criteria, "cost", null, null, 60);
+
+        assertThat(page.totalCount()).isEqualTo(4);
+        assertThat(page.items()).hasSize(4);
+        // TRACE_SESSION_OK is the only trace carrying token attributes.
+        assertThat(page.items().get(0).getTraceId()).isEqualTo(TRACE_SESSION_OK);
+        assertThat(page.items().get(0).getTotalCostUsd())
+                .isCloseTo(EXPECTED_TOTAL_COST_USD, within(COST_TOLERANCE_USD));
+        assertThat(page.items().get(1).getTotalCostUsd()).isEqualTo(0.0);
+        assertThat(page.items().get(2).getTotalCostUsd()).isEqualTo(0.0);
+        assertThat(page.items().get(3).getTotalCostUsd()).isEqualTo(0.0);
+    }
+
+    @Test
+    void sortCostScrollBackBeforeExcludesCursorRow() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TraceCursorPage firstPage = service.cursorPage(criteria, "cost", null, null, 1);
+
+        assertThat(firstPage.hasMore()).isTrue();
+        TraceCursor cursor = firstPage.nextCursor();
+        String firstTraceId = firstPage.items().get(0).getTraceId();
+        String beforeParam = cursor.ts().toString() + "," + cursor.id();
+
+        TraceCursorPage nextPage = service.cursorPage(criteria, "cost", beforeParam, null, 60);
+
+        List<String> nextPageIds = nextPage.items().stream()
+                .map(TraceSummary::getTraceId).toList();
+        assertThat(nextPageIds).doesNotContain(firstTraceId);
+        assertThat(nextPageIds).hasSize(3);
+    }
+
+    @Test
+    void sortCostOffsetPageOrdersByCostDescending() {
+        TraceQueryCriteria criteria = fullWindowCriteria();
+        TracePage page = service.offsetPage(criteria, "cost", 0, 25);
+
+        assertThat(page.items()).hasSize(4);
+        assertThat(page.items().get(0).getTraceId()).isEqualTo(TRACE_SESSION_OK);
+        List<Double> costs = page.items().stream().map(TraceSummary::getTotalCostUsd).toList();
+        assertThat(costs).isSortedAccordingTo((left, right) -> Double.compare(right, left));
+    }
+
+    // -------------------------------------------------------------------------
     // In-flight trace — no parentless span
     // -------------------------------------------------------------------------
 
@@ -945,6 +1115,33 @@ class TraceExplorerIntegrationTest {
         logRecord.setScopeName("com.anthropic.claude_code.events");
         logRecord.setTraceId(traceId);
         logRecord.setSpanId(traceId.substring(0, 16));
+        logRecord.setAttributes(attributes);
+        logRecord.setResourceAttributes(null);
+        logRecord.setScopeAttributes(null);
+        logRecord.setReceivedAt(Instant.now());
+        logRecordRepository.save(logRecord);
+    }
+
+    /**
+     * Seeds one {@code api_request} log record the way Claude Code emits it: the
+     * request's cost in the {@code cost_usd} attribute, and the trace/span that
+     * was active when it was issued in the top-level columns. Passing null for
+     * both ids models a build that never stamped them — such a request belongs to
+     * no trace and must not reach any cost figure.
+     */
+    private void addApiRequestLog(String traceId, String spanId, double costUsd, Instant timestamp) {
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(ATTR_EVENT_NAME, API_REQUEST_EVENT_NAME);
+        attributes.put(ATTR_SESSION_ID, SESSION_ID_ONE);
+        attributes.put(ATTR_COST_USD, String.valueOf(costUsd));
+
+        LogRecordEntity logRecord = new LogRecordEntity();
+        logRecord.setTimestamp(timestamp);
+        logRecord.setObservedTimestamp(timestamp);
+        logRecord.setBody("");
+        logRecord.setScopeName("com.anthropic.claude_code.events");
+        logRecord.setTraceId(traceId);
+        logRecord.setSpanId(spanId);
         logRecord.setAttributes(attributes);
         logRecord.setResourceAttributes(null);
         logRecord.setScopeAttributes(null);

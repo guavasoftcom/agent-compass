@@ -17,6 +17,7 @@ import com.guavasoft.agentcompass.model.TraceSummary;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -54,6 +55,7 @@ public class TraceExplorerService {
     private static final String SORT_SPANS = "spans";
     private static final String SORT_ERR = "err";
     private static final String SORT_TOKENS = "tokens";
+    private static final String SORT_COST = "cost";
 
     private static final String STATUS_OK = "ok";
     private static final String STATUS_ERROR = "error";
@@ -63,16 +65,19 @@ public class TraceExplorerService {
     private static final String DURATION_D3 = "d3";
 
     /**
-     * Resolved sort-key values for a cursor trace row. All five values are populated
+     * Resolved sort-key values for a cursor trace row. All six values are populated
      * from the single {@code traceCursorSortKey} lookup; each keyset branch uses only
-     * the fields it needs.
+     * the fields it needs. {@code totalCostUsd} stays a {@link BigDecimal} so the
+     * cost keyset predicate compares against the numeric column without a
+     * double round-trip that could drop a tie-break.
      */
     private record CursorSortKey(
             double durationMs,
             long spanCount,
             long errorCount,
             Instant minStart,
-            long totalTokens) {
+            long totalTokens,
+            BigDecimal totalCostUsd) {
     }
 
     /**
@@ -314,6 +319,13 @@ public class TraceExplorerService {
                         criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
                         pageLimit);
                 break;
+            case SORT_COST:
+                rows = spanRepository.traceListSortCostCursor(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageLimit);
+                break;
             default:
                 rows = spanRepository.traceListSortNew(
                         criteria.startTimestamp(), criteria.endTimestamp(),
@@ -377,6 +389,14 @@ public class TraceExplorerService {
                 rows = spanRepository.traceListSortTokensBefore(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.totalTokens(), cursor.id(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageLimit);
+                break;
+            case SORT_COST:
+                rows = spanRepository.traceListSortCostBefore(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        sortKey.totalCostUsd(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
                         criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
                         pageLimit);
@@ -449,6 +469,14 @@ public class TraceExplorerService {
                         criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
                         pageLimit);
                 break;
+            case SORT_COST:
+                rows = spanRepository.traceListSortCostAfter(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        sortKey.totalCostUsd(), cursor.id(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageLimit);
+                break;
             default:
                 rows = spanRepository.traceListSortNewAfter(
                         criteria.startTimestamp(), criteria.endTimestamp(),
@@ -467,7 +495,7 @@ public class TraceExplorerService {
      * is the signal for the caller to fall back to the first-page query.
      *
      * <p>Column order from {@code traceCursorSortKey}: duration_ms(0), span_count(1),
-     * error_count(2), min_start(3), total_tokens(4).
+     * error_count(2), min_start(3), total_tokens(4), total_cost_usd(5).
      */
     private CursorSortKey resolveCursorSortKey(TraceQueryCriteria criteria, TraceCursor cursor) {
         List<Object[]> keyRows = spanRepository.traceCursorSortKey(
@@ -484,7 +512,8 @@ public class TraceExplorerService {
         long errorCount = keyRow[2] == null ? 0L : ((Number) keyRow[2]).longValue();
         Instant minStart = (Instant) keyRow[3];
         long totalTokens = keyRow[4] == null ? 0L : ((Number) keyRow[4]).longValue();
-        return new CursorSortKey(durationMs, spanCount, errorCount, minStart, totalTokens);
+        BigDecimal totalCostUsd = keyRow[5] == null ? BigDecimal.ZERO : (BigDecimal) keyRow[5];
+        return new CursorSortKey(durationMs, spanCount, errorCount, minStart, totalTokens, totalCostUsd);
     }
 
     private static TraceCursorPage buildCursorPage(
@@ -577,6 +606,13 @@ public class TraceExplorerService {
                         criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
                         pageSize, pageOffset);
                 break;
+            case SORT_COST:
+                rows = spanRepository.traceListSortCost(
+                        criteria.startTimestamp(), criteria.endTimestamp(),
+                        criteria.statuses(), criteria.operations(), criteria.services(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        pageSize, pageOffset);
+                break;
             default:
                 rows = spanRepository.traceListSortNewOffset(
                         criteria.startTimestamp(), criteria.endTimestamp(),
@@ -616,7 +652,7 @@ public class TraceExplorerService {
      * Maps a raw Object[] row from the trace list queries into a {@link TraceSummary}.
      * Column order: trace_id(0), min_start(1), max_end(2), error_count(3),
      * span_count(4), root_span_name(5), session_id(6), root_span_id(7), duration_ms(8),
-     * total_tokens(9).
+     * total_tokens(9), total_cost_usd(10).
      */
     private static TraceSummary toTraceSummary(Object[] row) {
         String traceId = (String) row[0];
@@ -629,6 +665,7 @@ public class TraceExplorerService {
         String rootSpanId = blankToNull((String) row[7]);
         long durationNanos = Duration.between(minStart, maxEnd).toNanos();
         long totalTokens = row[9] == null ? 0L : ((Number) row[9]).longValue();
+        double totalCostUsd = row[10] == null ? 0.0 : ((Number) row[10]).doubleValue();
 
         return TraceSummary.builder()
                 .traceId(traceId)
@@ -641,6 +678,7 @@ public class TraceExplorerService {
                 .sessionId(sessionId)
                 .rootSpanId(rootSpanId)
                 .totalTokens(totalTokens)
+                .totalCostUsd(totalCostUsd)
                 .build();
     }
 

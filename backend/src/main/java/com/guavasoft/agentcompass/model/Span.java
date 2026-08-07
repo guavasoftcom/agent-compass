@@ -64,4 +64,14 @@ public class Span {
     @Schema(description = "Resource attributes inherited from the OTLP ResourceSpans envelope",
             example = "{\"service.name\":\"claude-code\"}")
     private Map<String, Object> resourceAttributes;
+
+    @Schema(description = "Cost attributed to this span in USD (the span_costs view): the summed cost_usd of the "
+            + "api_request logs Claude Code stamped with this span id — the span that was active when the request "
+            + "was issued, which is the interaction root or the tool.execution span, not the llm_request child. "
+            + "0 for spans no request was logged against. Summed client-side into the trace detail page's Cost "
+            + "KPI, but that sum can come in BELOW TraceSummary.totalCostUsd for the same trace: a request log "
+            + "can carry a trace id without a span id (OTLP permits it), and TraceSummary.totalCostUsd counts "
+            + "those requests too while no span here can claim them.",
+            example = "0.0182")
+    private Double costUsd;
 }

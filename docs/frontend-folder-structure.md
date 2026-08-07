@@ -38,6 +38,7 @@ frontend/src/
     colorMode.tsx                  // ColorModeProvider (persists light/dark to localStorage)
     fonts.ts                       // @fontsource side-effect imports
     mui-stack-augment.d.ts         // Stack prop augmentation
+    mui-typography-augment.d.ts    // registers the mono/eyebrow/eyebrowSm variants
   App/
     App.tsx                        // React Router routes
     AppShell.tsx                   // app-bar + drawer chrome around <Outlet />
@@ -200,7 +201,12 @@ frontend/src/
       CLAUDE.md
       SkillsAgentsPage.tsx
       SkillsAgentsPageView.tsx
+      skillsAgentsDerivations.ts  // skill/subagent row derivations + per-model split
       index.ts
+      components/
+        ModelBreakdownCard/
+          ModelBreakdownCard.tsx
+          index.ts
     TokensPage/
       CLAUDE.md
       TokensPage.tsx
@@ -254,6 +260,7 @@ frontend/src/
       attrFormat.ts               // page-internal helpers; no barrel needed
       logBuckets.ts
       severity.ts
+      spanCost.ts                 // costOfSpan(span) — the api_request cost attributed to a span
       spanTree.ts
       index.ts
       components/
@@ -272,9 +279,7 @@ frontend/src/
         TraceDetailHeader/
           TraceDetailHeader.tsx
           TraceDetailHeaderView.tsx
-          IdChip.tsx
           SummaryStrip.tsx
-          useCopyToClipboard.ts
           index.ts
         TraceMinimap/
           TraceMinimap.tsx

@@ -165,7 +165,11 @@ trace link for those rows, not a disabled placeholder.
   session's row usually won't exist at the same table position after any of those, so the panel
   is dropped defensively rather than pointing at a stale/mismatched row. It is **not** reset by
   `onReload`/auto-refresh — those revalidate the same page and shouldn't collapse the user's open
-  panel out from under them.
+  panel out from under them. The only visual cue that a row expands is `ExpandCaret` in the Started
+  cell — a 12px chevron that points right when closed and rotates 90° to primary.main when open,
+  the same rotation treatment `SortArrow` uses. There is no dedicated expander column; the caret is
+  inline before the timestamp (`display: inline-block`, `verticalAlign: -1px`) so the row keeps its
+  existing column count.
 - **Prompt-timeline window dimming**: `SessionsPageView` derives `windowStartMs`/`windowEndMs` by
   calling the shared `resolveWindow(selection)` (`lib/resolveWindow`, the same helper
   LogsPage/TracesPage use) and `Date.parse`-ing its `startTimestamp`/`endTimestamp`, then threads
@@ -254,6 +258,11 @@ trace link for those rows, not a disabled placeholder.
   `TraceTableView`'s pattern. If you touch the table's zebra/hover styling, keep it index-driven,
   not `nth-of-type`-driven, and keep hover scoped to `tr.data-row` so it doesn't paint the
   recessed expansion panel.
+- **The expansion cell needs `className="expand-cell"`, not just `sx={{ p: 0 }}`.** `tableSx`'s
+  `'& tbody td'` rule is one class plus two element selectors (0,1,2); a cell's own `sx` compiles to
+  a single class (0,1,0) and loses, so `p: 0` alone silently leaves the timeline panel inset by the
+  table's 13px/14px cell padding. The `'& tbody td.expand-cell'` rule in `tableSx` adds the extra
+  class needed to win. Any future full-width cell in this table has the same problem.
 - **`PromptTimelinePanel` is the Aurora glass timeline, not a plain recessed list.** Its panel
   background is a `radial-gradient` glow over an `alpha(text.primary, …)` wash (not the flat
   `alpha(neutralColors.white/inkLight, …)` surface older revisions used), capped at
@@ -262,7 +271,8 @@ trace link for those rows, not a disabled placeholder.
   `haiku`/unknown → `text.disabled`, keyed on the leading token so `"claude-sonnet-4-5"` matches),
   per-turn cost, `TokenUsage` (one combined `input + output + cacheCreation + cacheRead` total
   since the Aurora sync — the old "· N cached" secondary is gone, and the four-way split is one
-  hover away via `TokenBreakdownTooltip`), tool-call chips (`ToolChips`, first 5 + `+N`
+  hover away via `TokenBreakdownTooltip`, advertised by a dotted underline matching the grid's
+  own hover-affordance cells rather than `cursor: help` alone), tool-call chips (`ToolChips`, first 5 + `+N`
   overflow), and an optional "View trace" pill-link. Turns outside the active window render at
   `opacity: 0.45` with a "selected window starts/ends" hairline divider at each boundary crossing
   (see the window-dimming bullet above for where `windowStartMs`/`windowEndMs` come from).

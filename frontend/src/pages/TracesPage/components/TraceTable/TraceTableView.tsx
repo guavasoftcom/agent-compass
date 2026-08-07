@@ -4,8 +4,10 @@ import { alpha, Box, Typography } from '@mui/material';
 import { auroraColors } from '../../../../theme/colors';
 import type { TraceRow } from '../../../../api';
 import {
+  costOfTrace,
   formatDuration,
   formatTokens,
+  formatUsd,
   promptOf,
   serviceOf,
   tokensOf,
@@ -57,9 +59,11 @@ export interface TraceTableViewProps {
 }
 
 // Aurora sync: added a Prompt column (the trace's initiating user prompt, via
-// promptOf() → TraceRow.firstUserPrompt; null renders "—").
-// Column count bumped to 10; the expanded-row colSpan below must match.
-const COLUMN_COUNT = 10;
+// promptOf() → TraceRow.firstUserPrompt; null renders "—") and a Cost column
+// (the trace's total model spend, via costOfTrace() → TraceRow.totalCostUsd;
+// "—" when the trace made no model calls).
+// Column count bumped to 11; the expanded-row colSpan below must match.
+const COLUMN_COUNT = 11;
 
 const TraceTableView = ({
   rows,
@@ -94,7 +98,7 @@ const TraceTableView = ({
       <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <Box
           component="table"
-          sx={{ width: '100%', borderCollapse: 'collapse', minWidth: 1160 }}
+          sx={{ width: '100%', borderCollapse: 'collapse', minWidth: 1230 }}
         >
           <Box component="thead">
             <Box component="tr">
@@ -103,6 +107,7 @@ const TraceTableView = ({
               <TableHeaderCell>Prompt</TableHeaderCell>
               <TableHeaderCell>Service</TableHeaderCell>
               <TableHeaderCell align="right">Duration</TableHeaderCell>
+              <TableHeaderCell align="right">Cost</TableHeaderCell>
               <TableHeaderCell align="right">Spans</TableHeaderCell>
               <TableHeaderCell align="right">Tokens</TableHeaderCell>
               <TableHeaderCell align="right">Errors</TableHeaderCell>
@@ -115,6 +120,7 @@ const TraceTableView = ({
               const isExpanded = expanded.has(trace.traceId);
               const serviceName = serviceOf(trace.rootSpanName);
               const prompt = promptOf(trace);
+              const costUsd = costOfTrace(trace);
               return (
                 <Fragment key={trace.traceId}>
                   <Box
@@ -222,6 +228,18 @@ const TraceTableView = ({
                       }}
                     >
                       {formatDuration(trace.durationNanos)}
+                    </Box>
+                    <Box
+                      component="td"
+                      sx={{
+                        typography: 'mono',
+                        ...cellSx,
+                        textAlign: 'right',
+                        fontWeight: costUsd > 0 ? 600 : 400,
+                        color: costUsd > 0 ? 'text.primary' : 'text.disabled',
+                      }}
+                    >
+                      {formatUsd(costUsd)}
                     </Box>
                     <Box
                       component="td"

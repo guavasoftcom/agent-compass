@@ -46,9 +46,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -278,6 +280,7 @@ public class LogService {
     List<Instant> turnStartTimestamps = promptRows.stream().map(row -> (Instant) row[0]).toList();
     TurnTokenRollup turnTokenRollup = resolveModelAndTokensPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
     Map<Integer, Double> costByTurn = resolveCostPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+    applyTraceCorrelatedCosts(promptRows, costByTurn);
     Map<Integer, List<SessionPromptToolCount>> toolsByTurn =
         resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
 
@@ -329,8 +332,71 @@ public class LogService {
     return searchIndex >= 0 ? searchIndex : -searchIndex - 2;
   }
 
+  // Column index of the trace id on a findPromptsForSession row.
+  private static final int PROMPT_ROW_TRACE_ID = 2;
+
+  // Overrides the metric-bucketed per-turn cost with the turn trace's own cost
+  // wherever the turn has a trace id that the trace_costs view knows.
+  //
+  // Both numbers describe the same requests, but they bucket them differently:
+  // resolveCostPerTurn assigns a cost point to whichever turn interval its
+  // timestamp falls in, so a request that lands after the next prompt was typed
+  // is billed to that next turn, while the trace id says which turn actually
+  // issued it. That boundary skew is what made a prompt's cost disagree with the
+  // cost shown on the trace it links to (locally: exact agreement on ~8 of 10
+  // turns, off by a whole request on the rest). Correlating by trace id removes
+  // the disagreement by construction — same rows, same grouping key, one number.
+  //
+  // Turn-to-trace is not 1:1: several turns in a row can share one trace (a
+  // bare slash command immediately followed by its real prompt, both landing
+  // on the same claude_code.interaction trace before Claude Code closes it).
+  // Billing every one of those turns the trace's full cost would double- (or
+  // triple-) count it, so each trace is billed exactly once, to the FIRST
+  // (earliest / lowest turnIndex) turn that carries it — promptRows is already
+  // ordered oldest-first (findPromptsForSession: timestamp ASC, id ASC). Later
+  // turns sharing the trace have their cost explicitly cleared rather than
+  // left at whatever resolveCostPerTurn's time-bucketing assigned them --
+  // leaving that fallback value in place would silently reintroduce the same
+  // double-count through the other rollup. This restores the invariant that
+  // summing per-turn costs over a session equals summing trace_costs over the
+  // session's distinct traces.
+  //
+  // Turns predating trace correlation (no trace id, or no api_request log
+  // carrying one) keep the metric-bucketed value: there is no trace to
+  // contradict, so the existing behaviour is left alone rather than zeroed.
+  private void applyTraceCorrelatedCosts(List<Object[]> promptRows, Map<Integer, Double> costByTurn) {
+    List<String> traceIds = promptRows.stream()
+        .map(row -> (String) row[PROMPT_ROW_TRACE_ID])
+        .filter(Objects::nonNull)
+        .distinct()
+        .toList();
+    if (traceIds.isEmpty()) {
+      return;
+    }
+    Map<String, Double> costByTraceId = new HashMap<>();
+    for (Object[] costRow : logRecordRepository.findCostByTraceIds(traceIds)) {
+      if (costRow[1] != null) {
+        costByTraceId.put((String) costRow[0], ((Number) costRow[1]).doubleValue());
+      }
+    }
+    Set<String> traceIdsAlreadyBilled = new HashSet<>();
+    for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
+      String traceId = (String) promptRows.get(turnIndex)[PROMPT_ROW_TRACE_ID];
+      Double traceCost = traceId == null ? null : costByTraceId.get(traceId);
+      if (traceCost == null) {
+        continue;
+      }
+      if (traceIdsAlreadyBilled.add(traceId)) {
+        costByTurn.put(turnIndex, traceCost);
+      } else {
+        costByTurn.remove(turnIndex);
+      }
+    }
+  }
+
   // Per-turn cost rollup: SUM(value_delta) of the configured cost-usage metric
   // for this session, bucketed into the turn whose interval contains each point.
+  // Superseded per-turn by applyTraceCorrelatedCosts wherever a trace exists.
   private Map<Integer, Double> resolveCostPerTurn(
       String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
     List<Object[]> costPointRows = metricPointRepository.findCostPointsForSession(

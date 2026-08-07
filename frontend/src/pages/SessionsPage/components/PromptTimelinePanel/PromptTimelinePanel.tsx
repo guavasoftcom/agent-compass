@@ -236,7 +236,9 @@ export const TokenBreakdownTooltip = ({ tokens, children }: { tokens: SessionTok
 // hover. Aurora sync: the combined total replaces the old "· N cached" caption —
 // the per-kind split still lives one hover away via TokenBreakdownTooltip.
 // Exported so the SessionsPage grid can reuse the same hover affordance on the
-// Tokens cell.
+// Tokens cell. The dotted underline matches the grid's own hover-affordance
+// convention (SessionsTable's Cost / Cache-eff. cells) so the hover is visible
+// before the pointer arrives, not only via `cursor: help`.
 export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | undefined }) => {
   if (!tokens) {
     return null;
@@ -257,6 +259,9 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: '-0.1px',
           cursor: 'help',
+          borderBottom: '1px dotted',
+          borderColor: 'text.disabled',
+          pb: '1px',
           '&::before': { content: '""', width: 3, height: 3, borderRadius: '50%', bgcolor: 'text.disabled' },
         }}
       >

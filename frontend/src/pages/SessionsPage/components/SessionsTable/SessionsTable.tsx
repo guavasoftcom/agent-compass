@@ -147,6 +147,14 @@ const tableSx: SxProps<Theme> = {
     color: 'text.secondary',
     padding: '40px 14px',
   },
+  // The expanded prompt-timeline cell has to out-specify '& tbody td' above:
+  // that's one class plus two element selectors, so the cell's own single-class
+  // sx={{ p: 0 }} loses and the panel gets inset 13px/14px instead of sitting
+  // flush with the table edges. Pairs with className="expand-cell" below.
+  '& tbody td.expand-cell': {
+    padding: 0,
+    whiteSpace: 'normal',
+  },
 };
 
 // Right-aligned denial count rendered as an Aurora chip: 0 dims out, 1–3 amber, 4+ red.
@@ -314,6 +322,32 @@ const PromptCell = ({
   </Box>
 );
 
+// Expand affordance in the Started cell — the only cue that a row opens its prompt
+// timeline on click. Points right when closed, rotates to point down and takes the
+// primary color when open, reusing the rotation treatment SortArrow already uses.
+const ExpandCaret = ({ expanded }: { expanded: boolean }) => (
+  <Box
+    component="svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2.5}
+    sx={{
+      display: 'inline-block',
+      width: 12,
+      height: 12,
+      mr: '3px',
+      verticalAlign: '-1px',
+      flexShrink: 0,
+      color: expanded ? 'primary.main' : 'text.disabled',
+      transform: expanded ? 'rotate(90deg)' : 'none',
+      transition: 'transform .15s',
+    }}
+  >
+    <path d="M9 6l6 6-6 6" />
+  </Box>
+);
+
 // Sort caret — points up for asc, flips for desc; only rendered on the active column.
 const SortArrow = ({ direction }: { direction: 'asc' | 'desc' }) => (
   <Box
@@ -463,7 +497,10 @@ const SessionsTable = ({
                   },
                 }}
               >
-                <Box component="td">{formatTimestamp(row.startTimestamp)}</Box>
+                <Box component="td">
+                  <ExpandCaret expanded={isExpanded} />
+                  {formatTimestamp(row.startTimestamp)}
+                </Box>
                 <Box component="td" sx={{ whiteSpace: 'nowrap' }}>
                   <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
                     <Box component="span">{formatRelativeTime(row.endTimestamp)}</Box>
@@ -514,7 +551,12 @@ const SessionsTable = ({
               </Box>
               {isExpanded ? (
                 <Box component="tr">
-                  <Box component="td" colSpan={COLUMNS.length} sx={{ p: 0 }}>
+                  <Box
+                    component="td"
+                    className="expand-cell"
+                    colSpan={COLUMNS.length}
+                    sx={{ p: 0 }}
+                  >
                     <PromptTimelinePanel
                       sessionId={row.sessionId}
                       prompts={promptTimeline}

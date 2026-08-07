@@ -99,7 +99,7 @@ public class TracesController {
             description = "Returns a TracePage ({items, totalCount}) for the requested 0-based page. "
                     + "Sort is one of: new (start desc), old (start asc), slow (duration desc), "
                     + "fast (duration asc), spans (spanCount desc), err (errorCount desc then start desc), "
-                    + "tokens (totalTokens desc).")
+                    + "tokens (totalTokens desc), cost (totalCostUsd desc).")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "Offset-paged trace list",
@@ -124,7 +124,7 @@ public class TracesController {
                     + "'before=ts,traceId' scrolls back (rows after this row in sort order); "
                     + "'after=ts,traceId' polls for live tail (returns [] when nothing new). "
                     + "Default sort is 'new' (start desc). limit defaults to 60. "
-                    + "Sort values: new, old, slow, fast, spans, err, tokens (totalTokens desc). "
+                    + "Sort values: new, old, slow, fast, spans, err, tokens (totalTokens desc), cost (totalCostUsd desc). "
                     + "Initial page (no cursor) includes totalCount; continuation pages return totalCount=0.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",

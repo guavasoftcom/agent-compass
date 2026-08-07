@@ -37,10 +37,10 @@ export default function TraceDetailPage() {
     enabled: Boolean(traceId),
   });
 
-  // The trace's aggregate row, fetched purely for `firstUserPrompt` — the spans
-  // response is an array and can't carry a trace-level field. Deliberately not
-  // folded into the header's other numbers, which stay derived from the spans
-  // already in hand.
+  // The trace's aggregate row — the spans response is an array and can't carry
+  // trace-level fields. Feeds `firstUserPrompt` and the header's authoritative
+  // `totalCostUsd`; the header's other numbers (tokens, span/tool counts,
+  // depth) stay derived from the spans already in hand.
   const { data: traceSummary } = useQuery({
     queryKey: ['trace-summary', traceId],
     queryFn: () => fetchTraceSummaryOrNull(traceId!),
@@ -176,6 +176,7 @@ export default function TraceDetailPage() {
       logsBySpanId={logsBySpanId}
       sessionId={sessionId}
       firstUserPrompt={traceSummary?.firstUserPrompt ?? null}
+      traceCostUsd={traceSummary?.totalCostUsd ?? null}
     />
   );
 }

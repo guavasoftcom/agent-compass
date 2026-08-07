@@ -6,12 +6,26 @@ import org.springframework.data.repository.query.Param;
 
 import com.guavasoft.agentcompass.entity.SpanEntity;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
 public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
 
     List<SpanEntity> findByTraceIdOrderByStartTimestampAsc(String traceId);
+
+    // One grouped query per trace for TraceService#spansForTrace, replacing the
+    // per-row correlated subquery an earlier revision ran as a SpanEntity
+    // @Formula (measured ~25ms of a 33ms trace load across 1,282 spans, paid
+    // even by callers that never read cost). Returns (span_id, cost_usd);
+    // spans absent from the result had no api_request log carrying their span
+    // id, and the service defaults those to 0 the same way the @Formula did.
+    @Query(value = """
+            SELECT span_id, cost_usd
+            FROM span_costs
+            WHERE trace_id = :traceId
+            """, nativeQuery = true)
+    List<Object[]> findSpanCostsForTrace(@Param("traceId") String traceId);
 
     // For each (session_id, reference_timestamp) pair in the exemplar list, find
     // the span whose start_timestamp is closest to the reference timestamp and
@@ -124,6 +138,22 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
     // All repeatable filter arrays use the cardinality-guard pattern:
     //   cardinality(CAST(:param AS text[])) = 0 OR col = ANY(CAST(:param AS text[]))
     // so an empty array means "no filter" without a separate query branch.
+    //
+    // total_cost_usd is filled by a LEFT JOIN LATERAL over log_records, not a
+    // plain join against the trace_costs view (V14). Postgres can't push a
+    // join predicate past that view's GROUP BY, so a plain `LEFT JOIN
+    // trace_costs tc ON tc.trace_id = a.trace_id` re-aggregates every
+    // api_request log in the table on every call regardless of the window or
+    // LIMIT (measured: ~150ms / ~30k buffers on ~96k log_records / ~13k
+    // api_request rows, even returning 20 rows) and only gets worse as
+    // retention grows. The lateral form re-runs the identical predicates
+    // per-trace through the idx_log_records_trace index instead (measured:
+    // ~0.06ms / 6 buffers for a single trace via traceSummaryById). The
+    // predicates duplicate trace_costs' WHERE clause on purpose — same
+    // event.name / cost_usd literals TuningProperties documents as mirrored
+    // in Flyway SQL — so changing apiRequestEventName or
+    // apiRequestCostAttribute means updating both the view and every lateral
+    // block below.
     // =========================================================================
 
     // Histogram — bucket trace starts by date_bin, count ok/error, compute p95.
@@ -558,7 +588,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
 
     // Cursor list — initial page (sort=new: start DESC, trace_id DESC).
     // Returns columns: trace_id, min_start, max_end, error_count, span_count,
-    //                  root_span_name, session_id, root_span_id, duration_ms, total_tokens
+    //                  root_span_name, session_id, root_span_id, duration_ms, total_tokens, total_cost_usd
     // The ORDER BY is fixed to start DESC, trace_id DESC for sort=new.
     // Sort variations are handled by separate query methods below.
     @Query(value = """
@@ -593,6 +623,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -617,9 +648,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -695,6 +734,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -719,9 +759,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (min_start, trace_id) < (CAST(:cursorTs AS timestamptz), :cursorTraceId)
             AND (
@@ -799,6 +847,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -823,9 +872,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (min_start, trace_id) > (CAST(:cursorTs AS timestamptz), :cursorTraceId)
             AND (
@@ -905,6 +962,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -929,9 +987,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1009,6 +1075,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1033,9 +1100,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1112,6 +1187,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1136,9 +1212,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (min_start, trace_id) > (CAST(:cursorTs AS timestamptz), :cursorTraceId)
             AND (
@@ -1223,6 +1307,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1247,10 +1332,18 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT * FROM (
               SELECT trace_id, min_start, max_end, error_count, span_count,
-                     root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                     root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
               FROM traces
               WHERE (min_start, trace_id) < (CAST(:cursorTs AS timestamptz), :cursorTraceId)
               AND (
@@ -1330,6 +1423,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1354,9 +1448,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1432,6 +1534,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1456,9 +1559,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1534,6 +1645,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1558,9 +1670,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1636,6 +1756,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1660,9 +1781,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1738,6 +1867,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1762,9 +1892,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -1807,10 +1945,10 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
-    // Cursor sort-key lookup — resolves (duration_ms, span_count, error_count, min_start, total_tokens)
-    // for the cursor trace within the active window+filters so keyset pages can be built
-    // without the caller knowing the sort-key in advance.
-    // Returns at most one row: (duration_ms, span_count, error_count, min_start, total_tokens).
+    // Cursor sort-key lookup — resolves (duration_ms, span_count, error_count, min_start,
+    // total_tokens, total_cost_usd) for the cursor trace within the active window+filters
+    // so keyset pages can be built without the caller knowing the sort-key in advance.
+    // Returns at most one row in that column order.
     // Returns empty if the traceId is not present in the filtered window (fallback to first page).
     @Query(value = """
             WITH trace_agg AS (
@@ -1842,6 +1980,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
                 CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
                 CASE
@@ -1865,8 +2004,15 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
-            SELECT duration_ms, span_count, error_count, min_start, total_tokens
+            SELECT duration_ms, span_count, error_count, min_start, total_tokens, total_cost_usd
             FROM traces
             WHERE trace_id = :cursorTraceId
             AND (
@@ -1944,6 +2090,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -1968,9 +2115,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               duration_ms < :cursorDurationMs
@@ -2053,6 +2208,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2077,9 +2233,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               duration_ms > :cursorDurationMs
@@ -2163,6 +2327,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2187,9 +2352,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               duration_ms > :cursorDurationMs
@@ -2272,6 +2445,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2296,9 +2470,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               duration_ms < :cursorDurationMs
@@ -2382,6 +2564,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2406,9 +2589,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               span_count < :cursorSpanCount
@@ -2491,6 +2682,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2515,9 +2707,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               span_count > :cursorSpanCount
@@ -2603,6 +2803,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2627,9 +2828,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               error_count < :cursorErrorCount
@@ -2717,6 +2926,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2741,9 +2951,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               error_count > :cursorErrorCount
@@ -2827,6 +3045,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2851,9 +3070,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -2928,6 +3155,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -2952,9 +3180,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -3029,6 +3265,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -3053,9 +3290,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -3130,6 +3375,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -3154,9 +3400,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -3231,6 +3485,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -3255,9 +3510,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -3335,6 +3598,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -3359,9 +3623,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               total_tokens < :cursorTokens
@@ -3444,6 +3716,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -3468,9 +3741,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               total_tokens > :cursorTokens
@@ -3551,6 +3832,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 a.span_count,
                 a.error_count,
                 a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
                 COALESCE(rt.root_span_name, '')         AS root_span_name,
                 COALESCE(rt.session_id, '')             AS session_id,
                 COALESCE(rt.root_span_id, '')           AS root_span_id,
@@ -3575,9 +3857,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 END AS duration_bucket
               FROM trace_agg a
               LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
             )
             SELECT trace_id, min_start, max_end, error_count, span_count,
-                   root_span_name, session_id, root_span_id, duration_ms, total_tokens
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
             FROM traces
             WHERE (
               cardinality(CAST(:statuses AS text[])) = 0
@@ -3609,6 +3899,464 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             LIMIT :pageSize OFFSET :pageOffset
             """, nativeQuery = true)
     List<Object[]> traceListSortTokens(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageSize") int pageSize,
+            @Param("pageOffset") int pageOffset);
+
+    // Initial cursor page for sort=cost (total_cost_usd DESC, trace_id DESC — mirrors sort=tokens structure).
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
+            )
+            SELECT trace_id, min_start, max_end, error_count, span_count,
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
+            FROM traces
+            WHERE (
+              cardinality(CAST(:statuses AS text[])) = 0
+              OR status = ANY(CAST(:statuses AS text[]))
+            )
+            AND (
+              cardinality(CAST(:operations AS text[])) = 0
+              OR root_span_name = ANY(CAST(:operations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:services AS text[])) = 0
+              OR service = ANY(CAST(:services AS text[]))
+            )
+            AND (
+              cardinality(CAST(:durations AS text[])) = 0
+              OR duration_bucket = ANY(CAST(:durations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:sessions AS text[])) = 0
+              OR session_id = ANY(CAST(:sessions AS text[]))
+            )
+            AND (
+              :fullTextQuery = ''
+              OR trace_id ILIKE '%' || :fullTextQuery || '%'
+              OR session_id ILIKE '%' || :fullTextQuery || '%'
+              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+            )
+            ORDER BY total_cost_usd DESC, trace_id DESC
+            LIMIT :pageLimit
+            """, nativeQuery = true)
+    List<Object[]> traceListSortCostCursor(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageLimit") int pageLimit);
+
+    // Scroll-back page for sort=cost:
+    // ORDER BY total_cost_usd DESC, trace_id DESC
+    // before = rows that come AFTER the cursor row in that order (strictly lower rank in DESC):
+    //   (total_cost_usd < cursorCostUsd) OR (total_cost_usd = cursorCostUsd AND trace_id < cursorTraceId)
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
+            )
+            SELECT trace_id, min_start, max_end, error_count, span_count,
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
+            FROM traces
+            WHERE (
+              total_cost_usd < CAST(:cursorCostUsd AS numeric)
+              OR (total_cost_usd = CAST(:cursorCostUsd AS numeric) AND trace_id < :cursorTraceId)
+            )
+            AND (
+              cardinality(CAST(:statuses AS text[])) = 0
+              OR status = ANY(CAST(:statuses AS text[]))
+            )
+            AND (
+              cardinality(CAST(:operations AS text[])) = 0
+              OR root_span_name = ANY(CAST(:operations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:services AS text[])) = 0
+              OR service = ANY(CAST(:services AS text[]))
+            )
+            AND (
+              cardinality(CAST(:durations AS text[])) = 0
+              OR duration_bucket = ANY(CAST(:durations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:sessions AS text[])) = 0
+              OR session_id = ANY(CAST(:sessions AS text[]))
+            )
+            AND (
+              :fullTextQuery = ''
+              OR trace_id ILIKE '%' || :fullTextQuery || '%'
+              OR session_id ILIKE '%' || :fullTextQuery || '%'
+              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+            )
+            ORDER BY total_cost_usd DESC, trace_id DESC
+            LIMIT :pageLimit
+            """, nativeQuery = true)
+    List<Object[]> traceListSortCostBefore(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("cursorCostUsd") BigDecimal cursorCostUsd,
+            @Param("cursorTraceId") String cursorTraceId,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageLimit") int pageLimit);
+
+    // Live-tail page for sort=cost:
+    // after = rows that come BEFORE the cursor row in that order (strictly higher rank in DESC):
+    //   (total_cost_usd > cursorCostUsd) OR (total_cost_usd = cursorCostUsd AND trace_id > cursorTraceId)
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
+            )
+            SELECT trace_id, min_start, max_end, error_count, span_count,
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
+            FROM traces
+            WHERE (
+              total_cost_usd > CAST(:cursorCostUsd AS numeric)
+              OR (total_cost_usd = CAST(:cursorCostUsd AS numeric) AND trace_id > :cursorTraceId)
+            )
+            AND (
+              cardinality(CAST(:statuses AS text[])) = 0
+              OR status = ANY(CAST(:statuses AS text[]))
+            )
+            AND (
+              cardinality(CAST(:operations AS text[])) = 0
+              OR root_span_name = ANY(CAST(:operations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:services AS text[])) = 0
+              OR service = ANY(CAST(:services AS text[]))
+            )
+            AND (
+              cardinality(CAST(:durations AS text[])) = 0
+              OR duration_bucket = ANY(CAST(:durations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:sessions AS text[])) = 0
+              OR session_id = ANY(CAST(:sessions AS text[]))
+            )
+            AND (
+              :fullTextQuery = ''
+              OR trace_id ILIKE '%' || :fullTextQuery || '%'
+              OR session_id ILIKE '%' || :fullTextQuery || '%'
+              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+            )
+            ORDER BY total_cost_usd DESC, trace_id DESC
+            LIMIT :pageLimit
+            """, nativeQuery = true)
+    List<Object[]> traceListSortCostAfter(
+            @Param("windowStart") Instant windowStart,
+            @Param("windowEnd") Instant windowEnd,
+            @Param("cursorCostUsd") BigDecimal cursorCostUsd,
+            @Param("cursorTraceId") String cursorTraceId,
+            @Param("statuses") String[] statuses,
+            @Param("operations") String[] operations,
+            @Param("services") String[] services,
+            @Param("durations") String[] durations,
+            @Param("sessions") String[] sessions,
+            @Param("fullTextQuery") String fullTextQuery,
+            @Param("pageLimit") int pageLimit);
+
+    // Offset paged query for sort=cost: total_cost_usd DESC, trace_id DESC.
+    @Query(value = """
+            WITH trace_agg AS (
+              SELECT
+                s.trace_id,
+                MIN(s.start_timestamp)  AS min_start,
+                MAX(s.end_timestamp)    AS max_end,
+                COUNT(*)                AS span_count,
+                SUM(CASE WHEN s.status_code = 'error' THEN 1 ELSE 0 END) AS error_count,
+                COALESCE(SUM(span_token_total(s.attributes)), 0) AS total_tokens
+              FROM spans s
+              WHERE s.start_timestamp >= :windowStart
+                AND s.start_timestamp <= :windowEnd
+              GROUP BY s.trace_id
+            ),
+            trace_roots AS (
+              SELECT DISTINCT ON (r.trace_id)
+                r.trace_id,
+                r.span_id                               AS root_span_id,
+                r.name                                  AS root_span_name,
+                r.attributes ->> 'session.id'           AS session_id
+              FROM spans r
+              WHERE r.trace_id IN (SELECT trace_id FROM trace_agg)
+              ORDER BY r.trace_id, (r.parent_span_id IS NULL) DESC, r.start_timestamp ASC
+            ),
+            traces AS (
+              SELECT
+                a.trace_id,
+                a.min_start,
+                a.max_end,
+                a.span_count,
+                a.error_count,
+                a.total_tokens,
+                COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd,
+                COALESCE(rt.root_span_name, '')         AS root_span_name,
+                COALESCE(rt.session_id, '')             AS session_id,
+                COALESCE(rt.root_span_id, '')           AS root_span_id,
+                EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
+                CASE WHEN a.error_count > 0 THEN 'error' ELSE 'ok' END AS status,
+                CASE
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.interaction%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'session.%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'context.%'   THEN 'claude_code.session'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.tool%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'tool.%'        THEN 'claude_code.tools'
+                  WHEN COALESCE(rt.root_span_name, '') LIKE 'claude_code.llm%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'claude_code.model%'
+                    OR COALESCE(rt.root_span_name, '') LIKE 'model.%'       THEN 'claude_code.models'
+                  ELSE 'claude_code'
+                END AS service,
+                CASE
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 <  100  THEN 'd0'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 1000  THEN 'd1'
+                  WHEN EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 < 5000  THEN 'd2'
+                  ELSE 'd3'
+                END AS duration_bucket
+              FROM trace_agg a
+              LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+              LEFT JOIN LATERAL (
+                SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+                FROM log_records l
+                WHERE l.trace_id = a.trace_id
+                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+              ) tc ON TRUE
+            )
+            SELECT trace_id, min_start, max_end, error_count, span_count,
+                   root_span_name, session_id, root_span_id, duration_ms, total_tokens,
+                   total_cost_usd
+            FROM traces
+            WHERE (
+              cardinality(CAST(:statuses AS text[])) = 0
+              OR status = ANY(CAST(:statuses AS text[]))
+            )
+            AND (
+              cardinality(CAST(:operations AS text[])) = 0
+              OR root_span_name = ANY(CAST(:operations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:services AS text[])) = 0
+              OR service = ANY(CAST(:services AS text[]))
+            )
+            AND (
+              cardinality(CAST(:durations AS text[])) = 0
+              OR duration_bucket = ANY(CAST(:durations AS text[]))
+            )
+            AND (
+              cardinality(CAST(:sessions AS text[])) = 0
+              OR session_id = ANY(CAST(:sessions AS text[]))
+            )
+            AND (
+              :fullTextQuery = ''
+              OR trace_id ILIKE '%' || :fullTextQuery || '%'
+              OR session_id ILIKE '%' || :fullTextQuery || '%'
+              OR root_span_name ILIKE '%' || :fullTextQuery || '%'
+            )
+            ORDER BY total_cost_usd DESC, trace_id DESC
+            LIMIT :pageSize OFFSET :pageOffset
+            """, nativeQuery = true)
+    List<Object[]> traceListSortCost(
             @Param("windowStart") Instant windowStart,
             @Param("windowEnd") Instant windowEnd,
             @Param("statuses") String[] statuses,
@@ -3662,9 +4410,17 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               COALESCE(rt.session_id, '')             AS session_id,
               COALESCE(rt.root_span_id, '')           AS root_span_id,
               EXTRACT(EPOCH FROM (a.max_end - a.min_start)) * 1000.0 AS duration_ms,
-              a.total_tokens
+              a.total_tokens,
+              COALESCE(tc.total_cost_usd, 0)          AS total_cost_usd
             FROM trace_agg a
             LEFT JOIN trace_roots rt ON rt.trace_id = a.trace_id
+            LEFT JOIN LATERAL (
+              SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
+              FROM log_records l
+              WHERE l.trace_id = a.trace_id
+                AND l.attributes ->> 'event.name' = 'api_request'
+                AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+            ) tc ON TRUE
             """, nativeQuery = true)
     List<Object[]> traceSummaryById(@Param("traceId") String traceId);
 }

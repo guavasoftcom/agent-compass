@@ -98,7 +98,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - **Sessions** — session list with summary KPIs, per-session token usage, cache efficiency, and a first-prompt preview per row; rows expand into a per-turn prompt timeline (model, cost, token breakdown, tool calls).
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
-- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body; rows expand to an inline span summary, with a full per-trace span detail (waterfall) and cross-signal logs.
+- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body. Rows carry the trace's model spend and its initiating prompt, and are sortable by cost; they expand to an inline span summary, with a full per-trace span detail (waterfall, with cost attributed per span) and cross-signal logs.
 - **Report** — renders the report as monospace text with a one-click "Copy markdown" button.
 
 ## Tests
