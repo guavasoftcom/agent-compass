@@ -43,13 +43,18 @@ public class SessionController {
 
     @GetMapping("")
     @Operation(
-            summary = "Per-session cost and active-time totals over the window, sorted and paginated server-side",
+            summary = "Sessions active in the window with whole-session cost totals, "
+                    + "sorted and paginated server-side",
             description = "Joins the configured cost-usage and active-time metrics by session.id. Both "
-            + "are emitted by Claude Code as cumulative gauges split by (model, query_source) — the "
-            + "aggregation takes MAX per (session, model, query_source) stream then SUMs the per-"
-            + "stream maxima for the session, so multi-stream sessions are not undercounted. "
-            + "Wall-clock duration is the span between the first and last cost/active-time emission "
-            + "carrying the session id. The grid sorts and paginates on the server: pass sort (a "
+            + "are cumulative counters split into per-attribute-set streams; the aggregation SUMs the "
+            + "reset-aware per-row increments precomputed at ingest, so multi-stream sessions are not "
+            + "undercounted. The window selects WHICH sessions are listed — a session qualifies if it "
+            + "emitted cost or active time inside it — but costUsd and activeTimeSeconds then cover the "
+            + "session's ENTIRE lifetime, so a session that began earlier reports its full spend rather "
+            + "than the part inside the range. Tokens, the start/end timestamps and the tool/denial/prompt "
+            + "counts stay window-scoped. "
+            + "Wall-clock duration is the span between the first and last in-window cost/active-time "
+            + "emission carrying the session id. The grid sorts and paginates on the server: pass sort (a "
             + "column field), direction (asc/desc), page (zero-based) and size; the total session "
             + "count for the window is returned via the X-Total-Count header. Window-level stat-card "
             + "KPIs come from GET /api/sessions/summary.")
@@ -85,7 +90,9 @@ public class SessionController {
             description = "Total session count plus median and P95 per-session cost and median "
                     + "$/active-minute, computed over every session in the window rather than the visible "
                     + "page so the cards stay stable as the user pages or re-sorts the grid. Percentiles use "
-                    + "percentile_cont (linear interpolation).")
+                    + "percentile_cont (linear interpolation). These costs ARE clipped to the window, unlike "
+                    + "the whole-session costUsd on GET /api/sessions — the median here is a window figure and "
+                    + "will not equal the median of the grid's Cost column.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "Window-level session KPIs",

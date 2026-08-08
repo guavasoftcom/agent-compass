@@ -35,7 +35,7 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
       "startTimestamp": "2026-05-22T20:51:59.925Z",
       "endTimestamp":   "2026-05-22T21:34:18.000Z",  // NOW = Last activity column + default sort;
                                                     //   should track latest captured activity
-      "costUsd": 23.51,
+      "costUsd": 23.51,                  // WHOLE-SESSION spend, not window-clipped (see below)
       "tokens": 5400000,                 // NEW — raw integer, client formats to "5.4M"
       "tokenBreakdown": {                // NEW — four-way split for the hover tooltip;
         "input": 61200,                  //        MUST sum to `tokens`
@@ -56,6 +56,17 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
   "totalCount": 56
 }
 ```
+
+> **`costUsd` and `activeTimeSeconds` are whole-session; everything else on the row is
+> window-scoped.** The window selects which sessions appear (a session must have at least one
+> cost / active-time emission inside it) and supplies `startTimestamp` / `endTimestamp`, but the
+> cost and active-time rollups then join back to that session-id set with **no** timestamp
+> predicate — a session that began before the window reports its full spend, not the sliver
+> inside the range. The two move together because the grid derives `$/active min` as
+> `costUsd / activeTimeSeconds` client-side. `sort=costUsd` / `sort=activeTimeSeconds` /
+> `sort=costPerActiveMinuteUsd` order by the same whole-session values, so the visible order
+> matches the visible figures. The summary KPIs are unchanged and remain window-scoped, so
+> *Median cost/session* will not equal the median of the Cost column.
 
 **How to compute each new field (per `session.id`, within the window):**
 

@@ -59,6 +59,21 @@ const readNumericAttr = (
   return 0;
 };
 
+// Share of the input-side tokens that were served from the prompt cache.
+// Output tokens are excluded — they're generated, never cacheable, so folding
+// them in would dilute the rate with a denominator the cache can't ever
+// influence. Null when there were no input-side tokens at all (nothing to hit).
+export const cacheHitRatePercent = (
+  tokenBreakdown: TokenBreakdown,
+): number | null => {
+  const cacheEligibleTokens =
+    tokenBreakdown.cacheRead + tokenBreakdown.input + tokenBreakdown.cacheCreate;
+  if (cacheEligibleTokens <= 0) {
+    return null;
+  }
+  return Math.round((tokenBreakdown.cacheRead / cacheEligibleTokens) * 100);
+};
+
 export const tokenBreakdownForSpan = (span: SpanRow): TokenBreakdown => {
   const attrs = span.attributes;
   if (!attrs) {

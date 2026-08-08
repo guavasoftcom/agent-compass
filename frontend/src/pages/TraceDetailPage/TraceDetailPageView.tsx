@@ -5,8 +5,11 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import type { LogRow, SpanRow } from '../../api';
 import { formatDuration } from '../TracesPage/tracesApi';
 import { tokenBreakdownForSpan } from '../TracesPage/tokenBreakdown';
+import { costOfSpan } from './spanCost';
 import { type SpanTree, type TraceWindow } from './spanTree';
-import SpanDetailDock from './components/SpanDetailDock';
+import SpanInspectorDrawer, {
+  type SpanInspectorSelection,
+} from './components/SpanInspectorDrawer';
 import TraceDetailHeader from './components/TraceDetailHeader';
 import TraceMinimap, { type ZoomView } from './components/TraceMinimap';
 import WaterfallToolbar from './components/WaterfallToolbar';
@@ -101,12 +104,34 @@ const TraceDetailPageView = ({
   const percentOf = (timeMs: number) =>
     ((timeMs - view.s) / visibleSpanMs) * 100;
 
+  // Bring a span's row into view, scrolling only as far as it takes and leaving
+  // a couple of rows of context at whichever edge the row entered from. Rows
+  // already comfortably in view don't move the list at all, so stepping through
+  // spans slides the highlight rather than yanking the waterfall on every press.
+  //
+  // Geometry comes from live rects rather than `el.offsetTop`: offsetTop is
+  // measured from the nearest *positioned* ancestor, and nothing between a row
+  // and <body> is positioned, so it included the app chrome, header, toolbar,
+  // minimap, and axis — scrolling the target clean past the top edge.
   const scrollToSpan = useCallback((spanId: string) => {
-    const el = waterfallRef.current?.querySelector(
+    const container = waterfallRef.current;
+    const row = container?.querySelector(
       `[data-span="${spanId}"]`,
     ) as HTMLElement | null;
-    if (el && waterfallRef.current) {
-      waterfallRef.current.scrollTop = Math.max(0, el.offsetTop - 70);
+    if (!container || !row) {
+      return;
+    }
+    const containerBounds = container.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    // Capped so a short waterfall (or a tall row) can't demand more margin than
+    // the visible band has room for, which would leave the two edges fighting.
+    const edgeMargin = Math.min(rowBounds.height * 2, containerBounds.height / 4);
+    const visibleTop = containerBounds.top + edgeMargin;
+    const visibleBottom = containerBounds.bottom - edgeMargin;
+    if (rowBounds.top < visibleTop) {
+      container.scrollTop -= visibleTop - rowBounds.top;
+    } else if (rowBounds.bottom > visibleBottom) {
+      container.scrollTop += rowBounds.bottom - visibleBottom;
     }
   }, []);
 
@@ -151,6 +176,73 @@ const TraceDetailPageView = ({
 
   const selectSpan = (spanId: string) =>
     setSelected((cur) => (cur === spanId ? null : spanId));
+
+  // Span nav — derived fresh each render, same pattern as errorSpans above. It
+  // walks `visible`, the rendered row list, rather than the selected span's
+  // siblings: every span has a row above/below it (a single-root trace's root
+  // has no siblings at all, which left the most commonly selected span with no
+  // nav), and the target is guaranteed on screen, so scrollToSpan's [data-span]
+  // lookup can't miss the way it does for a collapsed-away or zoomed-out span.
+  const selectedSpan = spans?.find((s) => s.spanId === selected) ?? null;
+  const waterfallIndex = visible.findIndex((s) => s.spanId === selected);
+  // 0 hides the nav — either nothing is selected, or the selected span is no
+  // longer rendered (its parent was collapsed, or the zoom window moved off it).
+  const waterfallCount = waterfallIndex >= 0 ? visible.length : 0;
+
+  const selectAdjacentSpan = useCallback(
+    (delta: number) => {
+      const currentIndex = visible.findIndex((s) => s.spanId === selected);
+      if (currentIndex < 0) {
+        return;
+      }
+      const nextIndex = currentIndex + delta;
+      if (nextIndex >= 0 && nextIndex < visible.length) {
+        const spanId = visible[nextIndex].spanId;
+        setSelected(spanId);
+        scrollToSpan(spanId);
+      }
+    },
+    [visible, selected, scrollToSpan],
+  );
+
+  // ArrowUp/ArrowDown step to the row above/below while a span is selected.
+  // Deliberately narrow about what it claims: this is a window-level listener
+  // that preventDefaults, so anything it swallows is scrolling or typing the
+  // user expected to work. It stands down for text entry, for modifier
+  // combinations (browser/OS shortcuts), inside any open dialog — a log-value
+  // modal would otherwise be destroyed mid-read when the span swap remounts the
+  // span-id-keyed drawer content — and inside the drawer's own scroll column,
+  // where arrow keys should scroll.
+  useEffect(() => {
+    if (!selected) {
+      return undefined;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+        return;
+      }
+      if (target?.isContentEditable) {
+        return;
+      }
+      if (target?.closest('[role="dialog"], [data-drawer-scroll]')) {
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        selectAdjacentSpan(-1);
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        selectAdjacentSpan(1);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selected, selectAdjacentSpan]);
 
   if (isLoading) {
     return (
@@ -197,6 +289,20 @@ const TraceDetailPageView = ({
   const root = tree.roots[0];
   const gridColumns = 'minmax(220px, 40%) 1fr';
 
+  const drawerSelection: SpanInspectorSelection | null = selectedSpan
+    ? {
+        span: selectedSpan,
+        selfTimeNanos:
+          selfTimeNanosBySpanId.get(selectedSpan.spanId) ??
+          selectedSpan.durationNanos,
+        tokens: tokenBreakdownForSpan(selectedSpan),
+        logs: logsBySpanId.get(selectedSpan.spanId) ?? [],
+        costUsd: costOfSpan(selectedSpan),
+        waterfallIndex,
+        waterfallCount,
+      }
+    : null;
+
   return (
     <Box
       sx={{
@@ -223,134 +329,126 @@ const TraceDetailPageView = ({
         firstUserPrompt={firstUserPrompt}
       />
 
-      {/* waterfall card */}
-      <Box
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          border: 1,
-          borderColor: 'divider',
-          borderRadius: radii.xl,
-          overflow: 'hidden',
-          bgcolor: 'background.paper',
-        }}
-      >
-        <WaterfallToolbar
-          anyCollapsed={anyCollapsed}
-          errorCount={errorSpans.length}
-          onToggleAll={toggleAll}
-          onNextError={nextError}
-        />
-
-        <TraceMinimap
-          spans={spans}
-          earliestStartMs={earliest}
-          totalMs={totalMs}
-          depthBySpanId={depthBySpanId}
-          view={view}
-          onViewChange={setView}
-        />
-
-        {/* axis */}
+      {/* body row: waterfall card + inspector drawer as flex siblings, so the
+          waterfall's width recalculates live as the drawer opens/resizes and
+          keeps its full height (all rows) while a span is inspected */}
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row' }}>
+        {/* waterfall card */}
         <Box
           sx={{
-            display: 'grid',
-            gridTemplateColumns: gridColumns,
-            height: 22,
-            alignItems: 'center',
-            borderBottom: 1,
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            border: 1,
             borderColor: 'divider',
-            flexShrink: 0,
+            borderRadius: radii.xl,
+            overflow: 'hidden',
+            bgcolor: 'background.paper',
           }}
         >
+          <WaterfallToolbar
+            anyCollapsed={anyCollapsed}
+            errorCount={errorSpans.length}
+            onToggleAll={toggleAll}
+            onNextError={nextError}
+          />
+
+          <TraceMinimap
+            spans={spans}
+            earliestStartMs={earliest}
+            totalMs={totalMs}
+            depthBySpanId={depthBySpanId}
+            view={view}
+            onViewChange={setView}
+          />
+
+          {/* axis */}
           <Box
             sx={{
-              pl: 1.75,
-              typography: 'eyebrowSm',
-              color: 'text.disabled',
+              display: 'grid',
+              gridTemplateColumns: gridColumns,
+              height: 22,
+              alignItems: 'center',
+              borderBottom: 1,
+              borderColor: 'divider',
+              flexShrink: 0,
             }}
           >
-            Span
+            <Box
+              sx={{
+                pl: 1.75,
+                typography: 'eyebrowSm',
+                color: 'text.disabled',
+              }}
+            >
+              Span
+            </Box>
+            <Box sx={{ position: 'relative', height: '100%', mx: 1.5 }}>
+              {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
+                <Box
+                  key={fraction}
+                  component="span"
+                  sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    transform:
+                      fraction === 1
+                        ? 'translate(-100%,-50%)'
+                        : 'translate(-50%,-50%)',
+                    left: `${fraction * 100}%`,
+                    typography: 'mono',
+                    fontSize: 9.5,
+                    color: 'text.disabled',
+                  }}
+                >
+                  {formatDuration((view.s + fraction * visibleSpanMs) * 1e6)}
+                </Box>
+              ))}
+            </Box>
           </Box>
-          <Box sx={{ position: 'relative', height: '100%', mx: 1.5 }}>
-            {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
-              <Box
-                key={fraction}
-                component="span"
-                sx={{
-                  position: 'absolute',
-                  top: '50%',
-                  transform:
-                    fraction === 1
-                      ? 'translate(-100%,-50%)'
-                      : 'translate(-50%,-50%)',
-                  left: `${fraction * 100}%`,
-                  typography: 'mono',
-                  fontSize: 9.5,
-                  color: 'text.disabled',
-                }}
-              >
-                {formatDuration((view.s + fraction * visibleSpanMs) * 1e6)}
-              </Box>
-            ))}
+
+          {/* body */}
+          <Box
+            ref={waterfallRef}
+            sx={{ flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}
+          >
+            {visible.map((s) => {
+              const left = Math.max(0, percentOf(offMsOf(s)));
+              const right = Math.min(100, percentOf(offMsOf(s) + durMsOf(s)));
+              return (
+                <SpanWaterfallRow
+                  key={s.spanId}
+                  span={s}
+                  depth={depthBySpanId.get(s.spanId) ?? 0}
+                  hasChildren={
+                    (tree.childrenByParentId.get(s.spanId) ?? []).length > 0
+                  }
+                  isCollapsed={collapsed.has(s.spanId)}
+                  isSelected={selected === s.spanId}
+                  indexLabel={spanIndices.get(s.spanId)}
+                  descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
+                  logCount={logsBySpanId.get(s.spanId)?.length ?? 0}
+                  gridColumns={gridColumns}
+                  left={left}
+                  right={right}
+                  width={Math.max(0, right - left)}
+                  onToggleCollapse={toggleCollapse}
+                  onSelect={selectSpan}
+                />
+              );
+            })}
           </Box>
         </Box>
 
-        {/* body */}
-        <Box
-          ref={waterfallRef}
-          sx={{ flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}
-        >
-          {visible.map((s) => {
-            const left = Math.max(0, percentOf(offMsOf(s)));
-            const right = Math.min(100, percentOf(offMsOf(s) + durMsOf(s)));
-            return (
-              <SpanWaterfallRow
-                key={s.spanId}
-                span={s}
-                depth={depthBySpanId.get(s.spanId) ?? 0}
-                hasChildren={
-                  (tree.childrenByParentId.get(s.spanId) ?? []).length > 0
-                }
-                isCollapsed={collapsed.has(s.spanId)}
-                isSelected={selected === s.spanId}
-                indexLabel={spanIndices.get(s.spanId)}
-                descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
-                logCount={logsBySpanId.get(s.spanId)?.length ?? 0}
-                gridColumns={gridColumns}
-                left={left}
-                right={right}
-                width={Math.max(0, right - left)}
-                onToggleCollapse={toggleCollapse}
-                onSelect={selectSpan}
-              />
-            );
-          })}
-        </Box>
+        <SpanInspectorDrawer
+          selection={drawerSelection}
+          onClose={() => setSelected(null)}
+          onPreviousSpan={() => selectAdjacentSpan(-1)}
+          onNextSpan={() => selectAdjacentSpan(1)}
+        />
       </Box>
-
-      {/* detail dock — a separate card below the waterfall (gap above), matching the mockup */}
-      {selected
-        ? (() => {
-            const s = spans.find((x) => x.spanId === selected);
-            if (!s) {
-              return null;
-            }
-            return (
-              <SpanDetailDock
-                span={s}
-                selfNanos={
-                  selfTimeNanosBySpanId.get(s.spanId) ?? s.durationNanos
-                }
-                tokens={tokenBreakdownForSpan(s)}
-                logs={logsBySpanId.get(s.spanId) ?? []}
-                onClose={() => setSelected(null)}
-              />
-            );
-          })()
-        : null}
     </Box>
   );
 };

@@ -148,10 +148,24 @@ trace link for those rows, not a disabled placeholder.
   (25/50/100) and prev/next chevron buttons. Changing page size resets to page 0.
   `onSelectionChange` and `onReload` both reset the page to 0 so the user never lands on a
   non-existent page after a window change.
+- **Row cost and active time are whole-session, not window-scoped.** The window decides *which*
+  sessions the table lists; `costUsd` and `activeTimeSeconds` then report the session's entire
+  lifetime, so a session that began before the window still shows its full spend instead of the
+  sliver inside the range. Everything else on the row — `tokens`/`tokenBreakdown` (and therefore
+  the Cache eff. column), `startTimestamp`/`endTimestamp`, `toolCallCount`, `denialCount`,
+  `userPromptCount` — is still window-scoped, as are all four KPI cards. Two consequences worth
+  knowing before filing a bug: the **Median cost/session card will not equal the median of the
+  visible Cost column**, and a row's Started/Last-activity pair can be much narrower than the
+  session the cost describes. Backend seam:
+  `MetricPointRepository.aggregateSessionSummaries` builds a window-bounded `session_window` CTE
+  and joins `cost_per_session` / `active_per_session` back to that id set with no timestamp
+  predicate.
 - **`burn` ($/active min per row)**: computed client-side in `SessionsTable` as
   `(row.costUsd / row.activeTimeSeconds) * 60`; displayed as `—` when `activeTimeSeconds` is 0.
-  The summary card's `medianCostPerActiveMinuteUsd` is the backend's percentile across all
-  sessions, not the median of the per-row burns.
+  Cost and active time are deliberately whole-session *together* (see the bullet above) — if you
+  ever re-window one of them, re-window the other or this cell silently divides a full-session
+  numerator by a partial denominator. The summary card's `medianCostPerActiveMinuteUsd` is the
+  backend's window-scoped percentile across all sessions, not the median of the per-row burns.
 - **`sessionsTrend` sparkline**: the shared `LineSparkline` (`components/LineSparkline`) renders
   if `values.length >= 2`. It draws a filled area + stroke line over the bucket counts returned by
   the summary endpoint. Renders nothing for a single-bucket window (the `< 2` guard lives in

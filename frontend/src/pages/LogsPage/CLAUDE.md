@@ -216,8 +216,8 @@ presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props an
   before returning (returning `null` otherwise) rather than doing a compile-time-only
   `as string` cast — a cast would let a poisoned value reach `<Tag>{event}</Tag>` in
   `LogStream` and crash the render (React throws "Objects are not valid as a React child").
-  `TraceDetailPage/components/SpanDetailDock/LogEntry.tsx` uses the same guard for the
-  analogous `event.name`/`tool` attributes on the trace-detail dock — keep both in lockstep
+  `TraceDetailPage/components/SpanInspectorDrawer/LogEntry.tsx` uses the same guard for the
+  analogous `event.name`/`tool` attributes on the trace-detail drawer — keep both in lockstep
   if you add another attribute-derived string helper anywhere in the app. The app-level
   `ErrorBoundary` (`../../components/ErrorBoundary`, wired around `<Outlet />` in
   `App/AppShell.tsx`) is defense-in-depth for this same class of bug, not a substitute for
@@ -229,6 +229,9 @@ presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props an
   Push state up before moving the queries.
 - Severity on real rows is **derived**, not stored: `severityOf` in `logsDerivations.ts` mirrors
   the SQL function `derive_log_severity` (`V6__log_severity_function.sql`). Change them in lockstep.
+  The lockstep is three-way — `TraceDetailPage/components/SpanInspectorDrawer/ErrorSection.tsx`
+  imports the same helper to pick a span's ERROR-severity log for its stderr row, so a change to
+  the classification also moves what the trace-detail drawer shows on failed spans.
 - `VITE_LOGS_SAMPLE=1` swaps all fetchers to an in-memory synthetic store (offline UI work);
   shapes are identical to the live endpoints.
 - The body box height is `calc(100vh - Npx)`, reserving space for the header + histogram +

@@ -299,6 +299,26 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // seconds. Sessions missing one metric still appear: LEFT JOIN keeps cost-only
   // or active-time-only sessions, COALESCE turns the missing side into 0.
   //
+  // Cost and active time are WHOLE-SESSION totals, not window totals. session_window
+  // (window-bounded) decides WHICH sessions the page lists and supplies their
+  // first/last-seen timestamps; cost_per_session and active_per_session then join
+  // back to that id set with NO timestamp predicate, so a session that began before
+  // the window still reports its full spend and full active time instead of the
+  // sliver that happens to fall inside the range. The two must move together: the
+  // grid derives $/active min as cost / active time client-side, so mixing a
+  // whole-session numerator with a windowed denominator would overstate burn for
+  // exactly the sessions that straddle the window edge. Every other per-session
+  // figure here (tokens, first/last seen, and the log-record-derived tool call /
+  // denial / prompt counts in LogRecordRepository.aggregateSessionCounts) is still
+  // window-scoped, as are the KPI cards -- so the "Median cost/session" card is a
+  // window figure and will not equal the median of the Cost column.
+  //
+  // The unbounded join is why the id set comes first: without it Postgres would
+  // aggregate every cost/active-time row ever ingested. Joining session_window
+  // drives a nested loop over idx_metric_points_session_id_name_ts (V13,
+  // (session.id, metric_name, timestamp)) -- at most one index range per listed
+  // session, and the page size is clamped by PageBounds.
+  //
   // The [startTimestamp, endTimestamp] bounds use the NULL-or-compare pattern, so
   // the ?minutes= form (start only) and the ?startTimestamp=&endTimestamp= form
   // (both) flow through one query. :sortColumn is one of a service-whitelisted
@@ -322,24 +342,32 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // from the breakdown and therefore from the row's total -- same trade-off the
   // dashboard's TokenUsageSummary breakdown already makes.
   @Query(value = """
-      WITH cost_per_session AS (
-        SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta) AS cost_usd
+      WITH session_window AS (
+        SELECT
+          attributes ->> 'session.id' AS session_id,
+          MIN(timestamp)              AS first_seen,
+          MAX(timestamp)              AS last_seen
         FROM metric_points
-        WHERE metric_name = :costMetric
+        WHERE metric_name IN (:costMetric, :activeTimeMetric)
           AND attributes ->> 'session.id' IS NOT NULL
-          AND value_double IS NOT NULL
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         GROUP BY 1
       ),
+      cost_per_session AS (
+        SELECT w.session_id, SUM(p.value_delta) AS cost_usd
+        FROM session_window w
+        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        WHERE p.metric_name = :costMetric
+          AND p.value_double IS NOT NULL
+        GROUP BY 1
+      ),
       active_per_session AS (
-        SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta) AS active_time_seconds
-        FROM metric_points
-        WHERE metric_name = :activeTimeMetric
-          AND attributes ->> 'session.id' IS NOT NULL
-          AND value_double IS NOT NULL
-          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
-          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        SELECT w.session_id, SUM(p.value_delta) AS active_time_seconds
+        FROM session_window w
+        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        WHERE p.metric_name = :activeTimeMetric
+          AND p.value_double IS NOT NULL
         GROUP BY 1
       ),
       token_per_session AS (
@@ -372,18 +400,6 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         ORDER BY attributes ->> 'session.id', COALESCE(start_timestamp, timestamp)
-      ),
-      session_window AS (
-        SELECT
-          attributes ->> 'session.id' AS session_id,
-          MIN(timestamp)              AS first_seen,
-          MAX(timestamp)              AS last_seen
-        FROM metric_points
-        WHERE metric_name IN (:costMetric, :activeTimeMetric)
-          AND attributes ->> 'session.id' IS NOT NULL
-          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
-          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
-        GROUP BY 1
       )
       SELECT
         w.session_id,

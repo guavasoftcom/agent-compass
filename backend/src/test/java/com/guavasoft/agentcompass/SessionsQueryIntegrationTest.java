@@ -295,6 +295,45 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void rowCostAndActiveTimeCoverTheWholeSessionEvenWhenItStartedBeforeTheWindow() {
+    Instant beforeWindow = Instant.now().minus(3, ChronoUnit.HOURS);
+    Instant insideWindow = Instant.now().minus(30, ChronoUnit.MINUTES);
+
+    // Session W straddles the 60-minute window: one cumulative emission well
+    // before it, one inside. Reset-aware deltas are 4.0 + 6.0 (cost) and
+    // 200 + 300 (active), so the window-only figures would be 6.0 / 300 while the
+    // whole session is 10.0 / 500.
+    saveCost("W", "opus", "main", 4.0, beforeWindow);
+    saveCost("W", "opus", "main", 10.0, insideWindow);
+    saveActive("W", "opus", "main", 200.0, beforeWindow);
+    saveActive("W", "opus", "main", 500.0, insideWindow);
+    // Tokens stay window-scoped, so only the in-window delta (700 - 400 = 300)
+    // counts -- the deliberate asymmetry with cost/active time.
+    saveTokenUsageWithType("W", "input", 400.0, beforeWindow);
+    saveTokenUsageWithType("W", "input", 700.0, insideWindow);
+
+    // Session X never emits inside the window, so it must not be listed at all --
+    // the unbounded cost/active-time join must not widen row selection.
+    saveCost("X", "opus", "main", 99.0, beforeWindow);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    assertThat(page.items()).extracting(SessionSummary::sessionId).doesNotContain("X");
+
+    SessionSummary sessionW = page.items().stream()
+        .filter(item -> "W".equals(item.sessionId())).findFirst().orElseThrow();
+    assertThat(sessionW.costUsd()).isEqualTo(10.0);
+    assertThat(sessionW.activeTimeSeconds()).isEqualTo(500.0);
+    // Both sides of the client-derived $/active min moved together, so the burn
+    // stays a real rate (10.0 / 500s = $1.20/min) instead of full-session cost
+    // over a windowed denominator.
+    assertThat(sessionW.costUsd() / sessionW.activeTimeSeconds() * 60).isEqualTo(1.2);
+    assertThat(sessionW.tokens()).isEqualTo(300L);
+    // Started/Last activity are still the window's view of the session.
+    assertThat(sessionW.startTimestamp()).isAfter(beforeWindow.plusSeconds(1));
+  }
+
+  @Test
   void kpisComputePercentilesOverTheWholeWindow() {
     SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES);
 

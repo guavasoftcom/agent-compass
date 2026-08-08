@@ -2,7 +2,8 @@ import { Box, Tooltip, alpha, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { neutralColors } from '../../../../theme/colors';
 import type { SpanRow } from '../../../../api';
-import { formatDuration, formatTokens } from '../../../TracesPage/tracesApi';
+import { formatDuration, formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
+import { costOfSpan } from '../../spanCost';
 import {
   tokenBreakdownForSpan,
   type TokenBreakdown,
@@ -117,6 +118,35 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
   );
 };
 
+// Real, billed cost (costOfSpan → SpanRow.costUsd) — not an estimate. Omitted
+// for spans with no logged request (the vast majority of non-model spans).
+const SpanCostBadge = ({ costUsd }: { costUsd: number }) => {
+  if (costUsd <= 0) {
+    return null;
+  }
+  return (
+    <Box
+      component="span"
+      sx={{
+        ml: 0.9,
+        display: 'inline-flex',
+        alignItems: 'center',
+        px: 0.75,
+        height: 17,
+        borderRadius: '5px',
+        color: 'warning.main',
+        bgcolor: (t) => alpha(t.palette.warning.main, 0.16),
+        typography: 'mono',
+        fontSize: 10,
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {formatUsd(costUsd)}
+    </Box>
+  );
+};
+
 const SpanWaterfallRow = ({
   span,
   depth,
@@ -135,6 +165,7 @@ const SpanWaterfallRow = ({
 }: Props) => {
   const theme = useTheme();
   const tokens = tokenBreakdownForSpan(span);
+  const costUsd = costOfSpan(span);
   // Aurora sync: dropped the per-row `kind` pill (nearly every span is
   // `internal`, so it repeated without informing — `kind` still shows once in
   // the detail dock's meta grid) and replaced it with the span's tool name,
@@ -280,6 +311,7 @@ const SpanWaterfallRow = ({
           </Box>
         ) : null}
         <SpanTokenBadges tokens={tokens} />
+        <SpanCostBadge costUsd={costUsd} />
         {isError ? (
           <Box
             component="span"
