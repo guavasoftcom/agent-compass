@@ -54,6 +54,7 @@ class SessionsQueryIntegrationTest {
   private static final String TRACE_TURN_ZERO = "1111000000000000111100000000000a";
   private static final String TRACE_TURN_ONE = "2222000000000000222200000000000b";
   private static final String PROMPT_ATTRIBUTE = "prompt";
+  private static final String PROMPT_ID_ATTRIBUTE = "prompt.id";
   private static final String TOOL_EVENT_NAME = "tool_result";
   private static final String TOOL_ATTRIBUTE = "tool_name";
   private static final String TOOL_DECISION_EVENT_NAME = "tool_decision";
@@ -392,7 +393,7 @@ class SessionsQueryIntegrationTest {
   @Test
   void promptsForSessionReturnsFullTimelineOrderedAscendingWithNormalizedTraceIds() {
     List<Object[]> rows = logRecordRepository.findPromptsForSession(
-        "B", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, 500);
+        "B", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, PROMPT_ID_ATTRIBUTE, 500);
 
     assertThat(rows).hasSize(2);
     // The all-zero placeholder trace id (pre-tracing sessions) normalizes to
@@ -410,7 +411,7 @@ class SessionsQueryIntegrationTest {
     saveUserPrompt("E", "Investigate the intermittent CI failure", timestamp, "");
 
     List<Object[]> rows = logRecordRepository.findPromptsForSession(
-        "E", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, 500);
+        "E", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, PROMPT_ID_ATTRIBUTE, 500);
 
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0)[2]).isNull();

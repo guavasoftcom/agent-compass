@@ -1,18 +1,20 @@
 # Tokens page
 
 Token usage dashboard: spend KPIs, a stacked-area time-series chart of the four token types
-over the selected window, a token-composition donut with cache-read-ratio health gauge, and a
+over the selected window, a token-composition donut with cache-efficiency health gauge, a
+worst-cache-efficiency session ranking, an estimated per-tool context footprint, and a
 per-model token breakdown. Backend counterpart: `SessionController.tokenUsage` →
 `MetricService.aggregateTokenUsage[InRange]` (`backend/.../controller/SessionController.java`),
-served at `GET /api/sessions/token-usage`.
+served at `GET /api/sessions/token-usage`, plus `GET /api/sessions/cache-efficiency` and
+`GET /api/tool-activity/context-footprint`.
 
 ## Files
 
 ```
 TokensPage/
-├── TokensPage.tsx              container — window context, single query, emptySummary fallback
+├── TokensPage.tsx              container — window context, three queries, emptySummary fallback
 ├── TokensPageView.tsx          view — derives KPI cards, chart series, donut slices, cache-ratio
-│                               color/label; composes all four sub-cards and the AreaTrendChart
+│                               color/label; composes all six sub-cards and the AreaTrendChart
 ├── components/
 │   ├── TokenSummaryCards/      four-tile KPI strip (Total cost · Total tokens · Models used · Top model)
 │   │   ├── TokenSummaryCards.tsx
@@ -20,8 +22,14 @@ TokensPage/
 │   ├── TokenByModelCard/       per-model token sums — name + colour dot, big total, share bar
 │   │   ├── TokenByModelCard.tsx
 │   │   └── index.ts
-│   └── TokenCompositionCard/   token-mix donut (SVG hand-built) + cache-read-ratio gauge
-│       ├── TokenCompositionCard.tsx
+│   ├── TokenCompositionCard/   token-mix donut (SVG hand-built) + cache-efficiency gauge
+│   │   ├── TokenCompositionCard.tsx
+│   │   └── index.ts
+│   ├── CacheEfficiencyRankCard/  worst-cache-efficiency sessions, bar length = the ratio itself
+│   │   ├── CacheEfficiencyRankCard.tsx
+│   │   └── index.ts
+│   └── ContextFootprintCard/   per-tool context footprint (BreakdownList) + "estimated" chip
+│       ├── ContextFootprintCard.tsx
 │       └── index.ts
 └── index.ts
 ```
@@ -63,10 +71,15 @@ TokensPage/
 | Source                   | Query key                         | Fetcher → endpoint |
 |--------------------------|-----------------------------------|--------------------|
 | `TokensPage` (`useQuery`) | `['token-usage', selectionKey]`   | `fetchTokenUsage(selection)` → `GET /api/sessions/token-usage?…` |
+| `TokensPage` (`useQuery`) | `['session-cache-efficiency', selectionKey, limit]` | `fetchSessionCacheEfficiency(selection, 8)` → `GET /api/sessions/cache-efficiency?…&limit=8` |
+| `TokensPage` (`useQuery`) | `['tool-context-footprint', selectionKey]` | `fetchToolContextFootprint(selection)` → `GET /api/tool-activity/context-footprint?…` |
 
-`selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'`. There is exactly one query
-on this page; all four sub-cards and the chart are fed entirely from props derived from
-`summaryQuery.data`. No sub-card fetches independently.
+`selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'`. No sub-card fetches
+independently — the container owns all three queries and passes plain props down.
+
+The token summary is the page's spine, so its error wins `PageLayout`'s error slot; the two
+ranked lists are supplementary, and when only one of them fails the page still renders with
+that card showing its own empty state. `onReload` refetches all three.
 
 ## Data flow and semantics
 
@@ -103,6 +116,38 @@ on this page; all four sub-cards and the chart are fed entirely from props deriv
 
 ## Gotchas
 
+- **Cache efficiency has exactly one definition, and it lives in `lib/cacheEfficiency.ts`.**
+  It is `cacheRead / (input + cacheCreation + cacheRead)` — the share of input-side tokens
+  served from cache. Output is excluded (generated, never sent); cache-creation is deliberately
+  kept in the denominator, because dropping it would let a session that constantly rebuilds its
+  cache read as efficient. Four places compute this and must move together: this module,
+  `MetricService.aggregateTokenUsage[InRange]`'s `cacheReadRatio` (the gauge),
+  `MetricPointRepository.aggregateSessionSummaries`' whitelisted `cacheEfficiency` `ORDER BY`
+  (the Sessions grid column's server-side sort), and
+  `aggregateWorstCacheEfficiencySessions` (this page's ranking). The gauge's bands are the
+  shared `cacheEfficiencyBand` bands (≥85% strong, ≥60% mixed) — **not** the old page-local
+  0.7/0.4 pair, and **not** the old `cacheRead / (cacheCreation + cacheRead)` denominator that
+  made this page's number disagree with the Sessions column.
+- **`ContextFootprintCard`'s token figure is an estimate and must stay visually separate from
+  the exact cards.** It is `bytes / 4`, carries its own "estimated" chip, and leads with byte
+  values for that reason. Two things it is not: (1) billed spend — never add it to or compare
+  it against `TokenUsageSummary`; (2) a full accounting of cost — a tool result is re-sent with
+  every later request in its session, so the one-time size understates what it actually costs.
+  Its `calls` also runs lower than the Tool Calls page's count, because calls that reported no
+  `tool_result_size_bytes` are excluded rather than counted as zero.
+- **The context footprint counts tools the tuning report deliberately skips.** Agent/WebFetch
+  and image reads are excluded from the report's oversized-results list because nothing in
+  AGENTS.md can tune them; they are included here because this card asks a different question
+  — what is filling the window — and "delegate this to a subagent" is one of the levers the
+  comparison exists to inform.
+- **Rows past the top 8 collapse into "Other" rather than being dropped**, so the percentages
+  still sum to 100. MCP tool names (`mcp__server__tool`) proliferate, and a silent top-N would
+  make the visible shares look complete when they weren't.
+- **An empty cache-efficiency ranking is a real answer, not a failure.** The server applies a
+  noise floor (`tuning.cache-efficiency-minimum-input-tokens`, default 100k input-side tokens)
+  before ranking, because a session that made two small calls can sit at 0% without anything
+  being wrong. `CACHE_EFFICIENCY_FLOOR_LABEL` in the view mirrors that default for the card's
+  copy only — the server owns the real floor.
 - **`summary.cost.spend24h` is a pre-formatted string** (e.g. `"$4.23"`), not a raw number.
   The field is named `spend24h` for historical reasons but always reflects the selected window's
   spend — don't treat it as a 24-hour-only metric. The same applies to `deltaPct`, `burnRate`,

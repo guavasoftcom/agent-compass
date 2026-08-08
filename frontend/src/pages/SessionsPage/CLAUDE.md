@@ -25,7 +25,9 @@ SessionsPage/
     ├── sessionsFormat.ts        shared formatters: USD_FORMATTER, USD_PER_MINUTE_FORMATTER,
     │                            formatDuration (seconds), formatTokens (K/M compact — see the
     │                            boundary-rounding gotcha below), formatTimestamp, and
-    │                            formatRelativeTime (Last-activity column's "Nm/Nh/Nd ago")
+    │                            formatRelativeTime (Last-activity column's "Nm/Nh/Nd ago").
+    │                            Cache efficiency deliberately does NOT live here — the Tokens
+    │                            page needs the same ratio, so it lives in lib/cacheEfficiency.ts
     ├── SessionsKpiStrip/        4-card StatCard grid; renders the shared LineSparkline
     │   ├── SessionsKpiStrip.tsx   (components/LineSparkline) and the P95 caption math
     │   └── index.ts
@@ -36,6 +38,9 @@ SessionsPage/
     │   │                          the handleSort toggle + row-expand-click logic; renders
     │   │                          PromptTimelinePanel for the expanded row
     │   └── index.ts
+    ├── PromptTimelinePanel/
+    │   └── TurnRequestTable.tsx  per-turn drill-down table (time · model · effort · tokens ·
+    │                             cache read · cost · duration), one row per api_request
     └── PromptTimelinePanel/     Aurora glass per-turn timeline for the expanded row — genuinely
         ├── PromptTimelinePanel.tsx  new UI (not an extraction): a gradient rail with a card per
         │                          turn (timestamp, model chip, per-turn cost, TokenUsage w/
@@ -46,7 +51,10 @@ SessionsPage/
         │                          divider; long prompt text truncates through the shared
         │                          AttributeValue/ExpandedValueDialog machinery. Exports
         │                          TokenBreakdownTitle / TokenBreakdownTooltip / TokenUsage,
-        │                          reused by SessionsTable's Tokens-column hover.
+        │                          reused by SessionsTable's Tokens-column hover. Also renders
+        │                          TurnAttributionMarker — a clickable "N req" pill on turns whose
+        │                          figures came from their own api_request logs, a muted "approx"
+        │                          marker on counter-derived ones — and the TurnRequestTable it opens.
         └── index.ts
 ```
 
@@ -93,6 +101,7 @@ Fetchers live in the shared `api/endpoints.ts` (not a page-local module) and use
 | `SessionsPage` (`useQuery`)  | `['sessions-summary', selectionKey]`                                   | `fetchSessionsSummary(selection)` → `GET /api/sessions/summary?…` |
 | `SessionsPage` (`useQuery`)  | `['sessions', selectionKey, page, pageSize, sortField, sortDirection]` | `fetchSessions(selection, { page, pageSize, sort })` → `GET /api/sessions?…&page=N&size=M&sort=field&direction=asc\|desc` |
 | `SessionsPage` (`useQuery`, `sessionPromptsQuery`) | `['session-prompts', expandedSessionId]`, `enabled: expandedSessionId !== null` | `fetchSessionPrompts(sessionId)` → `GET /api/sessions/{sessionId}/prompts` |
+| `SessionsPage` (`useQuery`, `sessionRequestsQuery`) | `['session-requests', expandedSessionId]`, `enabled: expandedSessionId !== null` | `fetchSessionRequests(sessionId)` → `GET /api/sessions/{sessionId}/requests` |
 
 `fetchSessions` uses `listWithTotalCount<SessionSummaryRow>` from `api/http.ts`, which reads the
 `X-Total-Count` response header and returns `{ items: SessionSummaryRow[], totalCount: number }`.
@@ -215,17 +224,35 @@ trace link for those rows, not a disabled placeholder.
 - **Table box height** is `calc(100vh - BODY_CHROME_PX px)` (`BODY_CHROME_PX` = 320, top of
   `SessionsPageView.tsx`) with `minHeight: 420`. If you add or remove chrome above the table card,
   retune that constant or the table will over/under-fill the viewport.
+- **Per-turn figures come from two different pipelines, and the timeline says which.** Each turn
+  carries `attribution`: `REQUEST` means its model/cost/tokens are the exact per-call figures
+  summed over that turn's own `api_request` logs (joined on `prompt.id`); `INTERVAL` means no such
+  logs exist and the values were bucketed from cumulative counters by timestamp. The two are
+  **different measurements, not two views of one number** — measured against live data they
+  disagree by tens of percent in both directions, dominated by cache-read tokens. That is why
+  `TurnAttributionMarker` labels `INTERVAL` turns "approx" and why **a session row's
+  `tokenBreakdown` no longer equals the sum of its turns' `tokens`**: the row is a windowed
+  counter roll-up, the turns are whole-session per-request sums. Don't "reconcile" them.
+- **The per-request drill-down is one query per session, not per turn.** `sessionRequestsQuery`
+  fetches the whole session's requests once; `PromptTimelinePanel` groups them by `promptId` in a
+  `useMemo` and `expandedTurnPromptIds` (a `Set`, so several turns can be open at once) decides
+  which render a `TurnRequestTable`. The pill's `onClick` calls `stopPropagation` — the turn card
+  sits inside a clickable table row, and without it every toggle would collapse the whole panel.
 - **Cache-efficiency column is derived, not a DTO field.** `cacheEfficiencyRatio` /
-  `formatCacheEfficiency` (in `components/sessionsFormat.ts`) compute `cacheRead / (input +
+  `formatCacheEfficiency` (now in the shared `lib/cacheEfficiency.ts`, not `sessionsFormat.ts` —
+  the Tokens page needs the identical ratio and bands) compute `cacheRead / (input +
   cacheCreation + cacheRead)` from the row's `tokenBreakdown` — output tokens are excluded (they're
   generated, never cached). There is no `cacheEfficiency` field on `SessionSummaryRow`; the column
   is derived client-side exactly like the `$/active min` burn cell. It is nonetheless **sortable
   server-side**: the header maps to the backend's whitelisted `cacheEfficiency` sort token
   (`MetricService.SORT_COLUMNS_BY_FIELD`), whose `ORDER BY` uses the identical ratio and sorts
   sessions with no input-side tokens `NULLS LAST` — the same rows `CacheEfficiencyCell` renders as
-  "—". If you change the ratio's definition, change both sides in lockstep or the visible order
-  stops matching the visible values. Bands: ≥85% `success.main`, ≥60% `text.primary`, else
-  `warning.main`; colors come from the theme palette, never hard-coded hex.
+  "—". If you change the ratio's definition, change **all four** places in lockstep or the visible
+  order stops matching the visible values: `lib/cacheEfficiency.ts`, this column's `ORDER BY`,
+  `MetricService.aggregateTokenUsage[InRange]`'s `cacheReadRatio` (the Tokens page gauge), and
+  `MetricPointRepository.aggregateWorstCacheEfficiencySessions` (the Tokens page ranking). Bands
+  are the shared `CACHE_EFFICIENCY_STRONG` / `_WEAK` constants: ≥85% `success.main`, ≥60%
+  `text.primary`, else `warning.main`; colors come from the theme palette, never hard-coded hex.
 - **`DenialChip` threshold**: 0 → dimmed text, 1–3 → amber, 4+ → red. Colors come from
   `theme.palette.warning.main` / `theme.palette.error.main` — never hard-coded hex.
 - **`startType` field** is present on `SessionSummaryRow` but not rendered in the table. Resume

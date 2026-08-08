@@ -22,6 +22,7 @@ import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
+import com.guavasoft.agentcompass.model.ToolContextFootprint;
 import com.guavasoft.agentcompass.model.ToolDenialCount;
 import com.guavasoft.agentcompass.model.ToolFailureRate;
 import com.guavasoft.agentcompass.model.ToolLatency;
@@ -109,6 +110,38 @@ public class ToolActivityController {
                     timeWindowParams.endTimestamp());
         }
         return traceService.aggregateToolLatency(minutes);
+    }
+
+    @GetMapping("/context-footprint")
+    @Operation(
+            summary = "Per-tool context-window footprint over the window",
+            description = "For each tool, the summed and P95 tool_result_size_bytes plus an "
+                    + "estimated one-time context-token figure (bytes / 4). Answers 'what is "
+                    + "filling my context window', which is why it excludes nothing: externally "
+                    + "determined tools (Agent, WebFetch) and image reads are counted here even "
+                    + "though the tuning report's oversized-results list skips them, since they "
+                    + "occupy the window like anything else. Failed calls count too wherever they "
+                    + "reported a size — error output is context. Calls with no size attribute at "
+                    + "all are excluded, so `calls` is legitimately lower than the count on "
+                    + "/api/tool-activity/calls. estimatedTokens is an ESTIMATE for ranking tools "
+                    + "against each other; it is not billed spend, is not comparable to "
+                    + "/api/sessions/token-usage, and understates real cost because a result is "
+                    + "re-sent with every later request in its session. Sorted by total bytes "
+                    + "descending.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "One row per distinct tool that reported at least one result size",
+            content = @Content(
+                    mediaType = "application/json",
+                    array = @ArraySchema(schema = @Schema(implementation = ToolContextFootprint.class)))))
+    public List<ToolContextFootprint> toolContextFootprint(
+            @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateToolContextFootprintInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
+        }
+        return logService.aggregateToolContextFootprint(minutes);
     }
 
     @GetMapping("/failure-rates")

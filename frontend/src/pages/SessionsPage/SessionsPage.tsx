@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
   fetchSessionPrompts,
+  fetchSessionRequests,
   fetchSessions,
   fetchSessionsSummary,
   type SessionsSortModel,
@@ -77,6 +78,17 @@ export default function SessionsPage() {
     enabled: expandedSessionId !== null,
   });
 
+  // Every LLM request in the expanded session, backing the timeline's per-turn
+  // drill-down. Fetched once per session and grouped by prompt id in the panel,
+  // so opening and closing individual turns costs no further requests. Same
+  // enabled gate as the prompt timeline; an empty result is normal for sessions
+  // recorded without event logging and simply means no drill-down is offered.
+  const sessionRequestsQuery = useQuery({
+    queryKey: ['session-requests', expandedSessionId],
+    queryFn: () => fetchSessionRequests(expandedSessionId as string),
+    enabled: expandedSessionId !== null,
+  });
+
   const handleToggleExpand = (sessionId: string) => {
     setExpandedSessionId((previous) => (previous === sessionId ? null : sessionId));
   };
@@ -135,6 +147,8 @@ export default function SessionsPage() {
       promptTimeline={sessionPromptsQuery.data ?? null}
       promptTimelineLoading={sessionPromptsQuery.isLoading}
       promptTimelineError={sessionPromptsQuery.error as Error | null}
+      sessionRequests={sessionRequestsQuery.data ?? null}
+      sessionRequestsLoading={sessionRequestsQuery.isLoading}
     />
   );
 }

@@ -1,6 +1,8 @@
 // Formatters shared between SessionsKpiStrip and SessionsTable.
-
-import type { SessionTokenBreakdown } from '../../../api';
+//
+// Cache efficiency deliberately does NOT live here: the Tokens page needs the same
+// ratio and bands, so they live in `lib/cacheEfficiency.ts` alongside the note about
+// the three backend expressions that have to match. Import them from there.
 
 export const USD_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -55,34 +57,6 @@ export const formatTokens = (value: number): string => {
     return `${thousands}K`;
   }
   return `${Math.round(value)}`;
-};
-
-// Cache efficiency = cacheRead / (input + cacheCreation + cacheRead): the fraction of a
-// session's input-side tokens served from the prompt cache. Output tokens are generated,
-// never cached, so they're excluded from the denominator. Returns null when the session
-// recorded no input-side tokens (efficiency undefined) so callers render "—". The
-// backend's `cacheEfficiency` sort column orders by this exact ratio, so the column stays
-// consistent whether the browser derives the value for display or the server sorts by it.
-export const cacheEfficiencyRatio = (
-  breakdown: SessionTokenBreakdown | null | undefined,
-): number | null => {
-  if (!breakdown) {
-    return null;
-  }
-  const inputSideTokens =
-    breakdown.input + breakdown.cacheCreation + breakdown.cacheRead;
-  if (inputSideTokens <= 0) {
-    return null;
-  }
-  return breakdown.cacheRead / inputSideTokens;
-};
-
-// Ratio (0..1) → whole-percent string; "—" for null / non-finite input.
-export const formatCacheEfficiency = (ratio: number | null): string => {
-  if (ratio == null || !Number.isFinite(ratio)) {
-    return '—';
-  }
-  return `${Math.round(ratio * 100)}%`;
 };
 
 export const formatTimestamp = (value: string): string =>

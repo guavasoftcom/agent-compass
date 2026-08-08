@@ -1,9 +1,14 @@
-import { Fragment, useState, type ReactElement } from 'react';
+import { Fragment, useMemo, useState, type ReactElement } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, CircularProgress, Tooltip, Typography, alpha } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import type { SessionPromptRow, SessionTokenBreakdown } from '../../../../api';
+import type {
+  SessionApiRequestRow,
+  SessionPromptRow,
+  SessionTokenBreakdown,
+} from '../../../../api';
+import TurnRequestTable from './TurnRequestTable';
 import { AttributeList } from '../../../../components/AttributeList';
 import {
   AttributeValue,
@@ -148,6 +153,12 @@ interface PromptTimelinePanelProps {
   // the WHOLE session, not just the windowed slice (see SESSIONS-BACKEND.md).
   windowStartMs?: number;
   windowEndMs?: number;
+  // Every LLM request in the session, for the per-turn drill-down. Grouped by
+  // promptId here rather than fetched per turn, so expanding turns costs nothing
+  // extra. Null/empty is normal — sessions recorded without event logging have no
+  // per-request detail, and their turns fall back to counter-derived figures.
+  requests?: SessionApiRequestRow[] | null;
+  requestsLoading?: boolean;
 }
 
 // Rich title for the token-usage tooltip: the four-way split, a "Working" subtotal
@@ -272,6 +283,122 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
   );
 };
 
+/**
+ * Says where a turn's cost and token figures came from, and opens the
+ * per-request drill-down when they came from the requests themselves.
+ *
+ * REQUEST turns get a clickable "N requests" pill — the figures beside it are
+ * those N calls summed, so the pill doubles as provenance and as the expander.
+ * INTERVAL turns get a muted "approx" marker instead: their numbers are bucketed
+ * from cumulative counters by timestamp and are a different, coarser measurement
+ * — not merely a rounder version of the same one. Labeling them is what stops a
+ * reader from comparing an exact turn against an approximate one and concluding
+ * something changed.
+ */
+const TurnAttributionMarker = ({
+  attribution,
+  requestCount,
+  expanded,
+  loading,
+  onToggle,
+}: {
+  attribution: SessionPromptRow['attribution'];
+  requestCount: number;
+  expanded: boolean;
+  loading: boolean;
+  onToggle?: () => void;
+}) => {
+  if (attribution !== 'REQUEST' || requestCount === 0) {
+    // Older sessions carry no attribution field at all; treat a missing value the
+    // same as INTERVAL rather than implying exactness we cannot vouch for.
+    return (
+      <Tooltip
+        title={
+          'Approximate. This turn has no per-request logs, so its model, cost and tokens were '
+          + 'bucketed from cumulative counters by timestamp. Counter totals run lower than '
+          + 'per-request sums on cache-heavy turns — don\'t compare the two directly.'
+        }
+        placement="top"
+        arrow
+      >
+        <Box
+          component="span"
+          sx={{
+            fontFamily: fontFamilies.display,
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: '0.8px',
+            textTransform: 'uppercase',
+            color: 'text.disabled',
+            cursor: 'help',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          approx
+        </Box>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Tooltip
+      title={
+        loading
+          ? 'Loading per-request detail…'
+          : `Exact: summed from this turn's ${NUM_FORMATTER.format(requestCount)} API `
+            + `request${requestCount === 1 ? '' : 's'}. Click to see them.`
+      }
+      placement="top"
+      arrow
+    >
+      <Box
+        component="button"
+        type="button"
+        onClick={(event) => {
+          // The turn card sits inside a clickable table row; without this the
+          // row's own handler collapses the whole timeline on every toggle.
+          event.stopPropagation();
+          onToggle?.();
+        }}
+        disabled={onToggle === undefined}
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.375,
+          height: 18,
+          px: '7px',
+          border: 0,
+          borderRadius: 999,
+          cursor: 'pointer',
+          fontFamily: fontFamilies.display,
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: 0.2,
+          whiteSpace: 'nowrap',
+          color: expanded ? 'primary.main' : 'text.secondary',
+          bgcolor: (t: Theme) =>
+            alpha(t.palette.primary.main, expanded ? 0.18 : 0.08),
+          boxShadow: (t: Theme) =>
+            `inset 0 0 0 1px ${alpha(t.palette.primary.main, expanded ? 0.36 : 0.18)}`,
+          '&:hover': { bgcolor: (t: Theme) => alpha(t.palette.primary.main, 0.22) },
+        }}
+      >
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-block',
+            transform: expanded ? 'rotate(90deg)' : 'none',
+            transition: 'transform .14s',
+          }}
+        >
+          ›
+        </Box>
+        {NUM_FORMATTER.format(requestCount)} req
+      </Box>
+    </Tooltip>
+  );
+};
+
 // Aurora glass timeline: a gradient rail with a glowing dot per turn, each turn
 // a translucent card carrying its timestamp, model chip, per-turn cost, prompt
 // text (or a placeholder for pre-capture rows), tool-call chips, and an optional
@@ -280,8 +407,48 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
 // "View more" → ExpandedValueDialog machinery from components/AttributeList
 // (same pattern as LogTable and the grid's own row detail) rather than
 // rendering full text pre-wrapped inline.
-const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs, windowEndMs }: PromptTimelinePanelProps) => {
+const PromptTimelinePanel = ({
+  sessionId,
+  prompts,
+  loading,
+  error,
+  windowStartMs,
+  windowEndMs,
+  requests,
+  requestsLoading,
+}: PromptTimelinePanelProps) => {
   const [expandedValue, setExpandedValue] = useState<ValueDialogState | null>(null);
+  // Which turns have their per-request drill-down open. A Set (not a single id)
+  // because comparing two expensive turns side by side is the whole point.
+  const [expandedTurnPromptIds, setExpandedTurnPromptIds] = useState<Set<string>>(new Set());
+
+  const requestsByPromptId = useMemo(() => {
+    const grouped = new Map<string, SessionApiRequestRow[]>();
+    for (const request of requests ?? []) {
+      if (request.promptId == null) {
+        continue;
+      }
+      const existing = grouped.get(request.promptId);
+      if (existing) {
+        existing.push(request);
+      } else {
+        grouped.set(request.promptId, [request]);
+      }
+    }
+    return grouped;
+  }, [requests]);
+
+  const toggleTurnRequests = (promptId: string) => {
+    setExpandedTurnPromptIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(promptId)) {
+        next.delete(promptId);
+      } else {
+        next.add(promptId);
+      }
+      return next;
+    });
+  };
 
   const panelSx = {
     px: 2.5,
@@ -464,6 +631,13 @@ const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs
                   </Box>
                 ) : null}
                 <TokenUsage tokens={turn.tokens} />
+                <TurnAttributionMarker
+                  attribution={turn.attribution}
+                  requestCount={turn.requestCount ?? 0}
+                  expanded={turn.promptId != null && expandedTurnPromptIds.has(turn.promptId)}
+                  loading={requestsLoading === true}
+                  onToggle={turn.promptId == null ? undefined : () => toggleTurnRequests(turn.promptId as string)}
+                />
               </Box>
               {turn.traceId ? (
                 <Box
@@ -509,6 +683,10 @@ const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs
             </Box>
 
             <ToolChips tools={turn.tools} />
+
+            {turn.promptId != null && expandedTurnPromptIds.has(turn.promptId) ? (
+              <TurnRequestTable requests={requestsByPromptId.get(turn.promptId) ?? []} />
+            ) : null}
           </Box>
           </Fragment>
           );

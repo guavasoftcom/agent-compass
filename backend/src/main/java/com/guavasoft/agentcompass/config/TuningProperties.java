@@ -186,6 +186,18 @@ public class TuningProperties {
   private String costUsageMetric = "claude_code.cost.usage";
 
   /**
+   * Noise floor for the worst-cache-efficiency ranking: a session needs at least
+   * this many input-side tokens (input + cacheCreation + cacheRead — the ratio's
+   * own denominator) before it can be ranked. A session that made two small calls
+   * can sit at 0% efficiency without anything being wrong, and would otherwise
+   * crowd out the large sessions where a poor ratio actually costs money.
+   *
+   * <p>Values below 1 are clamped up to 1 by the service, which is also what
+   * guarantees the ranking query never divides by zero.
+   */
+  private long cacheEfficiencyMinimumInputTokens = 100_000L;
+
+  /**
    * OTLP metric name carrying per-(session, model, query_source) cumulative
    * active-time
    * seconds. Same MAX-per-stream-then-sum aggregation as

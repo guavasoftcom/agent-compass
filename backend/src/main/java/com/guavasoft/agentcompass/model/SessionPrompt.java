@@ -47,13 +47,41 @@ public record SessionPrompt(
         @Schema(description = "Tool calls this turn triggered, derived from tool_result events for this session "
                 + "within the turn's interval, grouped by tool name and ordered by count descending (ties broken "
                 + "by name ascending). Empty (never null) when the turn triggered no tool calls.")
-        List<SessionPromptToolCount> tools) {
+        List<SessionPromptToolCount> tools,
+
+        @Schema(description = "Identifier of this turn, shared with the api_request logs it issued. It is the join "
+                + "key for GET /api/sessions/{id}/requests: filtering that endpoint's rows to this value yields "
+                + "exactly the requests summed into this turn's figures. Null on turns predating prompt-id "
+                + "stamping, which are also the turns reporting attribution=INTERVAL.",
+                example = "9a7ac484-195b-4a74-a78d-1cf67c973af5", nullable = true)
+        String promptId,
+
+        @Schema(description = "How many api_request logs were correlated to this turn by prompt id. 0 means none "
+                + "were found, which is also when attribution falls back to INTERVAL.", example = "11")
+        long requestCount,
+
+        @Schema(description = "How this turn's model / costUsd / tokens were derived. REQUEST means they are the "
+                + "exact per-call figures summed over the turn's own api_request logs, joined by prompt id. "
+                + "INTERVAL means no such logs exist for the turn (event logging disabled, an older CLI, or a "
+                + "turn predating prompt-id stamping) and the values were bucketed from cumulative metric "
+                + "counters by timestamp interval instead — the older, approximate attribution. Clients should "
+                + "present INTERVAL figures as approximate and must not treat a 0 request count as zero spend.")
+        TurnAttribution attribution) {
+
+    /** Where a turn's per-turn rollups came from. */
+    @Schema(name = "SessionPrompt.TurnAttribution")
+    public enum TurnAttribution {
+        /** Exact: summed from the turn's own api_request logs, joined by prompt id. */
+        REQUEST,
+        /** Approximate: bucketed from cumulative metric counters by timestamp interval. */
+        INTERVAL
+    }
 
     /**
      * Compatibility constructor for the original three-field shape, defaulting the additive
      * model / costUsd / tokens / tools fields to their "nothing attributed" values.
      */
     public SessionPrompt(Instant timestamp, String prompt, String traceId) {
-        this(timestamp, prompt, traceId, null, null, null, List.of());
+        this(timestamp, prompt, traceId, null, null, null, List.of(), null, 0L, TurnAttribution.INTERVAL);
     }
 }

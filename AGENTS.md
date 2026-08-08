@@ -87,6 +87,12 @@ precomputes reset-aware increments into `metric_points.value_delta`,
 so every rollup is a plain `SUM(value_delta)` — details in
 [backend/CLAUDE.md](backend/CLAUDE.md).
 
+Spend is measurable two ways — those cumulative counters, and the exact per-call figures on
+`api_request` log records — and **the two do not reconcile**: on real data they disagree by tens
+of percent in both directions, dominated by cache-read tokens. Every figure names its source
+rather than blending them (see `SessionPrompt.attribution`). Read the two-pipelines note in
+[backend/CLAUDE.md](backend/CLAUDE.md) before adding any new token or cost aggregation.
+
 To bypass the bundled compose Postgres, set `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` —
 see [backend/.env.example](backend/.env.example).
 

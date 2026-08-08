@@ -4,6 +4,7 @@ import { alpha } from '@mui/material/styles';
 import type { SxProps, Theme } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type {
+  SessionApiRequestRow,
   SessionPromptRow,
   SessionSummaryRow,
   SessionsSortModel,
@@ -15,13 +16,17 @@ import PromptTimelinePanel, { TokenBreakdownTooltip } from '../PromptTimelinePan
 import {
   USD_FORMATTER,
   USD_PER_MINUTE_FORMATTER,
-  cacheEfficiencyRatio,
-  formatCacheEfficiency,
   formatDuration,
   formatRelativeTime,
   formatTokens,
   formatTimestamp,
 } from '../sessionsFormat';
+import {
+  CACHE_EFFICIENCY_STRONG,
+  CACHE_EFFICIENCY_WEAK,
+  cacheEfficiencyRatio,
+  formatCacheEfficiency,
+} from '../../../../lib/cacheEfficiency';
 
 // ---- column model -----------------------------------------------------------
 interface SessionColumn {
@@ -193,11 +198,6 @@ const DenialChip = ({ count }: { count: number }) => {
     </Box>
   );
 };
-
-// Cache efficiency bands: at/above STRONG reads calm-positive (green), below WEAK draws
-// the eye (amber) as a low-reuse / more-expensive session; in between stays neutral.
-const CACHE_EFFICIENCY_STRONG = 0.85;
-const CACHE_EFFICIENCY_WEAK = 0.6;
 
 // Cache-efficiency cell: percentage of a session's input-side tokens served from cache,
 // colored by band, with the exact ratio + raw cached/total on hover. Renders "—" when
@@ -379,6 +379,10 @@ interface SessionsTableProps {
   promptTimeline: SessionPromptRow[] | null;
   promptTimelineLoading: boolean;
   promptTimelineError: Error | null;
+  // Per-request drill-down rows for the expanded session, forwarded to
+  // PromptTimelinePanel which groups them by prompt id.
+  sessionRequests: SessionApiRequestRow[] | null;
+  sessionRequestsLoading: boolean;
   // Active dashboard window (epoch ms), forwarded to PromptTimelinePanel so it
   // can dim turns that fall outside the selected window (the prompts endpoint
   // returns the whole session, not just the windowed slice).
@@ -397,6 +401,8 @@ const SessionsTable = ({
   promptTimeline,
   promptTimelineLoading,
   promptTimelineError,
+  sessionRequests,
+  sessionRequestsLoading,
   windowStartMs,
   windowEndMs,
 }: SessionsTableProps) => {
@@ -560,6 +566,8 @@ const SessionsTable = ({
                     <PromptTimelinePanel
                       sessionId={row.sessionId}
                       prompts={promptTimeline}
+                      requests={sessionRequests}
+                      requestsLoading={sessionRequestsLoading}
                       loading={promptTimelineLoading}
                       error={promptTimelineError}
                       windowStartMs={windowStartMs}

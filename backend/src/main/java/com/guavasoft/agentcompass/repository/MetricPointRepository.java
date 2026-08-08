@@ -479,6 +479,101 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset);
 
+  // Sessions ranked by WORST cache efficiency — the Tokens page's ranked list.
+  //
+  // cacheEfficiency is cacheRead / (input + cacheCreation + cacheRead): the share
+  // of a session's input-side tokens served from the prompt cache. Output tokens
+  // are generated rather than sent, so they stay out of the ratio (they are still
+  // reported in total_tokens as a scale hint). This is the SAME expression the
+  // 'cacheEfficiency' sort column in aggregateSessionSummaries orders by and the
+  // same one the frontend's shared cacheEfficiencyRatio helper computes for the
+  // Sessions grid column — the three must move together or the ranking, the
+  // sortable column, and the rendered percentages stop agreeing.
+  //
+  // :minimumInputSideTokens is the noise floor (TuningProperties
+  // cacheEfficiencyMinimumInputTokens): a session that made two small calls can
+  // sit at 0% without anything being wrong and would crowd out the large sessions
+  // where a poor ratio actually costs money. Because the floor is applied to the
+  // ratio's own denominator and the service clamps it to at least 1, it is also
+  // what makes the division below unconditionally safe — there is no zero-guard
+  // CASE here because no surviving row can have a zero denominator.
+  //
+  // Structural resume-heartbeat exclusion: session_window keys off the cost and
+  // active-time metrics, which resume streams never emit (they carry only
+  // session.count), so heartbeat-only sessions are absent from the id set before
+  // the token join happens. The INNER JOIN to token_per_session then drops any
+  // session with no token points at all. Neither is a filter that can be dropped
+  // by accident — see MetricServiceCacheEfficiencyIT, which pins the behaviour.
+  //
+  // Cost is whole-session (joined back with no timestamp predicate), matching the
+  // Sessions grid's Cost column; tokens stay window-scoped like every other token
+  // rollup. Same deliberate split documented on aggregateSessionSummaries.
+  @Query(value = """
+      WITH session_window AS (
+        SELECT attributes ->> 'session.id' AS session_id
+        FROM metric_points
+        WHERE metric_name IN (:costMetric, :activeTimeMetric)
+          AND attributes ->> 'session.id' IS NOT NULL
+          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
+          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        GROUP BY 1
+      ),
+      token_per_session AS (
+        SELECT
+          attributes ->> 'session.id' AS session_id,
+          COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :inputTokenType), 0)::bigint
+            AS input_tokens,
+          COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :outputTokenType), 0)::bigint
+            AS output_tokens,
+          COALESCE(SUM(value_delta)
+            FILTER (WHERE attributes ->> :tokenTypeAttribute = :cacheCreationTokenType), 0)::bigint
+            AS cache_creation_tokens,
+          COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :cacheReadTokenType), 0)::bigint
+            AS cache_read_tokens
+        FROM metric_points
+        WHERE metric_name = :tokenMetric
+          AND attributes ->> 'session.id' IS NOT NULL
+          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
+          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        GROUP BY 1
+      ),
+      cost_per_session AS (
+        SELECT w.session_id, SUM(p.value_delta) AS cost_usd
+        FROM session_window w
+        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        WHERE p.metric_name = :costMetric
+          AND p.value_double IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT
+        w.session_id,
+        t.cache_read_tokens::double precision
+          / (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens) AS cache_efficiency,
+        t.cache_read_tokens                                                  AS cache_read_tokens,
+        (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens)::bigint AS input_side_tokens,
+        (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens)::bigint AS total_tokens,
+        COALESCE(c.cost_usd, 0)::double precision                            AS cost_usd
+      FROM session_window w
+      JOIN token_per_session t     ON t.session_id = w.session_id
+      LEFT JOIN cost_per_session c ON c.session_id = w.session_id
+      WHERE (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens) >= :minimumInputSideTokens
+      ORDER BY cache_efficiency ASC, input_side_tokens DESC, w.session_id ASC
+      LIMIT :resultLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateWorstCacheEfficiencySessions(
+      @Param("costMetric") String costMetric,
+      @Param("activeTimeMetric") String activeTimeMetric,
+      @Param("tokenMetric") String tokenMetric,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("inputTokenType") String inputTokenType,
+      @Param("outputTokenType") String outputTokenType,
+      @Param("cacheCreationTokenType") String cacheCreationTokenType,
+      @Param("cacheReadTokenType") String cacheReadTokenType,
+      @Param("startTimestamp") Instant startTimestamp,
+      @Param("endTimestamp") Instant endTimestamp,
+      @Param("minimumInputSideTokens") long minimumInputSideTokens,
+      @Param("resultLimit") int resultLimit);
+
   // ---------------------------------------------------------------------------
   // Prompt-timeline per-turn rollups (Sessions page GET /api/sessions/{id}/prompts)
   // ---------------------------------------------------------------------------

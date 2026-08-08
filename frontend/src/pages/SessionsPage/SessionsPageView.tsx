@@ -6,6 +6,7 @@ import { resolveWindow } from '../../lib/resolveWindow';
 import SessionsKpiStrip from './components/SessionsKpiStrip';
 import SessionsTable from './components/SessionsTable';
 import type {
+  SessionApiRequestRow,
   SessionPromptRow,
   SessionSummaryRow,
   SessionsSortModel,
@@ -51,11 +52,16 @@ export interface SessionsPageViewProps {
   promptTimeline: SessionPromptRow[] | null;
   promptTimelineLoading: boolean;
   promptTimelineError: Error | null;
+  // Per-request drill-down rows for the expanded session; grouped by prompt id
+  // inside PromptTimelinePanel. Null/empty means the session has no per-request
+  // detail, not that it had no spend.
+  sessionRequests: SessionApiRequestRow[] | null;
+  sessionRequestsLoading: boolean;
 }
 
 // Viewport height reserved for the page chrome above the table (header + KPI strip),
 // subtracted from 100vh to size the scrollable table body.
-const BODY_CHROME_PX = 320;
+const BODY_CHROME_PX = 385;
 
 const SessionsPageView = ({
   selection,
@@ -79,6 +85,8 @@ const SessionsPageView = ({
   promptTimeline,
   promptTimelineLoading,
   promptTimelineError,
+  sessionRequests,
+  sessionRequestsLoading,
 }: SessionsPageViewProps) => {
   const showLoading = isLoading && rows.length === 0;
   const showEmpty = !isLoading && rows.length === 0;
@@ -97,9 +105,9 @@ const SessionsPageView = ({
       eyebrow="Activity"
       title="Sessions"
       subtitle={
-        'Per-session cost and token usage over the selected window. The most expensive sessions '
-        + 'are the most leveraged tuning targets — inspecting their tool sequences and prompts '
-        + 'informs prompt revisions and skill additions.'
+        'Per-session cost and token usage over the selected window. The most expensive sessions ' +
+        'are the most leveraged tuning targets — inspecting their tool sequences and prompts ' +
+        'informs prompt revisions and skill additions.'
       }
       error={error}
       actions={
@@ -127,13 +135,22 @@ const SessionsPageView = ({
           minHeight: 420,
         }}
       >
-        <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'auto' }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowX: 'auto',
+            overflowY: 'auto',
+          }}
+        >
           <SessionsTable
             rows={rows}
             sortModel={sortModel}
             onSortModelChange={onSortModelChange}
             showLoading={showLoading}
             showEmpty={showEmpty}
+            sessionRequests={sessionRequests}
+            sessionRequestsLoading={sessionRequestsLoading}
             expandedSessionId={expandedSessionId}
             onToggleExpand={onToggleExpand}
             promptTimeline={promptTimeline}
@@ -147,8 +164,15 @@ const SessionsPageView = ({
           page={paginationModel.page}
           pageSize={paginationModel.pageSize}
           rowCount={rowCount}
-          onPageChange={(nextPage) => onPaginationModelChange({ page: nextPage, pageSize: paginationModel.pageSize })}
-          onPageSizeChange={(nextPageSize) => onPaginationModelChange({ page: 0, pageSize: nextPageSize })}
+          onPageChange={(nextPage) =>
+            onPaginationModelChange({
+              page: nextPage,
+              pageSize: paginationModel.pageSize,
+            })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            onPaginationModelChange({ page: 0, pageSize: nextPageSize })
+          }
         />
       </Paper>
     </PageLayout>

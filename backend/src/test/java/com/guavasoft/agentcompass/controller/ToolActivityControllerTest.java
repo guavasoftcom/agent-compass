@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
 import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.model.ToolCallCount;
+import com.guavasoft.agentcompass.model.ToolContextFootprint;
 import com.guavasoft.agentcompass.model.ToolDenialCount;
 import com.guavasoft.agentcompass.model.ToolFailureRate;
 import com.guavasoft.agentcompass.model.ToolRepeatStat;
@@ -154,6 +155,40 @@ class ToolActivityControllerTest {
                 .param("startTimestamp", rangeStart.toString())
                 .param("endTimestamp", rangeEnd.toString()))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void contextFootprintReturnsPerToolRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
+        when(logService.aggregateToolContextFootprint(anyInt())).thenReturn(List.of(
+                new ToolContextFootprint("Bash", 412L, 18_432_000L, 4_608_000L, 96_000L),
+                new ToolContextFootprint("Read", 120L, 4_096_000L, 1_024_000L, 51_200L)));
+
+        mockMvc.perform(get("/api/tool-activity/context-footprint"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].tool").value("Bash"))
+                .andExpect(jsonPath("$[0].calls").value(412))
+                .andExpect(jsonPath("$[0].totalBytes").value(18432000))
+                .andExpect(jsonPath("$[0].estimatedTokens").value(4608000))
+                .andExpect(jsonPath("$[0].p95Bytes").value(96000))
+                .andExpect(jsonPath("$[1].tool").value("Read"));
+
+        verify(logService).aggregateToolContextFootprint(1440);
+    }
+
+    @Test
+    void contextFootprintDelegatesToTheRangeFormWhenBothBoundsArePresent() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(logService.aggregateToolContextFootprintInRange(rangeStart, rangeEnd)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/context-footprint")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        verify(logService).aggregateToolContextFootprintInRange(rangeStart, rangeEnd);
     }
 
     @Test

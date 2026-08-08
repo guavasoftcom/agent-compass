@@ -186,6 +186,44 @@ export interface TokenUsageSummary {
 }
 
 /**
+ * One session in the worst-cache-efficiency ranking
+ * (`GET /api/sessions/cache-efficiency`). `cacheEfficiency` is the same ratio
+ * `lib/cacheEfficiency.ts` computes for the Sessions grid column — the backend
+ * ranks by it so the list and the column can never disagree. Sessions below the
+ * server's input-side token floor are absent rather than shown at 0%.
+ */
+export interface SessionCacheEfficiencyRow {
+  sessionId: string;
+  /** cacheRead / (input + cacheCreation + cacheRead), 0..1. Never null. */
+  cacheEfficiency: number;
+  cacheReadTokens: number;
+  /** The ratio's denominator: input + cacheCreation + cacheRead. */
+  inputSideTokens: number;
+  /** All four kinds including output — a scale hint, not the denominator. */
+  totalTokens: number;
+  /** Whole-session spend, matching the Sessions grid's Cost column. */
+  costUsd: number;
+}
+
+/**
+ * One tool's context-window footprint (`GET /api/tool-activity/context-footprint`).
+ *
+ * `estimatedTokens` is `totalBytes / 4` — an estimate of one-time injection size
+ * for ranking tools against each other. It is NOT billed spend: never add it to,
+ * or display it alongside, the exact figures on `TokenUsageSummary`, and note
+ * that it understates real cost because a tool result is re-sent with every
+ * later request in its session.
+ */
+export interface ToolContextFootprintRow {
+  tool: string;
+  /** Calls that reported a size, including failures; excludes sizeless calls. */
+  calls: number;
+  totalBytes: number;
+  estimatedTokens: number;
+  p95Bytes: number;
+}
+
+/**
  * Four-way token split (reset-aware sums of claude_code.token.usage by the
  * `type` attribute). Missing kinds are 0, never null.
  */
@@ -245,6 +283,43 @@ export interface SessionPromptRow {
   tokens?: SessionTokenBreakdown | null;
   /** Tool calls the turn triggered, count desc. Empty/null → "No tool calls". */
   tools?: { name: string; count: number }[] | null;
+  /**
+   * Turn identifier, shared with the api_request logs it issued — the join key
+   * for `fetchSessionRequests`. Null on turns predating prompt-id stamping.
+   */
+  promptId?: string | null;
+  /** api_request logs correlated to this turn. 0 whenever attribution is INTERVAL. */
+  requestCount?: number;
+  /**
+   * How `model` / `costUsd` / `tokens` were derived. `REQUEST` means exact
+   * per-call figures summed over the turn's own api_request logs. `INTERVAL`
+   * means no such logs exist and the values were bucketed from cumulative metric
+   * counters by timestamp — present the latter as approximate.
+   *
+   * The two are different measurements, not two views of one number: the
+   * counter-derived totals run materially lower than the per-request sums on
+   * cache-read-heavy sessions. Never add or compare them across turns.
+   */
+  attribution?: TurnAttribution;
+}
+
+export type TurnAttribution = 'REQUEST' | 'INTERVAL';
+
+/** One LLM request within a session (`GET /api/sessions/{id}/requests`). */
+export interface SessionApiRequestRow {
+  requestId: string;
+  timestamp: string;
+  /** The turn that issued this request; group by it to rebuild per-turn totals. */
+  promptId: string | null;
+  model: string | null;
+  /** Exact four-way split for this one call. */
+  tokens: SessionTokenBreakdown;
+  costUsd: number | null;
+  durationMs: number | null;
+  /** Absent on a minority of rows — render as unknown, don't assume a default. */
+  effort: string | null;
+  speed: string | null;
+  traceId: string | null;
 }
 
 export interface SessionsSortModel {

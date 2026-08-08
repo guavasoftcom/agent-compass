@@ -7,17 +7,34 @@ import PageActions from '../../components/PageActions';
 import AreaTrendChart, { AreaTrendLegend, useSeriesVisibility } from '../../components/AreaTrendChart';
 import { colorForIndex } from '../../theme/theme';
 import type { WindowOption } from '../../lib/constants';
-import type { TokenUsageSummary, WindowSelection } from '../../api';
+import type {
+  SessionCacheEfficiencyRow,
+  TokenUsageSummary,
+  ToolContextFootprintRow,
+  WindowSelection,
+} from '../../api';
 import TokenSummaryCards from './components/TokenSummaryCards';
 import TokenByModelCard from './components/TokenByModelCard';
 import TokenCompositionCard from './components/TokenCompositionCard';
+import CacheEfficiencyRankCard from './components/CacheEfficiencyRankCard';
+import ContextFootprintCard from './components/ContextFootprintCard';
 import { formatCompact, shortModelName } from '../../lib/format';
+import { cacheEfficiencyBand, type CacheEfficiencyBand } from '../../lib/cacheEfficiency';
+
+/**
+ * Mirrors the backend's tuning.cache-efficiency-minimum-input-tokens default.
+ * Display-only — the server owns the actual floor and applies it before ranking;
+ * this just names it in the card's explanatory copy.
+ */
+const CACHE_EFFICIENCY_FLOOR_LABEL = '100K';
 
 export interface TokensPageViewProps {
   selection: WindowSelection;
   onSelectionChange: (next: WindowSelection) => void;
   windows: readonly WindowOption[];
   summary: TokenUsageSummary;
+  cacheEfficiencyRows: SessionCacheEfficiencyRow[];
+  contextFootprintRows: ToolContextFootprintRow[];
   isLoading: boolean;
   error: Error | null;
   onReload: () => void;
@@ -26,33 +43,16 @@ export interface TokensPageViewProps {
   isPolling: boolean;
 }
 
-const ratioBandColor = (
-  ratio: number,
-  palette: { healthy: string; mixed: string; poor: string; muted: string },
-): string => {
-  if (ratio >= 0.7) {
-    return palette.healthy;
-  }
-  if (ratio >= 0.4) {
-    return palette.mixed;
-  }
-  if (ratio > 0) {
-    return palette.poor;
-  }
-  return palette.muted;
-};
-
-const ratioBandLabel = (ratio: number, denominatorEmpty: boolean): string => {
-  if (denominatorEmpty) {
-    return 'No cache activity in this window';
-  }
-  if (ratio >= 0.7) {
-    return 'Healthy — most prompts are reusing cache';
-  }
-  if (ratio >= 0.4) {
-    return 'Mixed — some prompts paying full freight';
-  }
-  return 'Poor — context placement is wasting per-turn spend';
+// The gauge's bands are the shared cache-efficiency bands (lib/cacheEfficiency),
+// not a second set local to this page: `summary.cacheReadRatio` is now the
+// window-level form of the exact ratio the Sessions grid column renders, so a
+// row reading "weak" there and the gauge reading "healthy" here would be a
+// contradiction rather than two different measurements.
+const BAND_LABELS: Record<CacheEfficiencyBand, string> = {
+  strong: 'Healthy — most prompts are reusing cache',
+  mixed: 'Mixed — some prompts paying full freight',
+  weak: 'Poor — context placement is wasting per-turn spend',
+  unknown: 'No cache activity in this window',
 };
 
 // Short explanation shown under each token-type in the donut legend.
@@ -68,6 +68,8 @@ const TokensPageView = ({
   onSelectionChange,
   windows,
   summary,
+  cacheEfficiencyRows,
+  contextFootprintRows,
   isLoading,
   error,
   onReload,
@@ -76,16 +78,21 @@ const TokensPageView = ({
   isPolling,
 }: TokensPageViewProps) => {
   const theme = useTheme();
-  const denominator = summary.cacheCreationTokens + summary.cacheReadTokens;
-  const denominatorEmpty = denominator === 0;
-  const healthy = summary.cacheReadRatio >= 0.7;
+  // The gauge's denominator is the ratio's own denominator — all input-side
+  // tokens. Output is excluded (generated, never sent), which is why this is not
+  // simply `totalTokens`.
+  const inputSideTokens =
+    summary.inputTokens + summary.cacheCreationTokens + summary.cacheReadTokens;
+  const denominatorEmpty = inputSideTokens === 0;
+  const band = cacheEfficiencyBand(denominatorEmpty ? null : summary.cacheReadRatio);
+  const healthy = band === 'strong';
 
-  const ratioColor = ratioBandColor(summary.cacheReadRatio, {
-    healthy: theme.palette.success.main,
+  const ratioColor = {
+    strong: theme.palette.success.main,
     mixed: theme.palette.warning.main,
-    poor: theme.palette.error.main,
-    muted: theme.palette.text.disabled,
-  });
+    weak: theme.palette.error.main,
+    unknown: theme.palette.text.disabled,
+  }[band];
 
   const totalTokens =
     summary.inputTokens
@@ -268,11 +275,21 @@ const TokensPageView = ({
         centerLabel="tokens"
         cacheReadRatio={summary.cacheReadRatio}
         ratioColor={ratioColor}
-        ratioLabel={ratioBandLabel(summary.cacheReadRatio, denominatorEmpty)}
+        ratioLabel={BAND_LABELS[band]}
         healthy={healthy}
         ratioEmpty={denominatorEmpty}
         savedTokens={formatCompact(summary.cacheReadTokens)}
       />
+
+      {/* Which sessions are rebuilding context instead of reusing it */}
+      <CacheEfficiencyRankCard
+        rows={cacheEfficiencyRows}
+        minimumInputTokensLabel={CACHE_EFFICIENCY_FLOOR_LABEL}
+      />
+
+      {/* Estimated per-tool context footprint — kept below the exact-token cards
+          and visually flagged so the estimate never reads as billed spend */}
+      <ContextFootprintCard rows={contextFootprintRows} />
 
       {/* Per-model token sums — full width, below the composition card */}
       <TokenByModelCard rows={modelRows} />

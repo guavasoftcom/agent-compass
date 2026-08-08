@@ -7,6 +7,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.CostSummary;
+import com.guavasoft.agentcompass.model.SessionApiRequest;
+import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionPromptToolCount;
@@ -177,7 +179,10 @@ class SessionControllerTest {
                         "claude-sonnet-4-5",
                         0.8,
                         new SessionTokenBreakdown(1840L, 3120L, 18400L, 214000L),
-                        List.of(new SessionPromptToolCount("Read", 4L), new SessionPromptToolCount("Edit", 2L)))));
+                        List.of(new SessionPromptToolCount("Read", 4L), new SessionPromptToolCount("Edit", 2L)),
+                        "9a7ac484-195b-4a74-a78d-1cf67c973af5",
+                        11L,
+                        SessionPrompt.TurnAttribution.REQUEST)));
 
         mockMvc.perform(get("/api/sessions/{sessionId}/prompts", sessionId))
                 .andExpect(status().isOk())
@@ -200,8 +205,95 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[1].tools[0].name").value("Read"))
                 .andExpect(jsonPath("$[1].tools[0].count").value(4))
                 .andExpect(jsonPath("$[1].tools[1].name").value("Edit"))
-                .andExpect(jsonPath("$[1].tools[1].count").value(2));
+                .andExpect(jsonPath("$[1].tools[1].count").value(2))
+                // Attribution is on the wire so clients can tell exact per-request
+                // figures from the older interval-bucketed approximation.
+                .andExpect(jsonPath("$[0].attribution").value("INTERVAL"))
+                .andExpect(jsonPath("$[0].requestCount").value(0))
+                .andExpect(jsonPath("$[1].attribution").value("REQUEST"))
+                .andExpect(jsonPath("$[1].requestCount").value(11))
+                // promptId is the join key into /requests; the drill-down cannot
+                // group a turn's calls without it.
+                .andExpect(jsonPath("$[0].promptId").value(nullValue()))
+                .andExpect(jsonPath("$[1].promptId").value("9a7ac484-195b-4a74-a78d-1cf67c973af5"));
 
         verify(logService).promptsForSession(sessionId);
+    }
+
+    @Test
+    void requestsDispatchesToLogServiceAndReturnsPerCallTokensAndCost() throws Exception {
+        String sessionId = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b";
+        when(logService.requestsForSession(sessionId)).thenReturn(List.of(
+                new SessionApiRequest(
+                        "req_011CdqUicd2Zjki38GaLv3VN",
+                        Instant.parse("2026-08-08T14:58:46.404Z"),
+                        "9a7ac484-195b-4a74-a78d-1cf67c973af5",
+                        "claude-opus-5",
+                        new SessionTokenBreakdown(2L, 1183L, 1853L, 236033L),
+                        0.1661315,
+                        16495L,
+                        "high",
+                        "normal",
+                        "0102030405060708090a0b0c0d0e0f10"),
+                // effort is absent on a minority of rows; it must serialize as null
+                // rather than being defaulted to a value the agent never used.
+                new SessionApiRequest(
+                        "req_022Dd", Instant.parse("2026-08-08T14:59:10.000Z"),
+                        "9a7ac484-195b-4a74-a78d-1cf67c973af5", "claude-opus-5",
+                        new SessionTokenBreakdown(4L, 90L, 0L, 240000L),
+                        0.02, 800L, null, "normal", null)));
+
+        mockMvc.perform(get("/api/sessions/{sessionId}/requests", sessionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].requestId").value("req_011CdqUicd2Zjki38GaLv3VN"))
+                .andExpect(jsonPath("$[0].promptId").value("9a7ac484-195b-4a74-a78d-1cf67c973af5"))
+                .andExpect(jsonPath("$[0].model").value("claude-opus-5"))
+                .andExpect(jsonPath("$[0].tokens.cacheRead").value(236033))
+                .andExpect(jsonPath("$[0].costUsd").value(0.1661315))
+                .andExpect(jsonPath("$[0].durationMs").value(16495))
+                .andExpect(jsonPath("$[0].effort").value("high"))
+                .andExpect(jsonPath("$[1].effort").value(nullValue()))
+                .andExpect(jsonPath("$[1].traceId").value(nullValue()));
+
+        verify(logService).requestsForSession(sessionId);
+    }
+
+    @Test
+    void cacheEfficiencyReturnsRankedSessionsAndDefaultsToTwentyFourHoursAndEightRows() throws Exception {
+        when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt())).thenReturn(List.of(
+                new SessionCacheEfficiency(
+                        "7b3fc524-7f3c-4db5-9bb4-da27b77df56b", 0.41, 410_000L, 1_000_000L, 1_240_000L, 4.12),
+                new SessionCacheEfficiency(
+                        "025a8c32-26ff-409d-b704-dc19dcecbb47", 0.88, 880_000L, 1_000_000L, 1_100_000L, 1.05)));
+
+        mockMvc.perform(get("/api/sessions/cache-efficiency"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].sessionId").value("7b3fc524-7f3c-4db5-9bb4-da27b77df56b"))
+                .andExpect(jsonPath("$[0].cacheEfficiency").value(0.41))
+                .andExpect(jsonPath("$[0].cacheReadTokens").value(410000))
+                .andExpect(jsonPath("$[0].inputSideTokens").value(1000000))
+                .andExpect(jsonPath("$[0].totalTokens").value(1240000))
+                .andExpect(jsonPath("$[0].costUsd").value(4.12))
+                .andExpect(jsonPath("$[1].cacheEfficiency").value(0.88));
+
+        verify(metricService).worstCacheEfficiencySessions(1440, 8);
+    }
+
+    @Test
+    void cacheEfficiencyDelegatesToTheRangeFormWhenBothBoundsArePresent() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(metricService.worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 3)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/sessions/cache-efficiency")
+                        .param("startTimestamp", rangeStart.toString())
+                        .param("endTimestamp", rangeEnd.toString())
+                        .param("limit", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        verify(metricService).worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 3);
     }
 }

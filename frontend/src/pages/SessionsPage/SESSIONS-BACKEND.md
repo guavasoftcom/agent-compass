@@ -205,6 +205,69 @@ timeline stays current.
 > renders each independently, so the endpoint can ship `{ timestamp, prompt, traceId }` first
 > (the chips simply don't appear) and add the per-turn fields later with **no frontend change**.
 
+### Per-request attribution (`promptId` / `requestCount` / `attribution`) — SHIPPED
+
+`model`, `costUsd` and `tokens` above describe the ORIGINAL interval-bucketed derivation. They
+are now sourced from the turn's own `api_request` logs wherever those exist, joined on
+`prompt.id`, and three fields say so:
+
+- **`promptId`** — the turn's identifier, shared with the `api_request` logs it issued. Null on
+  turns predating prompt-id stamping. It is the join key into `GET /api/sessions/{id}/requests`.
+- **`requestCount`** — how many `api_request` logs correlated to this turn. `0` whenever
+  attribution is `INTERVAL`.
+- **`attribution`** — `REQUEST` (exact per-call figures summed over the turn's own requests) or
+  `INTERVAL` (no such logs; values bucketed from cumulative counters by timestamp, the older and
+  coarser derivation). The fallback is **per turn, not per session**: a session that gained
+  `api_request` logs partway through reports each turn however that turn can be measured.
+
+> **The two pipelines are different measurements, not two views of one number.** Measured against
+> the live database, per-session `api_request` sums and `metric_points` sums disagree by tens of
+> percent in *both* directions, dominated by cache-read tokens (one real session: 157.6M cache-read
+> tokens per-request vs 29.3M from the counter). Partial log coverage explains the cases where the
+> request side is lower; it does not explain the cases where it is higher. Do **not** add,
+> average, or diff the two, and do not "fix" a turn whose numbers changed when it flipped from
+> `INTERVAL` to `REQUEST` — that is the contract working, which is exactly why the UI marks
+> `INTERVAL` turns "approx".
+
+The consequence for the invariant above: **the session row's `tokenBreakdown` no longer equals
+the sum of its turns' `tokens`** once any turn reports `REQUEST`. The row is a windowed
+counter roll-up; the turns are whole-session per-request sums. Both are correct for what they
+measure.
+
+---
+
+## `GET /api/sessions/{id}/requests` — NEW endpoint (per-request drill-down)
+
+Every `api_request` log for the session, oldest first, capped at 500 rows. Not window-scoped,
+matching `/prompts`. Powers the timeline's per-turn drill-down table; the panel fetches it once
+per expanded session and groups client-side by `promptId`, so opening individual turns costs
+nothing extra.
+
+```jsonc
+[
+  {
+    "requestId": "req_011CdqUicd2Zjki38GaLv3VN",
+    "timestamp": "2026-08-08T14:58:46.404Z",
+    "promptId": "9a7ac484-195b-4a74-a78d-1cf67c973af5", // join key back to the turn
+    "model": "claude-opus-5",
+    "tokens": { "input": 2, "output": 1183, "cacheCreation": 1853, "cacheRead": 236033 },
+    "costUsd": 0.1661315,
+    "durationMs": 16495,
+    "effort": "high",        // null on ~7% of rows — render "—", don't assume a default
+    "speed": "normal",
+    "traceId": "0102030405060708090a0b0c0d0e0f10"
+  }
+]
+```
+
+Grouping these rows by `promptId` and summing reproduces the owning turn's `tokens` exactly and
+its `costUsd` to within floating-point rounding (Postgres sums one side, the JVM the other).
+
+> **An empty array means "no per-request detail", never "no spend".** Sessions recorded without
+> event logging, or by an older CLI, have no `api_request` logs at all but still carry
+> counter-derived cost on every other endpoint. Those turns report `attribution: "INTERVAL"` and
+> the UI offers no drill-down for them rather than showing an empty table.
+
 ---
 
 ## `GET /api/sessions/summary` — add the sessions trend

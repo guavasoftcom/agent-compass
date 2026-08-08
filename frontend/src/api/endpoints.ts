@@ -9,6 +9,8 @@ import type {
   IdentifierUsageRow,
   ListResult,
   LogRow,
+  SessionApiRequestRow,
+  SessionCacheEfficiencyRow,
   SessionKpis,
   SessionPromptRow,
   SessionsPageRequest,
@@ -16,6 +18,7 @@ import type {
   SpanRow,
   ToolCallRow,
   ToolCallTimeseries,
+  ToolContextFootprintRow,
   ToolDenialRow,
   ToolFailureRateRow,
   ToolLatencyRow,
@@ -83,6 +86,26 @@ export const fetchTokenUsage = (
   return getJson(`/api/sessions/token-usage?${params.toString()}`);
 };
 
+// Sessions ranked worst-cache-efficiency-first. The server applies the noise
+// floor (default 100k input-side tokens) and the ranking, so an empty array
+// legitimately means "no session in this window is big enough to judge".
+export const fetchSessionCacheEfficiency = (
+  selection: WindowSelection = { kind: 'preset', minutes: 1440 },
+  limit = 8,
+): Promise<SessionCacheEfficiencyRow[]> => {
+  const params = windowQueryParams(selection);
+  params.set('limit', String(limit));
+  return getJson(`/api/sessions/cache-efficiency?${params.toString()}`);
+};
+
+// Per-tool context-window footprint, largest total bytes first.
+export const fetchToolContextFootprint = (
+  selection: WindowSelection = { kind: 'preset', minutes: 1440 },
+): Promise<ToolContextFootprintRow[]> => {
+  const params = windowQueryParams(selection);
+  return getJson(`/api/tool-activity/context-footprint?${params.toString()}`);
+};
+
 export const fetchSessions = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },
   request: SessionsPageRequest,
@@ -108,6 +131,15 @@ export const fetchSessionPrompts = (
   sessionId: string,
 ): Promise<SessionPromptRow[]> =>
   getJson(`/api/sessions/${encodeURIComponent(sessionId)}/prompts`);
+
+// Every LLM request in one session, oldest first — the prompt timeline's
+// per-turn drill-down. Not window-scoped, max 500 rows. An empty array is normal
+// for sessions recorded without event logging; it means "no per-request detail",
+// never "no spend".
+export const fetchSessionRequests = (
+  sessionId: string,
+): Promise<SessionApiRequestRow[]> =>
+  getJson(`/api/sessions/${encodeURIComponent(sessionId)}/requests`);
 
 export const fetchToolDenials = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },
