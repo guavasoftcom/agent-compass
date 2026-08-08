@@ -4,20 +4,26 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
 
-@Schema(description = "Per-session cost and active-time totals over the window. cost.usage and "
-        + "active_time.total are emitted by Claude Code as cumulative gauges split by (model, "
-        + "query_source) — we take MAX per (session, model, query_source) to collapse each cumulative "
-        + "stream to its last value, then SUM the per-stream maxima for the session. Wall-clock "
-        + "duration is the span between the first and last cost/active-time emission carrying this "
-        + "session id and may exceed the active-time total when the user steps away.")
+@Schema(description = "One session that was active during the requested window. The window selects WHICH "
+        + "sessions are listed; costUsd and activeTimeSeconds then describe the whole session, while tokens, "
+        + "tokenBreakdown, the start/end timestamps and the log-derived counts remain window-scoped. "
+        + "cost.usage and active_time.total are cumulative counters split into per-attribute-set streams; "
+        + "both totals are SUM(value_delta), the reset-aware per-row increments precomputed at ingest. "
+        + "Wall-clock duration is the span between the first and last in-window cost/active-time emission "
+        + "carrying this session id and may exceed the active-time total when the user steps away.")
 public record SessionSummary(
         @Schema(description = "Session identifier (the session.id attribute value)",
                 example = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b") String sessionId,
 
-        @Schema(description = "Total cost in USD, summed across (model, query_source) streams",
+        @Schema(description = "The session's WHOLE-LIFETIME cost in USD, summed across its streams — not "
+                + "clipped to the requested window. A session that began before the window still reports its "
+                + "full spend; the window only decides whether the session is listed. Consequently this will "
+                + "not reconcile with the window-scoped cost KPIs on GET /api/sessions/summary.",
                 example = "12.34") double costUsd,
 
-        @Schema(description = "Active-time seconds, summed across (model, query_source) streams",
+        @Schema(description = "The session's WHOLE-LIFETIME active-time seconds, summed across its streams — "
+                + "not clipped to the requested window, so that the client-derived cost-per-active-minute "
+                + "divides a whole-session cost by a whole-session duration.",
                 example = "1500.5") double activeTimeSeconds,
 
         @Schema(description = "Timestamp of the earliest cost / active-time emission for this session",

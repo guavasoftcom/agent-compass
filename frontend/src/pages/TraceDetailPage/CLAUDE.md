@@ -1,8 +1,8 @@
 # Trace detail page
 
 Single-trace span waterfall: renders every span in a trace as a horizontally-scaled waterfall,
-with a minimap zoom brush, per-span detail dock (timing, tokens, attributes, span events, and
-correlated log entries), and error navigation. Reached from `TracesPage` by clicking a trace row;
+with a minimap zoom brush, a per-span inspector drawer (timing, tokens, attributes, span events,
+and correlated log entries), and error navigation. Reached from `TracesPage` by clicking a trace row;
 mounted at `/traces/:traceId`. Backend counterpart: `TracesController` →
 `TraceService` / `LogService` (`backend/.../controller/TracesController.java`).
 
@@ -31,7 +31,7 @@ TraceDetailHeader  ──  breadcrumb + SummaryStrip KPIs (container/view split)
 WaterfallToolbar   ──  "Span waterfall" label + legend + Expand/Collapse all + Next error
 TraceMinimap       ──  full-trace overview with drag-to-zoom brush
 SpanWaterfallRow   ──  one row per visible span (single-file component, no view split)
-SpanDetailDock     ──  bottom dock for the selected span (single-file, multi-section)
+SpanInspectorDrawer ── right-side width-resizable drawer for the selected span
 ```
 
 **Cross-page utilities.** The page imports from `../TracesPage/` rather than duplicating:
@@ -60,7 +60,7 @@ TraceDetailPage/
 │                               sorts by event.sequence then event.timestamp
 ├── severity.ts                 severityLabel(n) + severityColor(n) — OTLP severityNumber
 │                               thresholds → 'TRACE'/'DEBUG'/'INFO'/'WARN'/'ERROR'/'FATAL'
-│                               and MUI chip color; used by LogEntry and SpanDetailDock
+│                               and MUI chip color; used by LogEntry and SpanInspectorDrawer
 ├── attrFormat.ts               attrValueAsString(v) — objects → JSON, null/undefined →
 │                               literal string, primitives → String()
 ├── spanCost.ts                 costOfSpan(span) → SpanRow.costUsd, a per-span cost breakdown figure
@@ -96,28 +96,68 @@ TraceDetailPage/
     ├── SpanWaterfallRow/
     │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + tool_name chip + SpanTokenBadges
     │   │                             (one combined total-token pill; the four-way split, cache read
-    │   │                             included, is in its hover tooltip) + error/descendant-error/log-count
-    │   │                             pills + timeline bar + duration label; pure component (no view split)
+    │   │                             included, is in its hover tooltip) + SpanCostBadge (amber
+    │   │                             formatUsd chip, only when costOfSpan(span) > 0) +
+    │   │                             error/descendant-error/log-count pills + timeline bar +
+    │   │                             duration label; pure component (no view split)
     │   └── index.ts
-    └── SpanDetailDock/
-        ├── SpanDetailDock.tsx         resizable bottom dock: grip + title + close; three columns —
-        │                             col 1: meta grid + self-time bar + status message + TokensSection
-        │                             col 2: SpanAttributesColumn (Tool group + Attributes group)
-        │                             col 3: SpanEventsList + log entries (LogEntry)
-        ├── TokensSection.tsx          input/output/cache_creation/cache_read table — cache_read is a
-        │                             plain row like the rest (no dashed-off "~1/10 rate" line); the
-        │                             section-header count is the total across all four
-        ├── SpanAttributesColumn.tsx   filters redundant keys; splits tool-related attrs into a
-        │                             "Tool" group (tinted blue) vs plain "Attributes" group
-        ├── SpanEventsList.tsx         timestamped span event cards (T+offset from span start)
-        ├── LogEntry.tsx               per-log row: offset + severity + event.name + tool badges + body;
-        │                             click to expand attributes; long values (> 240 chars) open a
-        │                             modal with tryParseJson repair + copy-to-clipboard
-        ├── dockParts.tsx              shared dock primitives: clock(ms) wall-clock formatter,
-        │                             SectionTitle (with count badge and token/tool tone variants),
+    └── SpanInspectorDrawer/
+        ├── SpanInspectorDrawer.tsx    right-side drawer, a flex sibling of the waterfall card (no
+        │                             scrim — the waterfall stays visible/scrollable): left-edge
+        │                             resize grip + header (span name, waterfall prev/next nav
+        │                             ↑ "n / N" ↓ when >1 row is rendered, close ×) + one
+        │                             scrolling column — meta grid (cost row, amber bold, after
+        │                             duration when costUsd > 0), self-time bar, ErrorSection,
+        │                             then the Tokens/Tool/Attributes/Events/Logs sections. Stays
+        │                             mounted while closed (width 0) so the 0.2s width transition
+        │                             runs; content is keyed by span id so section/log expand
+        │                             state resets per selection; keeps the last selection
+        │                             rendered during the close animation (guarded render-phase
+        │                             setState, compared by span id) and drops it on the closing
+        │                             transitionend, with `inert` while closed so nothing behind
+        │                             `width: 0` stays tabbable
+        ├── CollapsibleSection.tsx     collapsible section primitive: the header row is a real
+        │                             <button> (Tab/Enter/Space, aria-expanded) that toggles the
+        │                             body, 11px chevron rotates -90° when collapsed, optional
+        │                             leading icon + plain mono count (with native tooltip) +
+        │                             token/tool/error tone variants; state is local, so it resets
+        │                             when the drawer content remounts for a new span
+        ├── TokensSection.tsx          collapsible amber section — header count is the four-way
+        │                             total with the input/output/cache-create/cache-read split in
+        │                             its tooltip (so a collapsed header still explains itself);
+        │                             body rows are cost (formatUsd, only when costUsd > 0) +
+        │                             input/output/cache_creation in amber, then cache_read below
+        │                             a dashed rule, deliberately muted (text.disabled/secondary,
+        │                             neutral fill) with an outlined "N% HIT" badge. Renders its
+        │                             own rows (not AttrRows) because that row needs its own
+        │                             weight, separator, and trailing badge
+        ├── ErrorSection.tsx           collapsible red section, rendered only for
+        │                             statusCode === 'error' spans: statusMessage box + AttrRows
+        │                             with exit_code/command (span attributes) and stderr (from
+        │                             the span's ERROR-severity log, classified with the shared
+        │                             `LogsPage/logsDerivations.severityOf` — severityText is null
+        │                             on real telemetry) + "Copy error" button that
+        │                             puts all of it on the clipboard as plain text; replaced the
+        │                             old inline statusMessage-only red box
+        ├── SpanAttributeSections.tsx  filters redundant keys; renders a collapsible "Tool" section
+        │                             (info-tinted, wrench icon) + collapsible "Attributes" section
+        ├── SpanEventsList.tsx         collapsible Events section: timestamped cards (T+offset from
+        │                             span start) with each event's attribute grid
+        ├── LogEntry.tsx               per-log row: leading expand caret (▸→▾; same-width spacer on
+        │                             rows with no detail so columns align) + offset + severity +
+        │                             event.name + tool badges + body; click to expand attributes;
+        │                             long values (> 240 chars) open a modal with tryParseJson
+        │                             repair + copy-to-clipboard
+        ├── drawerParts.tsx            shared drawer primitives: clock(ms) wall-clock formatter,
         │                             AttrRows (key/value grid with tinted borders per tone)
-        ├── useResizableHeight.ts      drag-to-resize hook; clamps 150px–72% viewport; grip mouse-down
-        │                             registers global mousemove/mouseup and cleans up on mouseup
+        ├── useResizableWidth.ts       drag-to-resize hook for the left-edge grip; clamps 340px–62%
+        │                             viewport width; width is null until first drag (drawer falls
+        │                             back to min(440px, 42vw)) and persists across selections;
+        │                             exposes isResizing so the width transition is disabled while
+        │                             dragging. The document mousemove/mouseup listeners live in an
+        │                             effect keyed on isResizing (so unmounting mid-drag can't leak
+        │                             them) and the drag also ends on document mouseleave / window
+        │                             blur — releasing outside the viewport never delivers a mouseup
         └── index.ts
 ```
 
@@ -145,45 +185,54 @@ TraceDetailPage/
 Collapsed, the whole panel is one line: `▸ OVERVIEW   $0.42 · 4.2s · 31 spans ·
 12 tool calls · 1.2M tokens · 2 errors`.
 
-┌─ Waterfall card (flex column, rounded border, bgcolor paper) ────────────────────┐
-│ WaterfallToolbar: ≡ Span waterfall  [ok ■] [error ■] [tokens ■]  [Expand all]  │
-│                                                          [▲ Next error]         │
-├─ TraceMinimap ───────────────────────────────────────────────────────────────────┤
-│  drag to zoom · dbl-click resets                                                │
-│  ░░░░░░░░░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░  ← span bars staggered by depth       │
-│              [←│  brush  │→]              ← draggable zoom window               │
-├─ Axis (time tick labels at 0 / 25 / 50 / 75 / 100%) ────────────────────────────┤
-│ Span                    │  0ms    125ms   250ms   375ms   500ms                 │
-├─ Body (overflowY auto, overflowX hidden) ────────────────────────────────────────┤
-│ ▶ [1] claude_code.session  ●tokens  ●●●●●                   [████████] 500ms   │
-│   · [2] claude_code.llm_request  ●2.4k              [████] 310ms              │
-│   · [3] claude_code.tool.execution  [Bash]           [██] 45ms  error          │
-│   · [4] claude_code.tool.execution  [Read]      [█] 12ms  +1 below  2 logs     │
-│   · [5] claude_code.tool.execution  [Grep]          [██] 38ms                  │
-│   (scroll continues …)                                                           │
-└──────────────────────────────────────────────────────────────────────────────────┘
+Below the header, a flex row fills the remaining height: the waterfall card
+(`flex: 1; min-width: 0`) and the inspector drawer as a flex *sibling* — no
+scrim/backdrop, so opening or resizing the drawer just narrows the waterfall
+while every row stays visible at full height.
 
-┌─ SpanDetailDock (resizable, default 320px, mt 2) ────────────────────────────────┐
-│ ═══════════ grip (drag up/down to resize) ═══════════                           │
-│ claude_code.llm_request                                          [✕]            │
-│ ┌── col 1 ──────────────────┐ ┌── col 2 ──────────────────┐ ┌── col 3 ──────┐ │
-│ │ span id   <hex>           │ │ TOOL (n)                   │ │ EVENTS (n)    │ │
-│ │ kind      CLIENT          │ │  [tinted blue attr rows]   │ │  T+0ms event  │ │
-│ │ scope     …               │ │ ATTRIBUTES (n)             │ │ LOGS (n)      │ │
-│ │ status    ok/error        │ │  [plain attr rows]         │ │  T+12ms INFO  │ │
-│ │ started   HH:MM:SS.mmm    │ │                            │ │  tool_result  │ │
-│ │ ended     HH:MM:SS.mmm    │ └────────────────────────────┘ │  (expand …)   │ │
-│ │ duration  310ms           │                                └───────────────┘ │
-│ │ self time [████░░░] 87%   │                                                  │
-│ │ status message (error)    │                                                  │
-│ │ TOKENS (2,400)            │                                                  │
-│ │  input          1,800     │                                                  │
-│ │  output           600     │                                                  │
-│ │  cache_creation     0     │                                                  │
-│ │  cache_read     1,200     │                                                  │
-│ └───────────────────────────┘                                                  │
-└──────────────────────────────────────────────────────────────────────────────────┘
+┌─ Waterfall card (flex: 1, min-width: 0) ────────────────┐ ┌─ SpanInspectorDrawer ────────┐
+│ WaterfallToolbar: ≡ Span waterfall  [ok ■] [error ■]   │▐│ claude_code.llm_request  [✕] │
+│                  [tokens ■] [Expand all] [▲ Next error] │▐├──────────────────────────────┤
+├─ TraceMinimap ──────────────────────────────────────────┤▐│ span id   <hex>              │
+│  drag to zoom · dbl-click resets                        │▐│ kind      CLIENT             │
+│  ░░░░░░░░▓▓▓▓▓▓▓▓░░░░░  ← span bars staggered by depth │▐│ scope     …                  │
+│        [←│ brush │→]    ← draggable zoom window         │▐│ status    ok/error           │
+├─ Axis (ticks at 0 / 25 / 50 / 75 / 100%) ──────────────┤▐│ started   HH:MM:SS.mmm       │
+│ Span              │  0ms   125ms   250ms   375ms  500ms │▐│ ended     HH:MM:SS.mmm       │
+├─ Body (overflowY auto, overflowX hidden) ───────────────┤▐│ duration  310ms              │
+│ ▶ [1] claude_code.session ●tokens $0.42   [██████] 500ms│▐│ cost      $0.42  (amber)     │
+│   · [2] claude_code.llm_request ●2.4k  [████] 310ms   │▐│ self time [████░░] 87%       │
+│   · [3] claude_code.tool.execution [Bash] [█] 45ms err │▐│ ▾ ERROR   (red, error spans) │
+│   · [4] claude_code.tool.execution [Read] [█] 12ms     │▐│ ▾ TOKENS 2,400   (amber)     │
+│   (scroll continues …)                                   │▐│    cost / input / output / cc │
+│                                                          │▐│    ┄┄ cache_read  [88% HIT]  │
+│                                                          │▐│       (muted, not amber)     │
+│                                                          │▐│ ▾ TOOL (n) 🔧    (blue)      │
+│                                                          │▐│ ▾ ATTRIBUTES (n)             │
+│                                                          │▐│ ▾ EVENTS (n)                 │
+│                                                          │▐│ ▸ LOGS (n)  ← starts closed  │
+└──────────────────────────────────────────────────────────┘ └──────────────────────────────┘
+                                                            ▲
+                                             left-edge grip (drag to resize, 340px–62vw)
 ```
+
+Drawer behavior: closed = `width: 0; overflow: hidden` (no footprint, no gap); open =
+`min(440px, 42vw)` with a 16px left margin, animating `width 0.2s cubic-bezier(0.4, 0, 0.2, 1)`
+(transition disabled while dragging the grip). Clicking the selected row again, or the ×, closes
+it; selecting a different span swaps content in place and keeps the current width. The dragged
+width persists for the session (state only, not storage). Every section is collapsible via its
+header row; all default expanded except Logs, which starts collapsed. Section and log-row expand
+state resets per span selection (content keyed by span id).
+
+Span navigation: the drawer header shows ↑ / "n / N" / ↓ buttons that step to the waterfall row
+above/below the selected one and scroll it into view. `ArrowUp`/`ArrowDown` do the same globally
+while a span is selected. Because that listener is on `window` and calls `preventDefault`, it
+stands down whenever the key press plausibly meant something else: text entry
+(`input`/`textarea`/`select`/`contenteditable`), any modifier combination, anything inside an open
+`[role="dialog"]` (a `LogEntry` value modal — swapping spans there remounts the span-id-keyed
+drawer content and destroys the modal mid-read), and anything inside the drawer's own scroll
+column (`[data-drawer-scroll]`), where arrow keys should scroll. The nav does not wrap: the first
+row's ↑ and the last row's ↓ are disabled.
 
 ## Who calls which API
 
@@ -200,7 +249,7 @@ sample-data compatibility.
 All three queries are enabled only when `traceId` is truthy (`enabled: Boolean(traceId)`).
 None of them poll — this page has no `WindowSelection`, no auto-refresh, and no
 `refetchInterval`. The logs query is intentionally eager (not gated on a span being selected)
-so the dock's Logs section has data the moment the user first selects a span. The summary query
+so the drawer's Logs section has data the moment the user first selects a span. The summary query
 feeds two things: the header's Prompt row (`firstUserPrompt`) and the header's Cost KPI
 (`traceCostUsd`, from `TraceRow.totalCostUsd`) — see Gotchas and the Cost section below. Every
 other header figure (tokens, span/tool counts, depth) stays derived from the spans query.
@@ -233,7 +282,7 @@ Three derived maps are computed once in the container's `useMemo` pool:
 `selfTimeNanosBySpanId` subtracts the union of children's wall-clock intervals from the span's
 `durationNanos`. Children are sorted by start and merged (standard sweep-line union), so
 overlapping children count only once. Leaf spans retain their full duration as self time. The
-result drives the self-time progress bar in the dock's left column.
+result drives the self-time progress bar in the drawer.
 
 `sessionId` is extracted from the root span's `attributes['session.id']` or
 `resourceAttributes['session.id']`, surfaced as plain text in the Overview panel's meta footer.
@@ -253,9 +302,13 @@ which renders as "—" through `formatUsd`.
 endpoints, so a client-side sum of `costOfSpan(span)` (`spanCost.ts`) over the spans in hand can
 land on a different, and specifically lower, number than the trace's real total — e.g. when the
 spans haven't finished ingesting yet, or a request logged without a span id still counts toward
-the trace total but has no span to attribute it to. `costOfSpan` still exists as a per-span
+the trace total but has no span to attribute it to. `costOfSpan` is the per-span
 breakdown figure (its own read of `SpanRow.costUsd`, filled from the sibling `span_costs` view) —
-it's just not the source of the trace-level KPI anymore.
+it's just not the source of the trace-level KPI. It feeds three per-span displays, all shown only
+when `costOfSpan(span) > 0`: the waterfall row's `SpanCostBadge` chip, the drawer meta grid's
+`cost` row (amber bold, after duration), and the `cost` row atop the drawer's Tokens section.
+These are real billed amounts (the summed `cost_usd` of the `api_request` logs stamped with the
+span's id), so they carry no "~"/"est." qualifier.
 
 Two consequences worth remembering:
 
@@ -282,7 +335,7 @@ Within each bucket logs are sorted by `event.sequence` (when present on both sid
 `log.timestamp` (the OTLP record time, which can lag by seconds when the exporter batches).
 
 The `logCount` badge on each waterfall row is `logsBySpanId.get(spanId)?.length ?? 0`.
-The dock's Logs section receives the pre-bucketed array for the selected span.
+The drawer's Logs section receives the pre-bucketed array for the selected span.
 
 ### Zoom window and visible row filtering
 
@@ -330,19 +383,54 @@ The `WaterfallToolbar` button label tracks `anyCollapsed` live.
 `errorSpans` is a filtered `useMemo` of spans with `statusCode === 'error'`. On first render
 after data loads, a one-shot `useEffect` (guarded by `initRef`) selects the first error span and
 `scrollToSpan`s to it. `nextError` cycles through `errorSpans` by index using `errorIndexRef`
-(a `useRef` so it doesn't trigger re-renders). `scrollToSpan` reads the waterfall container ref
-and queries `[data-span="${spanId}"]` to locate the row element, scrolling to `offsetTop - 70`.
+(a `useRef` so it doesn't trigger re-renders).
 
-### Span selection and the detail dock
+`scrollToSpan` reads the waterfall container ref, queries `[data-span="${spanId}"]` for the row,
+and scrolls **the minimum distance** that brings the row inside the container's visible band,
+keeping `min(2 rows, a quarter of the container)` of margin at whichever edge the row entered
+from. A row already comfortably in view doesn't move the list at all — so stepping through spans
+slides the highlight instead of yanking the waterfall on every press. It's shared by span nav,
+`nextError`, and the initial error auto-select.
+
+### Span selection and the inspector drawer
 
 `selected` is a `string | null` span ID. `selectSpan` toggles: clicking the already-selected
-span deselects it (closes the dock). When a span is selected the dock finds the full `SpanRow`
-by ID and renders `SpanDetailDock` with the pre-computed `selfNanos`, `tokens` (from
-`tokenBreakdownForSpan`), and `logs` bucket.
+span deselects it (closes the drawer). The view resolves `selected` into a
+`SpanInspectorSelection` (the full `SpanRow` plus pre-computed `selfTimeNanos`, `tokens` from
+`tokenBreakdownForSpan`, the `logs` bucket, `costUsd` via `costOfSpan`, and the span's
+`waterfallIndex`/`waterfallCount`) and passes it — or null — to `SpanInspectorDrawer`, which always
+stays mounted so the width transition can run and the dragged width survives across selections.
 
-`SpanDetailDock` is resizable via `useResizableHeight(320)`: dragging the top grip registers
-`mousemove`/`mouseup` on `document`, computes `startH + (startY - currentY)` (drag upward
-increases height), and clamps to `[150px, 72% viewport]`.
+`waterfallIndex`/`waterfallCount` are derived fresh each render as the selected span's position in
+`visible` (cheap — same pattern as `errorSpans`; no new top-level state). `selectAdjacentSpan(delta)`
+moves that index by `delta` and — if in range — calls the existing `setSelected` + `scrollToSpan`.
+The drawer's ↑/↓ buttons and the view's `ArrowUp`/`ArrowDown` window keydown listener both go
+through it.
+
+**The nav walks `visible`, not the span's siblings.** An earlier revision stepped through
+`siblingsOf(span, tree)` (parent's children, or the trace roots). Three things were wrong with
+that, all fixed by navigating the rendered row list instead:
+
+- A single-root trace's root span has no siblings, so the count was 1 and the nav hid itself —
+  on the span the page auto-selects first, which is where a user reaches for it.
+- A span whose `parentSpanId` names a span outside the response is a *root* per `buildSpanTree`,
+  but `siblingsOf` looked that id up in `childrenByParentId`, missed, and fell back to a
+  one-element list — so orphan-rooted spans never got nav either.
+- A sibling hidden inside a collapsed parent or filtered out by the zoom window has no rendered
+  row, so `scrollToSpan`'s `[data-span]` query found nothing and silently did nothing: the drawer
+  swapped while the waterfall sat still on a row that wasn't even on screen.
+
+`visible` already respects both collapse and the zoom window, so every step lands on a row the
+user can see. `waterfallCount` is deliberately 0 when the selected span isn't in `visible` (its
+parent was collapsed, or the zoom moved off it), which hides the nav rather than showing "0 / N".
+
+`SpanInspectorDrawer` is resizable via `useResizableWidth()`: dragging the left-edge grip flips
+`isResizing`, whose effect registers `mousemove` (computing `startWidth + (startX - currentX)`, so
+dragging left widens, clamped to `[340px, 62% viewport width]`) plus `mouseup` / `mouseleave` /
+window `blur` to end the drag. The listeners deliberately live in the effect, not in the mousedown
+handler: React's cleanup then covers both a release the document never sees (mouse let go outside
+the viewport) and an unmount mid-drag. While dragging, `isResizing` disables the width transition
+so the edge tracks the cursor 1:1.
 
 ## Gotchas
 
@@ -366,7 +454,9 @@ increases height), and clamps to `[150px, 72% viewport]`.
   a guarded setter, the same shape `theme/colorMode.tsx` uses. A user who collapsed the panel on
   one trace sees it collapsed on the next one; that's intended (the point is recovering vertical
   space for the waterfall), so don't key the storage entry per trace.
-- **The cache hit-rate chip excludes output tokens.** `cacheHitRatePercent` in `SummaryStrip.tsx`
+- **The cache hit-rate chip excludes output tokens.** `cacheHitRatePercent` in
+  `../TracesPage/tokenBreakdown.ts` (shared by `SummaryStrip`'s trace-level chip and the drawer
+  `TokensSection`'s per-span one — one formula, so the two can't drift)
   is `cacheRead / (cacheRead + input + cacheCreate)` — the share of *input-side* tokens served from
   the prompt cache. Output tokens are generated and never cacheable, so including them would
   deflate the rate with a denominator the cache can't influence. Returns `null` (chip hidden, no
@@ -382,7 +472,7 @@ increases height), and clamps to `[150px, 72% viewport]`.
   `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace
   without conveying anything. `kind` is unchanged on `SpanRow` and still shown once in the
-  dock's meta grid, where the client/server distinction reads. Its slot now carries the span's
+  drawer's meta grid, where the client/server distinction reads. Its slot now carries the span's
   `attributes['tool_name']` as an info-colored chip after the span name, which is what actually
   tells one tool-call row from the next. Don't re-add the kind pill.
 - **No window context.** This page does not use `useWindowContext()` or `useSectionContext()`.
@@ -398,6 +488,15 @@ increases height), and clamps to `[150px, 72% viewport]`.
 - **`overflowX: hidden` is load-bearing.** The waterfall body has `overflowX: hidden` to
   prevent any span bar geometry (clamped to 0–100%) from introducing a horizontal scrollbar.
   Removing it breaks the layout on narrow viewports.
+- **`scrollToSpan` measures with `getBoundingClientRect`, never `offsetTop`.** An earlier version
+  set `scrollTop = row.offsetTop - 70`, which scrolled the target clean out of view: `offsetTop`
+  is measured from the nearest *positioned* ancestor, and nothing between a waterfall row and
+  `<body>` is positioned (`AppShell`'s only `position: fixed` is the mobile menu button), so the
+  value included the app chrome, page header, toolbar, minimap, and axis. Live rects are relative
+  to the viewport, so the container-vs-row delta is correct regardless of what sits above. If you
+  ever add `position: relative` to the waterfall body, `offsetTop` would start working — don't
+  take that as an invitation to switch back; the rect math also gives the scroll-only-if-needed
+  behavior.
 - **Self-time union sweep.** The sweep-line in `TraceDetailPage` uses millisecond timestamps
   (`Date.parse(child.startTimestamp)`) for union arithmetic, then converts the result back to
   nanoseconds (`unionMs * NANOS_PER_MILLI`) before subtracting from `durationNanos`. Getting
@@ -407,7 +506,7 @@ increases height), and clamps to `[150px, 72% viewport]`.
   carries `event.sequence`, the sequence-less log sorts after the sequenced one. This mirrors
   the intent — Claude Code >= 2.1.152 stamps `event.sequence` on all events in a span, so
   mixed-sequence batches are unusual.
-- **Attribute deduplication in the dock.** `SpanAttributesColumn` drops keys that are already
+- **Attribute deduplication in the drawer.** `SpanAttributeSections` drops keys that are already
   shown in the left meta column (normalized: strip unit suffixes like `_ms`/`_ns`, take the
   last dot-segment, lowercase) and any key matching `tokens?$`. Removing or widening `LEFT_KEYS`
   will re-surface those fields in the attribute grid.

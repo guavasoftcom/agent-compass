@@ -7,7 +7,7 @@ import { tryParseJson } from '../../../../components/AttributeList/utils';
 import { formatDuration } from '../../../TracesPage/tracesApi';
 import { attrValueAsString } from '../../attrFormat';
 import { severityColor, severityLabel } from '../../severity';
-import { clock } from './dockParts';
+import { clock } from './drawerParts';
 import { fontFamilies } from '../../../../theme/typography';
 
 // Keys already surfaced in the row header — don't repeat them in the expanded
@@ -92,6 +92,30 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
       sx={{ borderBottom: 1, borderColor: 'divider', cursor: hasDetail ? 'pointer' : 'default', '&:hover': hasDetail ? { bgcolor: 'action.hover' } : undefined }}
     >
       <Box sx={{ display: 'flex', gap: 1, py: 1, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        {hasDetail ? (
+          <Box
+            component="svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.4}
+            sx={{
+              width: 11,
+              height: 11,
+              color: 'text.disabled',
+              flexShrink: 0,
+              alignSelf: 'center',
+              transition: 'transform 0.14s ease',
+              transform: expanded ? 'rotate(90deg)' : 'none',
+            }}
+          >
+            <path d="M9 6l6 6-6 6" />
+          </Box>
+        ) : (
+          // Same-width spacer so timestamps and severity badges stay aligned in
+          // a column across expandable and non-expandable rows.
+          <Box component="span" sx={{ width: 11, flexShrink: 0 }} />
+        )}
         <Box component="span" sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled', whiteSpace: 'nowrap' }} title={new Date(logMs).toISOString()}>
           T+{formatDuration(offsetNanos)} · {clock(logMs)}
         </Box>

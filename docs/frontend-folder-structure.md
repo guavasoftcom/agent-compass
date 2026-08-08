@@ -7,7 +7,7 @@ Every **page** and every **component** lives in its own folder. The folder name 
 - `<Name>.tsx` — the implementation
 - `index.ts` — a barrel that re-exports the default (and any named exports)
 
-A small single-file leaf component may skip the barrel and be imported by its file path (e.g. `components/SearchInput/SearchInput`, `components/FacetRail/FacetRail`, `components/BreakdownList/BreakdownList`).
+This holds even for a component that is a single file today — the barrel is the public surface, so adding one costs two lines and keeps every import stable when the component later splits.
 
 Cross-cutting modules that are neither pages nor components are grouped into folders at the root of `src/`: `api/` (fetchers, DTO types, and transport behind a barrel), `lib/` (app-level non-UI modules — `constants`, `windowContext`, `resolveWindow`, `sampleData`, …), and `theme/` (the design system). Only the entry points (`main.tsx`, `vite-env.d.ts`) sit loose at the root.
 
@@ -48,7 +48,7 @@ frontend/src/
     NavItem.tsx
     navGroups.tsx                  // nav model
     index.ts
-  components/                      // cross-page primitives (folder + barrel; single-file leaves omit index.ts)
+  components/                      // cross-page primitives (folder + barrel)
     AreaTrendChart/
       AreaTrendChart.tsx
       AreaTrendLegend.tsx
@@ -64,9 +64,11 @@ frontend/src/
       utils.ts
       index.ts
     BreakdownList/
-      BreakdownList.tsx            // single-file leaf (no barrel)
+      BreakdownList.tsx            // shared ranked-breakdown list (metric + token breakdowns)
+      index.ts
     ChartCard/
-      ChartCard.tsx                // single-file leaf (no barrel)
+      ChartCard.tsx                // shared titled chart-container card
+      index.ts
     DonutCard/
       DonutCard.tsx
       index.ts
@@ -74,7 +76,8 @@ frontend/src/
       ErrorBoundary.tsx            // class-component render-crash fallback (wired in AppShell)
       index.ts
     FacetRail/
-      FacetRail.tsx                // shared facet rail (Logs + Traces); single-file leaf
+      FacetRail.tsx                // shared facet rail (Logs + Traces)
+      index.ts
     GhostButton/
       GhostButton.tsx
       index.ts
@@ -82,7 +85,8 @@ frontend/src/
       LineSparkline.tsx            // shared area+line sparkline (Sessions + Metrics KPI strips)
       index.ts
     LiveTailToggle/
-      LiveTailToggle.tsx           // single-file leaf (no barrel)
+      LiveTailToggle.tsx           // shared live-tail pill (Traces wraps it)
+      index.ts
     PageActions/
       PageActions.tsx
       PageActionsView.tsx
@@ -91,7 +95,8 @@ frontend/src/
       PageLayout.tsx
       index.ts
     SearchInput/
-      SearchInput.tsx              // single-file leaf (no barrel)
+      SearchInput.tsx              // shared search box (Logs + Traces, via FacetRail)
+      index.ts
     SectionLayout/
       SectionLayout.tsx
       SectionLayoutView.tsx
@@ -264,14 +269,16 @@ frontend/src/
       spanTree.ts
       index.ts
       components/
-        SpanDetailDock/
-          SpanDetailDock.tsx
-          SpanAttributesColumn.tsx
+        SpanInspectorDrawer/
+          SpanInspectorDrawer.tsx
+          CollapsibleSection.tsx
+          ErrorSection.tsx
+          SpanAttributeSections.tsx
           SpanEventsList.tsx
           TokensSection.tsx
           LogEntry.tsx
-          dockParts.tsx           // shared leaf bits (SectionTitle/AttrRows/clock)
-          useResizableHeight.ts
+          drawerParts.tsx         // shared leaf bits (AttrRows/clock)
+          useResizableWidth.ts
           index.ts
         SpanWaterfallRow/
           SpanWaterfallRow.tsx
@@ -387,7 +394,7 @@ import LogsPage from './pages/LogsPage';            // resolves to index.ts
 import PageLayout from '../components/PageLayout';  // resolves to index.ts
 ```
 
-Never reach past the folder boundary (`import X from './pages/LogsPage/LogsPage'`). The barrel is the public surface. The one exception is a single-file leaf component with no `index.ts` (e.g. `components/SearchInput/SearchInput`, `components/FacetRail/FacetRail`): there is no barrel, so the file path is the import.
+Never reach past the folder boundary (`import X from './pages/LogsPage/LogsPage'`). The barrel is the public surface. Flat helper files that live directly in a page folder (`TraceDetailPage/spanTree.ts`, `TracesPage/components/traceColors.ts`) are imported by path — they aren't component folders and have no barrel to reach past.
 
 ## Why a folder per component
 

@@ -71,6 +71,8 @@ TracesPage/
 │                             formatDuration/quantile/durationBucketOf/DURATION_BUCKETS/NANOS_PER_MILLI +
 │                             buildTracesQuery (shared by fetchers + sample)
 ├── tokenBreakdown.ts         tokenBreakdownForSpan(span) → per-span input/output/cacheCreate/cacheRead
+│                             + cacheHitRatePercent(breakdown) → input-side cache-hit share (null when
+│                             there were no input-side tokens); shared with TraceDetailPage
 │                             token split; also imported across TraceDetailPage
 ├── tracesSampleData.ts       VITE_TRACES_SAMPLE synthetic store + in-memory query engine (sampleHistogram/
 │                             Facets/Cursor/Page/Spans); split out so it can't cycle with the network layer.

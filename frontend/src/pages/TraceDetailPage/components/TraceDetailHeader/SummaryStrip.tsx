@@ -6,7 +6,10 @@ import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 import { gradients, tokenComposition } from '../../../../theme/colors';
 import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
-import type { TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
+import {
+  cacheHitRatePercent,
+  type TokenBreakdown,
+} from '../../../TracesPage/tokenBreakdown';
 
 export interface SummaryItem {
   /** Uppercase label shown above the value. */
@@ -38,21 +41,6 @@ const TOKEN_SEGMENTS: Array<{
 ];
 
 const COLLAPSE_STORAGE_KEY = 'trace-detail-overview-collapsed';
-
-// Share of the trace's input-side tokens that were served from the prompt cache.
-// Output tokens are excluded — they're generated, never cacheable, so folding them
-// in would dilute the rate with a denominator the cache can't ever influence.
-// Null when the trace logged no input-side tokens at all (nothing to hit).
-const cacheHitRatePercent = (tokenBreakdown: TokenBreakdown): number | null => {
-  const cacheEligibleTokens =
-    tokenBreakdown.cacheRead +
-    tokenBreakdown.input +
-    tokenBreakdown.cacheCreate;
-  if (cacheEligibleTokens <= 0) {
-    return null;
-  }
-  return Math.round((tokenBreakdown.cacheRead / cacheEligibleTokens) * 100);
-};
 
 // Same read-once / write-guarded shape theme/colorMode.tsx uses for its own
 // persisted preference — the initial value is read lazily in useState rather
