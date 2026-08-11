@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 @Service
 @RequiredArgsConstructor
@@ -36,19 +37,41 @@ public class TraceService {
     List<SpanEntity> spanEntities = spanRepository.findByTraceIdOrderByStartTimestampAsc(traceId);
     List<Span> spans = spanMapper.toSpans(spanEntities);
     applySpanCosts(traceId, spans);
+    applySpanEfforts(traceId, spans);
     return spans;
   }
 
   // One grouped query for the whole trace instead of one correlated subquery
   // per span -- see SpanRepository#findSpanCostsForTrace.
   private void applySpanCosts(String traceId, List<Span> spans) {
-    Map<String, Double> costBySpanId = new HashMap<>();
-    for (Object[] costRow : spanRepository.findSpanCostsForTrace(traceId)) {
-      costBySpanId.put((String) costRow[0], ((Number) costRow[1]).doubleValue());
-    }
+    Map<String, Double> costBySpanId =
+        mapBySpanId(spanRepository.findSpanCostsForTrace(traceId), row -> ((Number) row[1]).doubleValue());
     for (Span span : spans) {
       span.setCostUsd(costBySpanId.getOrDefault(span.getSpanId(), DEFAULT_SPAN_COST_USD));
     }
+  }
+
+  // Same one-grouped-query-per-trace shape as applySpanCosts. Deliberately has
+  // no default: a span missing from span_efforts stays null, because "no effort
+  // was recorded for this call" and "this call ran at the default effort" are
+  // different facts and the UI needs to be able to tell them apart.
+  private void applySpanEfforts(String traceId, List<Span> spans) {
+    Map<String, String> effortBySpanId =
+        mapBySpanId(spanRepository.findSpanEffortsForTrace(traceId), row -> (String) row[1]);
+    for (Span span : spans) {
+      span.setEffort(effortBySpanId.get(span.getSpanId()));
+    }
+  }
+
+  // Shared by applySpanCosts and applySpanEfforts: both queries return rows
+  // keyed by span_id (column 0) and differ only in the value type held in
+  // column 1 and how a missing key is handled by the caller.
+  private static <T> Map<String, T> mapBySpanId(List<Object[]> rows, Function<Object[], T> valueExtractor) {
+    Map<String, T> valueBySpanId = new HashMap<>();
+    for (Object[] row : rows) {
+      valueBySpanId.put((String) row[0], valueExtractor.apply(row));
+    }
+    return valueBySpanId;
   }
 
   public List<ToolLatency> aggregateToolLatency(int minutes) {

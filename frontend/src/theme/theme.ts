@@ -76,6 +76,15 @@ const LIGHT_BACKDROP =
   `radial-gradient(820px 520px at 98% 2%, ${alpha(auroraColors.pink, 0.1)}, transparent 60%),` +
   `radial-gradient(960px 640px at 78% 116%, ${alpha(auroraColors.cyanBright, 0.1)}, transparent 62%)`;
 
+/**
+ * The app backdrop as a `background-image` value, for surfaces that sit *over*
+ * the page rather than inside it (the Sessions detail drawer) and so can't
+ * inherit the body's fixed glow. Same two constants the body gets — don't
+ * hand-write a third copy of the radial stack.
+ */
+export const backdropGradient = (mode: ColorMode): string =>
+  mode === 'dark' ? DARK_BACKDROP : LIGHT_BACKDROP;
+
 const TOKENS: Record<ColorMode, ThemeTokens> = {
   light: {
     primary: auroraColors.violet,

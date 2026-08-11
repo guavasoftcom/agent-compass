@@ -300,18 +300,48 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // or active-time-only sessions, COALESCE turns the missing side into 0.
   //
   // Cost and active time are WHOLE-SESSION totals, not window totals. session_window
-  // (window-bounded) decides WHICH sessions the page lists and supplies their
-  // first/last-seen timestamps; cost_per_session and active_per_session then join
+  // (window-bounded) decides WHICH sessions the page lists; cost_per_session and
+  // active_per_session then join
   // back to that id set with NO timestamp predicate, so a session that began before
   // the window still reports its full spend and full active time instead of the
   // sliver that happens to fall inside the range. The two must move together: the
   // grid derives $/active min as cost / active time client-side, so mixing a
   // whole-session numerator with a windowed denominator would overstate burn for
-  // exactly the sessions that straddle the window edge. Every other per-session
-  // figure here (tokens, first/last seen, and the log-record-derived tool call /
-  // denial / prompt counts in LogRecordRepository.aggregateSessionCounts) is still
-  // window-scoped, as are the KPI cards -- so the "Median cost/session" card is a
-  // window figure and will not equal the median of the Cost column.
+  // exactly the sessions that straddle the window edge. Tokens and the
+  // log-record-derived tool call / denial / prompt counts in
+  // LogRecordRepository.aggregateSessionCounts ARE still window-scoped, as are the
+  // KPI cards -- so the "Median cost/session" card is a window figure and will not
+  // equal the median of the Cost column.
+  //
+  // MEMBERSHIP REQUIRES A NON-ZERO DELTA, and this is load-bearing rather than a
+  // micro-optimisation. Claude Code's exporter never retires a metric stream: every
+  // session it has ever hosted keeps re-emitting its cumulative cost/active-time
+  // counters once a minute forever, at an unchanged value. Measured on the live
+  // database, 98.9% of all cost/active-time points are such zero-delta re-exports,
+  // and a session that did its last real work two days ago was still emitting them
+  // in the current minute. Selecting on "has a point in the window" therefore listed
+  // every historical session on every window, each showing $0.00 -- the rollups are
+  // SUM(value_delta) and so were already correct -- with a start time clipped to the
+  // window edge and a last-activity of "now", which under the default endTimestamp
+  // sort floated the dead sessions above the live one. Activity means an increment.
+  //
+  // session_span then supplies the two timestamps, and it is deliberately NOT
+  // window-bounded -- it joins back to the id set the same way the cost and active
+  // time rollups do, so the row describes the whole session:
+  //   * first_seen is MIN(start_timestamp): for a cumulative stream that is when the
+  //     stream itself opened, which beats MIN(timestamp) by one export interval
+  //     (~45s on real data) and, unlike a windowed minimum, does not report a
+  //     session resumed inside the window as having started inside it. This is what
+  //     the grid's "Started" column claims to show and what its tooltip promises is
+  //     distinct from "Last activity".
+  //   * last_seen is the newest timestamp carrying an increment, so an idle session's
+  //     heartbeats cannot pass for activity. It cannot come back NULL: session_window
+  //     already guarantees at least one non-zero-delta row in the same metric set.
+  // wall_seconds spans the two and is therefore whole-session as well.
+  //
+  // value_delta IS DISTINCT FROM 0 rather than <> 0 because 16 pre-V11 rows carry a
+  // NULL delta; treating "increment unknown" as activity keeps them visible instead
+  // of silently dropping a session.
   //
   // The unbounded join is why the id set comes first: without it Postgres would
   // aggregate every cost/active-time row ever ingested. Joining session_window
@@ -344,14 +374,23 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   @Query(value = """
       WITH session_window AS (
         SELECT
-          attributes ->> 'session.id' AS session_id,
-          MIN(timestamp)              AS first_seen,
-          MAX(timestamp)              AS last_seen
+          attributes ->> 'session.id' AS session_id
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
           AND attributes ->> 'session.id' IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        GROUP BY 1
+      ),
+      session_span AS (
+        SELECT
+          w.session_id,
+          MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_seen,
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
+        FROM session_window w
+        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
         GROUP BY 1
       ),
       cost_per_session AS (
@@ -415,7 +454,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         m.terminal_type,
         m.start_type,
         COUNT(*) OVER()::bigint                                  AS total_count
-      FROM session_window w
+      FROM session_span w
       LEFT JOIN cost_per_session c   ON c.session_id = w.session_id
       LEFT JOIN active_per_session a ON a.session_id = w.session_id
       LEFT JOIN token_per_session t  ON t.session_id = w.session_id
@@ -484,7 +523,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // cacheEfficiency is cacheRead / (input + cacheCreation + cacheRead): the share
   // of a session's input-side tokens served from the prompt cache. Output tokens
   // are generated rather than sent, so they stay out of the ratio (they are still
-  // reported in total_tokens as a scale hint). This is the SAME expression the
+  // reported in total_tokens as a scale hint). The denominator is also returned
+  // decomposed — input_tokens / cache_creation_tokens alongside cache_read_tokens,
+  // the three always summing back to input_side_tokens — so the Tokens page's
+  // session detail can draw the split without a second query. This is the SAME expression the
   // 'cacheEfficiency' sort column in aggregateSessionSummaries orders by and the
   // same one the frontend's shared cacheEfficiencyRatio helper computes for the
   // Sessions grid column — the three must move together or the ranking, the
@@ -508,6 +550,16 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // Cost is whole-session (joined back with no timestamp predicate), matching the
   // Sessions grid's Cost column; tokens stay window-scoped like every other token
   // rollup. Same deliberate split documented on aggregateSessionSummaries.
+  //
+  // session_window here deliberately does NOT carry the value_delta membership test
+  // that aggregateSessionSummaries and aggregateSessionKpis use against the
+  // exporter's zero-delta re-emissions, because the token floor already excludes
+  // them: a session that only heartbeats accrues no token increments, so its
+  // input_side_tokens is 0 and it fails the >= :minimumInputSideTokens predicate
+  // (verified against live data -- all 11 ghost sessions in a sample window summed
+  // to exactly 0). Adding the filter would be redundant here and not merely
+  // redundant: cost and tokens are separate streams, so it could also drop a session
+  // that genuinely moved tokens in the window without moving cost.
   @Query(value = """
       WITH session_window AS (
         SELECT attributes ->> 'session.id' AS session_id
@@ -551,7 +603,9 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           / (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens) AS cache_efficiency,
         t.cache_read_tokens                                                  AS cache_read_tokens,
         (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens)::bigint AS input_side_tokens,
-        (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens)::bigint AS total_tokens,
+        t.input_tokens                                                       AS input_tokens,
+        t.cache_creation_tokens                                              AS cache_creation_tokens,
+        t.output_tokens                                                      AS output_tokens,
         COALESCE(c.cost_usd, 0)::double precision                            AS cost_usd
       FROM session_window w
       JOIN token_per_session t     ON t.session_id = w.session_id
@@ -891,6 +945,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // session.count (no cost/token/active-time/tool rows), so a fresh/resume breakdown
   // over this population is structurally ~all-fresh and carries no signal. Returns
   // exactly one row.
+  //
+  // session_window carries the same value_delta IS DISTINCT FROM 0 membership test as
+  // aggregateSessionSummaries, and for the same reason -- see the long note there on
+  // the exporter's zero-delta re-emissions. Without it totalSessions counted every
+  // session ever recorded, and both cost percentiles were computed over a population
+  // padded out with $0.00 ghosts, dragging the median toward zero.
   @Query(value = """
       WITH cost_per_session AS (
         SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta) AS cost_usd
@@ -918,6 +978,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
           AND attributes ->> 'session.id' IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         GROUP BY 1
@@ -948,23 +1009,47 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("endTimestamp") Instant endTimestamp);
 
   // New-session sparkline for the Sessions-page "Total sessions" card: how many
-  // sessions FIRST appeared in each evenly-spaced bucket of the window. A session is
-  // counted in the bucket of its earliest cost/active-time emission (MIN(timestamp)),
-  // so it's counted exactly once and the bucket counts sum to total_sessions (the
-  // same cost/active-time population as aggregateSessionKpis). Returns one row per
-  // non-empty bucket as (bucket_index 0-based, new_sessions); the service fills a
-  // dense, zero-padded array, so empty buckets correctly read as zero. Concrete
-  // start/end bounds are required (the trend needs a fixed origin for date_bin).
+  // sessions actually OPENED in each evenly-spaced bucket of the window. A session is
+  // counted in the bucket of its stream start (MIN(start_timestamp)), so it's counted
+  // at most once. Returns one row per non-empty bucket as (bucket_index 0-based,
+  // new_sessions); the service fills a dense, zero-padded array, so empty buckets
+  // correctly read as zero. Concrete start/end bounds are required (the trend needs a
+  // fixed origin for date_bin).
+  //
+  // The bucket counts NO LONGER sum to aggregateSessionKpis' total_sessions, and that
+  // is the intended behaviour rather than drift between two population definitions.
+  // The card counts sessions that were ACTIVE in the window; the sparkline counts
+  // sessions that BEGAN in it, and a session resumed after days of idling belongs in
+  // the first population but not the second. The previous query conflated them by
+  // bucketing on the earliest emission inside the window, which made every
+  // long-running session look brand new the moment you narrowed the window -- the
+  // same zero-delta re-emission artefact documented at length on
+  // aggregateSessionSummaries. Expect an all-zero sparkline over a short window in
+  // which real work continued on an older session; that reads correctly as "no new
+  // sessions started".
+  //
+  // first_seen is unbounded on purpose (it joins back to the windowed id set the way
+  // the summary query's rollups do) because a session's true start is a property of
+  // the session, not of the window: bounding it would reintroduce the clipping this
+  // change exists to remove. The window filter then applies to that true start.
   @Query(value = """
-      WITH first_seen AS (
-        SELECT
-          attributes ->> 'session.id' AS session_id,
-          MIN(timestamp)              AS first_ts
+      WITH session_window AS (
+        SELECT attributes ->> 'session.id' AS session_id
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
           AND attributes ->> 'session.id' IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :start
           AND timestamp <= :end
+        GROUP BY 1
+      ),
+      first_seen AS (
+        SELECT
+          w.session_id,
+          MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_ts
+        FROM session_window w
+        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
         GROUP BY 1
       )
       SELECT
@@ -973,6 +1058,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           / :bucketSeconds)::int      AS bucket_index,
         COUNT(*)::bigint              AS new_sessions
       FROM first_seen
+      WHERE first_ts >= :start
+        AND first_ts <= :end
       GROUP BY bucket_index
       ORDER BY bucket_index
       """, nativeQuery = true)

@@ -88,6 +88,13 @@ export interface SpanRow {
   // the request was issued — the interaction root or a tool.execution span, not
   // the llm_request child). 0 for spans no request was logged against.
   costUsd?: number | null;
+  // Reasoning effort this call ran at ('high' / 'medium' / 'xhigh' / 'max'),
+  // from the span_efforts view. Claude Code emits effort only on the api_request
+  // log, never as a span attribute, so the backend correlates it back by
+  // request_id — exact, not heuristic, because that id is unique on both sides.
+  // Null on non-model spans and on calls whose log recorded no effort (~2% of
+  // recent traffic). Null means NOT RECORDED — never render it as a default level.
+  effort?: string | null;
 }
 
 export interface ListResult<T> {
@@ -199,6 +206,21 @@ export interface SessionCacheEfficiencyRow {
   cacheReadTokens: number;
   /** The ratio's denominator: input + cacheCreation + cacheRead. */
   inputSideTokens: number;
+  /**
+   * `inputSideTokens` decomposed. `inputTokens + cacheCreationTokens +
+   * cacheReadTokens` always equals `inputSideTokens` — they are the same
+   * aggregation one level less collapsed, not a second measurement, which is
+   * what lets the session detail draw its token bar without a second fetch.
+   */
+  inputTokens: number;
+  cacheCreationTokens: number;
+  /**
+   * The one kind outside the ratio — generated rather than sent, so the cache
+   * could never have served it. Sent explicitly rather than left to a
+   * `totalTokens - inputSideTokens` subtraction here, so the row stays
+   * self-describing; it is the fourth segment of the session detail's bar.
+   */
+  outputTokens: number;
   /** All four kinds including output — a scale hint, not the denominator. */
   totalTokens: number;
   /** Whole-session spend, matching the Sessions grid's Cost column. */
@@ -284,8 +306,8 @@ export interface SessionPromptRow {
   /** Tool calls the turn triggered, count desc. Empty/null → "No tool calls". */
   tools?: { name: string; count: number }[] | null;
   /**
-   * Turn identifier, shared with the api_request logs it issued — the join key
-   * for `fetchSessionRequests`. Null on turns predating prompt-id stamping.
+   * Turn identifier, shared with the api_request logs it issued. Null on turns
+   * predating prompt-id stamping.
    */
   promptId?: string | null;
   /** api_request logs correlated to this turn. 0 whenever attribution is INTERVAL. */
@@ -304,23 +326,6 @@ export interface SessionPromptRow {
 }
 
 export type TurnAttribution = 'REQUEST' | 'INTERVAL';
-
-/** One LLM request within a session (`GET /api/sessions/{id}/requests`). */
-export interface SessionApiRequestRow {
-  requestId: string;
-  timestamp: string;
-  /** The turn that issued this request; group by it to rebuild per-turn totals. */
-  promptId: string | null;
-  model: string | null;
-  /** Exact four-way split for this one call. */
-  tokens: SessionTokenBreakdown;
-  costUsd: number | null;
-  durationMs: number | null;
-  /** Absent on a minority of rows — render as unknown, don't assume a default. */
-  effort: string | null;
-  speed: string | null;
-  traceId: string | null;
-}
 
 export interface SessionsSortModel {
   field: string;

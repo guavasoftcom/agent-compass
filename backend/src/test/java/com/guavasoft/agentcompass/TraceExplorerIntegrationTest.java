@@ -103,6 +103,23 @@ class TraceExplorerIntegrationTest {
             EXPECTED_ROOT_SPAN_COST_USD + SEED_CHILD_REQUEST_COST;
     private static final double COST_TOLERANCE_USD = 1e-9;
 
+    // Effort correlation (span_efforts, V15). Seeded on its own trace, placed
+    // OUTSIDE the window so it cannot disturb the in-window counts every list
+    // and histogram assertion above depends on — spansForTrace is keyed by trace
+    // id and does no window filtering, so the fixture is still fully reachable.
+    private static final String TRACE_EFFORT = "abcd000000000000abcd000000000001";
+    private static final String ATTR_REQUEST_ID = "request_id";
+    private static final String ATTR_EFFORT = "effort";
+    private static final String REQUEST_ID_WITH_EFFORT = "req_011CdqUicd2Zjki38GaLv3VN";
+    private static final String REQUEST_ID_WITHOUT_EFFORT = "req_011CdqUicd2Zjki38GaLv3VO";
+    private static final String SEED_EFFORT = "high";
+
+    /**
+     * Span id stamped on the seeded api_request logs. Intentionally matches
+     * neither llm_request span — see {@code addEffortFixture}.
+     */
+    private static final String ACTIVE_SPAN_ID_NOT_A_LLM_SPAN = "abcd0000ffff0000";
+
     /**
      * Sub-microsecond offset used to build a window finer than a Postgres
      * {@code timestamptz} can store — the precision the histogram bucket origin has
@@ -186,6 +203,84 @@ class TraceExplorerIntegrationTest {
         addApiRequestLog(TRACE_SESSION_OK, TRACE_SESSION_OK.substring(16, 32),
                 SEED_CHILD_REQUEST_COST, t1Start.plusSeconds(3));
         addApiRequestLog(null, null, SEED_UNCORRELATED_REQUEST_COST, t1Start.plusSeconds(4));
+
+        addEffortFixture();
+    }
+
+    /**
+     * Seeds the span_efforts (V15) correlation fixture: two llm_request spans
+     * carrying request ids, and the api_request logs those ids resolve to — one
+     * with an effort value, one without.
+     *
+     * <p>Both logs are deliberately stamped with a span id that is NOT either
+     * llm_request span's. That mirrors production (Claude Code stamps the span
+     * that was <em>active</em>, i.e. the interaction root, never the llm_request
+     * child) and is what makes these tests able to fail if someone ever
+     * "simplifies" the view to correlate by span id.
+     */
+    private void addEffortFixture() {
+        Instant effortStart = windowEnd.plusSeconds(1200);
+
+        addLlmRequestSpan(TRACE_EFFORT, TRACE_EFFORT.substring(0, 16), null,
+                REQUEST_ID_WITH_EFFORT, effortStart);
+        addLlmRequestSpan(TRACE_EFFORT, TRACE_EFFORT.substring(16, 32), TRACE_EFFORT.substring(0, 16),
+                REQUEST_ID_WITHOUT_EFFORT, effortStart.plusMillis(10));
+
+        addApiRequestLogWithRequestId(TRACE_EFFORT, ACTIVE_SPAN_ID_NOT_A_LLM_SPAN,
+                REQUEST_ID_WITH_EFFORT, SEED_EFFORT, effortStart.plusSeconds(1));
+        addApiRequestLogWithRequestId(TRACE_EFFORT, ACTIVE_SPAN_ID_NOT_A_LLM_SPAN,
+                REQUEST_ID_WITHOUT_EFFORT, null, effortStart.plusSeconds(2));
+    }
+
+    private void addLlmRequestSpan(
+            String traceId,
+            String spanId,
+            String parentSpanId,
+            String requestId,
+            Instant start) {
+
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(ATTR_REQUEST_ID, requestId);
+
+        SpanEntity span = new SpanEntity();
+        span.setTraceId(traceId);
+        span.setSpanId(spanId);
+        span.setParentSpanId(parentSpanId);
+        span.setName("claude_code.llm_request");
+        span.setKind("client");
+        span.setStartTimestamp(start);
+        span.setEndTimestamp(start.plusMillis(500));
+        span.setDurationNanos(500_000_000L);
+        span.setStatusCode("ok");
+        span.setAttributes(attributes);
+        span.setScopeAttributes(null);
+        span.setResourceAttributes(null);
+        span.setEvents(null);
+        span.setReceivedAt(Instant.now());
+        spanRepository.save(span);
+    }
+
+    /**
+     * Seeds an {@code api_request} log carrying a request id and, optionally, an
+     * effort. A null effort models the minority of real logs that record none —
+     * such a request must leave its span's effort null rather than defaulting.
+     */
+    private void addApiRequestLogWithRequestId(
+            String traceId,
+            String spanId,
+            String requestId,
+            String effort,
+            Instant timestamp) {
+
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(ATTR_EVENT_NAME, API_REQUEST_EVENT_NAME);
+        attributes.put(ATTR_SESSION_ID, SESSION_ID_ONE);
+        attributes.put(ATTR_REQUEST_ID, requestId);
+        if (effort != null) {
+            attributes.put(ATTR_EFFORT, effort);
+        }
+
+        saveLogRecord(traceId, spanId, attributes, timestamp);
     }
 
     // -------------------------------------------------------------------------
@@ -887,6 +982,68 @@ class TraceExplorerIntegrationTest {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Per-span effort (span_efforts, V15)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void spanEffortIsCorrelatedByRequestIdNotBySpanId() {
+        List<Span> spans = traceService.spansForTrace(TRACE_EFFORT);
+
+        Span spanWithEffort = spans.stream()
+                .filter(span -> TRACE_EFFORT.substring(0, 16).equals(span.getSpanId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("llm_request span not found"));
+
+        // The api_request log carrying this effort is stamped with a DIFFERENT
+        // span id, so this can only pass if the view joins on request_id. A
+        // span_id-based correlation would leave it null.
+        assertThat(spanWithEffort.getEffort()).isEqualTo(SEED_EFFORT);
+    }
+
+    @Test
+    void spanEffortIsNullWhenTheRequestLogRecordedNone() {
+        List<Span> spans = traceService.spansForTrace(TRACE_EFFORT);
+
+        Span spanWithoutEffort = spans.stream()
+                .filter(span -> TRACE_EFFORT.substring(16, 32).equals(span.getSpanId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("second llm_request span not found"));
+
+        // Its request log exists and correlates, it simply carries no effort.
+        // Null is the honest answer; a default level here would invent data.
+        assertThat(spanWithoutEffort.getEffort()).isNull();
+    }
+
+    @Test
+    void spanEffortIsNullForSpansCarryingNoRequestId() {
+        List<Span> spans = traceService.spansForTrace(TRACE_TOOL_OK);
+
+        assertThat(spans).isNotEmpty();
+        for (Span span : spans) {
+            assertThat(span.getEffort())
+                    .as("effort for spanId %s", span.getSpanId())
+                    .isNull();
+        }
+    }
+
+    @Test
+    void spanEffortDoesNotDisturbSpanCost() {
+        // The two correlations are independent: the effort fixture's requests
+        // carry no cost_usd, so they must not add cost, and applying efforts must
+        // not clear the costs applied just before it.
+        List<Span> effortSpans = traceService.spansForTrace(TRACE_EFFORT);
+        for (Span span : effortSpans) {
+            assertThat(span.getCostUsd())
+                    .as("costUsd for spanId %s", span.getSpanId())
+                    .isEqualTo(0.0);
+        }
+
+        List<Span> costSpans = traceService.spansForTrace(TRACE_SESSION_OK);
+        double summedSpanCost = costSpans.stream().mapToDouble(Span::getCostUsd).sum();
+        assertThat(summedSpanCost).isCloseTo(EXPECTED_TOTAL_COST_USD, within(COST_TOLERANCE_USD));
+    }
+
     @Test
     void sortCostPlacesHighestCostTraceFirst() {
         TraceQueryCriteria criteria = fullWindowCriteria();
@@ -1108,18 +1265,7 @@ class TraceExplorerIntegrationTest {
             attributes.put(ATTR_PROMPT, promptText);
         }
 
-        LogRecordEntity logRecord = new LogRecordEntity();
-        logRecord.setTimestamp(timestamp);
-        logRecord.setObservedTimestamp(timestamp);
-        logRecord.setBody("");
-        logRecord.setScopeName("com.anthropic.claude_code.events");
-        logRecord.setTraceId(traceId);
-        logRecord.setSpanId(traceId.substring(0, 16));
-        logRecord.setAttributes(attributes);
-        logRecord.setResourceAttributes(null);
-        logRecord.setScopeAttributes(null);
-        logRecord.setReceivedAt(Instant.now());
-        logRecordRepository.save(logRecord);
+        saveLogRecord(traceId, traceId.substring(0, 16), attributes, timestamp);
     }
 
     /**
@@ -1135,6 +1281,16 @@ class TraceExplorerIntegrationTest {
         attributes.put(ATTR_SESSION_ID, SESSION_ID_ONE);
         attributes.put(ATTR_COST_USD, String.valueOf(costUsd));
 
+        saveLogRecord(traceId, spanId, attributes, timestamp);
+    }
+
+    /**
+     * Shared construction for the log-record fixtures above: timestamp,
+     * observed timestamp, empty body, the standard scope name, no
+     * resource/scope attributes, and receivedAt stamped to now. Callers differ
+     * only in which attributes they carry and which span they're attached to.
+     */
+    private void saveLogRecord(String traceId, String spanId, Map<String, Object> attributes, Instant timestamp) {
         LogRecordEntity logRecord = new LogRecordEntity();
         logRecord.setTimestamp(timestamp);
         logRecord.setObservedTimestamp(timestamp);

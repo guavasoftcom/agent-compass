@@ -9,7 +9,6 @@ import type {
   IdentifierUsageRow,
   ListResult,
   LogRow,
-  SessionApiRequestRow,
   SessionCacheEfficiencyRow,
   SessionKpis,
   SessionPromptRow,
@@ -131,15 +130,6 @@ export const fetchSessionPrompts = (
   sessionId: string,
 ): Promise<SessionPromptRow[]> =>
   getJson(`/api/sessions/${encodeURIComponent(sessionId)}/prompts`);
-
-// Every LLM request in one session, oldest first — the prompt timeline's
-// per-turn drill-down. Not window-scoped, max 500 rows. An empty array is normal
-// for sessions recorded without event logging; it means "no per-request detail",
-// never "no spend".
-export const fetchSessionRequests = (
-  sessionId: string,
-): Promise<SessionApiRequestRow[]> =>
-  getJson(`/api/sessions/${encodeURIComponent(sessionId)}/requests`);
 
 export const fetchToolDenials = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },

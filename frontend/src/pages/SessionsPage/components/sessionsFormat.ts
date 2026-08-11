@@ -3,13 +3,13 @@
 // Cache efficiency deliberately does NOT live here: the Tokens page needs the same
 // ratio and bands, so they live in `lib/cacheEfficiency.ts` alongside the note about
 // the three backend expressions that have to match. Import them from there.
+//
+// USD_FORMATTER also does NOT live here: the Tokens page needs the identical
+// formatter (session-detail dialog, rank card), so it's defined once in
+// `lib/format.ts` and re-exported below so existing SessionsPage imports keep
+// working unchanged.
 
-export const USD_FORMATTER = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+export { USD_FORMATTER } from '../../../lib/format';
 
 export const USD_PER_MINUTE_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -61,6 +61,20 @@ export const formatTokens = (value: number): string => {
 
 export const formatTimestamp = (value: string): string =>
   value ? new Date(value).toLocaleString() : '';
+
+// Compact "Aug 9, 10:36 AM" — for the session detail drawer's metadata line,
+// where the full locale string formatTimestamp returns is too long to sit next
+// to three other facts. Seconds are dropped deliberately: the line describes
+// when a session began, not an event to correlate.
+export const formatShortTimestamp = (value: string): string =>
+  value
+    ? new Date(value).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    : '';
 
 // Relative "time ago" for the Last activity column (the default sort). Compact
 // buckets — just now / Nm / Nh / Nd ago.

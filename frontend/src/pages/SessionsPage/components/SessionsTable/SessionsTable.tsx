@@ -1,18 +1,15 @@
-import { Fragment } from 'react';
 import { Box, Tooltip } from '@mui/material';
-import { alpha } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import type { SxProps, Theme } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type {
-  SessionApiRequestRow,
-  SessionPromptRow,
   SessionSummaryRow,
   SessionsSortModel,
   SessionTokenBreakdown,
 } from '../../../../api';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
-import PromptTimelinePanel, { TokenBreakdownTooltip } from '../PromptTimelinePanel';
+import { TokenBreakdownTooltip } from '../PromptTimelinePanel';
 import {
   USD_FORMATTER,
   USD_PER_MINUTE_FORMATTER,
@@ -22,11 +19,14 @@ import {
   formatTimestamp,
 } from '../sessionsFormat';
 import {
-  CACHE_EFFICIENCY_STRONG,
-  CACHE_EFFICIENCY_WEAK,
+  cacheEfficiencyBand,
   cacheEfficiencyRatio,
   formatCacheEfficiency,
 } from '../../../../lib/cacheEfficiency';
+// Cross-page import, deliberately: the band→color mapping is the single
+// source of truth shared by this cell, the Tokens page's worst-cache-efficiency
+// rank table, and its session detail dialog — see cacheEfficiencyBandColors.ts.
+import { cacheEfficiencyBandColor } from '../../../TokensPage/components/cacheEfficiencyBandColors';
 
 // ---- column model -----------------------------------------------------------
 interface SessionColumn {
@@ -38,8 +38,8 @@ interface SessionColumn {
 }
 
 // Aurora sync: Terminal and Session columns removed from this listing (per
-// design review) — the session id is still available in the expanded prompt
-// timeline header if needed.
+// design review) — the session id is still available in the detail drawer's
+// header if needed.
 const COLUMNS: SessionColumn[] = [
   { field: 'startTimestamp', label: 'Started', numeric: false, sortable: true },
   {
@@ -152,14 +152,6 @@ const tableSx: SxProps<Theme> = {
     color: 'text.secondary',
     padding: '40px 14px',
   },
-  // The expanded prompt-timeline cell has to out-specify '& tbody td' above:
-  // that's one class plus two element selectors, so the cell's own single-class
-  // sx={{ p: 0 }} loses and the panel gets inset 13px/14px instead of sitting
-  // flush with the table edges. Pairs with className="expand-cell" below.
-  '& tbody td.expand-cell': {
-    padding: 0,
-    whiteSpace: 'normal',
-  },
 };
 
 // Right-aligned denial count rendered as an Aurora chip: 0 dims out, 1–3 amber, 4+ red.
@@ -208,6 +200,7 @@ const CacheEfficiencyCell = ({
 }: {
   breakdown: SessionTokenBreakdown | null;
 }) => {
+  const theme = useTheme();
   const ratio = cacheEfficiencyRatio(breakdown);
   if (ratio == null || breakdown == null) {
     return (
@@ -216,12 +209,7 @@ const CacheEfficiencyCell = ({
       </Box>
     );
   }
-  const color =
-    ratio >= CACHE_EFFICIENCY_STRONG
-      ? 'success.main'
-      : ratio >= CACHE_EFFICIENCY_WEAK
-        ? 'text.primary'
-        : 'warning.main';
+  const color = cacheEfficiencyBandColor(cacheEfficiencyBand(ratio), theme);
   const inputSideTokens =
     breakdown.input + breakdown.cacheCreation + breakdown.cacheRead;
   return (
@@ -322,32 +310,6 @@ const PromptCell = ({
   </Box>
 );
 
-// Expand affordance in the Started cell — the only cue that a row opens its prompt
-// timeline on click. Points right when closed, rotates to point down and takes the
-// primary color when open, reusing the rotation treatment SortArrow already uses.
-const ExpandCaret = ({ expanded }: { expanded: boolean }) => (
-  <Box
-    component="svg"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2.5}
-    sx={{
-      display: 'inline-block',
-      width: 12,
-      height: 12,
-      mr: '3px',
-      verticalAlign: '-1px',
-      flexShrink: 0,
-      color: expanded ? 'primary.main' : 'text.disabled',
-      transform: expanded ? 'rotate(90deg)' : 'none',
-      transition: 'transform .15s',
-    }}
-  >
-    <path d="M9 6l6 6-6 6" />
-  </Box>
-);
-
 // Sort caret — points up for asc, flips for desc; only rendered on the active column.
 const SortArrow = ({ direction }: { direction: 'asc' | 'desc' }) => (
   <Box
@@ -374,20 +336,10 @@ interface SessionsTableProps {
   onSortModelChange: (next: SessionsSortModel) => void;
   showLoading: boolean;
   showEmpty: boolean;
-  expandedSessionId: string | null;
-  onToggleExpand: (sessionId: string) => void;
-  promptTimeline: SessionPromptRow[] | null;
-  promptTimelineLoading: boolean;
-  promptTimelineError: Error | null;
-  // Per-request drill-down rows for the expanded session, forwarded to
-  // PromptTimelinePanel which groups them by prompt id.
-  sessionRequests: SessionApiRequestRow[] | null;
-  sessionRequestsLoading: boolean;
-  // Active dashboard window (epoch ms), forwarded to PromptTimelinePanel so it
-  // can dim turns that fall outside the selected window (the prompts endpoint
-  // returns the whole session, not just the windowed slice).
-  windowStartMs?: number;
-  windowEndMs?: number;
+  // Session whose detail drawer is open — the row keeps a highlight for as long
+  // as it is. The drawer itself is rendered by the view, not from in here.
+  openSessionId: string | null;
+  onToggleSessionDetail: (sessionId: string) => void;
 }
 
 const SessionsTable = ({
@@ -396,15 +348,8 @@ const SessionsTable = ({
   onSortModelChange,
   showLoading,
   showEmpty,
-  expandedSessionId,
-  onToggleExpand,
-  promptTimeline,
-  promptTimelineLoading,
-  promptTimelineError,
-  sessionRequests,
-  sessionRequestsLoading,
-  windowStartMs,
-  windowEndMs,
+  openSessionId,
+  onToggleSessionDetail,
 }: SessionsTableProps) => {
   const handleSort = (field: string) => {
     if (field === sortModel.field) {
@@ -481,102 +426,79 @@ const SessionsTable = ({
             row.activeTimeSeconds > 0
               ? (row.costUsd / row.activeTimeSeconds) * 60
               : null;
-          const isExpanded = expandedSessionId === row.sessionId;
+          const isOpen = openSessionId === row.sessionId;
           return (
-            <Fragment key={row.sessionId}>
-              <Box
-                component="tr"
-                className="data-row"
-                onClick={() => onToggleExpand(row.sessionId)}
-                sx={{
-                  cursor: 'pointer',
-                  '& > td': {
-                    backgroundColor: isExpanded
-                      ? 'action.hover'
-                      : index % 2
-                        ? (t) =>
-                            alpha(
-                              t.palette.primary.main,
-                              t.palette.mode === 'dark' ? 0.04 : 0.022,
-                            )
-                        : 'transparent',
-                  },
-                }}
-              >
-                <Box component="td">
-                  <ExpandCaret expanded={isExpanded} />
-                  {formatTimestamp(row.startTimestamp)}
-                </Box>
-                <Box component="td" sx={{ whiteSpace: 'nowrap' }}>
-                  <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
-                    <Box component="span">{formatRelativeTime(row.endTimestamp)}</Box>
-                  </Tooltip>
-                </Box>
-                <Box component="td" className="prompt">
-                  <PromptCell
-                    prompt={row.firstUserPrompt}
-                    count={row.userPromptCount}
-                  />
-                </Box>
-                <Box component="td" className="num cost">
-                  {USD_FORMATTER.format(row.costUsd)}
-                </Box>
-                <Box component="td" className="num tokens">
-                  {row.tokenBreakdown ? (
-                    <TokenBreakdownTooltip tokens={row.tokenBreakdown}>
-                      <Box
-                        component="span"
-                        sx={{
-                          cursor: 'help',
-                          borderBottom: (t) => `1px dotted ${t.palette.text.disabled}`,
-                          pb: '1px',
-                        }}
-                      >
-                        {formatTokens(row.tokens)}
-                      </Box>
-                    </TokenBreakdownTooltip>
-                  ) : (
-                    formatTokens(row.tokens)
-                  )}
-                </Box>
-                <Box component="td" className="num">
-                  <CacheEfficiencyCell breakdown={row.tokenBreakdown} />
-                </Box>
-                <Box component="td" className="num">
-                  {row.toolCallCount.toLocaleString()}
-                </Box>
-                <Box component="td" className="num">
-                  <DenialChip count={row.denialCount} />
-                </Box>
-                <Box component="td" className="num">
-                  {formatDuration(row.activeTimeSeconds)}
-                </Box>
-                <Box component="td" className="num">
-                  {burn == null ? '—' : USD_PER_MINUTE_FORMATTER.format(burn)}
-                </Box>
+            <Box
+              key={row.sessionId}
+              component="tr"
+              className="data-row"
+              onClick={() => onToggleSessionDetail(row.sessionId)}
+              sx={{
+                cursor: 'pointer',
+                '& > td': {
+                  backgroundColor: isOpen
+                    ? 'action.hover'
+                    : index % 2
+                      ? (t) =>
+                          alpha(
+                            t.palette.primary.main,
+                            t.palette.mode === 'dark' ? 0.04 : 0.022,
+                          )
+                      : 'transparent',
+                },
+              }}
+            >
+              <Box component="td">
+                {formatTimestamp(row.startTimestamp)}
               </Box>
-              {isExpanded ? (
-                <Box component="tr">
-                  <Box
-                    component="td"
-                    className="expand-cell"
-                    colSpan={COLUMNS.length}
-                    sx={{ p: 0 }}
-                  >
-                    <PromptTimelinePanel
-                      sessionId={row.sessionId}
-                      prompts={promptTimeline}
-                      requests={sessionRequests}
-                      requestsLoading={sessionRequestsLoading}
-                      loading={promptTimelineLoading}
-                      error={promptTimelineError}
-                      windowStartMs={windowStartMs}
-                      windowEndMs={windowEndMs}
-                    />
-                  </Box>
-                </Box>
-              ) : null}
-            </Fragment>
+              <Box component="td" sx={{ whiteSpace: 'nowrap' }}>
+                <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
+                  <Box component="span">{formatRelativeTime(row.endTimestamp)}</Box>
+                </Tooltip>
+              </Box>
+              <Box component="td" className="prompt">
+                <PromptCell
+                  prompt={row.firstUserPrompt}
+                  count={row.userPromptCount}
+                />
+              </Box>
+              <Box component="td" className="num cost">
+                {USD_FORMATTER.format(row.costUsd)}
+              </Box>
+              <Box component="td" className="num tokens">
+                {row.tokenBreakdown ? (
+                  <TokenBreakdownTooltip tokens={row.tokenBreakdown}>
+                    <Box
+                      component="span"
+                      sx={{
+                        cursor: 'help',
+                        borderBottom: (t) => `1px dotted ${t.palette.text.disabled}`,
+                        pb: '1px',
+                      }}
+                    >
+                      {formatTokens(row.tokens)}
+                    </Box>
+                  </TokenBreakdownTooltip>
+                ) : (
+                  formatTokens(row.tokens)
+                )}
+              </Box>
+              <Box component="td" className="num">
+                <CacheEfficiencyCell breakdown={row.tokenBreakdown} />
+              </Box>
+              <Box component="td" className="num">
+                {row.toolCallCount.toLocaleString()}
+              </Box>
+              <Box component="td" className="num">
+                <DenialChip count={row.denialCount} />
+              </Box>
+              <Box component="td" className="num">
+                {formatDuration(row.activeTimeSeconds)}
+              </Box>
+              <Box component="td" className="num">
+                {burn == null ? '—' : USD_PER_MINUTE_FORMATTER.format(burn)}
+              </Box>
+            </Box>
           );
         })}
       </Box>

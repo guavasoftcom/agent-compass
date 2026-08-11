@@ -367,15 +367,21 @@ public class MetricService {
         minimumInputSideTokens,
         PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT));
 
+    // Row shape: session_id, cache_efficiency, cache_read_tokens, input_side_tokens
+    // (read only by ORDER BY, not mapped into the record -- SessionCacheEfficiency
+    // derives it from the three input-side token-kind fields, and derives
+    // totalTokens from all four), input_tokens, cache_creation_tokens,
+    // output_tokens, cost_usd.
     List<SessionCacheEfficiency> sessions = new ArrayList<>(rows.size());
     for (Object[] row : rows) {
       sessions.add(new SessionCacheEfficiency(
           (String) row[0],
           ((Number) row[1]).doubleValue(),
           ((Number) row[2]).longValue(),
-          ((Number) row[3]).longValue(),
           ((Number) row[4]).longValue(),
-          ((Number) row[5]).doubleValue()));
+          ((Number) row[5]).longValue(),
+          ((Number) row[6]).longValue(),
+          ((Number) row[7]).doubleValue()));
     }
     return sessions;
   }

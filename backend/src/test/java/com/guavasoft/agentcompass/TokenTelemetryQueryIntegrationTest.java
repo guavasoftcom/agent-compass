@@ -144,11 +144,35 @@ class TokenTelemetryQueryIntegrationTest {
     SessionCacheEfficiency best = rankedSession(SESSION_BEST);
 
     // inputSideTokens is the ratio's denominator; totalTokens additionally
-    // carries output, so the two differ by exactly the output stream.
+    // carries output, so the two differ by exactly the output stream — which the
+    // row now also reports on its own rather than leaving to that subtraction.
     assertThat(best.inputSideTokens()).isEqualTo(1_000_000L);
+    assertThat(best.outputTokens()).isEqualTo(5_000_000L);
     assertThat(best.totalTokens()).isEqualTo(6_000_000L);
     assertThat(best.cacheReadTokens()).isEqualTo(900_000L);
     assertThat(best.costUsd()).isEqualTo(2.0);
+  }
+
+  @Test
+  void decomposesTheRatioDenominatorIntoItsThreeInputSideKinds() {
+    SessionCacheEfficiency worst = rankedSession(SESSION_WORST);
+
+    // The Tokens page's session detail draws three of its four bar segments from
+    // these (output is the fourth). The SQL aggregates each kind independently
+    // (one FILTERed SUM per kind over the same token-usage metric), so these
+    // assert the query actually reads the seeded per-kind values correctly.
+    // inputSideTokens() itself is derived from these three by construction, so no
+    // separate reconciliation assertion is needed.
+    assertThat(worst.inputTokens()).isEqualTo(500_000L);
+    assertThat(worst.cacheCreationTokens()).isEqualTo(300_000L);
+    assertThat(worst.cacheReadTokens()).isEqualTo(200_000L);
+
+    // A session that emitted no cache-creation and no output stream reports 0 for
+    // each rather than dropping out of the decomposition — the bar renders a
+    // legend row for a zero kind, so it has to be a number and not a null.
+    SessionCacheEfficiency best = rankedSession(SESSION_BEST);
+    assertThat(best.cacheCreationTokens()).isZero();
+    assertThat(worst.outputTokens()).isZero();
   }
 
   @Test

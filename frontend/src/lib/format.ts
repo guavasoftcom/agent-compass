@@ -7,6 +7,17 @@ const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
 
 export const formatCompact = (value: number): string => COMPACT_NUMBER_FORMATTER.format(value);
 
+// USD currency formatter (e.g. "$4.23") shared across the Sessions and Tokens
+// pages — costs render identically wherever a session or a token summary
+// names a dollar figure. `sessionsFormat.ts` re-exports this rather than
+// declaring its own copy.
+export const USD_FORMATTER = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 const BYTES_PER_UNIT = 1024;
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
 

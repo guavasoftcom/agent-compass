@@ -89,7 +89,10 @@ const ContextFootprintCard = ({ rows }: ContextFootprintCardProps) => {
           </Typography>
         </Box>
       ) : (
-        <BreakdownList rows={breakdownRows} layout="stacked" showColorDot />
+        // Ranked with a leading number rather than a color dot: the order is what
+        // this card is saying, and its colors carry no meaning shared with any
+        // other chart on the page.
+        <BreakdownList rows={breakdownRows} layout="stacked" showRank />
       )}
     </Paper>
   );

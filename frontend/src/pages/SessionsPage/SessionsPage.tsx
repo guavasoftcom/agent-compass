@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
   fetchSessionPrompts,
-  fetchSessionRequests,
   fetchSessions,
   fetchSessionsSummary,
   type SessionsSortModel,
@@ -20,6 +20,20 @@ const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 // cost is one click away on its sortable column). Maps to the existing `endTimestamp`.
 const DEFAULT_SORT: SessionsSortModel = { field: 'endTimestamp', direction: 'desc' };
 
+/**
+ * Deep-link query param — `/sessions?sessionId=…` lands with that session's
+ * prompt timeline already open. The Tokens page's cache-efficiency detail
+ * dialog is the current caller.
+ */
+const DEEP_LINK_SESSION_PARAM = 'sessionId';
+
+/** Builds the `?sessionId=` deep link consumed by this page's mount-time
+ * seeding above — the single place the param name is spelled, for any other
+ * page (e.g. the Tokens page's cache-efficiency detail dialog) that wants to
+ * link a user into a session's prompt timeline. */
+export const sessionsDeepLink = (sessionId: string): string =>
+  `/sessions?${DEEP_LINK_SESSION_PARAM}=${encodeURIComponent(sessionId)}`;
+
 const EMPTY_KPIS: SessionsKpis = {
   totalSessions: 0,
   medianCostUsd: 0,
@@ -36,8 +50,30 @@ export default function SessionsPage() {
     pageSize: DEFAULT_PAGE_SIZE,
   });
   const [sortModel, setSortModel] = useState<SessionsSortModel>(DEFAULT_SORT);
-  // Prompt-timeline row expansion: only one session's prompts are shown at a time.
-  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Session detail drawer: only one session's prompt timeline is open at a time.
+  // Seeded from the deep-link param so arriving from another page opens that
+  // session's timeline instead of an unscrolled, unfiltered table.
+  const [openSessionId, setOpenSessionId] = useState<string | null>(
+    () => searchParams.get(DEEP_LINK_SESSION_PARAM),
+  );
+
+  // The deep-link param is consumed once, at mount, by the initializer above,
+  // then dropped from the URL: expansion is ordinary page state from that point
+  // on, so leaving the param in place would only mean a reload silently
+  // re-opening a row the user had closed.
+  useEffect(() => {
+    if (!searchParams.has(DEEP_LINK_SESSION_PARAM)) {
+      return;
+    }
+    setSearchParams(
+      (previous) => {
+        previous.delete(DEEP_LINK_SESSION_PARAM);
+        return previous;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
 
   const selectionKey =
     selection.kind === 'preset'
@@ -69,28 +105,33 @@ export default function SessionsPage() {
     placeholderData: keepPreviousData,
   });
 
-  // Full, untruncated prompt timeline for the expanded session. Fires only while
-  // a row is open (enabled gate); not polled. Re-expanding refetches past the
-  // global staleTime so a live session's growing timeline stays current.
+  const rows = sessionsQuery.data?.items ?? [];
+
+  // Full, untruncated prompt timeline for the open session. Fires only while a
+  // session is both open AND actually present in the currently loaded page (not
+  // polled; re-opening refetches past the global staleTime so a live session's
+  // growing timeline stays current). The second half of that gate matters for
+  // the `?sessionId=` deep link: it can name a session that isn't on the table's
+  // first page under the default sort, and without the `rows.some(...)` check
+  // this query would fire a wasted whole-session fetch for a drawer that can
+  // never open (the view resolves the header row from the same page).
   const sessionPromptsQuery = useQuery({
-    queryKey: ['session-prompts', expandedSessionId],
-    queryFn: () => fetchSessionPrompts(expandedSessionId as string),
-    enabled: expandedSessionId !== null,
+    queryKey: ['session-prompts', openSessionId],
+    queryFn: () => fetchSessionPrompts(openSessionId as string),
+    enabled:
+      openSessionId !== null
+      && rows.some((row) => row.sessionId === openSessionId),
   });
 
-  // Every LLM request in the expanded session, backing the timeline's per-turn
-  // drill-down. Fetched once per session and grouped by prompt id in the panel,
-  // so opening and closing individual turns costs no further requests. Same
-  // enabled gate as the prompt timeline; an empty result is normal for sessions
-  // recorded without event logging and simply means no drill-down is offered.
-  const sessionRequestsQuery = useQuery({
-    queryKey: ['session-requests', expandedSessionId],
-    queryFn: () => fetchSessionRequests(expandedSessionId as string),
-    enabled: expandedSessionId !== null,
-  });
+  // Clicking the open session's row again closes its drawer; clicking another
+  // row swaps the drawer's contents without a close-then-open round trip.
+  const handleToggleSessionDetail = (sessionId: string) => {
+    setOpenSessionId((previous) => (previous === sessionId ? null : sessionId));
+  };
 
-  const handleToggleExpand = (sessionId: string) => {
-    setExpandedSessionId((previous) => (previous === sessionId ? null : sessionId));
+  // The drawer's own close affordances: × button, backdrop click, Escape.
+  const handleCloseSessionDetail = () => {
+    setOpenSessionId(null);
   };
 
   const handleReload = () => {
@@ -99,23 +140,24 @@ export default function SessionsPage() {
     sessionsQuery.refetch();
   };
 
-  // An expanded row rarely maps to the same position after a window/sort/page
-  // change, so drop the open panel defensively on each. onReload is intentionally
-  // NOT reset — it revalidates the same page and shouldn't collapse the panel.
+  // An open session rarely survives a window/sort/page change (its row may not
+  // even be on the new page), so close the drawer defensively on each. onReload
+  // is intentionally NOT reset — it revalidates the same page and shouldn't
+  // yank the drawer out from under the user.
   const handleSelectionChange = (next: WindowSelection) => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
-    setExpandedSessionId(null);
+    setOpenSessionId(null);
     setSelection(next);
   };
 
   const handleSortModelChange = (next: SessionsSortModel) => {
     setPaginationModel((previous) => ({ ...previous, page: 0 }));
-    setExpandedSessionId(null);
+    setOpenSessionId(null);
     setSortModel(next);
   };
 
   const handlePaginationModelChange = (next: PaginationModel) => {
-    setExpandedSessionId(null);
+    setOpenSessionId(null);
     setPaginationModel(next);
   };
 
@@ -129,7 +171,7 @@ export default function SessionsPage() {
       selection={selection}
       onSelectionChange={handleSelectionChange}
       windows={WINDOWS}
-      rows={sessionsQuery.data?.items ?? []}
+      rows={rows}
       rowCount={sessionsQuery.data?.totalCount ?? summaryQuery.data?.totalSessions ?? 0}
       paginationModel={paginationModel}
       onPaginationModelChange={handlePaginationModelChange}
@@ -142,13 +184,12 @@ export default function SessionsPage() {
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}
       isPolling={isPolling}
-      expandedSessionId={expandedSessionId}
-      onToggleExpand={handleToggleExpand}
+      openSessionId={openSessionId}
+      onToggleSessionDetail={handleToggleSessionDetail}
+      onCloseSessionDetail={handleCloseSessionDetail}
       promptTimeline={sessionPromptsQuery.data ?? null}
       promptTimelineLoading={sessionPromptsQuery.isLoading}
       promptTimelineError={sessionPromptsQuery.error as Error | null}
-      sessionRequests={sessionRequestsQuery.data ?? null}
-      sessionRequestsLoading={sessionRequestsQuery.isLoading}
     />
   );
 }

@@ -263,9 +263,11 @@ class SessionControllerTest {
     void cacheEfficiencyReturnsRankedSessionsAndDefaultsToTwentyFourHoursAndEightRows() throws Exception {
         when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt())).thenReturn(List.of(
                 new SessionCacheEfficiency(
-                        "7b3fc524-7f3c-4db5-9bb4-da27b77df56b", 0.41, 410_000L, 1_000_000L, 1_240_000L, 4.12),
+                        "7b3fc524-7f3c-4db5-9bb4-da27b77df56b", 0.41, 410_000L,
+                        130_000L, 460_000L, 240_000L, 4.12),
                 new SessionCacheEfficiency(
-                        "025a8c32-26ff-409d-b704-dc19dcecbb47", 0.88, 880_000L, 1_000_000L, 1_100_000L, 1.05)));
+                        "025a8c32-26ff-409d-b704-dc19dcecbb47", 0.88, 880_000L,
+                        40_000L, 80_000L, 100_000L, 1.05)));
 
         mockMvc.perform(get("/api/sessions/cache-efficiency"))
                 .andExpect(status().isOk())
@@ -274,6 +276,11 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[0].cacheEfficiency").value(0.41))
                 .andExpect(jsonPath("$[0].cacheReadTokens").value(410000))
                 .andExpect(jsonPath("$[0].inputSideTokens").value(1000000))
+                .andExpect(jsonPath("$[0].inputTokens").value(130000))
+                .andExpect(jsonPath("$[0].cacheCreationTokens").value(460000))
+                .andExpect(jsonPath("$[0].outputTokens").value(240000))
+                // Both derived, not carried: inputSideTokens is the three input-side
+                // kinds summed and totalTokens adds output on top of it.
                 .andExpect(jsonPath("$[0].totalTokens").value(1240000))
                 .andExpect(jsonPath("$[0].costUsd").value(4.12))
                 .andExpect(jsonPath("$[1].cacheEfficiency").value(0.88));

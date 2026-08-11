@@ -510,6 +510,33 @@ so the edge tracks the cursor 1:1.
   shown in the left meta column (normalized: strip unit suffixes like `_ms`/`_ns`, take the
   last dot-segment, lowercase) and any key matching `tokens?$`. Removing or widening `LEFT_KEYS`
   will re-surface those fields in the attribute grid.
+- **The model badge is on the waterfall row, not the drawer.** `SpanWaterfallRow` renders
+  `shortModelName(attributes.model ?? attributes['gen_ai.request.model'])` as a primary-tinted
+  pill next to the span name — the tool chip's counterpart for `llm_request` spans, so a trace
+  that switched models mid-run reads straight off the tree. Both keys are present on 100% of real
+  `llm_request` spans and always agree; the fallback is for the OTel-canonical key outliving the
+  vendor one, not for disagreement. In the **drawer**, model is deliberately left as an ordinary
+  row in the generic Attributes section — it is not promoted into the meta grid and is not in
+  `LEFT_KEYS`. An earlier revision did promote it; it was reverted as redundant with the badge.
+  Non-model spans (tool, session, interaction) carry neither key and render no badge.
+  When the span has an effort, it folds into that same pill as `Opus 5[1m] · high` rather than
+  taking a second badge — the row already carries tokens and cost, and a fourth pill crowds it.
+  `shortModelName` is the shared `lib/format` formatter every other per-model surface uses — it
+  renders `claude-opus-5[1m]` as `Opus 5[1m]` and is imperfect on dated ids
+  (`claude-haiku-4-5-20251001` → `Haiku 4 5 20251001`); the full raw id is the pill's `title`
+  tooltip. Don't add a second model formatter to pretty that up — fix the shared one.
+- **`effort` reaches the span by correlation, not as an attribute.** Claude Code never emits it
+  on a span; it lives only on the `api_request` log. `Span.effort` is filled from the
+  `span_efforts` view (`V15`), which joins the two on the **`request_id`** attribute — *not*
+  `span_id`, because per V14 those logs are stamped with the span that was *active* (the
+  interaction root, or a `tool.execution` span), never the `llm_request` child. A `span_id` join
+  would attach effort to the wrong span and look plausible doing it. The correlation is exact
+  rather than heuristic: `request_id` is unique on both sides (14,055/14,055 spans;
+  14,047/14,047 logs), and input/output token counts agree on all 13,999 joined rows.
+  `effort` is **null when not recorded** — ~2% of recent calls, more in older traces — and the
+  badge then shows the model alone. Never substitute a default level; "unrecorded" and "medium"
+  are different facts. `speed` *is* a span attribute but is `normal` on 100% of rows, so it
+  carries no information — don't add it.
 - **Long attribute value modal.** `LogEntry` truncates inline display at 240 chars and shows a
   "view formatted" button. The modal runs the raw text through `tryParseJson` (jsonrepair) so
   truncated OTLP payloads display as best-effort formatted JSON with a repair warning banner.

@@ -69,6 +69,15 @@ export interface BreakdownListProps {
    */
   showColorDot?: boolean;
   /**
+   * When `true`, the row's 1-based position in `rows` is rendered in place of
+   * the color dot, for `'stacked'` layout only. Used by `ContextFootprintCard`,
+   * whose ranking is the point of the card — a color dot doesn't communicate
+   * "1st, 2nd, 3rd" the way a number does. Mutually exclusive with
+   * `showColorDot` in practice; when both are passed the rank wins, since a row
+   * that carries a rank has no use for a second leading marker.
+   */
+  showRank?: boolean;
+  /**
    * When `true`, the value is rendered in the display font at a large
    * typographic size (matching the "Token sum by model" card). Only
    * meaningful for `'column-card'` layout.
@@ -80,6 +89,12 @@ export interface BreakdownListProps {
    */
   percentageDecimalPlaces?: number;
 }
+
+/**
+ * Fixed width of the `showRank` number column, so two-digit ranks don't shift
+ * the labels below them out of alignment with the single-digit ones above.
+ */
+const RANK_COLUMN_WIDTH = 18;
 
 /** Resolves the bar/dot color for a single row. */
 const resolveColor = (row: BreakdownRow): string => {
@@ -95,10 +110,10 @@ const resolveColor = (row: BreakdownRow): string => {
 
 /**
  * A shared "label · value · percentage · LinearProgress" list used across
- * ToolRankingCard, MetricBreakdown, and TokenByModelCard.
+ * ToolRankingCard, MetricBreakdown, TokenByModelCard, and ContextFootprintCard.
  *
- * The three call sites each use a different `layout` variant; `showColorDot`
- * and `largeValue` cover the remaining visual differences. The surrounding
+ * The call sites use different `layout` variants; `showColorDot` / `showRank` /
+ * `largeValue` cover the remaining visual differences. The surrounding
  * Paper/title/heading stays in each card — this component replaces only the
  * repeated row+bar markup.
  */
@@ -106,6 +121,7 @@ const BreakdownList = ({
   rows,
   layout = 'stacked',
   showColorDot = false,
+  showRank = false,
   largeValue = false,
   percentageDecimalPlaces = 1,
 }: BreakdownListProps) => {
@@ -292,7 +308,19 @@ const BreakdownList = ({
                 fontSize: 13,
               }}
             >
-              {showColorDot && (
+              {showRank && (
+                <Box
+                  sx={{
+                    width: RANK_COLUMN_WIDTH,
+                    flexShrink: 0,
+                    color: 'text.disabled',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {index + 1}
+                </Box>
+              )}
+              {showColorDot && !showRank && (
                 <Box
                   sx={{
                     width: 9,

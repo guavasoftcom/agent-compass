@@ -47,6 +47,11 @@ public class TuningProperties {
    * Span name for the leaf span that times a single LLM request. Carries
    * {@link #requestIdAttribute}, which {@code api_request*} logs share for
    * trace-detail correlation.
+   *
+   * <p>Also mirrored in SQL by the {@code span_efforts} view ({@code V15}), which
+   * restricts the correlation to spans with this name so a stray span that
+   * happens to carry a {@link #requestIdAttribute} value can never be matched.
+   * Overriding this property means a migration redefining that view.
    */
   private String llmRequestSpanName = "claude_code.llm_request";
 
@@ -62,6 +67,12 @@ public class TuningProperties {
    * Attribute key shared by {@code api_request*} logs and the
    * {@link #llmRequestSpanName} span. Used the same way as
    * {@link #toolCallIdAttribute} to re-point LLM logs onto the exact request span.
+   *
+   * <p>Also mirrored in SQL by the {@code span_efforts} view ({@code V15}) and the
+   * partial index backing it ({@code idx_log_records_request_id}), which join
+   * spans to {@code api_request} logs on this attribute to fill {@code Span.effort}.
+   * Overriding this property means a migration redefining both, or the trace
+   * detail page's effort correlation silently stops matching any row.
    */
   private String requestIdAttribute = "request_id";
 
@@ -75,10 +86,12 @@ public class TuningProperties {
    * by the equivalent {@code LEFT JOIN LATERAL} predicates {@code SpanRepository}
    * runs directly against {@code log_records} for pushdown in the trace-list
    * queries, which together are where every trace-level and span-level cost
-   * figure comes from — the same SQL-mirrors-configuration arrangement
-   * {@code derive_log_severity()} ({@code V6}) has. Overriding either property
-   * means a migration that redefines those views plus an update to the lateral
-   * predicates, or the Traces pages will read cost from the wrong rows.
+   * figure comes from, plus the {@code span_efforts} view ({@code V15}) that
+   * correlates {@link #apiRequestEffortAttribute} onto spans — the same
+   * SQL-mirrors-configuration arrangement {@code derive_log_severity()}
+   * ({@code V6}) has. Overriding this property means a migration that redefines
+   * those views plus an update to the lateral predicates, or the Traces pages
+   * will read cost and effort from the wrong rows.
    */
   private String apiRequestEventName = "api_request";
 
@@ -89,6 +102,22 @@ public class TuningProperties {
    * mirroring note above.
    */
   private String apiRequestCostAttribute = "cost_usd";
+
+  /**
+   * Attribute key on an {@link #apiRequestEventName} log carrying the reasoning
+   * effort the call ran at ({@code high} / {@code medium} / {@code xhigh} /
+   * {@code max}). Claude Code never emits this as a span attribute, so the
+   * {@code span_efforts} view ({@code V15}) correlates it back onto the
+   * {@link #llmRequestSpanName} span through {@link #requestIdAttribute} to fill
+   * {@code Span.effort}.
+   *
+   * <p>Mirrored in SQL by that view, with the same consequence as the cost
+   * mirroring above: overriding this means a migration redefining
+   * {@code span_efforts}, or the trace detail page reads effort from the wrong
+   * attribute. A log that carries no value here is simply absent from the view —
+   * the span's effort stays null, and null means not recorded, not a default.
+   */
+  private String apiRequestEffortAttribute = "effort";
 
   /**
    * Value of {@code event.name} for the LLM request-payload log. It carries only

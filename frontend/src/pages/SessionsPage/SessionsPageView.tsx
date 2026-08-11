@@ -3,10 +3,10 @@ import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import TablePager from '../../components/TablePager';
 import { resolveWindow } from '../../lib/resolveWindow';
+import SessionDetailDrawer from './components/SessionDetailDrawer';
 import SessionsKpiStrip from './components/SessionsKpiStrip';
 import SessionsTable from './components/SessionsTable';
 import type {
-  SessionApiRequestRow,
   SessionPromptRow,
   SessionSummaryRow,
   SessionsSortModel,
@@ -46,17 +46,14 @@ export interface SessionsPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
-  // Prompt-timeline row expansion (single open row at a time).
-  expandedSessionId: string | null;
-  onToggleExpand: (sessionId: string) => void;
+  // Session detail drawer (one session open at a time). The row stays
+  // highlighted while its drawer is open; clicking it again toggles closed.
+  openSessionId: string | null;
+  onToggleSessionDetail: (sessionId: string) => void;
+  onCloseSessionDetail: () => void;
   promptTimeline: SessionPromptRow[] | null;
   promptTimelineLoading: boolean;
   promptTimelineError: Error | null;
-  // Per-request drill-down rows for the expanded session; grouped by prompt id
-  // inside PromptTimelinePanel. Null/empty means the session has no per-request
-  // detail, not that it had no spend.
-  sessionRequests: SessionApiRequestRow[] | null;
-  sessionRequestsLoading: boolean;
 }
 
 // Viewport height reserved for the page chrome above the table (header + KPI strip),
@@ -80,16 +77,22 @@ const SessionsPageView = ({
   autoRefresh,
   onAutoRefreshChange,
   isPolling,
-  expandedSessionId,
-  onToggleExpand,
+  openSessionId,
+  onToggleSessionDetail,
+  onCloseSessionDetail,
   promptTimeline,
   promptTimelineLoading,
   promptTimelineError,
-  sessionRequests,
-  sessionRequestsLoading,
 }: SessionsPageViewProps) => {
   const showLoading = isLoading && rows.length === 0;
   const showEmpty = !isLoading && rows.length === 0;
+
+  // The drawer header repeats the open row's own figures, so it reads from the
+  // loaded page rather than from a second fetch. A session id that isn't on the
+  // current page (a stale `?sessionId=` deep link) resolves to null and the
+  // drawer simply stays closed — the same case the prompts query fails closed on.
+  const openSession =
+    rows.find((row) => row.sessionId === openSessionId) ?? null;
 
   // Bounds of the active window, so the prompt timeline can dim turns that
   // fall outside it (the /prompts endpoint returns the whole session, not
@@ -149,15 +152,8 @@ const SessionsPageView = ({
             onSortModelChange={onSortModelChange}
             showLoading={showLoading}
             showEmpty={showEmpty}
-            sessionRequests={sessionRequests}
-            sessionRequestsLoading={sessionRequestsLoading}
-            expandedSessionId={expandedSessionId}
-            onToggleExpand={onToggleExpand}
-            promptTimeline={promptTimeline}
-            promptTimelineLoading={promptTimelineLoading}
-            promptTimelineError={promptTimelineError}
-            windowStartMs={windowStartMs}
-            windowEndMs={windowEndMs}
+            openSessionId={openSessionId}
+            onToggleSessionDetail={onToggleSessionDetail}
           />
         </div>
         <TablePager
@@ -175,6 +171,16 @@ const SessionsPageView = ({
           }
         />
       </Paper>
+
+      <SessionDetailDrawer
+        session={openSession}
+        onClose={onCloseSessionDetail}
+        prompts={promptTimeline}
+        promptsLoading={promptTimelineLoading}
+        promptsError={promptTimelineError}
+        windowStartMs={windowStartMs}
+        windowEndMs={windowEndMs}
+      />
     </PageLayout>
   );
 };

@@ -13,7 +13,7 @@ refresh needs a few **additive** fields on the two existing responses plus the n
 | **New** *Last activity* column (relative "time ago", **default sort**) | reuses existing `endTimestamp` — must be **sortable** |
 | **New** *Terminal* column (interactive / non-interactive badge) | `terminalType` on each session row |
 | **New** *Prompt* column (first-prompt preview + `+N` pill) | `firstUserPrompt` + `userPromptCount` on each session row |
-| **New** row-expand → *prompt timeline* panel (per-turn model · cost · tool chips · trace link) | new `GET /api/sessions/{id}/prompts` endpoint |
+| **New** row-click → *prompt timeline* detail drawer (per-turn model · cost · tool chips · trace link) | new `GET /api/sessions/{id}/prompts` endpoint |
 | *Total sessions* card now shows a **trend sparkline** | `sessionsTrend` (per-bucket new-session counts) on the summary |
 
 `terminalType` comes straight off the `claude_code.session.count` points you already ingest
@@ -32,9 +32,9 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
   "items": [
     {
       "sessionId": "a67f8c25-ed9c-461c-92eb-afd704e94c03",
-      "startTimestamp": "2026-05-22T20:51:59.925Z",
-      "endTimestamp":   "2026-05-22T21:34:18.000Z",  // NOW = Last activity column + default sort;
-                                                    //   should track latest captured activity
+      "startTimestamp": "2026-05-22T20:51:59.925Z", // WHOLE-SESSION open, not window-clipped
+      "endTimestamp":   "2026-05-22T21:34:18.000Z",  // Last activity column + default sort;
+                                                    //   newest emission carrying an increment
       "costUsd": 23.51,                  // WHOLE-SESSION spend, not window-clipped (see below)
       "tokens": 5400000,                 // NEW — raw integer, client formats to "5.4M"
       "tokenBreakdown": {                // NEW — four-way split for the hover tooltip;
@@ -57,16 +57,30 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
 }
 ```
 
-> **`costUsd` and `activeTimeSeconds` are whole-session; everything else on the row is
-> window-scoped.** The window selects which sessions appear (a session must have at least one
-> cost / active-time emission inside it) and supplies `startTimestamp` / `endTimestamp`, but the
-> cost and active-time rollups then join back to that session-id set with **no** timestamp
-> predicate — a session that began before the window reports its full spend, not the sliver
-> inside the range. The two move together because the grid derives `$/active min` as
-> `costUsd / activeTimeSeconds` client-side. `sort=costUsd` / `sort=activeTimeSeconds` /
-> `sort=costPerActiveMinuteUsd` order by the same whole-session values, so the visible order
-> matches the visible figures. The summary KPIs are unchanged and remain window-scoped, so
-> *Median cost/session* will not equal the median of the Cost column.
+> **`costUsd`, `activeTimeSeconds`, `startTimestamp` and `endTimestamp` are whole-session;
+> tokens and the log-derived counts are window-scoped.** The window selects which sessions
+> appear (a session must post at least one cost / active-time **increment** inside it — see the
+> heartbeat note below), but those four rollups then join back to that session-id set with **no**
+> timestamp predicate — a session that began before the window reports its full spend and its
+> real start, not the sliver inside the range. Cost and active time move together because the
+> grid derives `$/active min` as `costUsd / activeTimeSeconds` client-side. `sort=costUsd` /
+> `sort=activeTimeSeconds` / `sort=costPerActiveMinuteUsd` / `sort=startTimestamp` /
+> `sort=endTimestamp` order by the same whole-session values, so the visible order matches the
+> visible figures. The summary KPIs remain window-scoped, so *Median cost/session* will not
+> equal the median of the Cost column.
+
+> **Membership requires an increment, not just an emission.** Claude Code's exporter never
+> retires a metric stream: every session it has ever hosted keeps re-emitting its cumulative
+> cost/active-time counters once a minute, forever, at an unchanged value. On live data 98.9% of
+> all cost/active-time points are these zero-delta re-exports, and sessions two days dead were
+> still emitting them in the current minute. Selecting sessions on "has a point in the window"
+> therefore listed every session ever recorded on every window — each showing `$0.00`, each with
+> a start clipped to the window edge and a last-activity of *now*, which under the default
+> `endTimestamp desc` sort buried the genuinely active session beneath a wall of ghosts. Both
+> `/api/sessions` and `/api/sessions/summary` require `value_delta` to be non-zero for a point to
+> count as activity. `startTimestamp` comes from `MIN(start_timestamp)` — for a cumulative stream
+> that is when the stream opened, one export interval (~45s) earlier than the first emission —
+> and `endTimestamp` from the newest timestamp actually carrying an increment.
 
 **How to compute each new field (per `session.id`, within the window):**
 
@@ -111,17 +125,18 @@ the UI, so they need no sort support. Other existing sortable fields (`startTime
 
 > **Default sort changed** from `costUsd desc` to **`endTimestamp desc`** (most recently active
 > first) — recency is the operational landing state; cost remains one click away on its column.
-> `endTimestamp` should reflect the session's **latest captured activity** (max event time for
-> the `session.id`), not just a fixed session-close time, so live sessions sort to the top.
+> `endTimestamp` reflects the session's **latest captured activity** — the newest emission for
+> the `session.id` that carried a counter increment, not merely its newest emission — so live
+> sessions sort to the top while idle ones do not masquerade as live.
 
 ---
 
 ## `GET /api/sessions/{id}/prompts` — NEW endpoint (prompt timeline)
 
-Fetched **on demand** when the user expands a session row — the full, untruncated per-turn
-timeline for one session. **Not window-scoped** (no `from`/`to`), no paging beyond the path
-segment; ascending by time, cap ~500 rows. Fires only while a row is open and is **not**
-polled; re-expanding refetches past the global 30s `staleTime` so a live session's growing
+Fetched **on demand** when the user opens a session's detail drawer — the full, untruncated
+per-turn timeline for one session. **Not window-scoped** (no `from`/`to`), no paging beyond the
+path segment; ascending by time, cap ~500 rows. Fires only while a session is open and is
+**not** polled; re-opening refetches past the global 30s `staleTime` so a live session's growing
 timeline stays current.
 
 > **Whole-session timeline vs. the dashboard window.** Because this endpoint returns the
@@ -239,9 +254,10 @@ measure.
 ## `GET /api/sessions/{id}/requests` — NEW endpoint (per-request drill-down)
 
 Every `api_request` log for the session, oldest first, capped at 500 rows. Not window-scoped,
-matching `/prompts`. Powers the timeline's per-turn drill-down table; the panel fetches it once
-per expanded session and groups client-side by `promptId`, so opening individual turns costs
-nothing extra.
+matching `/prompts`. The frontend's per-turn drill-down table (`TurnRequestTable`) that used to
+call this was removed — grouping by `promptId` and rendering these rows inline was judged
+trace-level detail that belongs in the trace detail page's span inspector instead. The endpoint
+is retained for potential future use; it has no frontend consumer today.
 
 ```jsonc
 [
@@ -286,8 +302,17 @@ existing `SessionKpis` payload; the Total-sessions card draws it as a line spark
 ```
 
 - Bucket the window into ~24 even slices and count **distinct `session.id`** whose session
-  **opened** in each slice (use the `start_timestamp` of the session's `session.count` points).
-  Order oldest → newest. ~12–48 points renders well; an empty array hides the line.
+  **opened** in each slice, using the session's true `MIN(start_timestamp)` rather than its
+  earliest emission inside the window. Order oldest → newest. ~12–48 points renders well; an
+  empty array hides the line.
+
+> **The buckets do not sum to `totalSessions`, by design.** The card counts sessions that were
+> *active* in the window; the sparkline counts sessions that *began* in it, and a session resumed
+> after days of idling belongs to the first population only. Bucketing on the earliest in-window
+> emission would make the two agree, but only by redrawing every long-running session as brand
+> new whenever the window narrows — the same clipping artefact described in the heartbeat note
+> above. A short window in which work continued on an older session correctly yields an all-zero
+> sparkline.
 
 ---
 
@@ -344,7 +369,7 @@ export interface SessionKpis {
 }
 ```
 
-Add the fetcher the container calls on row-expand:
+Add the fetcher the container calls when a session's drawer opens:
 
 ```ts
 export const fetchSessionPrompts = (sessionId: string): Promise<SessionPromptRow[]> =>
