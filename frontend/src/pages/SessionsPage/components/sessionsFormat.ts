@@ -1,13 +1,15 @@
 // Formatters shared between SessionsKpiStrip and SessionsTable.
+//
+// Cache efficiency deliberately does NOT live here: the Tokens page needs the same
+// ratio and bands, so they live in `lib/cacheEfficiency.ts` alongside the note about
+// the three backend expressions that have to match. Import them from there.
+//
+// USD_FORMATTER also does NOT live here: the Tokens page needs the identical
+// formatter (session-detail dialog, rank card), so it's defined once in
+// `lib/format.ts` and re-exported below so existing SessionsPage imports keep
+// working unchanged.
 
-import type { SessionTokenBreakdown } from '../../../api';
-
-export const USD_FORMATTER = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+export { USD_FORMATTER } from '../../../lib/format';
 
 export const USD_PER_MINUTE_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -57,36 +59,22 @@ export const formatTokens = (value: number): string => {
   return `${Math.round(value)}`;
 };
 
-// Cache efficiency = cacheRead / (input + cacheCreation + cacheRead): the fraction of a
-// session's input-side tokens served from the prompt cache. Output tokens are generated,
-// never cached, so they're excluded from the denominator. Returns null when the session
-// recorded no input-side tokens (efficiency undefined) so callers render "—". The
-// backend's `cacheEfficiency` sort column orders by this exact ratio, so the column stays
-// consistent whether the browser derives the value for display or the server sorts by it.
-export const cacheEfficiencyRatio = (
-  breakdown: SessionTokenBreakdown | null | undefined,
-): number | null => {
-  if (!breakdown) {
-    return null;
-  }
-  const inputSideTokens =
-    breakdown.input + breakdown.cacheCreation + breakdown.cacheRead;
-  if (inputSideTokens <= 0) {
-    return null;
-  }
-  return breakdown.cacheRead / inputSideTokens;
-};
-
-// Ratio (0..1) → whole-percent string; "—" for null / non-finite input.
-export const formatCacheEfficiency = (ratio: number | null): string => {
-  if (ratio == null || !Number.isFinite(ratio)) {
-    return '—';
-  }
-  return `${Math.round(ratio * 100)}%`;
-};
-
 export const formatTimestamp = (value: string): string =>
   value ? new Date(value).toLocaleString() : '';
+
+// Compact "Aug 9, 10:36 AM" — for the session detail drawer's metadata line,
+// where the full locale string formatTimestamp returns is too long to sit next
+// to three other facts. Seconds are dropped deliberately: the line describes
+// when a session began, not an event to correlate.
+export const formatShortTimestamp = (value: string): string =>
+  value
+    ? new Date(value).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    : '';
 
 // Relative "time ago" for the Last activity column (the default sort). Compact
 // buckets — just now / Nm / Nh / Nd ago.

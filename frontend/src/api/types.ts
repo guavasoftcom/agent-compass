@@ -88,6 +88,13 @@ export interface SpanRow {
   // the request was issued — the interaction root or a tool.execution span, not
   // the llm_request child). 0 for spans no request was logged against.
   costUsd?: number | null;
+  // Reasoning effort this call ran at ('high' / 'medium' / 'xhigh' / 'max'),
+  // from the span_efforts view. Claude Code emits effort only on the api_request
+  // log, never as a span attribute, so the backend correlates it back by
+  // request_id — exact, not heuristic, because that id is unique on both sides.
+  // Null on non-model spans and on calls whose log recorded no effort (~2% of
+  // recent traffic). Null means NOT RECORDED — never render it as a default level.
+  effort?: string | null;
 }
 
 export interface ListResult<T> {
@@ -186,6 +193,59 @@ export interface TokenUsageSummary {
 }
 
 /**
+ * One session in the worst-cache-efficiency ranking
+ * (`GET /api/sessions/cache-efficiency`). `cacheEfficiency` is the same ratio
+ * `lib/cacheEfficiency.ts` computes for the Sessions grid column — the backend
+ * ranks by it so the list and the column can never disagree. Sessions below the
+ * server's input-side token floor are absent rather than shown at 0%.
+ */
+export interface SessionCacheEfficiencyRow {
+  sessionId: string;
+  /** cacheRead / (input + cacheCreation + cacheRead), 0..1. Never null. */
+  cacheEfficiency: number;
+  cacheReadTokens: number;
+  /** The ratio's denominator: input + cacheCreation + cacheRead. */
+  inputSideTokens: number;
+  /**
+   * `inputSideTokens` decomposed. `inputTokens + cacheCreationTokens +
+   * cacheReadTokens` always equals `inputSideTokens` — they are the same
+   * aggregation one level less collapsed, not a second measurement, which is
+   * what lets the session detail draw its token bar without a second fetch.
+   */
+  inputTokens: number;
+  cacheCreationTokens: number;
+  /**
+   * The one kind outside the ratio — generated rather than sent, so the cache
+   * could never have served it. Sent explicitly rather than left to a
+   * `totalTokens - inputSideTokens` subtraction here, so the row stays
+   * self-describing; it is the fourth segment of the session detail's bar.
+   */
+  outputTokens: number;
+  /** All four kinds including output — a scale hint, not the denominator. */
+  totalTokens: number;
+  /** Whole-session spend, matching the Sessions grid's Cost column. */
+  costUsd: number;
+}
+
+/**
+ * One tool's context-window footprint (`GET /api/tool-activity/context-footprint`).
+ *
+ * `estimatedTokens` is `totalBytes / 4` — an estimate of one-time injection size
+ * for ranking tools against each other. It is NOT billed spend: never add it to,
+ * or display it alongside, the exact figures on `TokenUsageSummary`, and note
+ * that it understates real cost because a tool result is re-sent with every
+ * later request in its session.
+ */
+export interface ToolContextFootprintRow {
+  tool: string;
+  /** Calls that reported a size, including failures; excludes sizeless calls. */
+  calls: number;
+  totalBytes: number;
+  estimatedTokens: number;
+  p95Bytes: number;
+}
+
+/**
  * Four-way token split (reset-aware sums of claude_code.token.usage by the
  * `type` attribute). Missing kinds are 0, never null.
  */
@@ -245,7 +305,27 @@ export interface SessionPromptRow {
   tokens?: SessionTokenBreakdown | null;
   /** Tool calls the turn triggered, count desc. Empty/null → "No tool calls". */
   tools?: { name: string; count: number }[] | null;
+  /**
+   * Turn identifier, shared with the api_request logs it issued. Null on turns
+   * predating prompt-id stamping.
+   */
+  promptId?: string | null;
+  /** api_request logs correlated to this turn. 0 whenever attribution is INTERVAL. */
+  requestCount?: number;
+  /**
+   * How `model` / `costUsd` / `tokens` were derived. `REQUEST` means exact
+   * per-call figures summed over the turn's own api_request logs. `INTERVAL`
+   * means no such logs exist and the values were bucketed from cumulative metric
+   * counters by timestamp — present the latter as approximate.
+   *
+   * The two are different measurements, not two views of one number: the
+   * counter-derived totals run materially lower than the per-request sums on
+   * cache-read-heavy sessions. Never add or compare them across turns.
+   */
+  attribution?: TurnAttribution;
 }
+
+export type TurnAttribution = 'REQUEST' | 'INTERVAL';
 
 export interface SessionsSortModel {
   field: string;

@@ -3,6 +3,7 @@ import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import TablePager from '../../components/TablePager';
 import { resolveWindow } from '../../lib/resolveWindow';
+import SessionDetailDrawer from './components/SessionDetailDrawer';
 import SessionsKpiStrip from './components/SessionsKpiStrip';
 import SessionsTable from './components/SessionsTable';
 import type {
@@ -45,9 +46,11 @@ export interface SessionsPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
-  // Prompt-timeline row expansion (single open row at a time).
-  expandedSessionId: string | null;
-  onToggleExpand: (sessionId: string) => void;
+  // Session detail drawer (one session open at a time). The row stays
+  // highlighted while its drawer is open; clicking it again toggles closed.
+  openSessionId: string | null;
+  onToggleSessionDetail: (sessionId: string) => void;
+  onCloseSessionDetail: () => void;
   promptTimeline: SessionPromptRow[] | null;
   promptTimelineLoading: boolean;
   promptTimelineError: Error | null;
@@ -55,7 +58,7 @@ export interface SessionsPageViewProps {
 
 // Viewport height reserved for the page chrome above the table (header + KPI strip),
 // subtracted from 100vh to size the scrollable table body.
-const BODY_CHROME_PX = 320;
+const BODY_CHROME_PX = 385;
 
 const SessionsPageView = ({
   selection,
@@ -74,14 +77,22 @@ const SessionsPageView = ({
   autoRefresh,
   onAutoRefreshChange,
   isPolling,
-  expandedSessionId,
-  onToggleExpand,
+  openSessionId,
+  onToggleSessionDetail,
+  onCloseSessionDetail,
   promptTimeline,
   promptTimelineLoading,
   promptTimelineError,
 }: SessionsPageViewProps) => {
   const showLoading = isLoading && rows.length === 0;
   const showEmpty = !isLoading && rows.length === 0;
+
+  // The drawer header repeats the open row's own figures, so it reads from the
+  // loaded page rather than from a second fetch. A session id that isn't on the
+  // current page (a stale `?sessionId=` deep link) resolves to null and the
+  // drawer simply stays closed — the same case the prompts query fails closed on.
+  const openSession =
+    rows.find((row) => row.sessionId === openSessionId) ?? null;
 
   // Bounds of the active window, so the prompt timeline can dim turns that
   // fall outside it (the /prompts endpoint returns the whole session, not
@@ -97,9 +108,9 @@ const SessionsPageView = ({
       eyebrow="Activity"
       title="Sessions"
       subtitle={
-        'Per-session cost and token usage over the selected window. The most expensive sessions '
-        + 'are the most leveraged tuning targets — inspecting their tool sequences and prompts '
-        + 'informs prompt revisions and skill additions.'
+        'Per-session cost and token usage over the selected window. The most expensive sessions ' +
+        'are the most leveraged tuning targets — inspecting their tool sequences and prompts ' +
+        'informs prompt revisions and skill additions.'
       }
       error={error}
       actions={
@@ -127,30 +138,49 @@ const SessionsPageView = ({
           minHeight: 420,
         }}
       >
-        <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'auto' }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowX: 'auto',
+            overflowY: 'auto',
+          }}
+        >
           <SessionsTable
             rows={rows}
             sortModel={sortModel}
             onSortModelChange={onSortModelChange}
             showLoading={showLoading}
             showEmpty={showEmpty}
-            expandedSessionId={expandedSessionId}
-            onToggleExpand={onToggleExpand}
-            promptTimeline={promptTimeline}
-            promptTimelineLoading={promptTimelineLoading}
-            promptTimelineError={promptTimelineError}
-            windowStartMs={windowStartMs}
-            windowEndMs={windowEndMs}
+            openSessionId={openSessionId}
+            onToggleSessionDetail={onToggleSessionDetail}
           />
         </div>
         <TablePager
           page={paginationModel.page}
           pageSize={paginationModel.pageSize}
           rowCount={rowCount}
-          onPageChange={(nextPage) => onPaginationModelChange({ page: nextPage, pageSize: paginationModel.pageSize })}
-          onPageSizeChange={(nextPageSize) => onPaginationModelChange({ page: 0, pageSize: nextPageSize })}
+          onPageChange={(nextPage) =>
+            onPaginationModelChange({
+              page: nextPage,
+              pageSize: paginationModel.pageSize,
+            })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            onPaginationModelChange({ page: 0, pageSize: nextPageSize })
+          }
         />
       </Paper>
+
+      <SessionDetailDrawer
+        session={openSession}
+        onClose={onCloseSessionDetail}
+        prompts={promptTimeline}
+        promptsLoading={promptTimelineLoading}
+        promptsError={promptTimelineError}
+        windowStartMs={windowStartMs}
+        windowEndMs={windowEndMs}
+      />
     </PageLayout>
   );
 };

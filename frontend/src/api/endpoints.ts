@@ -9,6 +9,7 @@ import type {
   IdentifierUsageRow,
   ListResult,
   LogRow,
+  SessionCacheEfficiencyRow,
   SessionKpis,
   SessionPromptRow,
   SessionsPageRequest,
@@ -16,6 +17,7 @@ import type {
   SpanRow,
   ToolCallRow,
   ToolCallTimeseries,
+  ToolContextFootprintRow,
   ToolDenialRow,
   ToolFailureRateRow,
   ToolLatencyRow,
@@ -81,6 +83,26 @@ export const fetchTokenUsage = (
 ): Promise<TokenUsageSummary> => {
   const params = windowQueryParams(selection);
   return getJson(`/api/sessions/token-usage?${params.toString()}`);
+};
+
+// Sessions ranked worst-cache-efficiency-first. The server applies the noise
+// floor (default 100k input-side tokens) and the ranking, so an empty array
+// legitimately means "no session in this window is big enough to judge".
+export const fetchSessionCacheEfficiency = (
+  selection: WindowSelection = { kind: 'preset', minutes: 1440 },
+  limit = 8,
+): Promise<SessionCacheEfficiencyRow[]> => {
+  const params = windowQueryParams(selection);
+  params.set('limit', String(limit));
+  return getJson(`/api/sessions/cache-efficiency?${params.toString()}`);
+};
+
+// Per-tool context-window footprint, largest total bytes first.
+export const fetchToolContextFootprint = (
+  selection: WindowSelection = { kind: 'preset', minutes: 1440 },
+): Promise<ToolContextFootprintRow[]> => {
+  const params = windowQueryParams(selection);
+  return getJson(`/api/tool-activity/context-footprint?${params.toString()}`);
 };
 
 export const fetchSessions = (

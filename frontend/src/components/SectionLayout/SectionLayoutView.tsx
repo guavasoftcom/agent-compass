@@ -1,13 +1,11 @@
-import { Link as RouterLink, Outlet } from 'react-router-dom';
-import { alpha, Box, ButtonBase, Stack } from '@mui/material';
-import { neutralColors } from '../../theme/colors';
+import { Outlet } from 'react-router-dom';
+import { Box } from '@mui/material';
 import PageLayout from '../PageLayout';
 import PageActions from '../PageActions';
+import PillTabs from '../PillTabs';
 import { WINDOWS } from '../../lib/constants';
 import type { WindowSelection } from '../../api';
 import type { SectionTab, SectionContextValue } from './SectionLayout';
-import { fontFamilies } from '../../theme/typography';
-import { radii } from '../../theme/theme';
 
 export interface SectionLayoutViewProps {
   eyebrow?: string;
@@ -55,56 +53,12 @@ export const SectionLayoutView = ({
         />
       }
     >
-      {/* Aurora pill tabs */}
-      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-        {tabs.map((tab) => {
-          const selected = tab.to === activeTab;
-          return (
-            <ButtonBase
-              key={tab.to}
-              component={RouterLink}
-              to={tab.to}
-              focusRipple
-              sx={(theme) => ({
-                px: 2,
-                py: 1,
-                borderRadius: radii.pill,
-                fontFamily: fontFamilies.display,
-                fontSize: 14,
-                fontWeight: 600,
-                lineHeight: 1,
-                letterSpacing: 0.1,
-                border: '1px solid',
-                borderColor: selected ? 'divider' : 'transparent',
-                color: selected ? 'text.primary' : 'text.secondary',
-                backgroundColor: selected
-                  ? theme.palette.mode === 'dark'
-                    ? alpha(neutralColors.white, 0.08)
-                    : alpha(neutralColors.white, 0.9)
-                  : 'transparent',
-                boxShadow: selected
-                  ? theme.palette.mode === 'dark'
-                    ? `inset 0 1px 0 ${alpha(neutralColors.white, 0.07)}`
-                    : `0 1px 2px ${alpha(neutralColors.inkLight, 0.06)}`
-                  : 'none',
-                transition: theme.transitions.create([
-                  'background-color',
-                  'color',
-                  'border-color',
-                ]),
-                '&:hover': {
-                  color: 'text.primary',
-                  backgroundColor: selected
-                    ? undefined
-                    : theme.palette.action.hover,
-                },
-              })}
-            >
-              {tab.label}
-            </ButtonBase>
-          );
-        })}
-      </Stack>
+      {/* Aurora pill tabs — routed form: each tab navigates to its own child route */}
+      <PillTabs
+        tabs={tabs.map((tab) => ({ value: tab.to, label: tab.label, to: tab.to }))}
+        activeValue={activeTab}
+        ariaLabel={`${title} views`}
+      />
 
       <Box sx={{ mt: 0.5 }}>
         <Outlet context={context} />

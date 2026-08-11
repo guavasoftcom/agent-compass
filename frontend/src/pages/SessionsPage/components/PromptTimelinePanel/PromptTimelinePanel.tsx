@@ -137,9 +137,6 @@ const ToolChips = ({ tools }: { tools: { name: string; count: number }[] | null 
 };
 
 interface PromptTimelinePanelProps {
-  // Displayed in the panel header so it's clear which session this timeline
-  // belongs to (matches the row it was expanded from).
-  sessionId?: string;
   prompts: SessionPromptRow[] | null;
   loading: boolean;
   error: Error | null;
@@ -272,6 +269,57 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
   );
 };
 
+/**
+ * Flags a turn whose cost and token figures are approximate.
+ *
+ * INTERVAL turns get a muted "approx" marker: their numbers are bucketed from
+ * cumulative counters by timestamp and are a different, coarser measurement than
+ * a REQUEST turn's — not merely a rounder version of the same one. Labeling them
+ * is what stops a reader from comparing an exact turn against an approximate one
+ * and concluding something changed. REQUEST turns render nothing: exact is the
+ * expectation, so only the exception is worth the ink.
+ */
+const TurnAttributionMarker = ({
+  attribution,
+  requestCount,
+}: {
+  attribution: SessionPromptRow['attribution'];
+  requestCount: number;
+}) => {
+  if (attribution === 'REQUEST' && requestCount > 0) {
+    return null;
+  }
+  // Older sessions carry no attribution field at all; treat a missing value the
+  // same as INTERVAL rather than implying exactness we cannot vouch for.
+  return (
+    <Tooltip
+      title={
+        'Approximate. This turn has no per-request logs, so its model, cost and tokens were '
+        + 'bucketed from cumulative counters by timestamp. Counter totals run lower than '
+        + 'per-request sums on cache-heavy turns — don\'t compare the two directly.'
+      }
+      placement="top"
+      arrow
+    >
+      <Box
+        component="span"
+        sx={{
+          fontFamily: fontFamilies.display,
+          fontSize: 9.5,
+          fontWeight: 700,
+          letterSpacing: '0.8px',
+          textTransform: 'uppercase',
+          color: 'text.disabled',
+          cursor: 'help',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        approx
+      </Box>
+    </Tooltip>
+  );
+};
+
 // Aurora glass timeline: a gradient rail with a glowing dot per turn, each turn
 // a translucent card carrying its timestamp, model chip, per-turn cost, prompt
 // text (or a placeholder for pre-capture rows), tool-call chips, and an optional
@@ -280,14 +328,23 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
 // "View more" → ExpandedValueDialog machinery from components/AttributeList
 // (same pattern as LogTable and the grid's own row detail) rather than
 // rendering full text pre-wrapped inline.
-const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs, windowEndMs }: PromptTimelinePanelProps) => {
+const PromptTimelinePanel = ({
+  prompts,
+  loading,
+  error,
+  windowStartMs,
+  windowEndMs,
+}: PromptTimelinePanelProps) => {
   const [expandedValue, setExpandedValue] = useState<ValueDialogState | null>(null);
 
+  // No height cap and no scroll of its own: the panel fills its container (the
+  // detail drawer's body), which owns the scrolling. Session identity lives in
+  // the drawer header, so the panel header carries only the prompt count.
   const panelSx = {
     px: 2.5,
-    py: 2.25,
-    maxHeight: 340,
-    overflowY: 'auto',
+    pt: 2.25,
+    pb: 3.25,
+    minHeight: '100%',
     background: (t: Theme) =>
       `radial-gradient(600px 200px at 3% 0%, ${alpha(
         t.palette.primary.main,
@@ -296,7 +353,6 @@ const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs
         t.palette.text.primary,
         t.palette.mode === 'dark' ? 0.03 : 0.025,
       )}`,
-    boxShadow: (t: Theme) => `inset 0 1px 0 ${t.palette.divider}`,
   } as const;
 
   if (loading) {
@@ -352,23 +408,6 @@ const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs
         <Box component="span" sx={{ color: 'text.disabled', fontWeight: 600, letterSpacing: '0.5px' }}>
           {`${prompts.length} prompt${prompts.length === 1 ? '' : 's'}`}
         </Box>
-        {sessionId ? (
-          <Box
-            component="span"
-            sx={{
-              ml: 'auto',
-              fontFamily: fontFamilies.mono,
-              fontSize: 11,
-              fontWeight: 500,
-              letterSpacing: 0,
-              textTransform: 'none',
-              color: 'text.disabled',
-            }}
-          >
-            Session{' '}
-            <Box component="b" sx={{ color: 'text.secondary', fontWeight: 600 }}>{sessionId}</Box>
-          </Box>
-        ) : null}
       </Box>
 
       <Box
@@ -447,7 +486,11 @@ const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.125, minWidth: 0 }}>
+              {/* Wraps rather than overflows: in the detail drawer the card is
+                  560px wide, so a long model name plus cost, tokens and the
+                  "approx" marker no longer fit on one line — unwrapped, the
+                  marker ran under the View-trace pill. */}
+              <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 1.125, rowGap: 0.5, minWidth: 0 }}>
                 <Box
                   component="span"
                   sx={{ fontFamily: fontFamilies.mono, fontSize: 11, fontWeight: 500, color: 'text.disabled', whiteSpace: 'nowrap', letterSpacing: '-0.2px' }}
@@ -464,6 +507,10 @@ const PromptTimelinePanel = ({ sessionId, prompts, loading, error, windowStartMs
                   </Box>
                 ) : null}
                 <TokenUsage tokens={turn.tokens} />
+                <TurnAttributionMarker
+                  attribution={turn.attribution}
+                  requestCount={turn.requestCount ?? 0}
+                />
               </Box>
               {turn.traceId ? (
                 <Box

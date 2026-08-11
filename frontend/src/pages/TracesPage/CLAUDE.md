@@ -71,9 +71,11 @@ TracesPage/
 │                             formatDuration/quantile/durationBucketOf/DURATION_BUCKETS/NANOS_PER_MILLI +
 │                             buildTracesQuery (shared by fetchers + sample)
 ├── tokenBreakdown.ts         tokenBreakdownForSpan(span) → per-span input/output/cacheCreate/cacheRead
-│                             + cacheHitRatePercent(breakdown) → input-side cache-hit share (null when
-│                             there were no input-side tokens); shared with TraceDetailPage
-│                             token split; also imported across TraceDetailPage
+│                             + cacheHitRatePercent(breakdown) → input-side cache-hit share as a whole
+│                             percent (null when there were no input-side tokens). The ratio itself is
+│                             NOT computed here — it delegates to lib/cacheEfficiency, the dashboard's
+│                             single definition; this only bridges the cacheCreate/cacheCreation field
+│                             name and rounds. Shared with TraceDetailPage's token split.
 ├── tracesSampleData.ts       VITE_TRACES_SAMPLE synthetic store + in-memory query engine (sampleHistogram/
 │                             Facets/Cursor/Page/Spans); split out so it can't cycle with the network layer.
 │                             RNG + latency helpers come from lib/sampleData (shared with LogsPage)
@@ -223,6 +225,16 @@ substituted for the window range when a zoom is active.
   all history). Those requests belong to no trace and are deliberately not back-filled by a time-window guess —
   overlapping traces in one session would each claim the same request and inflate the total (measured at +20%
   on one local session).
+- **The "N% cached" chips share the dashboard's one cache-efficiency definition, but not its
+  token totals.** `cacheHitRatePercent` delegates to `lib/cacheEfficiency`, so the ratio here,
+  the Sessions grid's Cache eff. column, and the Tokens page gauge can't drift apart — change
+  the definition in that module and all three move (plus the three backend expressions it
+  names). The absolute token counts are a different matter: these come from
+  `claude_code.llm_request` span attributes — exact per-request figures, equal to the
+  `api_request` logs wherever both exist — while the Sessions/Tokens totals come from cumulative
+  counters, and the two disagree by tens of percent on cache-heavy sessions. Comparing the
+  *ratio* across pages is valid; comparing the *totals* is not (see backend/CLAUDE.md's
+  two-pipelines note).
 - **`TraceTableView`'s `COLUMN_COUNT` must match the header cells** — it's the `colSpan` on the
   expanded `TraceSummaryInline` row. Adding or removing a column means bumping it (currently 11)
   and rechecking the table's `minWidth: 1230`.

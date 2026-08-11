@@ -25,12 +25,14 @@ import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
 import com.guavasoft.agentcompass.model.PathNearMiss;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
+import com.guavasoft.agentcompass.model.SessionApiRequest;
 import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionPromptToolCount;
 import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
+import com.guavasoft.agentcompass.model.ToolContextFootprint;
 import com.guavasoft.agentcompass.model.ToolDenialCount;
 import com.guavasoft.agentcompass.model.ToolFailure;
 import com.guavasoft.agentcompass.model.ToolFailureRate;
@@ -67,6 +69,11 @@ public class LogService {
   private static final int DEFAULT_TIMESERIES_TOP_N = 8;
   private static final int BASH_HOTSPOT_LIMIT = 10;
   private static final int OVERSIZED_RESULT_LIMIT = 10;
+  // bytes → estimated context tokens. The ~4-bytes-per-token rule of thumb is
+  // accurate enough to RANK tools against each other, which is the only claim the
+  // context-footprint card makes; it is not a billed figure and must never be
+  // added to or compared against the exact counts on /api/sessions/token-usage.
+  private static final int BYTES_PER_ESTIMATED_TOKEN = 4;
   private static final int REDUNDANT_READ_LIMIT = 10;
   private static final int EDIT_FAILURE_LOOP_LIMIT = 10;
   private static final int SLOW_AND_LARGE_LIMIT = 10;
@@ -256,18 +263,32 @@ public class LogService {
   // clamps every other list endpoint so a pathologically long session can't
   // return an unbounded number of rows.
   //
-  // Each prompt is additionally enriched with three per-turn rollups (model,
-  // costUsd, tools), attributed by time interval since metric_points and the
-  // tool_result log events carry no trace_id: turn i spans
-  // [prompt_i.timestamp, prompt_{i+1}.timestamp), and the last turn is open-ended
-  // -- UNLESS this session has more than MAXIMUM_PAGE_SIZE prompts, in which case
-  // the "+1 probe" row fetched below closes it instead, so events belonging to a
-  // truncated (not-returned) 501st+ turn are never misattributed to the 500th.
+  // Each prompt is additionally enriched with per-turn rollups (model, costUsd,
+  // tokens, tools).
+  //
+  // Model, cost and tokens come from the turn's OWN api_request logs wherever
+  // they exist, joined by prompt id — exact per-call figures, grouped by the turn
+  // that actually issued each request. Turns with no such logs (event logging
+  // disabled, an older CLI, or rows predating prompt-id stamping) fall back to
+  // the older interval attribution below, and say so via SessionPrompt's
+  // attribution field rather than quietly reporting a different kind of number.
+  // The fallback is per-turn, not per-session: a session that gained api_request
+  // logs partway through reports each turn however that turn can be measured.
+  //
+  // Tools still use interval attribution unconditionally — tool_result events
+  // carry no prompt id, so there is nothing exact to join them on.
+  //
+  // Interval attribution: turn i spans [prompt_i.timestamp,
+  // prompt_{i+1}.timestamp), and the last turn is open-ended -- UNLESS this
+  // session has more than MAXIMUM_PAGE_SIZE prompts, in which case the "+1 probe"
+  // row fetched below closes it instead, so events belonging to a truncated
+  // (not-returned) 501st+ turn are never misattributed to the 500th.
   public List<SessionPrompt> promptsForSession(String sessionId) {
     List<Object[]> probeRows = logRecordRepository.findPromptsForSession(
         sessionId,
         tuningProperties.getUserPromptEventName(),
         tuningProperties.getPromptAttribute(),
+        tuningProperties.getPromptIdAttribute(),
         PageBounds.MAXIMUM_PAGE_SIZE + 1);
     if (probeRows.isEmpty()) {
       return List.of();
@@ -283,20 +304,103 @@ public class LogService {
     applyTraceCorrelatedCosts(promptRows, costByTurn);
     Map<Integer, List<SessionPromptToolCount>> toolsByTurn =
         resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+    Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
       Object[] row = promptRows.get(turnIndex);
-      prompts.add(new SessionPrompt(
-          (Instant) row[0],
-          (String) row[1],
-          (String) row[2],
-          turnTokenRollup.modelByTurn().get(turnIndex),
-          costByTurn.get(turnIndex),
-          turnTokenRollup.tokensByTurn().get(turnIndex),
-          toolsByTurn.getOrDefault(turnIndex, List.of())));
+      String promptId = (String) row[PROMPT_ROW_PROMPT_ID];
+      ApiRequestTurnRollup requestRollup =
+          promptId == null ? null : requestRollupsByPromptId.get(promptId);
+      prompts.add(requestRollup != null
+          ? new SessionPrompt(
+              (Instant) row[0],
+              (String) row[1],
+              (String) row[2],
+              requestRollup.model(),
+              requestRollup.costUsd(),
+              requestRollup.tokens(),
+              toolsByTurn.getOrDefault(turnIndex, List.of()),
+              promptId,
+              requestRollup.requestCount(),
+              SessionPrompt.TurnAttribution.REQUEST)
+          : new SessionPrompt(
+              (Instant) row[0],
+              (String) row[1],
+              (String) row[2],
+              turnTokenRollup.modelByTurn().get(turnIndex),
+              costByTurn.get(turnIndex),
+              turnTokenRollup.tokensByTurn().get(turnIndex),
+              toolsByTurn.getOrDefault(turnIndex, List.of()),
+              promptId,
+              0L,
+              SessionPrompt.TurnAttribution.INTERVAL));
     }
     return prompts;
+  }
+
+  // Exact per-turn rollup summed from a session's api_request logs, keyed by the
+  // prompt id of the turn that issued them.
+  private record ApiRequestTurnRollup(
+      long requestCount, String model, Double costUsd, SessionTokenBreakdown tokens, long durationMs) {}
+
+  private Map<String, ApiRequestTurnRollup> resolveApiRequestTurns(String sessionId) {
+    List<Object[]> rows = logRecordRepository.aggregateApiRequestTurnsForSession(
+        sessionId,
+        tuningProperties.getApiRequestEventName(),
+        tuningProperties.getPromptIdAttribute(),
+        tuningProperties.getApiRequestCostAttribute(),
+        tuningProperties.getModelAttribute());
+
+    Map<String, ApiRequestTurnRollup> rollupsByPromptId = new HashMap<>();
+    for (Object[] row : rows) {
+      rollupsByPromptId.put((String) row[0], new ApiRequestTurnRollup(
+          ((Number) row[1]).longValue(),
+          (String) row[8],
+          row[6] == null ? null : ((Number) row[6]).doubleValue(),
+          new SessionTokenBreakdown(
+              ((Number) row[2]).longValue(),
+              ((Number) row[3]).longValue(),
+              ((Number) row[4]).longValue(),
+              ((Number) row[5]).longValue()),
+          ((Number) row[7]).longValue()));
+    }
+    return rollupsByPromptId;
+  }
+
+  // Individual LLM requests for one session, oldest first — the prompt
+  // timeline's per-turn drill-down. Not window-scoped, matching
+  // promptsForSession; clamped by the same shared page ceiling so a long session
+  // cannot return an unbounded list.
+  public List<SessionApiRequest> requestsForSession(String sessionId) {
+    List<Object[]> rows = logRecordRepository.findApiRequestsForSession(
+        sessionId,
+        tuningProperties.getApiRequestEventName(),
+        tuningProperties.getPromptIdAttribute(),
+        tuningProperties.getRequestIdAttribute(),
+        tuningProperties.getApiRequestCostAttribute(),
+        tuningProperties.getModelAttribute(),
+        PageBounds.MAXIMUM_PAGE_SIZE);
+
+    List<SessionApiRequest> requests = new ArrayList<>(rows.size());
+    for (Object[] row : rows) {
+      requests.add(new SessionApiRequest(
+          (String) row[0],
+          (Instant) row[1],
+          (String) row[2],
+          (String) row[3],
+          new SessionTokenBreakdown(
+              ((Number) row[4]).longValue(),
+              ((Number) row[5]).longValue(),
+              ((Number) row[6]).longValue(),
+              ((Number) row[7]).longValue()),
+          row[8] == null ? null : ((Number) row[8]).doubleValue(),
+          row[9] == null ? null : ((Number) row[9]).longValue(),
+          (String) row[10],
+          (String) row[11],
+          (String) row[12]));
+    }
+    return requests;
   }
 
   // Turn attribution for the prompt-timeline rollups: assigns eventTimestamp to
@@ -332,8 +436,9 @@ public class LogService {
     return searchIndex >= 0 ? searchIndex : -searchIndex - 2;
   }
 
-  // Column index of the trace id on a findPromptsForSession row.
+  // Column indexes on a findPromptsForSession row.
   private static final int PROMPT_ROW_TRACE_ID = 2;
+  private static final int PROMPT_ROW_PROMPT_ID = 3;
 
   // Overrides the metric-bucketed per-turn cost with the turn trace's own cost
   // wherever the turn has a trace id that the trace_costs view knows.
@@ -662,6 +767,34 @@ public class LogService {
             (String) row[0],
             ((Number) row[1]).longValue(),
             row[2] == null ? 0L : ((Number) row[2]).longValue()))
+        .toList();
+  }
+
+  public List<ToolContextFootprint> aggregateToolContextFootprint(int minutes) {
+    Instant since = Instant.now();
+    return aggregateToolContextFootprintInRange(since.minus(Duration.ofMinutes(minutes)), since);
+  }
+
+  public List<ToolContextFootprint> aggregateToolContextFootprintInRange(Instant start, Instant end) {
+    List<Object[]> rows = logRecordRepository.aggregateToolContextFootprintInRange(
+        tuningProperties.getToolEventName(),
+        tuningProperties.getToolAttribute(),
+        start,
+        end);
+    return mapToolContextFootprint(rows);
+  }
+
+  private static List<ToolContextFootprint> mapToolContextFootprint(List<Object[]> rows) {
+    return rows.stream()
+        .map(row -> {
+          long totalBytes = row[2] == null ? 0L : ((Number) row[2]).longValue();
+          return new ToolContextFootprint(
+              (String) row[0],
+              ((Number) row[1]).longValue(),
+              totalBytes,
+              totalBytes / BYTES_PER_ESTIMATED_TOKEN,
+              row[3] == null ? 0L : ((Number) row[3]).longValue());
+        })
         .toList();
   }
 

@@ -4,8 +4,8 @@ Per-session cost and token explorer: four KPI stat cards plus a sortable, server
 sessions table. Two independent queries feed the page — a lightweight window-summary for the
 cards and a paged row query for the table — so paging and re-sorting do not re-run the heavy
 percentile aggregation. Each row also carries a truncated first-prompt preview; clicking a row
-expands it into an Aurora-styled prompt-timeline panel (per-turn model/cost/tokens/tool chips)
-fetched on demand. Backend counterpart: `SessionController`
+opens a right-side detail drawer holding that session's Aurora-styled prompt timeline (per-turn
+model/cost/tokens/tool chips) fetched on demand. Backend counterpart: `SessionController`
 (`backend/.../controller/SessionController.java`); full response-shape contract in
 [SESSIONS-BACKEND.md](SESSIONS-BACKEND.md).
 
@@ -14,18 +14,26 @@ fetched on demand. Backend counterpart: `SessionController`
 ```
 SessionsPage/
 ├── SessionsPage.tsx        container — window context, three queries (summary, table page, and
-│                           the on-demand prompt timeline), sort/pagination/expansion state,
-│                           reload and selection-change handlers
-├── SessionsPageView.tsx    view — composes SessionsKpiStrip, SessionsTable, and the shared
-│                           TablePager; derives windowStartMs/windowEndMs (lib/resolveWindow) for
-│                           the timeline's out-of-window dimming; exports SessionsKpis,
-│                           PaginationModel, SessionsPageViewProps
+│                           the on-demand prompt timeline), sort/pagination/open-drawer state
+│                           (seeded from the ?sessionId= deep link), reload and
+│                           selection-change handlers
+├── SessionsPageView.tsx    view — composes SessionsKpiStrip, SessionsTable, the shared
+│                           TablePager, and SessionDetailDrawer; resolves openSessionId to the
+│                           row object the drawer header needs; derives windowStartMs/windowEndMs
+│                           (lib/resolveWindow) for the timeline's out-of-window dimming; exports
+│                           SessionsKpis, PaginationModel, SessionsPageViewProps
 ├── index.ts                re-exports container default
 └── components/
-    ├── sessionsFormat.ts        shared formatters: USD_FORMATTER, USD_PER_MINUTE_FORMATTER,
-    │                            formatDuration (seconds), formatTokens (K/M compact — see the
-    │                            boundary-rounding gotcha below), formatTimestamp, and
-    │                            formatRelativeTime (Last-activity column's "Nm/Nh/Nd ago")
+    ├── sessionsFormat.ts        shared formatters: USD_PER_MINUTE_FORMATTER, formatDuration
+    │                            (seconds), formatTokens (K/M compact — see the boundary-rounding
+    │                            gotcha below), formatTimestamp, formatShortTimestamp ("Aug 9,
+    │                            10:36 AM" — the drawer header's metadata line, where the full
+    │                            locale string is too long), and formatRelativeTime
+    │                            (Last-activity column's "Nm/Nh/Nd ago"). USD_FORMATTER is
+    │                            re-exported from here but defined in lib/format.ts — the Tokens
+    │                            page needs the identical formatter. Cache efficiency deliberately
+    │                            does NOT live here either — the Tokens page needs the same ratio,
+    │                            so it lives in lib/cacheEfficiency.ts
     ├── SessionsKpiStrip/        4-card StatCard grid; renders the shared LineSparkline
     │   ├── SessionsKpiStrip.tsx   (components/LineSparkline) and the P95 caption math
     │   └── index.ts
@@ -33,20 +41,33 @@ SessionsPage/
     │   ├── SessionsTable.tsx      PromptCell, PromptCountPill, SortArrow leaf components, the
     │   │                          Last-activity relative-time cell (Tooltip shows the absolute
     │   │                          timestamp), the Tokens-cell TokenBreakdownTooltip hover, and
-    │   │                          the handleSort toggle + row-expand-click logic; renders
-    │   │                          PromptTimelinePanel for the expanded row
+    │   │                          the handleSort toggle + row-click logic. It knows only
+    │   │                          openSessionId (for the row highlight) — the drawer itself is
+    │   │                          the view's child, not the table's
     │   └── index.ts
-    └── PromptTimelinePanel/     Aurora glass per-turn timeline for the expanded row — genuinely
-        ├── PromptTimelinePanel.tsx  new UI (not an extraction): a gradient rail with a card per
-        │                          turn (timestamp, model chip, per-turn cost, TokenUsage w/
-        │                          breakdown tooltip, tool-call chips, optional "View trace"
-        │                          link); header shows the prompt count plus the optional
-        │                          sessionId prop (right-aligned) so the expanded panel names
-        │                          the session; dims turns outside the active window with a boundary
+    ├── SessionDetailDrawer/     right-side MUI Drawer (560px, max 92vw) over a scrim, opened by
+    │   ├── SessionDetailDrawer.tsx  a row click: header names the session (id, start,
+    │   │                          whole-session cost, "active Nh ago", token total + cache-eff.
+    │   │                          badge, close ×) and the body is the scroll container for
+    │   │                          PromptTimelinePanel. Closes on ×, backdrop, or Escape (all
+    │   │                          three are MUI's onClose). Keeps the last session rendered
+    │   │                          through the slide-out (guarded render-phase setState compared
+    │   │                          by session id, dropped on the transition's onExited) and
+    │   │                          auto-scrolls to the most recent turn on open
+    │   └── index.ts
+    └── PromptTimelinePanel/     Aurora glass per-turn timeline rendered inside the drawer —
+        ├── PromptTimelinePanel.tsx  genuinely new UI (not an extraction): a gradient rail with a
+        │                          card per turn (timestamp, model chip, per-turn cost, TokenUsage
+        │                          w/ breakdown tooltip, tool-call chips, optional "View trace"
+        │                          link); header shows the prompt count (session identity lives in
+        │                          the drawer header); dims turns outside the active window with a boundary
         │                          divider; long prompt text truncates through the shared
         │                          AttributeValue/ExpandedValueDialog machinery. Exports
         │                          TokenBreakdownTitle / TokenBreakdownTooltip / TokenUsage,
-        │                          reused by SessionsTable's Tokens-column hover.
+        │                          reused by SessionsTable's Tokens-column hover. Also renders
+        │                          TurnAttributionMarker — a muted "approx" marker on turns whose
+        │                          figures were bucketed from cumulative counters; renders nothing
+        │                          on exact (api_request-derived) turns.
         └── index.ts
 ```
 
@@ -75,12 +96,30 @@ the view takes typed props and contains no `useQuery` or context reads.
 │ │       min (Last activity is the default sort)                      │   │
 │ │ tbody rows: PromptCell (+N pill) · DenialChip;                     │   │
 │ │             Tokens cell hover → TokenBreakdownTooltip; click a    │   │
-│ │             row → inline expansion <tr> with the Aurora prompt    │   │
-│ │             timeline (PromptTimelinePanel, max-height 340px)      │   │
+│ │             row → SessionDetailDrawer (row stays highlighted)     │   │
 │ │ ── <TablePager> (shared) ───────────────────────────────────────── │   │
 │ │ Rows per page [25 | 50 | 100]      N–M of total   [◀] [▶]         │   │
 │ └───────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
+```
+
+The detail drawer slides in over the right edge of the viewport (scrim behind it, table
+untouched underneath):
+
+```
+                              ┌─ SessionDetailDrawer (560px, max 92vw) ───┐
+                              │ Session 690cb902-…-9ddc290d9200      [✕] │
+                              │ Aug 9, 8:26 PM · $4.38 · active 1h ago ·  │
+                              │ 5.3M tok · 98% cache                      │
+                              ├───────────────────────────────────────────┤
+                              │ ⏱ PROMPT TIMELINE  12 prompts             │
+                              │ ● Aug 9, 8:26:55 PM ·Opus· $0.41 · 240K   │
+                              │ │  apply the design handoff…  [View trace]│
+                              │ │  [Bash 25] [Edit 24] [Read 8]           │
+                              │ ● …                                       │
+                              │ ── selected window starts ──              │
+                              │ ● (scrolls; opens at the newest turn)     │
+                              └───────────────────────────────────────────┘
 ```
 
 ## Who calls which API
@@ -92,7 +131,7 @@ Fetchers live in the shared `api/endpoints.ts` (not a page-local module) and use
 |------------------------------|------------------------------------------------------------------------|--------------------|
 | `SessionsPage` (`useQuery`)  | `['sessions-summary', selectionKey]`                                   | `fetchSessionsSummary(selection)` → `GET /api/sessions/summary?…` |
 | `SessionsPage` (`useQuery`)  | `['sessions', selectionKey, page, pageSize, sortField, sortDirection]` | `fetchSessions(selection, { page, pageSize, sort })` → `GET /api/sessions?…&page=N&size=M&sort=field&direction=asc\|desc` |
-| `SessionsPage` (`useQuery`, `sessionPromptsQuery`) | `['session-prompts', expandedSessionId]`, `enabled: expandedSessionId !== null` | `fetchSessionPrompts(sessionId)` → `GET /api/sessions/{sessionId}/prompts` |
+| `SessionsPage` (`useQuery`, `sessionPromptsQuery`) | `['session-prompts', openSessionId]`, `enabled: openSessionId !== null && rows.some((row) => row.sessionId === openSessionId)` | `fetchSessionPrompts(sessionId)` → `GET /api/sessions/{sessionId}/prompts` |
 
 `fetchSessions` uses `listWithTotalCount<SessionSummaryRow>` from `api/http.ts`, which reads the
 `X-Total-Count` response header and returns `{ items: SessionSummaryRow[], totalCount: number }`.
@@ -109,11 +148,11 @@ timeline's richer per-turn cards — `model`, `costUsd`, `tokens` (a `SessionTok
 per-field semantics. `SessionPromptRow` and `SessionTokenBreakdown` are the single canonical
 types (in `api/types.ts`) — `PromptTimelinePanel` imports them directly rather than declaring its
 own widening copies, so there is no cast anywhere in the data path from `fetchSessionPrompts` to
-the panel. It only fires while a row is expanded (`enabled` gate) and has no `refetchInterval`
-(not polled). It is **not** static, though: past the global 30s `staleTime` (`main.tsx`),
-re-expanding the same row triggers a real refetch rather than only serving the TanStack cache —
-this matters because live sessions keep gaining prompts, so the timeline for an in-progress
-session can legitimately grow between expansions. It also isn't invalidated by
+the panel. It only fires while a session's drawer is open (`enabled` gate) and has no
+`refetchInterval` (not polled). It is **not** static, though: past the global 30s `staleTime`
+(`main.tsx`), re-opening the same session triggers a real refetch rather than only serving the
+TanStack cache — this matters because live sessions keep gaining prompts, so the timeline for an
+in-progress session can legitimately grow between openings. It also isn't invalidated by
 `onReload`/auto-refresh, since those target the summary/table queries, not this one. `prompt` is
 null for pre-capture events (prompt_text wasn't recorded) — those rows are kept, not filtered, and
 render a placeholder client-side (see the `PromptTimelinePanel` gotcha below). `traceId` is null
@@ -141,25 +180,33 @@ trace link for those rows, not a disabled placeholder.
   `cacheEfficiency`, `activeTimeSeconds`, `costPerActiveMinuteUsd`. Non-sortable:
   `toolCallCount`, `denialCount`, `firstUserPrompt`. The `terminalType` and `sessionId`
   columns were dropped in the Aurora sessions/traces sync — both fields are still on
-  `SessionSummaryRow`, and `sessionId` now shows in the expanded `PromptTimelinePanel`
-  header instead of its own column.
+  `SessionSummaryRow`, and `sessionId` now shows in the detail drawer's header instead of its
+  own column.
 - **Pagination**: offset-based, zero-indexed (`page: 0`). `DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0]`
   (`lib/constants`, currently 25). The pager footer uses a `SegmentedToggle` for rows-per-page
   (25/50/100) and prev/next chevron buttons. Changing page size resets to page 0.
   `onSelectionChange` and `onReload` both reset the page to 0 so the user never lands on a
   non-existent page after a window change.
-- **Row cost and active time are whole-session, not window-scoped.** The window decides *which*
-  sessions the table lists; `costUsd` and `activeTimeSeconds` then report the session's entire
-  lifetime, so a session that began before the window still shows its full spend instead of the
-  sliver inside the range. Everything else on the row — `tokens`/`tokenBreakdown` (and therefore
-  the Cache eff. column), `startTimestamp`/`endTimestamp`, `toolCallCount`, `denialCount`,
-  `userPromptCount` — is still window-scoped, as are all four KPI cards. Two consequences worth
-  knowing before filing a bug: the **Median cost/session card will not equal the median of the
-  visible Cost column**, and a row's Started/Last-activity pair can be much narrower than the
-  session the cost describes. Backend seam:
-  `MetricPointRepository.aggregateSessionSummaries` builds a window-bounded `session_window` CTE
-  and joins `cost_per_session` / `active_per_session` back to that id set with no timestamp
-  predicate.
+- **Row cost, active time, Started and Last activity are whole-session, not window-scoped.** The
+  window decides *which* sessions the table lists; `costUsd`, `activeTimeSeconds`,
+  `startTimestamp` and `endTimestamp` then describe the session's entire lifetime, so a session
+  that began before the window shows its full spend and its real start instead of the sliver
+  inside the range. `tokens`/`tokenBreakdown` (and therefore the Cache eff. column),
+  `toolCallCount`, `denialCount` and `userPromptCount` are still window-scoped, as are all four
+  KPI cards — so the **Median cost/session card will not equal the median of the visible Cost
+  column**. Backend seam: `MetricPointRepository.aggregateSessionSummaries` builds a
+  window-bounded `session_window` CTE and joins `cost_per_session` / `active_per_session` /
+  `session_span` back to that id set with no timestamp predicate.
+- **A session is listed only if it posted a counter *increment* in the window.** Claude Code's
+  exporter never retires a metric stream: a finished session keeps re-emitting its cumulative
+  cost/active-time counters every minute forever at an unchanged value (98.9% of all such points
+  on live data). Membership therefore tests `value_delta`, not mere presence. Before that filter
+  existed the grid listed every session ever recorded, each showing `$0.00`, each claiming to
+  have started at the window edge and to have been active seconds ago — which under the default
+  `endTimestamp desc` sort pushed the one session actually being worked on off the top of the
+  table. If sessions you know are finished reappear here, that filter is what regressed. A live
+  session that sits idle longer than the whole window legitimately drops off the list: "active in
+  this window" is the definition, and it is the same one the KPI cards use.
 - **`burn` ($/active min per row)**: computed client-side in `SessionsTable` as
   `(row.costUsd / row.activeTimeSeconds) * 60`; displayed as `—` when `activeTimeSeconds` is 0.
   Cost and active time are deliberately whole-session *together* (see the bullet above) — if you
@@ -169,25 +216,45 @@ trace link for those rows, not a disabled placeholder.
 - **`sessionsTrend` sparkline**: the shared `LineSparkline` (`components/LineSparkline`) renders
   if `values.length >= 2`. It draws a filled area + stroke line over the bucket counts returned by
   the summary endpoint. Renders nothing for a single-bucket window (the `< 2` guard lives in
-  `LineSparkline`, shared with `MetricKpiStrip`).
-- **Row expansion (prompt timeline)**: `SessionsPage` holds a single `expandedSessionId: string |
-  null` — only one row's prompt timeline is shown at a time, not a per-row `Set`. Clicking a row
-  calls `onToggleExpand(sessionId)`, which collapses it if it's already the expanded row,
-  otherwise switches the expansion to it (switching rows does **not** require collapsing first).
-  `expandedSessionId` is reset to `null` on window-selection change, sort change, and
-  page/pageSize change (`handlePaginationModelChange` wraps `setPaginationModel`) — an expanded
-  session's row usually won't exist at the same table position after any of those, so the panel
-  is dropped defensively rather than pointing at a stale/mismatched row. It is **not** reset by
-  `onReload`/auto-refresh — those revalidate the same page and shouldn't collapse the user's open
-  panel out from under them. The only visual cue that a row expands is `ExpandCaret` in the Started
-  cell — a 12px chevron that points right when closed and rotates 90° to primary.main when open,
-  the same rotation treatment `SortArrow` uses. There is no dedicated expander column; the caret is
-  inline before the timestamp (`display: inline-block`, `verticalAlign: -1px`) so the row keeps its
-  existing column count.
+  `LineSparkline`, shared with `MetricKpiStrip`). Its buckets count sessions that *opened* in the
+  window and so **do not sum to the Total-sessions figure above them**, which counts sessions that
+  were *active* in it — an all-zero line under a card reading `2` just means both sessions are
+  older than the window. Making them agree would require bucketing on each session's earliest
+  in-window emission, which is exactly the clipping that made every long-running session look
+  brand new.
+- **Session detail drawer**: `SessionsPage` holds a single `openSessionId: string | null` — one
+  session's prompt timeline at a time, not a per-row `Set`. Clicking a row calls
+  `onToggleSessionDetail(sessionId)`, which closes the drawer if that session is already open and
+  otherwise switches to it; the drawer's own affordances (×, backdrop click, Escape — all three
+  arrive as MUI's single `onClose`) go through `onCloseSessionDetail`. The initial value is
+  **seeded from a `?sessionId=` deep link** (`DEEP_LINK_SESSION_PARAM`,
+  built by the exported `sessionsDeepLink(sessionId)` helper — the Tokens page's
+  cache-efficiency detail dialog is the current caller) so arriving from another page lands
+  with that session's timeline already open; a `useEffect` then strips the param from the URL
+  via `setSearchParams`'s functional-updater form (`replace: true`), not a manually cloned
+  `URLSearchParams`. The param is consumed once, at mount, and the open session is plain page
+  state afterwards — leaving it bound would mean a reload silently re-opening a drawer the user
+  had closed. One known limit: the drawer auto-opens only if that session is on the first page
+  under the default sort (there is no "which page holds this session" lookup on the server) —
+  when it isn't, `openSessionId` is set but no row matches it, so `SessionsPageView`'s
+  `rows.find(...)` resolves to null and the drawer stays shut. `sessionPromptsQuery`'s `enabled`
+  gate checks the same `rows.some((row) => row.sessionId === openSessionId)` condition, so that
+  case also fails closed rather than firing a wasted whole-session fetch.
+  `openSessionId` is reset to `null` on window-selection change, sort change, and
+  page/pageSize change (`handlePaginationModelChange` wraps `setPaginationModel`) — the open
+  session's row usually won't survive any of those, so the drawer is closed defensively rather
+  than left describing a row that is no longer on screen. It is **not** reset by
+  `onReload`/auto-refresh — those revalidate the same page and shouldn't yank the drawer out from
+  under the user. There is no expand caret or expander column: the whole `<tr>` is the affordance
+  (`cursor: pointer`), and the open row keeps the hover highlight for as long as its drawer is up.
+  Note that the scrim makes rows unclickable while the drawer is open, so in practice a row click
+  never *closes* the drawer — it hits the backdrop first, which closes it. That's the mockup's
+  behavior too; the toggle branch stays because the state model is "which session is open", not
+  "was the last click on the open row".
 - **Prompt-timeline window dimming**: `SessionsPageView` derives `windowStartMs`/`windowEndMs` by
   calling the shared `resolveWindow(selection)` (`lib/resolveWindow`, the same helper
-  LogsPage/TracesPage use) and `Date.parse`-ing its `startTimestamp`/`endTimestamp`, then threads
-  them down through `SessionsTable` to `PromptTimelinePanel` as props. There is no page-local
+  LogsPage/TracesPage use) and `Date.parse`-ing its `startTimestamp`/`endTimestamp`, then passes
+  them to `SessionDetailDrawer`, which forwards them to `PromptTimelinePanel`. There is no page-local
   window-bounds calculation — using the shared resolver means the dimming boundary can never
   contradict what the summary/table queries actually counted (`resolveWindow` applies the same
   ingest-slack + `MAX_WINDOW_SPAN_MS` clamp those queries' window params get). LogsPage itself
@@ -215,17 +282,44 @@ trace link for those rows, not a disabled placeholder.
 - **Table box height** is `calc(100vh - BODY_CHROME_PX px)` (`BODY_CHROME_PX` = 320, top of
   `SessionsPageView.tsx`) with `minHeight: 420`. If you add or remove chrome above the table card,
   retune that constant or the table will over/under-fill the viewport.
+- **Per-turn figures come from two different pipelines, and the timeline says which.** Each turn
+  carries `attribution`: `REQUEST` means its model/cost/tokens are the exact per-call figures
+  summed over that turn's own `api_request` logs (joined on `prompt.id`); `INTERVAL` means no such
+  logs exist and the values were bucketed from cumulative counters by timestamp. The two are
+  **different measurements, not two views of one number** — measured against live data they
+  disagree by tens of percent in both directions, dominated by cache-read tokens. That is why
+  `TurnAttributionMarker` labels `INTERVAL` turns "approx" (and labels `REQUEST` turns nothing —
+  exact is the expectation, so only the exception earns ink) and why **a session row's
+  `tokenBreakdown` no longer equals the sum of its turns' `tokens`**: the row is a windowed
+  counter roll-up, the turns are whole-session per-request sums. Don't "reconcile" them.
+- **There is no per-request drill-down here, deliberately.** An earlier revision put a clickable
+  "N req" pill on each turn that opened a `TurnRequestTable` (time · model · effort · tokens ·
+  cache read · cost · duration) inline, backed by a `sessionRequestsQuery` against
+  `GET /api/sessions/{id}/requests`. It was removed: per-call model detail reads as trace-level
+  information, and the trace detail page's span inspector is where it belongs (the turn's
+  "View trace" link goes straight there). The backend endpoint still exists and is still
+  documented in SESSIONS-BACKEND.md — it simply has no frontend consumer. `fetchSessionRequests`
+  and the `SessionApiRequestRow` type were removed from `api/` along with it; re-adding the
+  drill-down means restoring both, not flipping a prop.
 - **Cache-efficiency column is derived, not a DTO field.** `cacheEfficiencyRatio` /
-  `formatCacheEfficiency` (in `components/sessionsFormat.ts`) compute `cacheRead / (input +
+  `formatCacheEfficiency` (now in the shared `lib/cacheEfficiency.ts`, not `sessionsFormat.ts` —
+  the Tokens page needs the identical ratio and bands) compute `cacheRead / (input +
   cacheCreation + cacheRead)` from the row's `tokenBreakdown` — output tokens are excluded (they're
   generated, never cached). There is no `cacheEfficiency` field on `SessionSummaryRow`; the column
   is derived client-side exactly like the `$/active min` burn cell. It is nonetheless **sortable
   server-side**: the header maps to the backend's whitelisted `cacheEfficiency` sort token
   (`MetricService.SORT_COLUMNS_BY_FIELD`), whose `ORDER BY` uses the identical ratio and sorts
   sessions with no input-side tokens `NULLS LAST` — the same rows `CacheEfficiencyCell` renders as
-  "—". If you change the ratio's definition, change both sides in lockstep or the visible order
-  stops matching the visible values. Bands: ≥85% `success.main`, ≥60% `text.primary`, else
-  `warning.main`; colors come from the theme palette, never hard-coded hex.
+  "—". If you change the ratio's definition, change **all four** places in lockstep or the visible
+  order stops matching the visible values: `lib/cacheEfficiency.ts`, this column's `ORDER BY`,
+  `MetricService.aggregateTokenUsage[InRange]`'s `cacheReadRatio` (the Tokens page gauge), and
+  `MetricPointRepository.aggregateWorstCacheEfficiencySessions` (the Tokens page ranking). Bands
+  the shared `CACHE_EFFICIENCY_STRONG` / `_WEAK` thresholds (≥85% strong, ≥60% mixed). Colors are
+  the shared `cacheEfficiencyBandColor(band, theme)` (a cross-page import from the Tokens page's
+  `components/cacheEfficiencyBandColors.ts` — see that page's CLAUDE.md): strong → `success.main`,
+  mixed → `text.primary`, weak → `warning.main`, unknown → `text.disabled`. `CacheEfficiencyCell`
+  calls it rather than hand-rolling its own ternary, so this column and the Tokens page's ranking
+  table/detail dialog can never disagree about which band a given ratio is in.
 - **`DenialChip` threshold**: 0 → dimmed text, 1–3 → amber, 4+ → red. Colors come from
   `theme.palette.warning.main` / `theme.palette.error.main` — never hard-coded hex.
 - **`startType` field** is present on `SessionSummaryRow` but not rendered in the table. Resume
@@ -263,24 +357,18 @@ trace link for those rows, not a disabled placeholder.
 - **The "+N" pill is `userPromptCount - 1`**, not the raw count — it reads as "and N more prompts
   beyond the one shown," matching the `+N more` idiom used elsewhere (e.g. `LogTableRow`'s
   attribute overflow toggle), not a raw total.
-- **Row `<tr>`s are wrapped in a `Fragment`, not rendered as siblings directly under `tbody`**, so
-  the optional prompt-timeline `<tr>` can sit right after its owning row. This is the same shape
-  `TraceTableView` uses for its inline span-summary expansion. Because of the Fragment, the table
-  no longer uses a CSS `tr:nth-of-type(even)` zebra rule (an expanded row's timeline `<tr>` would
-  shift the even/odd parity of every row below it) — zebra striping is computed inline per row
-  from the `.map` `index` instead (`index % 2 ? alpha(...) : 'transparent'`), matching
-  `TraceTableView`'s pattern. If you touch the table's zebra/hover styling, keep it index-driven,
-  not `nth-of-type`-driven, and keep hover scoped to `tr.data-row` so it doesn't paint the
-  recessed expansion panel.
-- **The expansion cell needs `className="expand-cell"`, not just `sx={{ p: 0 }}`.** `tableSx`'s
-  `'& tbody td'` rule is one class plus two element selectors (0,1,2); a cell's own `sx` compiles to
-  a single class (0,1,0) and loses, so `p: 0` alone silently leaves the timeline panel inset by the
-  table's 13px/14px cell padding. The `'& tbody td.expand-cell'` rule in `tableSx` adds the extra
-  class needed to win. Any future full-width cell in this table has the same problem.
+- **Zebra striping is index-driven, not `nth-of-type`-driven.** It's computed inline per row from
+  the `.map` `index` (`index % 2 ? alpha(...) : 'transparent'`), matching `TraceTableView`'s
+  pattern, and hover stays scoped to `tr.data-row`. The rule predates the drawer (rows used to be
+  wrapped in a `Fragment` alongside an expansion `<tr>`, which shifted the parity of every row
+  below an open one); keep it index-driven anyway, so re-introducing any interleaved row can't
+  silently re-stripe the table.
 - **`PromptTimelinePanel` is the Aurora glass timeline, not a plain recessed list.** Its panel
   background is a `radial-gradient` glow over an `alpha(text.primary, …)` wash (not the flat
-  `alpha(neutralColors.white/inkLight, …)` surface older revisions used), capped at
-  `maxHeight: 340` with `overflowY: 'auto'`. Each turn renders as its own bordered card with a
+  `alpha(neutralColors.white/inkLight, …)` surface older revisions used). It has **no height cap
+  and no scroll of its own** — `minHeight: '100%'` inside the drawer body, which is the scroll
+  container (before the drawer it was capped at `maxHeight: 340` with `overflowY: 'auto'`; don't
+  put that back or the panel gets a second, nested scrollbar). Each turn renders as its own bordered card with a
   glowing rail dot, a model chip (`opus` → `primary.main`, `sonnet` → `auroraColors.cyanBright`,
   `haiku`/unknown → `text.disabled`, keyed on the leading token so `"claude-sonnet-4-5"` matches),
   per-turn cost, `TokenUsage` (one combined `input + output + cacheCreation + cacheRead` total
@@ -317,3 +405,25 @@ trace link for those rows, not a disabled placeholder.
   gradient "Open full trace" button `TraceSummaryInlineView` uses. Rendered **only when
   `turn.traceId` is non-null** — no disabled placeholder for the ~35% of prompts that predate
   tracing.
+- **The turn-card header wraps.** Its left group is `flexWrap: 'wrap'` with `columnGap`/`rowGap`,
+  because at the drawer's 560px a long model name plus cost, tokens and the "approx" marker no
+  longer fit on one line — unwrapped, the marker overprinted the View-trace pill. Don't switch it
+  back to a single nowrap row.
+- **The drawer's auto-scroll needs both of its triggers.** `SessionDetailDrawer` scrolls its body
+  to the newest turn from a `useEffect` on `[open, prompts]` *and* from the slide transition's
+  `onEntered`. Either alone misses a case: the timeline usually resolves after the drawer is
+  already open (the effect catches that), but a session opened a second time has its prompts
+  cached and renders them during the entering slide, when the panel isn't laid out yet and
+  `scrollTop` silently clamps back to 0 (`onEntered` catches that one). Verified both ways in the
+  browser — if you collapse them into one, re-check the cached-reopen path.
+- **MUI v9 drawer styling goes through `slotProps`, not `PaperProps`.** Paper (560px / `92vw`
+  cap / `background.default` + the shared `backdropGradient(mode)` from `theme/theme.ts`, since a
+  panel stacked over the fixed body glow would otherwise read as a flat slab), backdrop tint, and
+  the 260ms `cubic-bezier(.22,.8,.24,1)` slide + `onEntered`/`onExited` all live in
+  `slotProps.paper` / `.backdrop` / `.transition`. `PaperProps` was removed in v9 (see
+  [DESIGN-CONSTRAINTS.md](../../../../DESIGN-CONSTRAINTS.md)).
+- **The drawer keeps the last session rendered while it slides out.** `session` going null would
+  otherwise blank the header and timeline the instant the row is deselected, mid-animation. Same
+  guarded render-phase-setState pattern as `SpanInspectorDrawer` (compared by session id, since
+  the view resolves a fresh row object out of the query result every render), cleared on
+  `onExited`.

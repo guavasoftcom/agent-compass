@@ -74,4 +74,13 @@ public class Span {
             + "those requests too while no span here can claim them.",
             example = "0.0182")
     private Double costUsd;
+
+    @Schema(description = "Reasoning effort this request ran at (the span_efforts view). Claude Code emits it "
+            + "only on the api_request log, never as a span attribute, so it is correlated back onto the span by "
+            + "request_id — a key that is globally unique on both sides, making the pairing exact rather than "
+            + "heuristic. Null on spans that are not llm_request calls, and on the minority of calls whose log "
+            + "recorded no effort (~2% of recent traffic, higher in older data). Null means NOT RECORDED, never "
+            + "a default level — don't render it as one.",
+            example = "high")
+    private String effort;
 }

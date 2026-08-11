@@ -179,6 +179,48 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end);
 
+  // Per-tool context footprint: how many bytes of result text each tool pushed
+  // into the context window over the window. Drives the Tokens page's
+  // "what's filling the context window" ranking.
+  //
+  // Deliberately differs from aggregateOversizedToolResultsInRange in two ways,
+  // because this answers a different question (where does my context budget go?)
+  // rather than that one's (which single calls are tunable offenders?):
+  //   - externallyDeterminedTools are NOT excluded. Agent/WebFetch results fill
+  //     context like anything else, and "delegate this to a subagent" is itself
+  //     one of the levers this ranking is meant to inform, so hiding them would
+  //     hide the comparison the card exists to make.
+  //   - image/binary reads are NOT excluded either; they still occupy the window.
+  //
+  // Failed calls count wherever they reported a size: error output is context
+  // too. Rows with no tool_result_size_bytes at all are excluded rather than
+  // counted as zero, so `calls` reads as "calls we can account for" and never
+  // deflates the per-call average with unmeasurable rows. That makes this
+  // COUNT(*) legitimately smaller than the one on /api/tool-activity/calls.
+  //
+  // p95 uses percentile_cont over the same non-null population, matching the
+  // interpolation semantics every other percentile in this codebase uses.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown')                     AS tool,
+        COUNT(*)::bigint                                                       AS calls,
+        SUM((attributes ->> 'tool_result_size_bytes')::numeric)::bigint        AS total_bytes,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+          ORDER BY (attributes ->> 'tool_result_size_bytes')::numeric))::bigint AS p95_bytes
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool
+      ORDER BY total_bytes DESC, tool ASC
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolContextFootprintInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
   // Per-(tool, error_type, root cause) failure counts over tool_result events.
   // success is
   // stored as a JSON boolean; ->>'success' returns text, so compare to the string
@@ -1030,11 +1072,19 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // row order -- and therefore LogService#turnIndexForTimestamp's turn
   // boundaries, which are built directly from this ordering -- deterministic
   // across requests instead of depending on incidental heap/plan order.
+  //
+  // prompt_id is the turn's own identifier, carried by both user_prompt and
+  // api_request logs. It is what lets the per-turn token/cost rollups be joined
+  // exactly instead of attributed by timestamp interval (see
+  // aggregateApiRequestTurnsForSession). It is NULL on rows emitted before
+  // Claude Code started stamping it, which is precisely when LogService falls
+  // back to the older interval attribution.
   @Query(value = """
       SELECT
         lr.timestamp                                                     AS event_timestamp,
         lr.attributes ->> :promptAttribute                                AS prompt_text,
-        NULLIF(NULLIF(lr.trace_id, ''), repeat('0', 32))                  AS trace_id
+        NULLIF(NULLIF(lr.trace_id, ''), repeat('0', 32))                  AS trace_id,
+        lr.attributes ->> :promptIdAttribute                              AS prompt_id
       FROM log_records lr
       WHERE lr.attributes ->> 'event.name' = :eventName
         AND lr.attributes ->> 'session.id' = :sessionId
@@ -1045,7 +1095,93 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionId") String sessionId,
       @Param("eventName") String eventName,
       @Param("promptAttribute") String promptAttribute,
+      @Param("promptIdAttribute") String promptIdAttribute,
       @Param("promptLimit") int promptLimit);
+
+  // ---------------------------------------------------------------------------
+  // Per-API-request token attribution (T3)
+  // ---------------------------------------------------------------------------
+  //
+  // Claude Code stamps every api_request log with the exact token counts, cost,
+  // and duration of that one request, plus the prompt.id of the turn that issued
+  // it. That makes per-turn rollups an exact GROUP BY rather than the
+  // timestamp-interval bucketing LogService otherwise has to do: a request that
+  // lands after the user typed the next prompt is billed to the turn that
+  // actually issued it, not to whichever interval its timestamp fell in.
+  //
+  // Token/duration/effort/speed attribute keys are SQL literals here, matching
+  // how duration_ms and tool_result_size_bytes are already read elsewhere in this
+  // class. The keys that ARE configurable (event name, prompt id, request id,
+  // model, cost) come through TuningProperties, same as every other query.
+  //
+  // Coverage is partial by design and must stay graceful: sessions can exist in
+  // metric_points with no api_request logs at all (event logging disabled, or an
+  // older CLI), and `effort` is absent on roughly 7% of rows even where the rest
+  // is present. Callers therefore treat an empty result as "fall back", never as
+  // "this turn cost nothing".
+
+  // Per-turn rollup for one session, grouped by prompt.id.
+  //
+  // The turn's model is the one that served the most REQUESTS in the turn
+  // (mode()), which can differ from the metric-derived rollup's "model with the
+  // most tokens" on a turn that mixes models — the two agree whenever a turn
+  // uses a single model, which is the overwhelming majority.
+  @Query(value = """
+      SELECT
+        attributes ->> :promptIdAttribute                                     AS prompt_id,
+        COUNT(*)::bigint                                                      AS request_count,
+        COALESCE(SUM((attributes ->> 'input_tokens')::numeric), 0)::bigint    AS input_tokens,
+        COALESCE(SUM((attributes ->> 'output_tokens')::numeric), 0)::bigint   AS output_tokens,
+        COALESCE(SUM((attributes ->> 'cache_creation_tokens')::numeric), 0)::bigint AS cache_creation_tokens,
+        COALESCE(SUM((attributes ->> 'cache_read_tokens')::numeric), 0)::bigint     AS cache_read_tokens,
+        SUM((attributes ->> :costAttribute)::numeric)::double precision       AS cost_usd,
+        COALESCE(SUM((attributes ->> 'duration_ms')::numeric), 0)::bigint     AS duration_ms,
+        mode() WITHIN GROUP (ORDER BY attributes ->> :modelAttribute)         AS model
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :apiRequestEventName
+        AND attributes ->> 'session.id' = :sessionId
+        AND attributes ->> :promptIdAttribute IS NOT NULL
+      GROUP BY 1
+      """, nativeQuery = true)
+  List<Object[]> aggregateApiRequestTurnsForSession(
+      @Param("sessionId") String sessionId,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("promptIdAttribute") String promptIdAttribute,
+      @Param("costAttribute") String costAttribute,
+      @Param("modelAttribute") String modelAttribute);
+
+  // Individual requests for one session, oldest first — the per-turn drill-down.
+  // Capped by the caller (PageBounds) because a long session can issue thousands
+  // of requests; the service reports the cap rather than silently truncating.
+  @Query(value = """
+      SELECT
+        attributes ->> :requestIdAttribute                             AS request_id,
+        timestamp                                                      AS request_timestamp,
+        attributes ->> :promptIdAttribute                              AS prompt_id,
+        attributes ->> :modelAttribute                                 AS model,
+        COALESCE((attributes ->> 'input_tokens')::numeric, 0)::bigint  AS input_tokens,
+        COALESCE((attributes ->> 'output_tokens')::numeric, 0)::bigint AS output_tokens,
+        COALESCE((attributes ->> 'cache_creation_tokens')::numeric, 0)::bigint AS cache_creation_tokens,
+        COALESCE((attributes ->> 'cache_read_tokens')::numeric, 0)::bigint     AS cache_read_tokens,
+        (attributes ->> :costAttribute)::double precision              AS cost_usd,
+        (attributes ->> 'duration_ms')::numeric::bigint                AS duration_ms,
+        attributes ->> 'effort'                                        AS effort,
+        attributes ->> 'speed'                                         AS speed,
+        NULLIF(NULLIF(trace_id, ''), repeat('0', 32))                  AS trace_id
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :apiRequestEventName
+        AND attributes ->> 'session.id' = :sessionId
+      ORDER BY timestamp ASC, id ASC
+      LIMIT :requestLimit
+      """, nativeQuery = true)
+  List<Object[]> findApiRequestsForSession(
+      @Param("sessionId") String sessionId,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("promptIdAttribute") String promptIdAttribute,
+      @Param("requestIdAttribute") String requestIdAttribute,
+      @Param("costAttribute") String costAttribute,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("requestLimit") int requestLimit);
 
   // Initiating user prompt per trace, for the Traces list rows and the trace
   // detail summary. Claude Code stamps each user_prompt log with the

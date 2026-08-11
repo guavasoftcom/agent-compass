@@ -79,13 +79,20 @@ is the authoritative per-property reference.
 
 Several of those properties are **mirrored as literals in Flyway SQL** — the `span_costs` /
 `trace_costs` views (`V14`), the `LEFT JOIN LATERAL` predicates in `SpanRepository` that re-run those
-views' filter against `log_records` for pushdown, and the `derive_log_severity()` function (`V6`).
-Overriding `api-request-cost-attribute`, `api-request-event-name`, or the severity lists therefore
-means a new migration redefining the views/function *and* updating the lateral predicates, or the
-pages read from the wrong rows. Token/cost/active-time counters are cumulative per stream and ingest
-precomputes reset-aware increments into `metric_points.value_delta`,
+views' filter against `log_records` for pushdown, the `derive_log_severity()` function (`V6`), and the
+`span_efforts` view plus its partial index (`V15`). Overriding `api-request-cost-attribute`,
+`api-request-event-name`, `api-request-effort-attribute`, `request-id-attribute`, `llm-request-span-name`,
+or the severity lists therefore means a new migration redefining the views/function *and* updating the
+lateral predicates, or the pages read from the wrong rows. Token/cost/active-time counters are
+cumulative per stream and ingest precomputes reset-aware increments into `metric_points.value_delta`,
 so every rollup is a plain `SUM(value_delta)` — details in
 [backend/CLAUDE.md](backend/CLAUDE.md).
+
+Spend is measurable two ways — those cumulative counters, and the exact per-call figures on
+`api_request` log records — and **the two do not reconcile**: on real data they disagree by tens
+of percent in both directions, dominated by cache-read tokens. Every figure names its source
+rather than blending them (see `SessionPrompt.attribution`). Read the two-pipelines note in
+[backend/CLAUDE.md](backend/CLAUDE.md) before adding any new token or cost aggregation.
 
 To bypass the bundled compose Postgres, set `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` —
 see [backend/.env.example](backend/.env.example).

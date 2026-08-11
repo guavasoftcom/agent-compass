@@ -7,14 +7,18 @@ import java.time.Instant;
 import java.util.List;
 
 @Schema(name = "TokenUsageSummary", description = "Window-wide token totals split by type plus a bucketed time series for the "
-        + "trend chart. cacheReadRatio = cacheRead / (cacheRead + cacheCreation); ≥0.7 is "
-        + "healthy, 0.4–0.7 is mixed, <0.4 means most prompts are paying full freight.")
+        + "trend chart. cacheReadRatio = cacheRead / (input + cacheCreation + cacheRead) — the "
+        + "window-level form of the per-session cache efficiency the Sessions grid sorts and "
+        + "renders; ≥0.85 is healthy, 0.6–0.85 is mixed, <0.6 means most prompts are paying "
+        + "full freight.")
 public record TokenUsageSummary(
         @Schema(description = "Sum of value over the window for type='input'", example = "12450") long inputTokens,
         @Schema(description = "Sum of value over the window for type='output'", example = "8240") long outputTokens,
         @Schema(description = "Sum of value over the window for type='cacheCreation'", example = "65120") long cacheCreationTokens,
         @Schema(description = "Sum of value over the window for type='cacheRead'", example = "412300") long cacheReadTokens,
-        @Schema(description = "cacheRead / (cacheRead + cacheCreation); 0.0 when both are zero", example = "0.864") double cacheReadRatio,
+        @Schema(description = "cacheRead / (input + cacheCreation + cacheRead); 0.0 when the window "
+                + "recorded no input-side tokens. Output tokens are generated rather than sent, so "
+                + "they are excluded from the denominator.", example = "0.864") double cacheReadRatio,
         @Schema(description = "Bucket width used to produce the time series, in seconds", example = "900") long bucketSeconds,
         @ArraySchema(schema = @Schema(implementation = Point.class)) List<Point> points,
         @ArraySchema(schema = @Schema(implementation = ModelTokenShare.class),

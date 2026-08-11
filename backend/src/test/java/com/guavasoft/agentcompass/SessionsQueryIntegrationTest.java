@@ -54,6 +54,7 @@ class SessionsQueryIntegrationTest {
   private static final String TRACE_TURN_ZERO = "1111000000000000111100000000000a";
   private static final String TRACE_TURN_ONE = "2222000000000000222200000000000b";
   private static final String PROMPT_ATTRIBUTE = "prompt";
+  private static final String PROMPT_ID_ATTRIBUTE = "prompt.id";
   private static final String TOOL_EVENT_NAME = "tool_result";
   private static final String TOOL_ATTRIBUTE = "tool_name";
   private static final String TOOL_DECISION_EVENT_NAME = "tool_decision";
@@ -329,8 +330,36 @@ class SessionsQueryIntegrationTest {
     // over a windowed denominator.
     assertThat(sessionW.costUsd() / sessionW.activeTimeSeconds() * 60).isEqualTo(1.2);
     assertThat(sessionW.tokens()).isEqualTo(300L);
-    // Started/Last activity are still the window's view of the session.
-    assertThat(sessionW.startTimestamp()).isAfter(beforeWindow.plusSeconds(1));
+    // Started is the session's TRUE opening, not the window edge. W first emitted
+    // three hours ago and must say so even though the window opened one hour ago;
+    // clipping it to the window is what made every long-running session read as
+    // having started moments ago. Last activity stays the newest real emission.
+    assertThat(sessionW.startTimestamp()).isBeforeOrEqualTo(beforeWindow);
+    assertThat(sessionW.endTimestamp()).isBetween(insideWindow.minusSeconds(1), insideWindow.plusSeconds(1));
+  }
+
+  @Test
+  void heartbeatOnlySessionsAreNotListedAsActive() {
+    // The exporter never retires a stream: a finished session keeps re-emitting its
+    // cumulative counters at an unchanged value forever. Session H did all its work
+    // before the window and has only such zero-delta re-emissions inside it, so it
+    // must not appear -- listing it was what filled the grid with long-dead sessions
+    // all claiming to have started, and last been active, moments ago.
+    Instant beforeWindow = Instant.now().minus(3, ChronoUnit.HOURS);
+    Instant insideWindow = Instant.now().minus(5, ChronoUnit.MINUTES);
+
+    saveCost("H", "opus", "main", 7.0, beforeWindow);
+    saveCost("H", "opus", "main", 7.0, insideWindow);
+    saveCost("H", "opus", "main", 7.0, insideWindow.plusSeconds(60));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    assertThat(page.items()).extracting(SessionSummary::sessionId).doesNotContain("H");
+    assertThat(page.totalCount()).isEqualTo(3);
+
+    // The KPI population is filtered the same way, so the ghost cannot pad the
+    // session count or drag the cost percentiles toward zero.
+    assertThat(metricService.sessionsKpis(WINDOW_MINUTES).totalSessions()).isEqualTo(3);
   }
 
   @Test
@@ -345,11 +374,34 @@ class SessionsQueryIntegrationTest {
     // 0.45. C excluded.
     assertThat(kpis.medianCostPerActiveMinuteUsd())
         .isCloseTo(0.45, org.assertj.core.data.Offset.offset(1e-9));
-    // New-session sparkline: each session counted in the bucket it first appeared,
-    // so the buckets sum to totalSessions (A, B, C -> 3).
+    // New-session sparkline: each session counted in the bucket it opened in. The
+    // buckets happen to sum to totalSessions here only because all three seeded
+    // sessions also STARTED inside the window -- that equality is not an invariant
+    // in general (see newSessionTrendCountsOnlySessionsThatOpenedInsideTheWindow).
     assertThat(kpis.sessionsTrend()).isNotEmpty();
     assertThat(kpis.sessionsTrend().stream().mapToLong(Long::longValue).sum())
         .isEqualTo(kpis.totalSessions());
+  }
+
+  @Test
+  void newSessionTrendCountsOnlySessionsThatOpenedInsideTheWindow() {
+    // Session R opened three hours ago and was resumed inside the window. It is an
+    // active session (so it counts toward totalSessions) but NOT a new one, so the
+    // sparkline must leave it out. Bucketing on the earliest in-window emission --
+    // the old behaviour -- would have redrawn it as brand new every time the window
+    // narrowed, which is the same clipping artefact the Started column suffered.
+    Instant beforeWindow = Instant.now().minus(3, ChronoUnit.HOURS);
+    Instant insideWindow = Instant.now().minus(20, ChronoUnit.MINUTES);
+
+    saveCost("R", "opus", "main", 2.0, beforeWindow);
+    saveCost("R", "opus", "main", 9.0, insideWindow);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES);
+
+    assertThat(kpis.totalSessions()).isEqualTo(4);
+    assertThat(kpis.sessionsTrend().stream().mapToLong(Long::longValue).sum())
+        .isEqualTo(3);
   }
 
   @Test
@@ -392,7 +444,7 @@ class SessionsQueryIntegrationTest {
   @Test
   void promptsForSessionReturnsFullTimelineOrderedAscendingWithNormalizedTraceIds() {
     List<Object[]> rows = logRecordRepository.findPromptsForSession(
-        "B", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, 500);
+        "B", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, PROMPT_ID_ATTRIBUTE, 500);
 
     assertThat(rows).hasSize(2);
     // The all-zero placeholder trace id (pre-tracing sessions) normalizes to
@@ -410,7 +462,7 @@ class SessionsQueryIntegrationTest {
     saveUserPrompt("E", "Investigate the intermittent CI failure", timestamp, "");
 
     List<Object[]> rows = logRecordRepository.findPromptsForSession(
-        "E", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, 500);
+        "E", USER_PROMPT_EVENT_NAME, PROMPT_ATTRIBUTE, PROMPT_ID_ATTRIBUTE, 500);
 
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0)[2]).isNull();

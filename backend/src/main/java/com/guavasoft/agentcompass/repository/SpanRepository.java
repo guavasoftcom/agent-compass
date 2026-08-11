@@ -27,6 +27,19 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             """, nativeQuery = true)
     List<Object[]> findSpanCostsForTrace(@Param("traceId") String traceId);
 
+    // Per-trace reasoning effort, same one-grouped-query-per-trace shape as
+    // findSpanCostsForTrace above. Returns (span_id, effort); spans absent from
+    // the result either are not llm_request calls or had no effort recorded on
+    // their api_request log, and the service leaves those null. See the
+    // span_efforts view (V15) for why the correlation is by request_id and not
+    // span_id.
+    @Query(value = """
+            SELECT span_id, effort
+            FROM span_efforts
+            WHERE trace_id = :traceId
+            """, nativeQuery = true)
+    List<Object[]> findSpanEffortsForTrace(@Param("traceId") String traceId);
+
     // For each (session_id, reference_timestamp) pair in the exemplar list, find
     // the span whose start_timestamp is closest to the reference timestamp and
     // whose attributes carry the same session_id. Used by the token-distribution

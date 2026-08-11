@@ -14,6 +14,7 @@ import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.model.ExemplarPoint;
 import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.ModelTokenShare;
+import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
@@ -69,6 +70,16 @@ public class MetricService {
   private static final int SESSION_COUNTS_USER_PROMPT_COUNT_INDEX = 3;
   private static final int SESSION_COUNTS_FIRST_USER_PROMPT_INDEX = 4;
   private static final int SESSIONS_TREND_BUCKETS = 24;
+
+  /** Rows returned by the worst-cache-efficiency ranking when the caller sends no limit. */
+  private static final int DEFAULT_CACHE_EFFICIENCY_LIMIT = 8;
+
+  /**
+   * Lower bound applied to the configured cache-efficiency token floor. The floor
+   * is the ranking query's only guarantee that the ratio's denominator is non-zero,
+   * so a configured 0 must never reach the SQL.
+   */
+  private static final long MINIMUM_CACHE_EFFICIENCY_TOKEN_FLOOR = 1L;
 
   private static final String START_TYPE_FRESH = "fresh";
   private static final String START_TYPE_RESUME = "resume";
@@ -282,7 +293,14 @@ public class MetricService {
           entry.getKey(), counts[0], counts[1], counts[2], counts[3]));
     }
 
-    long cacheDenominator = cacheCreationTotal + cacheReadTotal;
+    // Window-level cache efficiency, defined identically to the per-session ratio
+    // the Sessions grid column sorts and renders: cacheRead over ALL input-side
+    // tokens. Output is excluded because it is generated, never sent. Keeping
+    // cacheCreation in the denominator is what makes the number a cost proxy —
+    // dropping it would let a session that constantly rebuilds its cache read as
+    // efficient. Change this and the frontend's shared cacheEfficiencyRatio helper
+    // plus aggregateSessionSummaries' 'cacheEfficiency' ORDER BY together.
+    long cacheDenominator = inputTotal + cacheCreationTotal + cacheReadTotal;
     double cacheReadRatio = cacheDenominator == 0L ? 0.0 : (double) cacheReadTotal / (double) cacheDenominator;
 
     return new TokenUsageSummary(
@@ -315,6 +333,57 @@ public class MetricService {
 
   public SessionKpis sessionsKpisInRange(Instant start, Instant end) {
     return buildSessionKpis(start, end);
+  }
+
+  public List<SessionCacheEfficiency> worstCacheEfficiencySessions(int minutes, int limit) {
+    Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
+    return buildWorstCacheEfficiencySessions(since, null, limit);
+  }
+
+  public List<SessionCacheEfficiency> worstCacheEfficiencySessionsInRange(Instant start, Instant end, int limit) {
+    return buildWorstCacheEfficiencySessions(start, end, limit);
+  }
+
+  // Sessions with the lowest share of input-side tokens served from cache, worst
+  // first. The token floor is clamped to at least one token: it is the ranking
+  // query's only guarantee that the ratio's denominator is non-zero, so a
+  // misconfigured tuning.cache-efficiency-minimum-input-tokens=0 must not be able
+  // to reach the SQL. The result limit goes through the same PageBounds clamp
+  // every other list endpoint uses.
+  private List<SessionCacheEfficiency> buildWorstCacheEfficiencySessions(Instant start, Instant end, int limit) {
+    long minimumInputSideTokens =
+        Math.max(MINIMUM_CACHE_EFFICIENCY_TOKEN_FLOOR, tuningProperties.getCacheEfficiencyMinimumInputTokens());
+    List<Object[]> rows = metricPointRepository.aggregateWorstCacheEfficiencySessions(
+        tuningProperties.getCostUsageMetric(),
+        tuningProperties.getActiveTimeMetric(),
+        tuningProperties.getTokenUsageMetric(),
+        tuningProperties.getTokenTypeAttribute(),
+        INPUT_TYPE,
+        OUTPUT_TYPE,
+        CACHE_CREATION_TYPE,
+        CACHE_READ_TYPE,
+        start,
+        end,
+        minimumInputSideTokens,
+        PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT));
+
+    // Row shape: session_id, cache_efficiency, cache_read_tokens, input_side_tokens
+    // (read only by ORDER BY, not mapped into the record -- SessionCacheEfficiency
+    // derives it from the three input-side token-kind fields, and derives
+    // totalTokens from all four), input_tokens, cache_creation_tokens,
+    // output_tokens, cost_usd.
+    List<SessionCacheEfficiency> sessions = new ArrayList<>(rows.size());
+    for (Object[] row : rows) {
+      sessions.add(new SessionCacheEfficiency(
+          (String) row[0],
+          ((Number) row[1]).doubleValue(),
+          ((Number) row[2]).longValue(),
+          ((Number) row[4]).longValue(),
+          ((Number) row[5]).longValue(),
+          ((Number) row[6]).longValue(),
+          ((Number) row[7]).doubleValue()));
+    }
+    return sessions;
   }
 
   private SessionKpis buildSessionKpis(Instant start, Instant end) {

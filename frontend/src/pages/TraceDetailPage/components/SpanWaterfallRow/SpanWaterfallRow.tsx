@@ -9,6 +9,7 @@ import {
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
 import { fontFamilies } from '../../../../theme/typography';
+import { shortModelName } from '../../../../lib/format';
 
 interface Props {
   span: SpanRow;
@@ -172,6 +173,21 @@ const SpanWaterfallRow = ({
   // which is what actually distinguishes one tool-call row from the next.
   const toolNameAttribute = span.attributes?.['tool_name'];
   const toolName = typeof toolNameAttribute === 'string' ? toolNameAttribute : '';
+  // Which model an llm_request row actually went to — the tool chip's counterpart
+  // for model spans, so a trace that switched models mid-run reads off the tree
+  // instead of one drawer open at a time. `model` and `gen_ai.request.model` are
+  // both present on every real llm_request span and always agree; the fallback is
+  // for the OTel-canonical key outliving the vendor one. Non-model spans (tool,
+  // session, interaction) carry neither and render no badge.
+  const modelAttribute = span.attributes?.['model'] ?? span.attributes?.['gen_ai.request.model'];
+  const modelName = typeof modelAttribute === 'string' ? modelAttribute : '';
+  // Effort rides in the same pill rather than its own, so an llm_request row
+  // gains one badge here, not two — the row is already carrying tokens and cost.
+  // It is null on ~2% of recent calls (higher in older traces), and that means
+  // "not recorded": the pill then shows the model alone rather than implying a
+  // default level. See the span_efforts view (V15) for why it is a join and not
+  // a span attribute.
+  const effort = span.effort ?? '';
   const isError = span.statusCode === 'error';
   const barBackground = isError
     ? theme.palette.error.main
@@ -308,6 +324,35 @@ const SpanWaterfallRow = ({
             }}
           >
             {toolName}
+          </Box>
+        ) : null}
+        {modelName ? (
+          <Box
+            component="span"
+            title={effort ? `${modelName} · ${effort} effort` : modelName}
+            sx={{
+              ml: 0.9,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 0.4,
+              height: 17,
+              px: 0.75,
+              borderRadius: '5px',
+              color: 'primary.main',
+              bgcolor: (t) => alpha(t.palette.primary.main, 0.15),
+              typography: 'mono',
+              fontSize: 10,
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            {shortModelName(modelName)}
+            {effort ? (
+              <Box component="span" sx={{ fontWeight: 500, opacity: 0.75 }}>
+                {`· ${effort}`}
+              </Box>
+            ) : null}
           </Box>
         ) : null}
         <SpanTokenBadges tokens={tokens} />

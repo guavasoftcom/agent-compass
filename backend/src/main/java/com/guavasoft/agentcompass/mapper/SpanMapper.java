@@ -15,6 +15,10 @@ public interface SpanMapper {
   // TraceService#spansForTrace from one grouped per-trace cost query, not read
   // per-span off the entity. See SpanRepository#findSpanCostsForTrace.
   @Mapping(target = "costUsd", ignore = true)
+  // effort has no source field on SpanEntity either -- it is filled in afterwards
+  // by TraceService#spansForTrace from one grouped per-trace effort query. See
+  // SpanRepository#findSpanEffortsForTrace.
+  @Mapping(target = "effort", ignore = true)
   Span toSpan(SpanEntity entity);
 
   List<Span> toSpans(List<SpanEntity> entities);

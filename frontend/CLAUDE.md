@@ -13,13 +13,17 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `PageActions` — composes `WindowSelector` + reload button + auto-refresh toggle; this is what most pages pass into `PageLayout`'s `actions` slot.
   - `WindowSelector` — preset-or-custom datetime picker; emits `WindowSelection`.
   - `SectionLayout` — `PageLayout` + tab strip + shared `selection` / `autoRefresh` context (`useSectionContext`) for grouped pages like Tool activity.
+  - `PillTabs` — the Aurora pill tab strip (wrapping row, active tab lifted onto a paper-tinted surface). Two forms from one component: pass `to` on each tab for routed section tabs (`SectionLayout`), or omit it and handle `onChange` for in-page tabs (`TokensPage`). Use it rather than restyling a `ButtonBase` row, so a tab looks the same whether or not it changes the URL.
   - `StatCard`, `AttributeList`, `Sparkline`, `DonutCard`, etc. — leaf presentational primitives.
   - `TablePager` — shared offset-pager footer (rows-per-page `SegmentedToggle` + range label + prev/next); used by Sessions, Logs, and Traces tables.
   - `StreamTableToggle` — shared Stream|Table view-mode `SegmentedToggle`; used by Logs and (via `TraceViewToggle`) Traces.
   - `LineSparkline` — shared area+line SVG sparkline (guards `values.length < 2`); used by the Sessions and Metrics KPI strips.
   - `FacetRail` — shared filter-rail (search box + checkbox facet sections); Logs' `LogFacetRail` and Traces' `TraceFacetRail` build sections for it.
   - `LiveTailToggle` — shared live-tail pill; Traces' `TraceTailToggle` wraps it.
-  - `BreakdownList` — shared ranked-breakdown list; used by the metric and token breakdowns.
+  - `BreakdownList` — shared ranked-breakdown list; used by the metric and token breakdowns. The
+    leading marker on the `'stacked'` layout is a choice between `showColorDot` (a color the row
+    shares with another chart) and `showRank` (a 1-based position number, when the ordering is
+    the point and the color means nothing) — pick one rather than adding a third variant.
   - `ChartCard` — shared titled chart-container card; used by the Tool-activity cards.
   - `ErrorBoundary` — the one class component in the app (React only exposes
     `componentDidCatch`/`getDerivedStateFromError` on classes); renders a MUI `Alert` + reload
@@ -33,7 +37,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
 - `theme/` — the design system. Seven files: `colors.ts`, `typography.ts`, `theme.ts`, `colorMode.tsx`, `fonts.ts` (self-hosted `@fontsource` side-effect imports), `mui-stack-augment.d.ts` (Stack prop augmentation), and `mui-typography-augment.d.ts` (registers the custom `mono` / `eyebrow` / `eyebrowSm` variants with MUI's type system, which is what makes `sx={{ typography: 'mono' }}` and `<Typography variant="eyebrowSm">` typecheck). No barrel — import the specific file (`from '../../theme/colors'`).
   - `theme/colors.ts` — **the single source of truth for every raw color**. Hue-named primitives (`auroraColors`, `neutralColors`), semantic aliases (`severity`, `tokenComposition`), and the signature `gradients`. No `#rrggbb` / `rgba(...)` literal should live anywhere else under `src/`; for transparency wrap a base token in MUI's `alpha(token, opacity)` rather than hand-writing an rgba string. `theme.ts`, `traceColors.ts`, and component `sx` props all reference these tokens.
   - `theme/typography.ts` — **the single source of truth for font-family stacks**: `fontFamilies.display` (Sora), `.body` (Space Grotesk, the app default), `.mono` (JetBrains Mono). No raw font-family string should live anywhere else under `src/`. Font *sizes* are deliberately left inline (the ~28 values in use aren't a clean scale; a 1:1 token rename would add indirection without benefit — snapping them to a real type scale is a separate visual redesign).
-  - `theme/colorMode.tsx` + `theme/theme.ts` — `ColorModeProvider` persists `light` | `dark` to `localStorage`; `theme.ts` maps the `colors.ts` primitives into the light/dark theme token sets and defines the `CHART_PALETTE` + `colorForIndex(index)` helper.
+  - `theme/colorMode.tsx` + `theme/theme.ts` — `ColorModeProvider` persists `light` | `dark` to `localStorage`; `theme.ts` maps the `colors.ts` primitives into the light/dark theme token sets and defines the `CHART_PALETTE` + `colorForIndex(index)` helper, the `radii` scale, and `backdropGradient(mode)` (the app's radial glow as a `background-image`, for surfaces that sit *over* the page — currently the Sessions detail drawer — and so can't inherit the body's fixed backdrop).
 - `lib/` — app-level, non-UI modules:
   - `lib/windowContext.tsx` — `WindowProvider` holds the current `WindowSelection` and `autoRefresh` flag globally so navigating between pages preserves the user's selected range. Default selection is "last 24 hours" (`{ kind: 'preset', minutes: 1440 }`).
   - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants, including `MAX_WINDOW_SPAN_MS` (mirrors the backend's `@ValidDateRange(maxDays = 30)` cap — keep the two in lockstep).

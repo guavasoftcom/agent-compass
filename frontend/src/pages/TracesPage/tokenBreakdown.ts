@@ -1,4 +1,7 @@
 import type { SpanRow } from '../../api';
+import { cacheEfficiencyRatio } from '../../lib/cacheEfficiency';
+
+const PERCENT_SCALE = 100;
 
 export interface TokenBreakdown {
   input: number;
@@ -59,19 +62,32 @@ const readNumericAttr = (
   return 0;
 };
 
-// Share of the input-side tokens that were served from the prompt cache.
-// Output tokens are excluded — they're generated, never cacheable, so folding
-// them in would dilute the rate with a denominator the cache can't ever
-// influence. Null when there were no input-side tokens at all (nothing to hit).
+// Share of the input-side tokens that were served from the prompt cache, as a
+// whole percent (or null when there were no input-side tokens at all — nothing
+// to hit).
+//
+// The ratio itself comes from the shared lib/cacheEfficiency helper, which is the
+// dashboard's single definition of cache efficiency; this wrapper exists only to
+// bridge the field-name difference (`cacheCreate` here vs `cacheCreation` on
+// SessionTokenBreakdown) and to round to a percent for the chips. Keeping the
+// arithmetic in one place means the trace chips can't silently drift from the
+// Sessions column and the Tokens page gauge, which is what they'd do if this
+// stayed a second copy that merely happened to agree.
+//
+// Note the totals these chips describe are NOT comparable to the Sessions/Tokens
+// token totals — those come from cumulative counters, these from per-request span
+// attributes (see the two-pipelines note in backend/CLAUDE.md). The *ratio* is
+// comparable; the absolute numbers are not.
 export const cacheHitRatePercent = (
   tokenBreakdown: TokenBreakdown,
 ): number | null => {
-  const cacheEligibleTokens =
-    tokenBreakdown.cacheRead + tokenBreakdown.input + tokenBreakdown.cacheCreate;
-  if (cacheEligibleTokens <= 0) {
-    return null;
-  }
-  return Math.round((tokenBreakdown.cacheRead / cacheEligibleTokens) * 100);
+  const ratio = cacheEfficiencyRatio({
+    input: tokenBreakdown.input,
+    output: tokenBreakdown.output,
+    cacheCreation: tokenBreakdown.cacheCreate,
+    cacheRead: tokenBreakdown.cacheRead,
+  });
+  return ratio == null ? null : Math.round(ratio * PERCENT_SCALE);
 };
 
 export const tokenBreakdownForSpan = (span: SpanRow): TokenBreakdown => {
