@@ -46,7 +46,20 @@ export interface AreaTrendChartProps {
    * powers of ten, and idle/zero values clamp to the floor. Default 'linear'.
    */
   yScale?: 'linear' | 'log';
+  /**
+   * Render sparse whole-number counters as bars instead of an area.
+   * When true, y-axis ticks step by whole numbers and the series renders
+   * as stacked or grouped bars with a baseline rule.
+   */
+  isDiscrete?: boolean;
 }
+
+const MAXIMUM_BAR_WIDTH = 24;
+const BAR_WIDTH_FRACTION_OF_BUCKET = 0.7;
+/** Below this a bar reads as a flat sliver, so an empty bucket draws nothing. */
+const MINIMUM_VISIBLE_BAR_HEIGHT = 0.2;
+const BAR_CORNER_RADIUS = 2.5;
+const BAR_BASELINE_OPACITY = 0.28;
 
 const defaultFormatX = (date: Date): string =>
   date.toLocaleTimeString([], { hour: 'numeric' });
@@ -91,6 +104,7 @@ const AreaTrendChart = ({
   focusedLabel = null,
   stacked = true,
   yScale = 'linear',
+  isDiscrete = false,
 }: AreaTrendChartProps) => {
   const theme = useTheme();
   const gradientId = useId().replace(/:/g, '');
@@ -129,8 +143,8 @@ const AreaTrendChart = ({
   // actual computation is a pure function (`areaTrendGeometry.ts`) so it can be
   // unit-tested without a DOM renderer.
   const { layers, yFloor, yCeiling, yTicks } = useMemo(
-    () => buildLayersAndYDomain(series, activeStates, bucketCount, stacked, isLogarithmic),
-    [series, activeStates, bucketCount, stacked, isLogarithmic],
+    () => buildLayersAndYDomain(series, activeStates, bucketCount, stacked, isLogarithmic, isDiscrete),
+    [series, activeStates, bucketCount, stacked, isLogarithmic, isDiscrete],
   );
 
   // Coordinate mappers: memoized separately from layers/y-domain so a resize
@@ -178,6 +192,13 @@ const AreaTrendChart = ({
     !focusedLabel || focusedLabel === label ? 1 : 0.12;
   const bandOpacityFor = (label: string): number =>
     lineOpacityFor(label) * (stacked ? 1 : 0.35);
+
+  // Discrete bars: capped so a short window doesn't produce slabs, and kept off
+  // each other by taking only 70% of a bucket's width.
+  const barWidth = Math.min(
+    MAXIMUM_BAR_WIDTH,
+    (plotWidth / Math.max(1, bucketCount)) * BAR_WIDTH_FRACTION_OF_BUCKET,
+  );
 
   const handleMove = (event: ReactMouseEvent<SVGSVGElement>) => {
     if (bucketCount < 1) {
@@ -241,8 +262,10 @@ const AreaTrendChart = ({
               x2="0"
               y2="1"
             >
-              <stop offset="0" stopColor={layer.color} stopOpacity={0.4} />
-              <stop offset="1" stopColor={layer.color} stopOpacity={0.04} />
+              {/* Bars carry the series color as a fill in their own right, so they
+                  hold far more of it than an area band fading into the plot. */}
+              <stop offset="0" stopColor={layer.color} stopOpacity={isDiscrete ? 0.95 : 0.4} />
+              <stop offset="1" stopColor={layer.color} stopOpacity={isDiscrete ? 0.45 : 0.04} />
             </linearGradient>
           ))}
         </defs>
@@ -270,28 +293,73 @@ const AreaTrendChart = ({
           </g>
         ))}
 
-        {layers.map((layer, layerIndex) => (
-          <path
-            key={`band-${layer.seriesIndex}`}
-            d={bandPaths[layerIndex]}
-            fill={`url(#${gradientId}-${layer.seriesIndex})`}
-            opacity={bandOpacityFor(layer.label)}
-            style={{ transition: 'opacity .12s' }}
-          />
-        ))}
+        {isDiscrete ? (
+          <>
+            {layers.map((layer) => (
+              <g
+                key={`bars-${layer.seriesIndex}`}
+                opacity={bandOpacityFor(layer.label)}
+                style={{ transition: 'opacity .12s' }}
+              >
+                {layer.upper.map((value, bucketIndex) => {
+                  const barTopY = yCoordinateAt(value);
+                  const barHeight = yCoordinateAt(layer.lower[bucketIndex] ?? 0) - barTopY;
+                  // An empty bucket draws nothing — absence is absence, not a
+                  // flat sliver sitting on the baseline.
+                  if (barHeight <= MINIMUM_VISIBLE_BAR_HEIGHT) {
+                    return null;
+                  }
+                  return (
+                    <rect
+                      key={bucketIndex}
+                      x={xCoordinateAt(bucketIndex) - barWidth / 2}
+                      y={barTopY}
+                      width={barWidth}
+                      height={barHeight}
+                      rx={BAR_CORNER_RADIUS}
+                      fill={`url(#${gradientId}-${layer.seriesIndex})`}
+                    />
+                  );
+                })}
+              </g>
+            ))}
+            <line
+              x1={PLOT_PADDING.left}
+              y1={baselineY}
+              x2={width - PLOT_PADDING.right}
+              y2={baselineY}
+              stroke={layers[0]?.color ?? gridColor}
+              strokeOpacity={BAR_BASELINE_OPACITY}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+            />
+          </>
+        ) : (
+          <>
+            {layers.map((layer, layerIndex) => (
+              <path
+                key={`band-${layer.seriesIndex}`}
+                d={bandPaths[layerIndex]}
+                fill={`url(#${gradientId}-${layer.seriesIndex})`}
+                opacity={bandOpacityFor(layer.label)}
+                style={{ transition: 'opacity .12s' }}
+              />
+            ))}
 
-        {layers.map((layer, layerIndex) => (
-          <path
-            key={`line-${layer.seriesIndex}`}
-            d={linePaths[layerIndex]}
-            fill="none"
-            stroke={layer.color}
-            strokeWidth={2.5}
-            strokeLinejoin="round"
-            opacity={lineOpacityFor(layer.label)}
-            style={{ transition: 'opacity .12s' }}
-          />
-        ))}
+            {layers.map((layer, layerIndex) => (
+              <path
+                key={`line-${layer.seriesIndex}`}
+                d={linePaths[layerIndex]}
+                fill="none"
+                stroke={layer.color}
+                strokeWidth={2.5}
+                strokeLinejoin="round"
+                opacity={lineOpacityFor(layer.label)}
+                style={{ transition: 'opacity .12s' }}
+              />
+            ))}
+          </>
+        )}
 
         {xTickIndexes.map((tickIndex) => {
           const date = axisDates[tickIndex];

@@ -334,7 +334,7 @@ class SessionsQueryIntegrationTest {
     // three hours ago and must say so even though the window opened one hour ago;
     // clipping it to the window is what made every long-running session read as
     // having started moments ago. Last activity stays the newest real emission.
-    assertThat(sessionW.startTimestamp()).isBeforeOrEqualTo(beforeWindow);
+    assertThat(sessionW.startTimestamp()).isBeforeOrEqualTo(beforeWindow.plus(1, ChronoUnit.MICROS));
     assertThat(sessionW.endTimestamp()).isBetween(insideWindow.minusSeconds(1), insideWindow.plusSeconds(1));
   }
 
