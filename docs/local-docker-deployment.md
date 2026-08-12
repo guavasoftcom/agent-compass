@@ -43,7 +43,7 @@ docker compose up -d app
 
 `pull` fetches the newer image; `up -d` notices the image changed and recreates only the `app` container (Postgres and the data volume are untouched). Flyway applies any new migrations on the first boot of the new version, so give it a few seconds before refreshing the dashboard.
 
-If you pinned a release tag through `AGENT_COMPASS_IMAGE` (see *Configuration*), `pull` will just re-fetch the pinned version — update the tag first:
+If you pinned a release tag through `AGENT_COMPASS_IMAGE` (see _Configuration_), `pull` will just re-fetch the pinned version — update the tag first:
 
 ```sh
 AGENT_COMPASS_IMAGE=ghcr.io/guavasoftcom/agent-compass:v1.1.0 docker compose up -d
@@ -68,6 +68,7 @@ Put these in the `env` block of `~/.claude/settings.json` so every session picks
   "env": {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+    "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1000000000",
 
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
@@ -77,12 +78,17 @@ Put these in the `env` block of `~/.claude/settings.json` so every session picks
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:18080",
     "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
 
+    "OTEL_LOG_ASSISTANT_RESPONSES": "1",
     "OTEL_LOG_USER_PROMPTS": "1",
     "OTEL_LOG_TOOL_DETAILS": "1",
     "OTEL_LOG_TOOL_CONTENT": "1",
     "OTEL_LOG_RAW_API_BODIES": "1",
 
     "OTEL_METRICS_INCLUDE_SESSION_ID": "1",
+    "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
+    "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
+    "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "true",
+
     "OTEL_METRIC_EXPORT_INTERVAL": "60000",
     "OTEL_LOGS_EXPORT_INTERVAL": "60000",
     "OTEL_TRACES_EXPORT_INTERVAL": "60000"
@@ -94,25 +100,30 @@ For a single shell instead, `export` the same names and values.
 
 ### What each one feeds
 
-| Variable | What breaks or degrades without it |
-| --- | --- |
-| `CLAUDE_CODE_ENABLE_TELEMETRY=1` | Master switch. Nothing is emitted without it, whatever else is set. |
-| `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` | Opts into the richer event set beyond the stable baseline. Leave it on — the dashboard reads several of the extra events. |
-| `OTEL_METRICS_EXPORTER=otlp` | Token, cost, session, and lines-of-code metrics → Tokens, Sessions, Insights. |
-| `OTEL_LOGS_EXPORTER=otlp` | Tool calls, permission decisions, and hook executions → Tool Activity, Logs, and the tuning report. |
-| `OTEL_TRACES_EXPORTER=otlp` | Spans → Traces and the per-trace waterfall. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` | The wire format the `/v1/*` ingest endpoints accept. gRPC is not served. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL; Claude Code appends `/v1/metrics`, `/v1/logs`, `/v1/traces`. |
-| `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative` | **Required — see below.** Ingest assumes cumulative counters. |
-| `OTEL_LOG_USER_PROMPTS=1` | Prompt text on `user_prompt` events. Without it, Sessions still counts turns but every prompt reads null, and the Traces explorer's prompt column is empty. |
-| `OTEL_LOG_TOOL_DETAILS` / `OTEL_LOG_TOOL_CONTENT` | The `tool_input` attribute on tool events. This is load-bearing for more than it sounds: bash anti-pattern detection, redundant-file-read and path near-miss analysis in the tuning report, and the Skills & Agents page all read identifiers out of `tool_input` JSON. |
-| `OTEL_LOG_RAW_API_BODIES=1` | `api_request_body` / `api_response_body` events, surfaced as debug rows with expandable bodies in the Logs explorer. |
-| `OTEL_METRICS_INCLUDE_SESSION_ID=1` | The `session.id` metric attribute. Nearly every aggregation in this backend groups by it, so turning it off to save cardinality would flatten Sessions, per-session token rollups, and most of Tool Activity. |
-| `OTEL_*_EXPORT_INTERVAL` | Export batching, in ms. At 60000 a short session can end before its first export — drop these to `10000` while debugging ingest, then put them back. |
+| Variable                                                       | What breaks or degrades without it                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLAUDE_CODE_ENABLE_TELEMETRY=1`                               | Master switch. Nothing is emitted without it, whatever else is set.                                                                                                                                                                                                     |
+| `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`                        | Opts into the richer event set beyond the stable baseline. Leave it on — the dashboard reads several of the extra events.                                                                                                                                               |
+| `CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH`                          | Maximum size (in bytes) of content payloads in telemetry. Set high to capture full tool inputs, responses, and API bodies without truncation.                                                                                                                            |
+| `OTEL_METRICS_EXPORTER=otlp`                                   | Token, cost, session, and lines-of-code metrics → Tokens, Sessions, Insights.                                                                                                                                                                                           |
+| `OTEL_LOGS_EXPORTER=otlp`                                      | Tool calls, permission decisions, and hook executions → Tool Activity, Logs, and the tuning report.                                                                                                                                                                     |
+| `OTEL_TRACES_EXPORTER=otlp`                                    | Spans → Traces and the per-trace waterfall.                                                                                                                                                                                                                             |
+| `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`                    | The wire format the `/v1/*` ingest endpoints accept. gRPC is not served.                                                                                                                                                                                                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                  | Base URL; Claude Code appends `/v1/metrics`, `/v1/logs`, `/v1/traces`.                                                                                                                                                                                                  |
+| `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative` | **Required — see below.** Ingest assumes cumulative counters.                                                                                                                                                                                                           |
+| `OTEL_LOG_ASSISTANT_RESPONSES=1`                               | Assistant response text on response events. Enables full message content capture in logs and traces.                                                                                                                                                                    |
+| `OTEL_LOG_USER_PROMPTS=1`                                      | Prompt text on `user_prompt` events. Without it, Sessions still counts turns but every prompt reads null, and the Traces explorer's prompt column is empty.                                                                                                             |
+| `OTEL_LOG_TOOL_DETAILS` / `OTEL_LOG_TOOL_CONTENT`              | The `tool_input` attribute on tool events. This is load-bearing for more than it sounds: bash anti-pattern detection, redundant-file-read and path near-miss analysis in the tuning report, and the Skills & Agents page all read identifiers out of `tool_input` JSON. |
+| `OTEL_LOG_RAW_API_BODIES=1`                                    | `api_request_body` / `api_response_body` events, surfaced as debug rows with expandable bodies in the Logs explorer.                                                                                                                                                    |
+| `OTEL_METRICS_INCLUDE_SESSION_ID=1`                            | The `session.id` metric attribute. Nearly every aggregation in this backend groups by it, so turning it off to save cardinality would flatten Sessions, per-session token rollups, and most of Tool Activity.                                                           |
+| `OTEL_METRICS_INCLUDE_ACCOUNT_UUID`                            | Account UUID on metrics. Enables multi-account / multi-user filtering and analysis.                                                                                                                                                                                     |
+| `OTEL_METRICS_INCLUDE_ENTRYPOINT`                              | Entrypoint (CLI, extension, IDE, web) on metrics. Enables per-interface usage analysis.                                                                                                                                                                                |
+| `OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES`                     | Resource-level attributes (hostname, process ID, runtime version) on metrics. Useful for debugging deployment and environment issues.                                                                                                                                   |
+| `OTEL_*_EXPORT_INTERVAL`                                       | Export batching, in ms. At 60000 a short session can end before its first export — drop these to `10000` while debugging ingest, then put them back.                                                                                                                    |
 
 ### Two settings that are load-bearing here
 
-**`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` must be `cumulative`.** Claude Code's `claude_code.*` counters are cumulative and re-emitted per stream, and this backend depends on that: [`MetricPointRepository`](../backend/src/main/java/com/guavasoft/agentcompass/repository/MetricPointRepository.java) precomputes a reset-aware per-row increment at ingest (`value_delta`, added in `V11`) as `current − previous` per stream, falling back to `current` when the counter resets. Every token, cost, and active-time rollup then reads `SUM(value_delta)`. Point a *delta*-temporality exporter at it and each point is already an increment, so that subtraction differences a series of increments and the numbers come out wrong — with no error to tell you.
+**`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` must be `cumulative`.** Claude Code's `claude_code.*` counters are cumulative and re-emitted per stream, and this backend depends on that: [`MetricPointRepository`](../backend/src/main/java/com/guavasoft/agentcompass/repository/MetricPointRepository.java) precomputes a reset-aware per-row increment at ingest (`value_delta`, added in `V11`) as `current − previous` per stream, falling back to `current` when the counter resets. Every token, cost, and active-time rollup then reads `SUM(value_delta)`. Point a _delta_-temporality exporter at it and each point is already an increment, so that subtraction differences a series of increments and the numbers come out wrong — with no error to tell you.
 
 **`OTEL_LOG_TOOL_DETAILS` / `OTEL_LOG_TOOL_CONTENT` are not just cosmetic.** `tool_input` isn't only shown in the UI; it's parsed. Skill and subagent identifiers are read from `skill.name` / `subagent_type` **or** from fields inside the `tool_input` JSON, and the report's bash-command and file-path analysis reads `command` and `file_path` out of the same blob. With these off, the Skills & Agents page and several report sections have nothing to work from.
 
@@ -120,6 +131,31 @@ For a single shell instead, `export` the same names and values.
 
 - `OTEL_METRICS_INCLUDE_VERSION=1` — stamps the Claude Code version on metrics, which makes it possible to line a behavior change up against an upgrade.
 - `OTEL_RESOURCE_ATTRIBUTES=key=value,key2=value2` — your own dimensions (team, machine, experiment). They land in the jsonb payload and are filterable in the Logs and Traces explorers.
+
+### Optional: Require backend to be running
+
+To prevent accidentally running sessions that won't be captured (because the telemetry backend is down), add a hook to `~/.claude/settings.json` that checks backend connectivity before allowing a session to start:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "endpoint=\"${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:18080}\"; curl -s -o /dev/null --max-time 2 \"$endpoint/v1/logs\" || echo '{\"decision\":\"block\",\"reason\":\"Telemetry backend is unreachable (OTLP ingest at '\"$endpoint\"') — this session is not being captured. Start Agent Compass (docker compose up -d or cd backend && ./mvnw spring-boot:run), then resubmit.\"}'",
+            "timeout": 5,
+            "statusMessage": "Checking telemetry backend connectivity"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This hook runs before each prompt, checks if the backend's `/v1/logs` endpoint responds, and blocks the session with a clear message if unreachable. It respects your `OTEL_EXPORTER_OTLP_ENDPOINT` setting, so you can use it with either the docker-compose stack (`:18080`) or the dev backend (`:8080`). If you move the container with `APP_PORT`, the hook will follow automatically.
 
 ### Verify it's flowing
 
@@ -130,7 +166,7 @@ curl -s "http://localhost:18080/api/sessions/summary?minutes=60"
 curl -s "http://localhost:18080/api/tool-activity/calls?minutes=60" | head -c 300
 ```
 
-Non-empty results mean ingest is working — the dashboard at <http://localhost:18080> will show the same data. If they stay empty, see *Troubleshooting* below.
+Non-empty results mean ingest is working — the dashboard at <http://localhost:18080> will show the same data. If they stay empty, see _Troubleshooting_ below.
 
 ### Other OTel-instrumented agents
 
@@ -140,12 +176,12 @@ Any agent that speaks OTLP works the same way — set `OTEL_EXPORTER_OTLP_PROTOC
 
 [docker-compose.yml](../docker-compose.yml) reads these from your environment (or a `.env` file next to it); all have working defaults.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `APP_PORT` | `18080` | Host port for the dashboard, `/api`, and OTLP ingest. Kept off 80/8080 so it can run beside a dev backend. |
-| `AGENT_COMPASS_IMAGE` | `ghcr.io/guavasoftcom/agent-compass:latest` | Image to run. Pin a release tag (`:v0.1.0`) or point at a locally built image. |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `postgres` / `coding_agent_tuning` | Database credentials, applied to both services. |
-| `JAVA_OPTS` | empty | Extra JVM flags, e.g. `-Xmx1g`. |
+| Variable                                              | Default                                         | Purpose                                                                                                    |
+| ----------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `APP_PORT`                                            | `18080`                                         | Host port for the dashboard, `/api`, and OTLP ingest. Kept off 80/8080 so it can run beside a dev backend. |
+| `AGENT_COMPASS_IMAGE`                                 | `ghcr.io/guavasoftcom/agent-compass:latest`     | Image to run. Pin a release tag (`:v0.1.0`) or point at a locally built image.                             |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `postgres` / `coding_agent_tuning` | Database credentials, applied to both services.                                                            |
+| `JAVA_OPTS`                                           | empty                                           | Extra JVM flags, e.g. `-Xmx1g`.                                                                            |
 
 Postgres is intentionally **not** published to the host — the app reaches it over the compose network. To attach `psql` or a GUI client, uncomment the `ports` block on the `postgres` service (it defaults to `5433` so it won't collide with a dev Postgres on 5432).
 
@@ -186,7 +222,7 @@ The image is published by [.github/workflows/release.yml](../.github/workflows/r
 
 **App container restarts with `Driver claims to not accept jdbcUrl`** — `SPRING_DATASOURCE_URL` reached the container empty. Check that whatever sets it (your shell, a `.env`) isn't exporting a blank value; an empty variable overrides the compose default rather than falling back to it.
 
-**Dashboard loads but every panel is empty** — the app is running against its own fresh database. Either send it telemetry (see above), or attach the dev volume as described in *Data, and how it relates to the dev stack*.
+**Dashboard loads but every panel is empty** — the app is running against its own fresh database. Either send it telemetry (see above), or attach the dev volume as described in _Data, and how it relates to the dev stack_.
 
 **Telemetry enabled but nothing arrives** — work through these in order:
 
@@ -195,10 +231,10 @@ The image is published by [.github/workflows/release.yml](../.github/workflows/r
 3. **Restart Claude Code.** The variables are read at startup; a session already running when you set them keeps the old configuration.
 4. **Confirm the endpoint answers:** `curl -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/x-protobuf' --data-binary '' http://localhost:18080/v1/metrics` should return `400` (route exists, empty body rejected). A `404` means you're pointed at the wrong port or path; a connection refused means the stack isn't up.
 
-**Metrics show up but Tool Activity and Traces stay empty** — only `OTEL_METRICS_EXPORTER` is set. Tool calls, permission decisions, and hooks arrive as *logs*, and the Traces pages need *spans*; set `OTEL_LOGS_EXPORTER=otlp` and `OTEL_TRACES_EXPORTER=otlp` too.
+**Metrics show up but Tool Activity and Traces stay empty** — only `OTEL_METRICS_EXPORTER` is set. Tool calls, permission decisions, and hooks arrive as _logs_, and the Traces pages need _spans_; set `OTEL_LOGS_EXPORTER=otlp` and `OTEL_TRACES_EXPORTER=otlp` too.
 
 **Session prompt timeline shows turns but no prompt text** — `OTEL_LOG_USER_PROMPTS` is unset. Prompt content is opt-in; set it to `1` and start a new session.
 
-**Token or cost totals look implausible** — check `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` is `cumulative`. Delta temporality produces no error, just wrong arithmetic (see *Two settings that are load-bearing here*). Rows already ingested under the wrong setting stay wrong; their `value_delta` was computed at ingest time.
+**Token or cost totals look implausible** — check `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` is `cumulative`. Delta temporality produces no error, just wrong arithmetic (see _Two settings that are load-bearing here_). Rows already ingested under the wrong setting stay wrong; their `value_delta` was computed at ingest time.
 
 **`no such image` on `docker compose up`** — the released image hasn't been published yet, or you're on a private package. Build locally as shown above, or `docker login ghcr.io` first.
