@@ -44,6 +44,11 @@ export const buildLayersAndYDomain = (
   bucketCount: number,
   stacked: boolean,
   isLogarithmic: boolean,
+  /**
+   * Sparse whole-number series (drawn as bars). Steps the axis by whole numbers
+   * and adds a bucket of headroom above the peak. Ignored on a log scale.
+   */
+  isDiscrete: boolean = false,
 ): LayersAndYDomain => {
   const isSeriesActive = (seriesIndex: number): boolean =>
     activeStates ? activeStates[seriesIndex] !== false : true;
@@ -132,8 +137,22 @@ export const buildLayersAndYDomain = (
         }
       }
     }
-    ceiling = niceMax(peakValue);
-    ticks = Array.from({ length: 6 }, (_, i) => (ceiling * i) / 5);
+
+    if (isDiscrete) {
+      // A counter that only ever reaches a handful deserves honest ticks: five
+      // evenly-spaced fractions of a ceiling of 1 all round to "1, 1, 1, 0, 0".
+      // Step by whole numbers instead, one tick per integer. The peak is rounded
+      // because a stacked split reconstitutes it through floating-point shares
+      // (0.73 + 0.27 of an integer bucket), so it can arrive a hair off.
+      // One bucket of headroom keeps the busiest bar off the ceiling and puts a
+      // labelled tick above the peak.
+      const peakInteger = Math.max(1, Math.round(peakValue));
+      ceiling = peakInteger + 1;
+      ticks = Array.from({ length: ceiling + 1 }, (_, i) => i);
+    } else {
+      ceiling = niceMax(peakValue);
+      ticks = Array.from({ length: 6 }, (_, i) => (ceiling * i) / 5);
+    }
   }
 
   // Shared baseline for unstacked bands (axis floor).

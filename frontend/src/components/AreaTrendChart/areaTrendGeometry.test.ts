@@ -53,6 +53,35 @@ describe('buildLayersAndYDomain', () => {
     expect(yCeiling).toBe(10);
   });
 
+  it('steps a discrete y-axis by whole numbers with a bucket of headroom', () => {
+    const commits: AreaTrendSeries = { label: 'total', data: [0, 1, 0, 2], color: '#555' };
+    const { yCeiling, yTicks } = buildLayersAndYDomain([commits], undefined, 4, true, false, true);
+
+    // Peak of 2 → ceiling 3, so the busiest bucket never paints floor-to-ceiling
+    // and there's a labelled tick above it.
+    expect(yCeiling).toBe(3);
+    expect(yTicks).toEqual([0, 1, 2, 3]);
+  });
+
+  it('keeps discrete ticks integral when a stacked split reconstitutes the peak', () => {
+    // 73% + 27% of 1 comes back as 1.0000000000000002 in binary floating point.
+    const added: AreaTrendSeries = { label: 'added', data: [0.73], color: '#111' };
+    const removed: AreaTrendSeries = { label: 'removed', data: [0.27], color: '#222' };
+    const { yCeiling, yTicks } = buildLayersAndYDomain(
+      [added, removed], undefined, 1, true, false, true,
+    );
+
+    expect(yCeiling).toBe(2);
+    expect(yTicks).toEqual([0, 1, 2]);
+  });
+
+  it('leaves the nice-number axis alone when the series is not discrete', () => {
+    const { yCeiling, yTicks } = buildLayersAndYDomain([seriesA, seriesB], undefined, 3, true, false, false);
+
+    expect(yCeiling).toBe(10);
+    expect(yTicks).toHaveLength(6);
+  });
+
   it('computes a log floor a decade below the smallest positive value', () => {
     const sparse: AreaTrendSeries = { label: 'sparse', data: [0, 5, 500], color: '#333' };
     const { yFloor, yCeiling } = buildLayersAndYDomain([sparse], undefined, 3, false, true);

@@ -17,6 +17,9 @@ export interface MetricTrendCardProps {
 
 const SPLIT_NONE = 'None';
 
+/** Above this peak a whole-number series is dense enough to read as a curve. */
+const DISCRETE_PEAK_CEILING = 5;
+
 /**
  * Trend chart card for the selected metric. Renders a titled Paper with an
  * optional "Split by" SegmentedToggle (visible only when the metric has attribute
@@ -57,6 +60,21 @@ const MetricTrendCard = ({
       color: colorForIndex(row.colorIndex),
     }));
   }, [metric, split]);
+
+  /**
+   * A sparse whole-number counter draws as bars rather than an interpolated
+   * area: a line between buckets claims a rate that rose and fell between them,
+   * but a commit either happened in that hour or it didn't. This is a threshold
+   * rather than a per-metric flag so an uncurated counter the backend discovers
+   * gets the same treatment without a spec.
+   */
+  const isDiscrete = useMemo(() => {
+    if (metric.trend.length === 0) {
+      return false;
+    }
+    const peakValue = metric.trend.reduce((peak, value) => Math.max(peak, value), 0);
+    return peakValue <= DISCRETE_PEAK_CEILING && metric.trend.every((value) => Number.isInteger(value));
+  }, [metric.trend]);
 
   return (
     <Paper variant="outlined" sx={{ p: '20px 24px', minWidth: 0 }}>
@@ -118,6 +136,7 @@ const MetricTrendCard = ({
           yLabel={metric.unit.replace(/[{}]/g, '')}
           formatY={formatCompact}
           height={290}
+          isDiscrete={isDiscrete}
         />
       )}
     </Paper>

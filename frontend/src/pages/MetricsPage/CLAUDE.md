@@ -31,9 +31,10 @@ MetricsPage/
 │   ├── metricsSampleData.ts  MetricSeries + MetricSplitRow types; the METRICS
 │   │                         fixture array; re-exported by metricsApi.ts as the
 │   │                         default prop value and by all four components
-│   ├── MetricKpiStrip/       responsive N-card grid; each card = StatCard with
-│   │   ├── MetricKpiStrip.tsx  shared LineSparkline + Δ chip; selected card gets
-│   │   └── index.ts            accent ring via PaperProps sx override
+│   ├── MetricKpiStrip/       two-tier picker: three headline metrics as full
+│   │   ├── MetricKpiStrip.tsx  StatCards (LineSparkline + Δ), everything else as
+│   │   └── index.ts            hand-built compact cards; selected card gets an
+│   │                           accent ring, identical in both tiers
 │   ├── MetricHeader/         selected-metric detail header: full name, type/unit
 │   │   ├── MetricHeader.tsx    badges, description, sum/rate/peak/delta stats
 │   │   └── index.ts
@@ -52,9 +53,12 @@ MetricsPage/
 ┌─ PageLayout ──────────────────────────────────────────────────────────────┐
 │ eyebrow "Observability" / title "Metrics" / subtitle          [PageActions] │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ ┌─ MetricKpiStrip: N-column grid (2 xs / 3 sm / min(N,7) lg) ──────────┐ │
-│ │ [token] [cost] [session] [active] [loc] [decision] [commit] …        │ │
-│ │  sparkline · sum · Δ chip;  selected = accent ring + action.selected  │ │
+│ ┌─ MetricKpiStrip ──────────────────────────────────────────────────────┐ │
+│ │ primary (3 cols → 2 ≤900px → 1 ≤620px), full cards:                  │ │
+│ │   [token] [cost] [session]   name · sum · sparkline · Δ               │ │
+│ │ secondary (4 cols → 2 ≤1080px), compact, no sparkline:               │ │
+│ │   [active] [loc] [decision] [commit] [discovered…]  name / sum + Δ    │ │
+│ │  selected = accent ring + action.selected, both tiers                 │ │
 │ └───────────────────────────────────────────────────────────────────────┘ │
 │ ┌─ MetricHeader (Paper) ─────────────────────────────────────────────────┐ │
 │ │ claude_code.token.usage  [Counter]  [tokens]                           │ │
@@ -98,6 +102,18 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
 - **Split state lives in the view.** `MetricsPageView` owns `selectedId` (which metric card is
   active) and `split` (current breakdown key, or `'None'`). Selecting a different metric card
   via `selectMetric` resets the split to `'None'` so stale split labels never bleed across metrics.
+- **Strip tiers are an allow-list, not a rank.** `PRIMARY_METRIC_IDS` in `MetricKpiStrip` names
+  exactly `token` / `cost` / `session`; every other metric — including a discovered one whose id is
+  its dotted name with dashes (`claude_code-commit-count`) — falls through to the compact tier. A
+  new metric therefore never requires a layout decision, and an unknown metric is by definition not
+  a headline. The compact card is hand-built rather than a denser `StatCard` because it puts value
+  and Δ on one baseline row, which `StatCard`'s label → value → children stack can't express.
+- **Sparse whole-number counters draw as bars.** `MetricTrendCard` sets `isDiscrete` when the
+  trend's peak is ≤ 5 and every value is an integer, which switches `AreaTrendChart` from an
+  interpolated area to per-bucket bars, steps the y-axis by whole numbers, and adds a bucket of
+  headroom above the peak. It's a threshold, not a per-metric flag, so a discovered counter gets it
+  without a spec. `commit.count` hits it; `session.count` does not (its bucket values are
+  fractional), so it keeps the area chart.
 - **Chart series derivation.** When `split === 'None'` the chart renders one series (the metric's
   raw `trend` array). When a split is active, `MetricTrendCard` maps each `MetricSplitRow` to a
   scaled series: `data[i] = trend[i] * row.pct / 100`. Colors come from
