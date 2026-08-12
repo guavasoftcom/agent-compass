@@ -28,7 +28,7 @@ export interface MetricsPageViewProps {
 const SPLIT_NONE = 'None';
 
 /**
- * Metrics page — a simplified master-detail over the six claude_code.* counters.
+ * Metrics page — a simplified master-detail over the claude_code.* counters.
  *
  * Left: the metric list (sparkline + headline value). Right: the selected
  * metric's header stats, a trend chart, and a breakdown card. A single
@@ -74,8 +74,8 @@ const MetricsPageView = ({
       eyebrow="Observability"
       title="Metrics"
       subtitle={
-        'The six counters Claude Code emits in the claude_code.* namespace. Pick a metric to see ' +
-        'its trend over the selected window; split token & cost by model when you need the breakdown.'
+        'Every counter received in the claude_code.* namespace. Pick a metric to see its trend ' +
+        'over the selected window; split token & cost by model when you need the breakdown.'
       }
       error={error}
       actions={

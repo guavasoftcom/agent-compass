@@ -16,11 +16,19 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Builds the {@code GET /api/metrics/series} payload: one {@link MetricSeries} per
- * fixed {@code claude_code.*} counter, each with a windowed trend and any attribute
+ * {@code claude_code.*} counter, each with a windowed trend and any attribute
  * splits, for the Metrics page master-detail.
+ *
+ * <p>The counter list is curated-plus-discovered rather than fixed. Seven counters
+ * have hand-written descriptions, units, and splits; any other metric name the
+ * database has ever received is appended with a generated spec, so a metric added
+ * by a newer agent release shows up without a code change. See
+ * {@code metricSpecs()}.
  *
  * <p>Every metric is a cumulative counter re-emitted every minute and split into
  * concurrent streams identified by the full attribute set, so all aggregation goes
@@ -49,6 +57,9 @@ public class MetricSeriesService {
   private static final String MODEL_ATTRIBUTE = "model";
   private static final String DECISION_ATTRIBUTE = "decision";
   private static final String RATE_UNIT_PER_HOUR = "/h";
+  private static final String DEFAULT_CAPTION_PREFIX = "Sum";
+  private static final String USD_UNIT = "USD";
+  private static final String SECONDS_UNIT = "s";
   private static final String DIR_UP = "up";
   private static final String DIR_DOWN = "down";
   private static final String UNKNOWN_LABEL = "unknown";
@@ -83,10 +94,62 @@ public class MetricSeriesService {
     return series;
   }
 
-  // The six fixed counters and how each one reads. Metric names come from
+  // Curated specs first, in their declared order, then anything else the database
+  // has ever received, alphabetically. A deployment on a newer Claude Code (or on
+  // a different agent entirely) gets a working card for a metric this code has
+  // never heard of, instead of silently dropping it -- which is exactly what
+  // happened to claude_code.commit.count, emitted from 2026-06-12 and invisible
+  // on this page until it was added to the curated list below.
+  private List<MetricSpec> metricSpecs() {
+    List<MetricSpec> specs = new ArrayList<>(curatedMetricSpecs());
+    Set<String> curatedNames = specs.stream().map(MetricSpec::name).collect(Collectors.toSet());
+    for (Object[] row : repository.findDistinctMetricNames()) {
+      String metricName = (String) row[0];
+      if (curatedNames.contains(metricName)) {
+        continue;
+      }
+      specs.add(discoveredMetricSpec(metricName, row[1] == null ? "" : (String) row[1]));
+    }
+    return specs;
+  }
+
+  // A metric with no curated entry still gets a real card: headline total, trend,
+  // rate, and delta all come from the same reset-aware aggregation as the curated
+  // ones. What it cannot have is editorial -- a description explaining what the
+  // number means, and the attribute splits worth breaking it down by, both of
+  // which require knowing the metric. The description says so rather than
+  // inventing prose, so an uncurated card is visibly uncurated and someone can
+  // promote it to curatedMetricSpecs() when it turns out to matter.
+  private static MetricSpec discoveredMetricSpec(String metricName, String unit) {
+    return new MetricSpec(
+        metricName.replace('.', '-'),
+        metricName,
+        unit,
+        DEFAULT_CAPTION_PREFIX,
+        "Discovered counter — emitted to this backend but not yet curated in the dashboard, so it "
+            + "carries no description and no attribute splits. The total is the same reset-aware "
+            + "sum used by every other metric here.",
+        formatForUnit(unit),
+        Map.of());
+  }
+
+  // Units are OTLP UCUM-ish: "USD" for money, "s" for seconds, an annotation in
+  // braces ("{session}") or the empty string for dimensionless counts. Only the
+  // first two change how a number reads; everything else formats as a count.
+  private static ValueFormat formatForUnit(String unit) {
+    if (USD_UNIT.equalsIgnoreCase(unit)) {
+      return ValueFormat.USD;
+    }
+    if (SECONDS_UNIT.equals(unit)) {
+      return ValueFormat.DURATION;
+    }
+    return ValueFormat.NUMBER;
+  }
+
+  // The seven known counters and how each one reads. Metric names come from
   // TuningProperties so deployments can override the emission namespace; split
   // attribute keys (model / type / decision) are the OTLP attribute names.
-  private List<MetricSpec> metricSpecs() {
+  private List<MetricSpec> curatedMetricSpecs() {
     String typeAttribute = tuningProperties.getTokenTypeAttribute();
     return List.of(
         new MetricSpec(
@@ -116,7 +179,13 @@ public class MetricSeriesService {
         new MetricSpec(
             "decision", tuningProperties.getCodeEditDecisionMetric(), "{decision}", "Decisions",
             "Edit-tool permission decisions. Split by decision to see the accept / reject mix.",
-            ValueFormat.NUMBER, orderedSplits("Decision", DECISION_ATTRIBUTE)));
+            ValueFormat.NUMBER, orderedSplits("Decision", DECISION_ATTRIBUTE)),
+        new MetricSpec(
+            "commit", tuningProperties.getCommitCountMetric(), "{commit}", "Commits",
+            "Git commits created during Claude Code sessions. A low-volume counter — it moves only "
+                + "when the agent actually commits, so read it as a throughput signal rather than a "
+                + "rate. No split: it carries only session and user identity attributes.",
+            ValueFormat.NUMBER, Map.of()));
   }
 
   // (displayName -> attribute) pairs, insertion-ordered so the UI shows the splits

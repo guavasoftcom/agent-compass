@@ -1,9 +1,15 @@
 // Sample data for the simplified Metrics page.
 //
-// Six fixed counters in the claude_code.* namespace. Each carries a headline
-// value, a 24-point trend (for the catalog sparkline + the detail chart), and an
-// optional set of attribute "splits" (e.g. token usage by model or type). These
-// render until the API lands — see BACKEND.md (`GET /api/metrics/series`).
+// The seven curated counters in the claude_code.* namespace. Each carries a
+// headline value, a 24-point trend (for the catalog sparkline + the detail
+// chart), and an optional set of attribute "splits" (e.g. token usage by model
+// or type). These render until the API lands — see BACKEND.md
+// (`GET /api/metrics/series`).
+//
+// The live endpoint can return MORE than these seven: it appends a generated
+// card for any metric name in the database that has no curated spec. There is no
+// fixture for that case, so sample mode always shows exactly seven — don't treat
+// this array's length as the number of cards the page can render.
 
 export interface MetricSplitRow {
   label: string;
@@ -176,5 +182,26 @@ export const METRICS: MetricSeries[] = [
         { label: 'rejected', value: '139', pct: 13, colorIndex: 1 },
       ],
     },
+  },
+  {
+    id: 'commit',
+    name: 'claude_code.commit.count',
+    type: 'counter',
+    unit: '{commit}',
+    // Deliberately tiny next to the others: on real telemetry this counter moves
+    // a couple of dozen times over months, so a fixture in the thousands would
+    // make the sparkline lie about what the card normally looks like.
+    sum: '4',
+    sumLabel: 'Commits (24h)',
+    rate: '0.2',
+    rateUnit: '/h',
+    peak: '2',
+    delta: '+33.3%',
+    dir: 'up',
+    description:
+      'Git commits created during Claude Code sessions. A low-volume counter — it moves only when ' +
+      'the agent actually commits, so read it as a throughput signal rather than a rate.',
+    trend: [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0],
+    splits: {},
   },
 ];

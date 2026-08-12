@@ -125,14 +125,56 @@ class MetricSeriesQueryIntegrationTest {
   }
 
   @Test
-  void returnsAllSixMetricsEvenWhenUnseeded() {
+  void returnsEveryCuratedMetricEvenWhenUnseeded() {
     List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now());
     assertThat(series).extracting(MetricSeries::id)
-        .containsExactly("token", "cost", "session", "active", "loc", "decision");
+        .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit");
     // Metrics with no rows still return a well-formed zero series, no splits populated.
     MetricSeries session = series.stream().filter(s -> "session".equals(s.id())).findFirst().orElseThrow();
     assertThat(session.sum()).isEqualTo("0");
     assertThat(session.splits()).isEmpty();
+
+    MetricSeries commit = series.stream().filter(s -> "commit".equals(s.id())).findFirst().orElseThrow();
+    assertThat(commit.name()).isEqualTo("claude_code.commit.count");
+    assertThat(commit.splits()).isEmpty();
+  }
+
+  @Test
+  void appendsAGeneratedCardForAMetricNoSpecCovers() {
+    // One cumulative stream, 40 then 100, so the reset-aware sum telescopes to 100.
+    saveWithUnit("acme.agent.spend.total", "USD", 40.0, base);
+    saveWithUnit("acme.agent.spend.total", "USD", 100.0, base.plusSeconds(60));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now());
+
+    // Curated order is preserved and the unknown metric lands after it.
+    assertThat(series).extracting(MetricSeries::id)
+        .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit",
+            "acme-agent-spend-total");
+
+    MetricSeries discovered = series.get(series.size() - 1);
+    assertThat(discovered.name()).isEqualTo("acme.agent.spend.total");
+    // The declared unit drives the format, so a discovered money counter still reads as money.
+    assertThat(discovered.sum()).isEqualTo("$100.00");
+    assertThat(discovered.trend()).hasSize(24);
+    assertThat(discovered.splits()).isEmpty();
+    assertThat(discovered.description()).contains("not yet curated");
+  }
+
+  @Test
+  void discoveryIgnoresTheWindowSoCardsDoNotAppearAndVanishAsTheUserPans() {
+    saveWithUnit("acme.agent.legacy.count", "", 7.0, base.minus(90, ChronoUnit.DAYS));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    MetricSeries discovered = metricSeriesService.metricSeries(windowStart(), Instant.now()).stream()
+        .filter(candidate -> "acme-agent-legacy-count".equals(candidate.id()))
+        .findFirst()
+        .orElseThrow();
+
+    // Every row it has is far outside the queried window, so it reads zero rather
+    // than disappearing -- the same way an unseeded curated metric does.
+    assertThat(discovered.sum()).isEqualTo("0");
   }
 
   private MetricSeries seriesById(String id) {
@@ -154,7 +196,16 @@ class MetricSeriesQueryIntegrationTest {
     save(DECISION_METRIC, Map.of("session.id", "s1", "decision", decision), value, timestamp);
   }
 
+  private void saveWithUnit(String metricName, String unit, double value, Instant timestamp) {
+    save(metricName, Map.of("session.id", "s1"), value, timestamp, unit);
+  }
+
   private void save(String metricName, Map<String, Object> attributes, double value, Instant timestamp) {
+    save(metricName, attributes, value, timestamp, null);
+  }
+
+  private void save(
+      String metricName, Map<String, Object> attributes, double value, Instant timestamp, String unit) {
     MetricPointEntity entity = new MetricPointEntity();
     entity.setMetricName(metricName);
     entity.setTimestamp(timestamp);
@@ -162,6 +213,7 @@ class MetricSeriesQueryIntegrationTest {
     entity.setValueDouble(value);
     entity.setValueKind("double");
     entity.setAttributes(attributes);
+    entity.setUnit(unit);
     MetricPointEntity savedEntity = metricPointRepository.save(entity);
     seededMetricPointIds.add(savedEntity.getId());
   }

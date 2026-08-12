@@ -1085,6 +1085,46 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // window total, the per-bucket trend, and the per-split breakdown all
   // reconcile. value_double carries every claude_code.* metric.
 
+  // Every distinct metric name in the table, with its unit, so the Metrics page
+  // can show a card for a counter nobody has curated yet (see
+  // MetricSeriesService.discoveredMetricSpec).
+  //
+  // Deliberately NOT window-scoped. A card set that changes as the user pans the
+  // window would make metrics appear and vanish; the curated ones already render
+  // at zero when a window has no data, and discovered ones match that.
+  //
+  // This is a loose index scan, not the plain GROUP BY it looks like it should
+  // be. Postgres has no skip scan, so `SELECT metric_name FROM metric_points
+  // GROUP BY metric_name` reads every row: measured at 247 ms over a 30-day
+  // window (parallel seq scan, 390k buffers) purely to learn seven strings. The
+  // recursive form walks idx_metric_points_name_ts one key at a time -- one
+  // index probe per distinct name, eight probes total -- and measures 0.245 ms,
+  // independent of table size. For scale: ONE aggregateMetricTotal call above
+  // costs 235 ms, and the page makes six of them, so this must not be the
+  // expensive part of the request.
+  //
+  // Unit is read off whichever row each probe lands on rather than aggregated,
+  // because a metric name carries exactly one unit (verified: seven names, seven
+  // distinct (name, unit) pairs). The empty string is a real value -- only
+  // token.usage, cost.usage, and active_time.total declare a unit at all.
+  @Query(value = """
+      WITH RECURSIVE distinct_metrics AS (
+          (SELECT metric_name, unit FROM metric_points ORDER BY metric_name LIMIT 1)
+        UNION ALL
+          SELECT probe.metric_name, probe.unit
+          FROM distinct_metrics AS walker
+          CROSS JOIN LATERAL (
+            SELECT candidate.metric_name, candidate.unit
+            FROM metric_points AS candidate
+            WHERE candidate.metric_name > walker.metric_name
+            ORDER BY candidate.metric_name
+            LIMIT 1) AS probe)
+      SELECT metric_name, COALESCE(unit, '') AS unit
+      FROM distinct_metrics
+      ORDER BY metric_name
+      """, nativeQuery = true)
+  List<Object[]> findDistinctMetricNames();
+
   // Window total for one metric.
   @Query(value = """
       SELECT COALESCE(SUM(value_delta), 0)::double precision AS total

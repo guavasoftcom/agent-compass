@@ -1,11 +1,19 @@
 # Metrics page
 
-Master-detail view over the six `claude_code.*` counters. A KPI strip across the top
+Master-detail view over the `claude_code.*` counters. A KPI strip across the top
 lets users pick a metric; below it, the selected metric's header stats, a windowed
 `AreaTrendChart`, and a breakdown card are shown. A "Split by" toggle stacks the
 chart by attribute (model, type, change, …) when the selected metric supports it.
 Backend counterpart: `MetricsController` → `MetricSeriesService`
 (`backend/.../controller/MetricsController.java`, `GET /api/metrics/series`).
+
+**The card count is not fixed.** `MetricSeriesService` returns seven *curated*
+metrics (token, cost, session, active, loc, decision, commit) followed by a
+generated card for every other metric name present in `metric_points` — so a
+counter introduced by a newer Claude Code release appears here with no frontend
+change. Discovered cards have a placeholder description and no splits; promoting
+one means adding a `MetricSpec` to `curatedMetricSpecs()` in the backend. Nothing
+in this folder may assume six metrics, or seven.
 
 ## Files
 
@@ -23,7 +31,7 @@ MetricsPage/
 │   ├── metricsSampleData.ts  MetricSeries + MetricSplitRow types; the METRICS
 │   │                         fixture array; re-exported by metricsApi.ts as the
 │   │                         default prop value and by all four components
-│   ├── MetricKpiStrip/       responsive 6-card grid; each card = StatCard with
+│   ├── MetricKpiStrip/       responsive N-card grid; each card = StatCard with
 │   │   ├── MetricKpiStrip.tsx  shared LineSparkline + Δ chip; selected card gets
 │   │   └── index.ts            accent ring via PaperProps sx override
 │   ├── MetricHeader/         selected-metric detail header: full name, type/unit
@@ -44,8 +52,8 @@ MetricsPage/
 ┌─ PageLayout ──────────────────────────────────────────────────────────────┐
 │ eyebrow "Observability" / title "Metrics" / subtitle          [PageActions] │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ ┌─ MetricKpiStrip: 6-column grid (2 xs / 3 sm / 6 lg) ─────────────────┐ │
-│ │ [token.usage] [cost.usage] [session.count] [active_time] [loc] [decision] │ │
+│ ┌─ MetricKpiStrip: N-column grid (2 xs / 3 sm / min(N,7) lg) ──────────┐ │
+│ │ [token] [cost] [session] [active] [loc] [decision] [commit] …        │ │
 │ │  sparkline · sum · Δ chip;  selected = accent ring + action.selected  │ │
 │ └───────────────────────────────────────────────────────────────────────┘ │
 │ ┌─ MetricHeader (Paper) ─────────────────────────────────────────────────┐ │
@@ -99,8 +107,8 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
   24 h. It is NOT tied to the `from`/`to` params, so the axis is an approximation of the window
   rather than an exact label.
 - **`SegmentedToggle` appears only when `splitKeys.length > 1`** (i.e. the selected metric
-  has at least one attribute split). Metrics without splits (`session.count`, `active_time.total`)
-  show no toggle.
+  has at least one attribute split). Metrics without splits (`session.count`, `active_time.total`,
+  `commit.count`, and every discovered metric) show no toggle.
 - **`MetricBreakdown` doubles as two cards in one.** With `split === 'None'` it shows a compact
   summary panel. With a split active it passes `BreakdownRow[]` (derived from `MetricSplitRow`)
   to the shared `BreakdownList` component with `layout="stacked"`.
@@ -114,9 +122,10 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
   `metricsApi.ts`. All four sub-components import from `'../metricsSampleData'`; `metricsApi.ts`
   re-exports the type. Keep the type source in `metricsSampleData.ts` until the API is stable
   enough to own the shape.
-- `VITE_METRICS_SAMPLE=1` returns static data for all six metrics immediately; the `isLoading`
-  and `error` paths are therefore untested without a live backend. The chart renders a
-  `Loading…` placeholder only when `isLoading === true`.
+- `VITE_METRICS_SAMPLE=1` returns static data for the seven curated metrics immediately; the
+  `isLoading` and `error` paths are therefore untested without a live backend. The chart renders a
+  `Loading…` placeholder only when `isLoading === true`. Sample mode has no fixture for a
+  *discovered* metric, so that path only exercises against a real database.
 - The `'metrics/series'` query key uses a forward-slash, unlike the `'kebab-feature'` convention
   used by other pages. If you refactor, also update `MetricsPage`'s manual `refetch()` call —
   it uses the hook directly, not `queryClient.invalidateQueries`, so the key mismatch would only

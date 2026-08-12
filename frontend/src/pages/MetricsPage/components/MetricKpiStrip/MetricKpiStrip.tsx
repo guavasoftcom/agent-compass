@@ -22,13 +22,26 @@ const typeColor = (type: MetricSeries['type'], t: Theme): string => {
 };
 
 /**
+ * Widest single row the strip will lay out on a large screen. Beyond this the
+ * cards wrap to a second row rather than getting thinner — at 7 columns a card
+ * is already ~155px at the lg breakpoint, which is about as narrow as the
+ * headline value and its unit suffix stay readable.
+ */
+const LARGE_SCREEN_MAX_COLUMNS = 7;
+
+/**
  * Metric picker as a KPI strip (replaces the dropdown/rail): a responsive row of
  * cards, one per metric, each showing name · headline value · sparkline · Δ.
  * Doubles as an at-a-glance overview; click a card to load its detail below.
  * The selected card gets an accent ring.
+ *
+ * The column count follows `metrics.length` rather than being fixed, because the
+ * series endpoint appends a card for any uncurated metric it finds in the
+ * database — the strip has to absorb a metric this code has never seen.
  */
 const MetricKpiStrip = ({ metrics, selectedId, onSelect }: MetricKpiStripProps) => {
   const theme = useTheme();
+  const columnCount = Math.min(Math.max(metrics.length, 1), LARGE_SCREEN_MAX_COLUMNS);
   return (
     <Box>
       <Typography
@@ -47,7 +60,7 @@ const MetricKpiStrip = ({ metrics, selectedId, onSelect }: MetricKpiStripProps) 
           gridTemplateColumns: {
             xs: 'repeat(2, 1fr)',
             sm: 'repeat(3, 1fr)',
-            lg: 'repeat(6, 1fr)',
+            lg: `repeat(${columnCount}, 1fr)`,
           },
           gap: 1.5,
         }}

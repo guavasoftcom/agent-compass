@@ -248,6 +248,13 @@ public class TuningProperties {
   private String sessionStartTypeAttribute = "start_type";
 
   /**
+   * OTLP metric name carrying the cumulative count of git commits created during
+   * a session. Drives the Metrics page. Carries only identity attributes
+   * (session / user / organization), so it has no meaningful split.
+   */
+  private String commitCountMetric = "claude_code.commit.count";
+
+  /**
    * OTLP metric name carrying cumulative lines added/removed by edit tools, split
    * on the {@code type} attribute (added | removed). Drives the Metrics page.
    */
