@@ -13,6 +13,25 @@ The container listens on 8080 internally, but it's published on **18080** to sta
 
 ## Start it
 
+[install.sh](../install.sh) does the whole path in one command — fetches the compose file, points Claude Code at the stack, brings it up:
+
+```sh
+git clone https://github.com/guavasoftcom/agent-compass.git
+cd agent-compass && ./install.sh
+```
+
+Once the repository is public, the same thing without the clone:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/install.sh | bash
+```
+
+It checks that Docker and Claude Code are installed before changing anything, downloads `docker-compose.yml` into `~/.agent-compass`, merges the env block from [_Point Claude Code at it_](#point-claude-code-at-it) into `~/.claude/settings.json` — backing the original up first and printing the command that restores it — then pulls and starts the stack and waits for the dashboard to answer. Re-running it is safe: it rewrites only the keys it owns and never duplicates the hook.
+
+`./install.sh --help` lists the flags. The ones that matter most: `--port` to move off 18080, `--project` to scope the telemetry settings to the current repository instead of your user settings, `--with-hook` to add the connectivity guard described below, `--no-start` / `--skip-settings` to do only half the job.
+
+Or drive compose yourself, from a checkout or any directory holding the compose file:
+
 ```sh
 docker compose pull
 docker compose up -d
@@ -134,7 +153,9 @@ For a single shell instead, `export` the same names and values.
 
 ### Optional: Require backend to be running
 
-To prevent accidentally running sessions that won't be captured (because the telemetry backend is down), add a hook to `~/.claude/settings.json` that checks backend connectivity before allowing a session to start:
+To prevent accidentally running sessions that won't be captured (because the telemetry backend is down), add a hook to `~/.claude/settings.json` that checks backend connectivity before allowing a session to start.
+
+`./install.sh --with-hook` writes this hook for you (matching whatever `--port` you chose), so take the manual route below only if you didn't use the installer — adding both leaves you with two copies that each run on every prompt:
 
 ```json
 {
