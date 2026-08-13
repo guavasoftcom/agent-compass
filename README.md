@@ -1,20 +1,120 @@
 # Agent Compass
 
+[![Release](https://img.shields.io/github/v/release/guavasoftcom/agent-compass)](https://github.com/guavasoftcom/agent-compass/releases/latest)
+[![CI](https://github.com/guavasoftcom/agent-compass/actions/workflows/pull-request.yml/badge.svg)](https://github.com/guavasoftcom/agent-compass/actions/workflows/pull-request.yml)
+[![GHCR](https://img.shields.io/badge/ghcr.io-agent--compass-2496ED?logo=docker&logoColor=white)](https://github.com/guavasoftcom/agent-compass/pkgs/container/agent-compass)
+[![License](https://img.shields.io/github/license/guavasoftcom/agent-compass)](LICENSE)
+
 OTLP/HTTP telemetry sink + Postgres store + markdown tuning report + React/MUI dashboard for coding-agent self-tuning.
 
-End-to-end flow:
+## What this is
 
-1. Coding agents (Claude Code, GitHub Copilot, etc.) push **OTLP/HTTP protobuf** directly to this backend.
-2. Backend persists every log record, metric data point, and span to Postgres (`jsonb` for attribute maps).
-3. Backend aggregates the stored telemetry and exposes:
-   - A **markdown report** (`GET /api/report`) for paste-into-agent self-tuning.
-   - **JSON endpoints** that power a React + Material UI dashboard.
-4. The user reviews the dashboard, copies the markdown report, and pastes it into their coding agent so it can revise its own `AGENTS.md` / skills / prompts.
+Coding agents like Claude Code already emit OpenTelemetry — every tool call, token, dollar, and
+error. That telemetry usually disappears into a vendor dashboard built for microservices, where it
+answers questions about *services* rather than about how the agent actually works.
+
+Agent Compass is a self-hosted place to send it instead. It ingests the agent's OTLP stream, stores
+it in Postgres, and turns it back into two things you can act on: a dashboard for exploring what the
+agent did, and a markdown report you paste back into the agent so it can revise its own `AGENTS.md`,
+skills, and prompts. The loop is the point — the agent's own trace data becomes the evidence for
+tuning the agent.
+
+### What it does
+
+- **Ingests** OTLP/HTTP protobuf logs, metrics, and traces directly — no collector, no agent-side
+  shim, no vendor SDK. Point the standard `OTEL_EXPORTER_OTLP_*` env vars at it and data flows.
+- **Stores** every log record, metric point, and span in Postgres, with attribute maps kept whole in
+  `jsonb` so nothing is flattened away at write time.
+- **Aggregates** the raw signal into the questions that matter for agent tuning: which tools fail and
+  why, which file reads were redundant, where edits looped, what filled the context window, what the
+  session actually cost, and which prompts drove it.
+
+### What it provides
+
+- A **markdown tuning report** (`GET /api/report`) — failures by root cause, path near-misses,
+  redundant reads, edit failure loops, Bash hotspots, tool performance and call mix, context
+  footprint, oversized results. Written to be pasted straight into a coding-agent chat, and filtered
+  down to rows a rule in `AGENTS.md` could actually change.
+- A **dashboard** over the same data — tool usage, token usage and cost, sessions with per-turn
+  prompt timelines, plus full logs / metrics / traces explorers with faceted filtering and live tail.
+- A **JSON API** (`/api/**`, documented via Swagger UI) if you'd rather build your own view.
+- A **single Docker image** carrying both halves of the app, and a plain-OTLP design that leaves you
+  free to move the data anywhere else later.
+
+### What it stores, and what guards it
+
+Worth knowing before you point anything at it. To make the report and the prompt-level views work,
+the recommended Claude Code configuration ([docs/local-docker-deployment.md](docs/local-docker-deployment.md#point-claude-code-at-it))
+turns on content capture — `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_ASSISTANT_RESPONSES`,
+`OTEL_LOG_TOOL_DETAILS` / `OTEL_LOG_TOOL_CONTENT`, `OTEL_LOG_RAW_API_BODIES` — with
+`CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH` set high enough not to truncate. So your Postgres ends up
+holding **full prompt text, assistant responses, tool inputs and results, and raw API bodies** from
+your sessions. That's not incidental: it's what bash anti-pattern detection, redundant-read and path
+near-miss analysis, and the per-turn prompt timeline actually read. Drop those switches and the
+corresponding sections go quiet rather than wrong.
+
+There is **no authentication on any endpoint** — no Spring Security on the classpath, no API key on
+ingest. Anything that can reach the port can push telemetry *and* read every stored prompt. That is
+a reasonable trade on `localhost`, which is what this is built for; exposing it beyond your own
+machine means putting your own auth in front of it (reverse proxy, network policy, whatever you
+already run). This is the same reason self-hosting is the design rather than a feature: the data is
+sensitive enough that shipping it to someone else's dashboard is the part worth avoiding.
+
+Nothing is ever deleted, either — there is no retention window, TTL, or cleanup job, so the database
+grows for as long as you keep feeding it, and with content capture on it grows quickly. Trimming it
+is manual; see [Run](#run).
+
+End-to-end flow — note that it closes: the agent's own telemetry comes back to it as a report it can act on.
+
+```mermaid
+flowchart LR
+    agent["Claude Code<br/>(or any OTel-instrumented agent)"]
+
+    subgraph container["Single container, single port :18080"]
+        ingest["OTLP ingest<br/>/v1/metrics · /v1/logs · /v1/traces"]
+        api["Aggregations<br/>/api/**"]
+        report["Tuning report<br/>/api/report"]
+        spa["Dashboard SPA"]
+    end
+
+    db[("Postgres<br/>log_records · metric_points · spans<br/>attributes kept whole as jsonb")]
+    user(["You"])
+
+    agent -- "OTLP/HTTP protobuf" --> ingest
+    ingest -- "persist, precompute value_delta" --> db
+    db --> api
+    api --> spa
+    spa --> user
+    db --> report
+    report -- "paste into the agent" --> user
+    user -- "revise AGENTS.md / skills / prompts" --> agent
+```
+
+Coding agents push **OTLP/HTTP protobuf** straight at the backend — no collector in between. Every log record, metric point, and span lands in Postgres with its attribute map kept whole in `jsonb`; the aggregations on top feed both the React + Material UI dashboard and the markdown report you paste back into the agent.
 
 ## Repository layout
 
 - `backend/` — Spring Boot 4.1 (Java 21), Spring Data JPA, `opentelemetry-proto`, Postgres.
 - `frontend/` — React + Vite + Material UI (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` or `@mui/x-data-grid`), TanStack Query, React Router.
+
+## Quick start
+
+To *use* Agent Compass you need Docker and Claude Code — no JDK, no Node. [install.sh](install.sh) fetches the released image's compose stack, points Claude Code's telemetry at it, and starts it:
+
+```sh
+git clone https://github.com/guavasoftcom/agent-compass.git
+cd agent-compass && ./install.sh
+```
+
+Once the repository is public, the same thing without the clone:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/install.sh | bash
+```
+
+The dashboard comes up on <http://localhost:18080>. Your `~/.claude/settings.json` is backed up before the telemetry env block is merged in, and the script prints the command that restores it. `./install.sh --help` covers the flags — `--port`, `--project` (scope the settings to one repository), `--with-hook`, `--no-start`, `--skip-settings`. Details, and what each telemetry variable feeds, in [docs/local-docker-deployment.md](docs/local-docker-deployment.md).
+
+Everything below is for running from source.
 
 ## Prerequisites
 
@@ -43,6 +143,8 @@ Open <http://localhost:5173> for the dashboard, or <http://localhost:8080/swagge
 To run the released image instead of the dev servers — API and dashboard in one container, on one port — see [docs/local-docker-deployment.md](docs/local-docker-deployment.md) and the [docker-compose.yml](docker-compose.yml) beside it.
 
 Flyway creates and migrates the schema on startup (`backend/src/main/resources/db/migration/`); Hibernate runs with `ddl-auto=validate` and fails fast if the entity model and DB drift.
+
+Reclaiming space is manual — nothing prunes old telemetry, so trimming means a `DELETE ... WHERE timestamp < ...` against `log_records`, `metric_points`, and `spans`.
 
 If you'd rather use an existing Postgres (no Docker), set `SPRING_DATASOURCE_URL` / `SPRING_DATASOURCE_USERNAME` / `SPRING_DATASOURCE_PASSWORD` env vars before starting the backend — see [backend/.env.example](backend/.env.example). The compose support backs off when explicit datasource properties are present.
 
@@ -102,6 +204,66 @@ Sections: failures by root cause, path near-misses, redundant file reads, edit f
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
 - **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body. Rows carry the trace's model spend and its initiating prompt, and are sortable by cost; they expand to an inline span summary, with a full per-trace span detail (waterfall, with cost attributed per span) and cross-signal logs.
 - **Report** — renders the report as monospace text with a one-click "Copy markdown" button.
+
+## Reading the numbers
+
+Some figures on the dashboard are **supposed** to disagree, so they're worth knowing about before you
+file them as bugs.
+
+### Token and cost figures come from two pipelines
+
+Spend is measurable two ways, and the two do not reconcile. Claude Code emits cumulative token/cost
+counters (`claude_code.token.usage`, `claude_code.cost.usage`) *and* stamps an exact per-call figure
+on every `api_request` log record. Neither is estimated — there is no rate table anywhere in the
+project (an earlier token-price estimate was removed for running 2-3x off real spend), so each
+pipeline is a faithful transcription of what its instrument reported.
+
+They still disagree by tens of percent in **both** directions on real data, dominated by cache-read
+tokens — one measured session showed 157.6M cache-read tokens from the request logs against 29.3M
+from the counter. Where the request side is *lower*, partial log coverage explains it: turns recorded
+before event logging was enabled have no request rows at all. Where the request side is *higher*,
+**nothing yet explains the gap**, so in that direction one of the two instruments is wrong and it
+isn't established which. Treat input/output token counts as solid and cache-read — plus any total
+containing it — as the number carrying the uncertainty.
+
+Rather than blend them into a figure that is wrong in a new way, every number names its source and is
+computed from one pipeline only:
+
+| Area | Source | Standing |
+| --- | --- | --- |
+| Token Usage page; Sessions list, KPIs, and `/token-usage`; metrics series and cost | cumulative counters, read as `SUM(value_delta)` | Faithful to the counter; carries the cache-read divergence |
+| Per-turn prompt timeline rows marked `attribution=REQUEST` | the turn's own `api_request` logs, joined on `prompt.id` | Exact per call — the most trustworthy spend figure in the app |
+| The same rows marked `attribution=INTERVAL` | counters bucketed by turn interval | Labeled approximate; a slow response can bill to the turn that was open when it landed |
+| Trace and span cost (`trace_costs` / `span_costs`) | `api_request` logs correlated by trace id | Exact, same family as `REQUEST` |
+
+`GET /api/sessions/{id}/requests` filtered to a turn's `promptId` returns exactly the calls summed
+into that turn, so a `REQUEST` figure can always be checked against its parts.
+
+None of this touches tool call counts, latency, failure rates, denials, repeats, context footprint
+(measured in bytes), or the logs / metrics / traces explorers — it is a token-and-cost caveat only.
+
+### A session's tokens don't equal the sum of its turns
+
+Expect the Sessions row and its prompt timeline to differ, for three independent reasons — only the
+last is the pipeline split above:
+
+- The session row is **window-scoped** (it counts the selected time window) while
+  `/{sessionId}/prompts` is **whole-session**.
+- Turn attribution **drops points** that fall before the first captured prompt, or past the 500-turn
+  cap.
+- A session that gained event logging partway through **mixes attributions**, so some turns are
+  measured per request and others bucketed from counters.
+
+The first two would make the two views disagree even if both read the same instrument.
+
+### Two smaller ones, in the same family
+
+- **Context footprint is aggregated twice, on purpose.** The dashboard card ranks every tool; the
+  report's section drops externally determined tools (`Agent`, `WebSearch`, `WebFetch`) and image
+  reads, because no rule in `AGENTS.md` could change those. Neither is the other's filtered view and
+  their totals are meant to differ — see the [Report](#report) section.
+- **`estimatedTokens` on context-footprint rows is `bytes / 4`** — a ranking heuristic, never billed
+  spend. Cost figures come from the sources above.
 
 ## Tests
 

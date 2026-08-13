@@ -52,7 +52,10 @@ export default function ReportPageView({
         />
       }
     >
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper
+        variant="outlined"
+        sx={{ p: 2, height: `calc(100vh - 180px)`, overflow: 'auto' }}
+      >
         <Typography
           component="pre"
           sx={{
@@ -63,7 +66,7 @@ export default function ReportPageView({
             wordBreak: 'break-word',
           }}
         >
-          {isLoading ? 'Loading…' : data ?? ''}
+          {isLoading ? 'Loading…' : (data ?? '')}
         </Typography>
       </Paper>
     </PageLayout>
