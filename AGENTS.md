@@ -88,6 +88,14 @@ cumulative per stream and ingest precomputes reset-aware increments into `metric
 so every rollup is a plain `SUM(value_delta)` — details in
 [backend/CLAUDE.md](backend/CLAUDE.md).
 
+Context-window footprint is aggregated **twice, on purpose**: `LogRecordRepository`'s
+`aggregateToolContextFootprintInRange` feeds the dashboard card and counts every tool, while
+`aggregateTunableToolContextFootprintInRange` feeds the markdown report's "Context footprint"
+section and drops externally determined tools (`Agent`, `WebSearch`, `WebFetch`) and image reads —
+the same exclusions the oversized-result list uses, because the report's header tells readers not
+to write rules against those. Neither query is the other's filtered view; changing one is not
+automatically a reason to change the other, and their totals are supposed to differ.
+
 Spend is measurable two ways — those cumulative counters, and the exact per-call figures on
 `api_request` log records — and **the two do not reconcile**: on real data they disagree by tens
 of percent in both directions, dominated by cache-read tokens. Every figure names its source

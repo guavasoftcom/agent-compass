@@ -71,6 +71,15 @@ class ReportQueryIntegrationTest {
     private static final long GROUPED_RESULT_BYTES = 30_000L;
     private static final long SPREAD_GAP_SECONDS = 45L * 60L;
 
+    /** Tail-shape fixtures: many small results plus a couple of blowouts (p95 >> mean). */
+    private static final long TAIL_SMALL_RESULT_BYTES = 1_000L;
+    private static final long TAIL_BLOWOUT_RESULT_BYTES = 400_000L;
+    private static final int TAIL_SMALL_CALL_COUNT = 20;
+    private static final int TAIL_BLOWOUT_CALL_COUNT = 2;
+    /** Control fixture: a comparable total spread evenly across calls (p95 ≈ mean). */
+    private static final long UNIFORMLY_LARGE_RESULT_BYTES = 50_000L;
+    private static final int UNIFORMLY_LARGE_CALL_COUNT = 12;
+
     /** Window spanning 60 minutes; the after-window row sits one hour past its end. */
     private Instant windowStart;
     private Instant windowEnd;
@@ -217,6 +226,53 @@ class ReportQueryIntegrationTest {
         assertThat(markdown)
                 .doesNotContain("| `Agent` | `` | " + AGENT_RESULT_BYTES + " |")
                 .doesNotContain("`/repo/screenshot.png`");
+    }
+
+    @Test
+    void renderMarkdownRanksContextFootprintOverTunableToolsOnly() {
+        saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL), "Agent", null,
+                AGENT_RESULT_BYTES);
+        saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), TOOL_READ,
+                "{\"file_path\":\"/repo/screenshot.png\"}", IMAGE_RESULT_BYTES);
+
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+
+        // Seeded window: two Bash calls and one Read at SEEDED_RESULT_BYTES each. The Agent
+        // result and the image read must not reach the ranking, which the total proves —
+        // either one leaking in would dwarf it. Both tools still appear elsewhere in the
+        // report (performance, mix), so the assertion is on the footprint's own arithmetic.
+        assertThat(markdown)
+                .contains("## Context footprint")
+                .contains("| `Bash` | 2 | 8192 | 66.7% | 4096 | 4096 |")
+                .contains("| `Read` | 1 | 4096 | 33.3% | 4096 | 4096 |")
+                .contains("Total: **12288** bytes (~3072 tokens");
+    }
+
+    @Test
+    void renderMarkdownSuggestsCappingTheTailOnlyWhenP95OutrunsTheMean() {
+        for (int callIndex = 0; callIndex < TAIL_SMALL_CALL_COUNT; callIndex++) {
+            saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + callIndex), TOOL_READ,
+                    null, TAIL_SMALL_RESULT_BYTES);
+        }
+        for (int callIndex = 0; callIndex < TAIL_BLOWOUT_CALL_COUNT; callIndex++) {
+            saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 100 + callIndex), TOOL_READ,
+                    null, TAIL_BLOWOUT_RESULT_BYTES);
+        }
+        for (int callIndex = 0; callIndex < UNIFORMLY_LARGE_CALL_COUNT; callIndex++) {
+            saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 200 + callIndex), TOOL_BASH,
+                    GIT_STATUS_TOOL_INPUT, UNIFORMLY_LARGE_RESULT_BYTES);
+        }
+
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+
+        // Read's total is carried by two blowouts among many small calls, so its p95 runs
+        // an order of magnitude past its mean and the tail rule fires. Bash returns roughly
+        // the same large payload every call — same order of total bytes, no tail to cap —
+        // so it must not produce the bullet, or the rule would just be "big tool is big".
+        assertThat(markdown)
+                .contains("`Read` results average")
+                .contains("cap the tail")
+                .doesNotContain("`Bash` results average");
     }
 
     @Test
