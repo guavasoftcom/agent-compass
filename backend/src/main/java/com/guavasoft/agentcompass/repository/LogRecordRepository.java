@@ -221,6 +221,43 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end);
 
+  // The tuning report's variant of the footprint aggregation above: same columns,
+  // but restricted to rows a rule in AGENTS.md could actually change. The two
+  // exclusions are lifted verbatim from aggregateOversizedToolResultsInRange —
+  // externally determined tools (the caller doesn't choose how much Agent or
+  // WebFetch returns) and image/binary reads (undesirable to ban, impossible to
+  // page) — because the report's header tells readers not to write rules against
+  // either, and a ranking that led with `Agent` would contradict it.
+  //
+  // The dashboard card keeps the unfiltered query on purpose: it asks where the
+  // context budget went, and "delegate this to a subagent" is one of the answers
+  // it exists to inform. Neither query is the other's filtered view; changing one
+  // is not automatically a reason to change the other.
+  @Query(value = """
+      SELECT
+        COALESCE(attributes ->> :toolAttribute, 'unknown')                     AS tool,
+        COUNT(*)::bigint                                                       AS calls,
+        SUM((attributes ->> 'tool_result_size_bytes')::numeric)::bigint        AS total_bytes,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+          ORDER BY (attributes ->> 'tool_result_size_bytes')::numeric))::bigint AS p95_bytes
+      FROM log_records
+      WHERE attributes ->> 'event.name' = :eventName
+        AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
+        AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
+        AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
+            !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY tool
+      ORDER BY total_bytes DESC, tool ASC
+      """, nativeQuery = true)
+  List<Object[]> aggregateTunableToolContextFootprintInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("excludedTools") List<String> excludedTools,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
   // Per-(tool, error_type, root cause) failure counts over tool_result events.
   // success is
   // stored as a JSON boolean; ->>'success' returns text, so compare to the string

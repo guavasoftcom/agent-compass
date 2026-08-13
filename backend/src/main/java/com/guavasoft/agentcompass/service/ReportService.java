@@ -9,6 +9,7 @@ import com.guavasoft.agentcompass.model.PathNearMiss;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
 import com.guavasoft.agentcompass.model.ToolCallCount;
+import com.guavasoft.agentcompass.model.ToolContextFootprint;
 import com.guavasoft.agentcompass.model.ToolFailure;
 import com.guavasoft.agentcompass.model.ToolPerformance;
 import com.samskivert.mustache.Mustache;
@@ -54,6 +55,12 @@ public class ReportService {
   private static final String SCOPE_DEDUP_KEY = "scope:";
   private static final int OVERSIZED_SUGGESTION_LIMIT = 3;
   private static final int SLOW_AND_LARGE_SUGGESTION_LIMIT = 2;
+  // A tool whose p95 result is this many times its own mean is not uniformly
+  // chatty — a few blowout calls carry its total, which is a different fix
+  // (cap the tail) from "this tool returns too much in general".
+  private static final double CONTEXT_TAIL_P95_TO_MEAN_RATIO = 3.0;
+  private static final long CONTEXT_TAIL_MINIMUM_CALLS = 10L;
+  private static final int CONTEXT_TAIL_SUGGESTION_LIMIT = 2;
   private static final String SHARE_FORMAT = "%.1f%%";
   private static final String TRUNCATION_SUFFIX = "…";
 
@@ -153,6 +160,24 @@ public class ReportService {
         })
         .toList();
 
+    List<ToolContextFootprint> contextFootprint =
+        logService.aggregateTunableToolContextFootprintInRange(start, end);
+    long contextFootprintTotalBytes = contextFootprint.stream()
+        .mapToLong(ToolContextFootprint::totalBytes)
+        .sum();
+    List<Map<String, Object>> contextFootprintContext = contextFootprint.stream()
+        .map(footprint -> {
+          Map<String, Object> footprintRow = new LinkedHashMap<>();
+          footprintRow.put(CTX_TOOL, footprint.tool());
+          footprintRow.put(CTX_CALLS, footprint.calls());
+          footprintRow.put("totalBytes", footprint.totalBytes());
+          footprintRow.put("share", formatShare(footprint.totalBytes(), contextFootprintTotalBytes));
+          footprintRow.put(CTX_AVG_OUT, averageBytes(footprint));
+          footprintRow.put("p95Bytes", footprint.p95Bytes());
+          return footprintRow;
+        })
+        .toList();
+
     List<RedundantFileRead> redundantReads = logService.aggregateRedundantFileReadsInRange(start, end);
     List<Map<String, Object>> redundantReadsContext = redundantReads.stream()
         .map(redundantRead -> {
@@ -194,7 +219,7 @@ public class ReportService {
         .toList();
 
     List<String> suggestions = buildSuggestions(
-        bashHotspots, bashCoverage, oversized, redundantReads, editLoops, slowLarge);
+        bashHotspots, bashCoverage, oversized, contextFootprint, redundantReads, editLoops, slowLarge);
 
     Map<String, Object> context = new HashMap<>();
     context.put("minutes", minutesForContext);
@@ -219,6 +244,12 @@ public class ReportService {
     context.put("pathNearMisses", pathNearMissesContext);
     context.put("hasOversized", !oversizedContext.isEmpty());
     context.put("oversized", oversizedContext);
+    context.put("hasContextFootprint", !contextFootprintContext.isEmpty());
+    context.put("contextFootprint", contextFootprintContext);
+    context.put("contextFootprintTotalBytes", contextFootprintTotalBytes);
+    context.put("contextFootprintEstimatedTokens", contextFootprint.stream()
+        .mapToLong(ToolContextFootprint::estimatedTokens)
+        .sum());
     context.put("hasRedundantReads", !redundantReadsContext.isEmpty());
     context.put("redundantReads", redundantReadsContext);
     context.put("hasEditLoops", !editLoopsContext.isEmpty());
@@ -252,6 +283,7 @@ public class ReportService {
       List<BashCommandHotspot> bashHotspots,
       BashCommandCoverage bashCoverage,
       List<OversizedToolResult> oversized,
+      List<ToolContextFootprint> contextFootprint,
       List<RedundantFileRead> redundantReads,
       List<EditFailureLoop> editLoops,
       List<SlowAndLargeCall> slowLarge) {
@@ -314,6 +346,29 @@ public class ReportService {
       oversizedBulletCount++;
     }
 
+    // Tail-shape rule. The oversized list above names individual payloads; this one
+    // names a tool whose *distribution* is the problem — a p95 several times its own
+    // mean means the total is carried by a handful of blowouts, so the fix is a cap
+    // on the worst calls rather than using the tool less. Tools that return a lot on
+    // every call don't match (their p95 sits near their mean) and are already covered
+    // by the oversized rows.
+    contextFootprint.stream()
+        .filter(footprint -> footprint.calls() >= CONTEXT_TAIL_MINIMUM_CALLS)
+        .filter(footprint -> footprint.p95Bytes() >= OVERSIZED_BYTES_THRESHOLD)
+        .filter(footprint -> footprint.p95Bytes()
+            >= averageBytes(footprint) * CONTEXT_TAIL_P95_TO_MEAN_RATIO)
+        .limit(CONTEXT_TAIL_SUGGESTION_LIMIT)
+        .forEach(footprint -> bullets.add(String.format(
+            "`%s` results average %d bytes but p95 is %d (%.1fx the mean over %d calls) — its context"
+                + " share is driven by a few blowout calls, not the typical one, so cap the tail"
+                + " (page the read, scope the glob, pipe dump-style output through `head`) rather"
+                + " than discouraging the tool.",
+            footprint.tool(),
+            averageBytes(footprint),
+            footprint.p95Bytes(),
+            averageBytes(footprint) == 0 ? 0.0 : (double) footprint.p95Bytes() / averageBytes(footprint),
+            footprint.calls())));
+
     redundantReads.stream()
         .filter(redundantRead -> HUNTING_LOOP_PATTERN.equals(classifyReadPattern(redundantRead)))
         .limit(3)
@@ -373,6 +428,17 @@ public class ReportService {
         });
 
     return bullets;
+  }
+
+  /**
+   * Mean result size for one footprint row. The aggregation counts only calls that reported a
+   * size, so this divides by the same population the p95 was taken over — the two are comparable.
+   */
+  private static long averageBytes(ToolContextFootprint footprint) {
+    if (footprint.calls() == 0) {
+      return 0L;
+    }
+    return footprint.totalBytes() / footprint.calls();
   }
 
   private static String firstToken(String scope) {

@@ -276,7 +276,9 @@ that card showing its own empty state. `onReload` refetches all three.
   Its `calls` also runs lower than the Tool Calls page's count, because calls that reported no
   `tool_result_size_bytes` are excluded rather than counted as zero.
 - **The context footprint counts tools the tuning report deliberately skips.** Agent/WebFetch
-  and image reads are excluded from the report's oversized-results list because nothing in
+  and image reads are excluded from the report's oversized-results list *and* from its own
+  "Context footprint" section (which runs the separate
+  `aggregateTunableToolContextFootprintInRange` query for exactly that reason) because nothing in
   AGENTS.md can tune them; they are included here because this card asks a different question
   — what is filling the window — and "delegate this to a subagent" is one of the levers the
   comparison exists to inform.

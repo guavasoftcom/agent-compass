@@ -784,6 +784,21 @@ public class LogService {
     return mapToolContextFootprint(rows);
   }
 
+  /**
+   * Same aggregation as {@link #aggregateToolContextFootprintInRange}, minus the rows the tuning
+   * report has no rule to offer for: externally determined tools and image reads. Used by the
+   * report only — the dashboard card deliberately keeps those rows (see the repository comment).
+   */
+  public List<ToolContextFootprint> aggregateTunableToolContextFootprintInRange(Instant start, Instant end) {
+    List<Object[]> rows = logRecordRepository.aggregateTunableToolContextFootprintInRange(
+        tuningProperties.getToolEventName(),
+        tuningProperties.getToolAttribute(),
+        tuningProperties.getExternallyDeterminedTools(),
+        start,
+        end);
+    return mapToolContextFootprint(rows);
+  }
+
   private static List<ToolContextFootprint> mapToolContextFootprint(List<Object[]> rows) {
     return rows.stream()
         .map(row -> {
