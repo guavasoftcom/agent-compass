@@ -48,8 +48,8 @@ const STREAM_PAGE = 60;
 // Viewport height reserved for the page chrome above the body (header + histogram
 // + toolbar), subtracted from 100vh to size the scrollable body. Stream view has
 // one extra toolbar row (facet rail header) so it reserves 10px more than Table.
-const STREAM_BODY_CHROME_PX = 430;
-const TABLE_BODY_CHROME_PX = 420;
+const STREAM_BODY_CHROME_PX = 460;
+const TABLE_BODY_CHROME_PX = 460;
 
 const emptySelections = (): FacetSelections => ({
   severity: new Set(),
