@@ -3,7 +3,7 @@ import {
   cacheHitRatePercent,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
-import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
+import { formatTokens } from '../../../TracesPage/tracesApi';
 import CollapsibleSection from './CollapsibleSection';
 import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
@@ -32,15 +32,14 @@ const rowSx = {
   fontSize: 11.5,
 } as const;
 
+// Tokens only — no cost. The span's cost, when it has one to show, is the
+// `cost` row in the drawer's meta grid above; carrying it here too meant one
+// number in two places a few hundred pixels apart.
 interface TokensSectionProps {
   tokens: TokenBreakdown;
-  // Real, billed cost for this span (SpanRow.costUsd via costOfSpan) — not an
-  // estimate. 0/undefined when the span has no logged request; the cost row is
-  // simply omitted then.
-  costUsd?: number;
 }
 
-const TokensSection = ({ tokens, costUsd }: TokensSectionProps) => {
+const TokensSection = ({ tokens }: TokensSectionProps) => {
   if (tokens.total <= 0) {
     return null;
   }
@@ -49,9 +48,6 @@ const TokensSection = ({ tokens, costUsd }: TokensSectionProps) => {
   // so giving it the same weight as the billable counts would make four numbers
   // read as one comparable set when they aren't.
   const pricedRows: Array<[string, string]> = [];
-  if (costUsd && costUsd > 0) {
-    pricedRows.push(['cost', formatUsd(costUsd)]);
-  }
   pricedRows.push(['input', tokens.input.toLocaleString()]);
   pricedRows.push(['output', tokens.output.toLocaleString()]);
   pricedRows.push(['cache_creation', tokens.cacheCreate.toLocaleString()]);

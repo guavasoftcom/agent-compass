@@ -65,7 +65,11 @@ TraceDetailPage/
 │                               literal string, primitives → String()
 ├── spanCost.ts                 costOfSpan(span) → SpanRow.costUsd, a per-span cost breakdown figure
 │                               (0 when none was logged against it) — NOT the source of the header's
-│                               Cost KPI, which reads the backend-authoritative trace total instead
+│                               Cost KPI, which reads the backend-authoritative trace total instead;
+│                               costOfSpanRequests(logs) sums cost_usd over a span's own api_request
+│                               logs, and costOfSelectedSpan(span, logs) prefers the stamped figure
+│                               and falls back to the logs — 0 on a claude_code.interaction span,
+│                               whose rollup is the trace total (the row/drawer number — see Cost)
 ├── index.ts                    re-exports TraceDetailPage as default
 └── components/
     ├── TraceDetailHeader/
@@ -97,8 +101,9 @@ TraceDetailPage/
     │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + tool_name chip + SpanTokenBadges
     │   │                             (one combined total-token pill; the four-way split, cache read
     │   │                             included, is in its hover tooltip) + SpanCostBadge (amber
-    │   │                             formatUsd chip, only when costOfSpan(span) > 0) +
-    │   │                             error/descendant-error/log-count pills + timeline bar +
+    │   │                             formatUsd chip, only when the resolved costUsd > 0; its
+    │   │                             tooltip says whether that is a rollup or one call) +
+    │   │                             error/descendant-error pills + timeline bar +
     │   │                             duration label; pure component (no view split)
     │   └── index.ts
     └── SpanInspectorDrawer/
@@ -125,7 +130,8 @@ TraceDetailPage/
         ├── TokensSection.tsx          collapsible amber section — header count is the four-way
         │                             total with the input/output/cache-create/cache-read split in
         │                             its tooltip (so a collapsed header still explains itself);
-        │                             body rows are cost (formatUsd, only when costUsd > 0) +
+        │                             body rows are tokens only (no cost row — the drawer states
+        │                             cost once, in the meta grid):
         │                             input/output/cache_creation in amber, then cache_read below
         │                             a dashed rule, deliberately muted (text.disabled/secondary,
         │                             neutral fill) with an outlined "N% HIT" badge. Renders its
@@ -200,11 +206,11 @@ while every row stays visible at full height.
 ├─ Axis (ticks at 0 / 25 / 50 / 75 / 100%) ──────────────┤▐│ started   HH:MM:SS.mmm       │
 │ Span              │  0ms   125ms   250ms   375ms  500ms │▐│ ended     HH:MM:SS.mmm       │
 ├─ Body (overflowY auto, overflowX hidden) ───────────────┤▐│ duration  310ms              │
-│ ▶ [1] claude_code.session ●tokens $0.42   [██████] 500ms│▐│ cost      $0.42  (amber)     │
+│ ▶ [1] claude_code.session ●tokens        [██████] 500ms│▐│ cost      $0.42  (amber)     │
 │   · [2] claude_code.llm_request ●2.4k  [████] 310ms   │▐│ self time [████░░] 87%       │
 │   · [3] claude_code.tool.execution [Bash] [█] 45ms err │▐│ ▾ ERROR   (red, error spans) │
 │   · [4] claude_code.tool.execution [Read] [█] 12ms     │▐│ ▾ TOKENS 2,400   (amber)     │
-│   (scroll continues …)                                   │▐│    cost / input / output / cc │
+│   (scroll continues …)                                   │▐│    input / output / cache_cr  │
 │                                                          │▐│    ┄┄ cache_read  [88% HIT]  │
 │                                                          │▐│       (muted, not amber)     │
 │                                                          │▐│ ▾ TOOL (n) 🔧    (blue)      │
@@ -304,17 +310,48 @@ land on a different, and specifically lower, number than the trace's real total 
 spans haven't finished ingesting yet, or a request logged without a span id still counts toward
 the trace total but has no span to attribute it to. `costOfSpan` is the per-span
 breakdown figure (its own read of `SpanRow.costUsd`, filled from the sibling `span_costs` view) —
-it's just not the source of the trace-level KPI. It feeds three per-span displays, all shown only
-when `costOfSpan(span) > 0`: the waterfall row's `SpanCostBadge` chip, the drawer meta grid's
-`cost` row (amber bold, after duration), and the `cost` row atop the drawer's Tokens section.
-These are real billed amounts (the summed `cost_usd` of the `api_request` logs stamped with the
-span's id), so they carry no "~"/"est." qualifier.
+it's just not the source of the trace-level KPI. These are real billed amounts, so they carry no
+"~"/"est." qualifier.
+
+**Both per-span displays resolve through `costOfSelectedSpan(span, logs)`** — the waterfall row's
+`SpanCostBadge` chip, and the drawer's meta grid `cost` row (amber bold, after duration; the
+drawer's Tokens section carries no cost row, so the drawer states cost once). It prefers
+`costOfSpan` and falls back to `costOfSpanRequests(logs)` — the summed
+`cost_usd` of the `api_request` logs bucketed onto that span — when nothing was stamped against the
+span itself. That fallback is the whole point: it is what puts a per-call price on an `llm_request`
+row, which `span_costs` leaves at 0 (see the consequence below). The two are never added, so a
+`tool.execution` span, which is both stamped *and* holds its own request logs, shows its stamped
+total once rather than twice.
+
+**A `claude_code.interaction` span shows no cost at all** — `costOfSelectedSpan` returns 0 for it
+whatever it was stamped with, so the row's badge and the drawer's `cost` row both disappear on the
+turn root. Its rollup *is* the whole turn, i.e. the trace-level number the header's Cost KPI
+already states in a place built for it; repeating it on a span row invited reading it as that
+span's own cost and adding it to the `llm_request` rows underneath. This is display-only
+suppression — `costOfSpan(span)` still returns the real `span_costs` figure, and the header KPI
+(from the `trace-summary` query) is unaffected. The match is on the span name, normalized the way
+`serviceOf` / `isToolCallSpan` do it, so `claude_code.interaction` and a bare `interaction` both
+hit.
+
+**The badge column still does not sum to the trace total, by construction.** A stamped
+`tool.execution` running a subagent covers every request made under it while the `llm_request` rows
+below show their own, so the same dollar appears at two depths. The `isRollupCost` prop (true when
+`costOfSpan(span) > 0`) picks the badge's tooltip — "Cost of the requests made under this span" vs
+"Cost of this model call" — which is what tells a reader which kind they're looking at. The
+authoritative total is the header KPI; don't try to reconcile it against a column sum.
 
 Two consequences worth remembering:
 
 - **The cost lands on the span that issued the request** — the `claude_code.interaction` root, or a
-  `tool.execution` span for a request made inside a tool run — **not on the `llm_request` child.** So a
-  waterfall row can show tokens with no cost, and the root row carries most of the trace's spend.
+  `tool.execution` span for a request made inside a tool run — **not on the `llm_request` child.** So
+  a waterfall row can show tokens with no cost, and the raw `span_costs` figure for a turn sits
+  entirely on its root — which, on an `interaction` root, is exactly the figure the row and drawer
+  now suppress. Both surfaces work around the misattribution client-side (above), which is why a
+  stamped `tool.execution` row can carry a rollup badge and its `llm_request` children their own.
+  Fixing it in the data instead — re-keying `span_costs` to `request_id`,
+  the way `span_efforts` (`V15`) already correlates — was considered and rejected: it would disperse
+  a Task subagent's cost across its children (4,652 logs / $360.81 locally) and move 37 cross-trace
+  requests out of the trace their logs were recorded under.
 - **There is no client-side estimate.** An earlier revision priced the span's tokens at published
   per-model rates; it ran 2-3x off real spend and disagreed with the Sessions page, which reports what
   Claude Code actually billed. A trace whose requests predate trace-id correlation totals 0 and renders
@@ -334,8 +371,11 @@ Within each bucket logs are sorted by `event.sequence` (when present on both sid
 `event.timestamp` attribute (the authoritative SDK wall-clock time) then by
 `log.timestamp` (the OTLP record time, which can lag by seconds when the exporter batches).
 
-The `logCount` badge on each waterfall row is `logsBySpanId.get(spanId)?.length ?? 0`.
-The drawer's Logs section receives the pre-bucketed array for the selected span.
+The buckets feed the drawer only — its Logs section receives the pre-bucketed array for the
+selected span, and `costOfSpanRequests` reads the same array for the per-call cost (see Cost).
+The waterfall row deliberately carries no log-count badge: a count of correlated log records is
+a property of the telemetry, not of what the span did, and it competed for row width with the
+token, cost, and error pills that answer questions someone actually scans the waterfall for.
 
 ### Zoom window and visible row filtering
 
@@ -397,7 +437,7 @@ slides the highlight instead of yanking the waterfall on every press. It's share
 `selected` is a `string | null` span ID. `selectSpan` toggles: clicking the already-selected
 span deselects it (closes the drawer). The view resolves `selected` into a
 `SpanInspectorSelection` (the full `SpanRow` plus pre-computed `selfTimeNanos`, `tokens` from
-`tokenBreakdownForSpan`, the `logs` bucket, `costUsd` via `costOfSpan`, and the span's
+`tokenBreakdownForSpan`, the `logs` bucket, `costUsd` via `costOfSelectedSpan`, and the span's
 `waterfallIndex`/`waterfallCount`) and passes it — or null — to `SpanInspectorDrawer`, which always
 stays mounted so the width transition can run and the dragged width survives across selections.
 

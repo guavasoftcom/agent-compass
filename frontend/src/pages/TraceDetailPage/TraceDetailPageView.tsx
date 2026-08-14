@@ -5,7 +5,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import type { LogRow, SpanRow } from '../../api';
 import { formatDuration } from '../TracesPage/tracesApi';
 import { tokenBreakdownForSpan } from '../TracesPage/tokenBreakdown';
-import { costOfSpan } from './spanCost';
+import { costOfSelectedSpan, costOfSpan } from './spanCost';
 import { type SpanTree, type TraceWindow } from './spanTree';
 import SpanInspectorDrawer, {
   type SpanInspectorSelection,
@@ -297,7 +297,11 @@ const TraceDetailPageView = ({
           selectedSpan.durationNanos,
         tokens: tokenBreakdownForSpan(selectedSpan),
         logs: logsBySpanId.get(selectedSpan.spanId) ?? [],
-        costUsd: costOfSpan(selectedSpan),
+        // Falls back to the span's own api_request logs when nothing was
+        // stamped against the span itself — see costOfSelectedSpan. That is
+        // what puts a per-call figure on an llm_request row, which span_costs
+        // leaves at 0.
+        costUsd: costOfSelectedSpan(selectedSpan, logsBySpanId.get(selectedSpan.spanId)),
         waterfallIndex,
         waterfallCount,
       }
@@ -429,7 +433,8 @@ const TraceDetailPageView = ({
                   isSelected={selected === s.spanId}
                   indexLabel={spanIndices.get(s.spanId)}
                   descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
-                  logCount={logsBySpanId.get(s.spanId)?.length ?? 0}
+                  costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
+                  isRollupCost={costOfSpan(s) > 0}
                   gridColumns={gridColumns}
                   left={left}
                   right={right}

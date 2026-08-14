@@ -7,7 +7,21 @@
 // the trace total (a request logged without a span id still counts toward the
 // trace but has no span to attribute it to).
 
-import type { SpanRow } from '../../api';
+import type { LogRow, SpanRow } from '../../api';
+
+// The event whose logs carry `cost_usd`. Mirrors the backend's
+// `tuning.api-request-event-name` (TuningProperties), the same literal the
+// span_costs / trace_costs views (V14) filter on — overriding that property
+// means changing it here too.
+const API_REQUEST_EVENT_NAME = 'api_request';
+
+// The conversational-turn root span. Normalized the way `serviceOf` /
+// `isToolCallSpan` (../TracesPage/traceDerivations) do it — strip the
+// `claude_code.` prefix, lowercase — so the check reads the same as every other
+// span-name rule on these pages.
+const INTERACTION_OPERATION = 'interaction';
+const isInteractionSpan = (span: SpanRow): boolean =>
+  (span.name ?? '').toLowerCase().replace(/^claude_code\./, '') === INTERACTION_OPERATION;
 
 // A span's cost, as reported by the backend's span_costs view: the summed
 // cost_usd of the api_request logs stamped with this span's id. There is
@@ -20,4 +34,66 @@ export const costOfSpan = (span: SpanRow): number => {
     return span.costUsd;
   }
   return 0;
+};
+
+// The cost of the API calls this span itself made, summed from the api_request
+// logs bucketed onto it. Distinct from costOfSpan, which reads the span_costs
+// view: Claude Code stamps those logs with the span that was *active* when the
+// request went out (the interaction root, or a tool.execution span), never the
+// llm_request child that represents the call, so span_costs attributes a whole
+// turn's spend to its root and leaves every llm_request row at 0. LogService's
+// resolveLeafSpans re-points each root-stranded log onto its true span by
+// request_id before the frontend ever sees it, so the logs bucketed onto an
+// llm_request span are exactly that call's own — which is where this number
+// comes from. Summed rather than first-match: nothing guarantees a span issued
+// only one request. Returns 0 when the span has no cost-bearing request log.
+export const costOfSpanRequests = (logs: LogRow[] | undefined): number => {
+  if (!logs || logs.length === 0) {
+    return 0;
+  }
+  let total = 0;
+  for (const log of logs) {
+    if (log.attributes?.['event.name'] !== API_REQUEST_EVENT_NAME) {
+      continue;
+    }
+    const cost = log.attributes?.['cost_usd'];
+    if (typeof cost === 'number' && Number.isFinite(cost)) {
+      total += cost;
+    }
+  }
+  return total;
+};
+
+// What the waterfall row and the inspector show for a span, preferring
+// whichever of the two figures above actually describes it.
+//
+// costOfSpan wins when it is non-zero, because a span carrying a span_costs row
+// is the span the requests were stamped against and its figure covers all of
+// them — including any the log bucketing didn't reach. Only when it is 0 does
+// the span's own request logs answer, which is the llm_request case: the row
+// that made the call but was never stamped with the cost. The two are never
+// added, so a turn's spend can't be counted twice on one span.
+//
+// This is display-only and deliberately not pushed into span_costs (V14): that
+// view's per-span rollup is what answers "what did this Agent call cost" on a
+// tool.execution span, and re-keying it to request_id would disperse that
+// figure across the subagent's children and move 37 cross-trace requests out of
+// the trace their logs were recorded under.
+//
+// A `claude_code.interaction` span reports 0 here regardless of what it was
+// stamped with: its rollup covers the whole turn, which is the trace-level
+// figure the header's Cost KPI already states — repeating it on the root row
+// and in that row's drawer only invited reading it as a per-span cost and
+// summing it with the llm_request rows below. Suppressed at display time on
+// purpose: `costOfSpan` still reports the span_costs figure for anything that
+// needs the real number.
+export const costOfSelectedSpan = (span: SpanRow, logs: LogRow[] | undefined): number => {
+  if (isInteractionSpan(span)) {
+    return 0;
+  }
+  const stampedCost = costOfSpan(span);
+  if (stampedCost > 0) {
+    return stampedCost;
+  }
+  return costOfSpanRequests(logs);
 };

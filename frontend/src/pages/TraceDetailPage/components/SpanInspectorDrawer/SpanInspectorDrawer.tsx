@@ -22,9 +22,13 @@ export interface SpanInspectorSelection {
   selfTimeNanos: number;
   tokens: TokenBreakdown;
   logs: LogRow[];
-  // Real, billed cost for this span (costOfSpan(span) — see spanCost.ts). Not
+  // Real, billed cost for this span (costOfSelectedSpan — see spanCost.ts). Not
   // an estimate: the summed cost_usd of the api_request logs stamped with this
-  // span. 0 when none was logged against it.
+  // span, or — on a span nothing was stamped against, i.e. every llm_request
+  // row — of the request logs bucketed onto it, which is that call's own spend.
+  // 0 when the span neither was stamped nor issued a logged request, and on a
+  // claude_code.interaction span, whose rollup is the trace total the header
+  // KPI already states. The meta grid's cost row is omitted whenever it is 0.
   costUsd: number;
   // Span nav — the span's position among the waterfall's currently rendered
   // rows. Nav buttons are omitted entirely when there's nowhere to step
@@ -164,7 +168,7 @@ const DrawerContent = ({ selection }: { selection: SpanInspectorSelection }) => 
 
       <ErrorSection span={span} logs={logs} />
 
-      <TokensSection tokens={tokens} costUsd={costUsd} />
+      <TokensSection tokens={tokens} />
       <SpanAttributeSections attributes={span.attributes ?? undefined} />
       <SpanEventsList events={span.events ?? undefined} spanStartMs={startMs} />
       {logs.length ? (

@@ -3,7 +3,6 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { neutralColors } from '../../../../theme/colors';
 import type { SpanRow } from '../../../../api';
 import { formatDuration, formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
-import { costOfSpan } from '../../spanCost';
 import {
   tokenBreakdownForSpan,
   type TokenBreakdown,
@@ -19,7 +18,12 @@ interface Props {
   isSelected: boolean;
   indexLabel: number | undefined;
   descendantErrorCount: number;
-  logCount: number;
+  // Cost attributable to this span, from costOfSelectedSpan. The view resolves
+  // it because it owns the log buckets the llm_request figure comes from.
+  costUsd: number;
+  // True when costUsd is the stamped span_costs rollup (requests made under
+  // this span) rather than the span's own call — drives the badge tooltip.
+  isRollupCost: boolean;
   gridColumns: string;
   // Horizontal bar geometry (percent of the visible zoom window).
   left: number;
@@ -119,15 +123,34 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
   );
 };
 
-// Real, billed cost (costOfSpan → SpanRow.costUsd) — not an estimate. Omitted
-// for spans with no logged request (the vast majority of non-model spans).
-const SpanCostBadge = ({ costUsd }: { costUsd: number }) => {
+// Real, billed cost (costOfSelectedSpan — see spanCost.ts) — not an estimate.
+// Omitted for spans that neither were stamped with a request nor issued one,
+// and for claude_code.interaction rows, which resolve to 0 there because their
+// rollup is the whole turn (the header's Cost KPI).
+//
+// Two kinds of figure share this badge, and the tooltip is what tells them
+// apart: on a stamped span — now only a tool.execution running a subagent — it
+// covers every request made *under* that span, so a parent and its children can
+// each carry a badge and the column does not sum to the trace total. On an
+// llm_request row it is that one call's own spend.
+const SpanCostBadge = ({
+  costUsd,
+  isRollupCost,
+}: {
+  costUsd: number;
+  isRollupCost: boolean;
+}) => {
   if (costUsd <= 0) {
     return null;
   }
   return (
     <Box
       component="span"
+      title={
+        isRollupCost
+          ? 'Cost of the requests made under this span'
+          : 'Cost of this model call'
+      }
       sx={{
         ml: 0.9,
         display: 'inline-flex',
@@ -156,7 +179,8 @@ const SpanWaterfallRow = ({
   isSelected,
   indexLabel,
   descendantErrorCount,
-  logCount,
+  costUsd,
+  isRollupCost,
   gridColumns,
   left,
   right,
@@ -166,7 +190,6 @@ const SpanWaterfallRow = ({
 }: Props) => {
   const theme = useTheme();
   const tokens = tokenBreakdownForSpan(span);
-  const costUsd = costOfSpan(span);
   // Aurora sync: dropped the per-row `kind` pill (nearly every span is
   // `internal`, so it repeated without informing — `kind` still shows once in
   // the detail dock's meta grid) and replaced it with the span's tool name,
@@ -356,7 +379,7 @@ const SpanWaterfallRow = ({
           </Box>
         ) : null}
         <SpanTokenBadges tokens={tokens} />
-        <SpanCostBadge costUsd={costUsd} />
+        <SpanCostBadge costUsd={costUsd} isRollupCost={isRollupCost} />
         {isError ? (
           <Box
             component="span"
@@ -393,25 +416,6 @@ const SpanWaterfallRow = ({
             }}
           >
             +{descendantErrorCount} below
-          </Box>
-        ) : null}
-        {logCount > 0 ? (
-          <Box
-            component="span"
-            sx={{
-              ml: 0.9,
-              px: 0.75,
-              py: 0.1,
-              borderRadius: '5px',
-              color: 'info.main',
-              bgcolor: (t) => alpha(t.palette.info.main, 0.14),
-              fontFamily: fontFamilies.display,
-              fontSize: 9.5,
-              fontWeight: 700,
-              flexShrink: 0,
-            }}
-          >
-            {logCount} log{logCount === 1 ? '' : 's'}
           </Box>
         ) : null}
       </Box>
