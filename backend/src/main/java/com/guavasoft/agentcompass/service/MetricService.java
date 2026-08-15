@@ -367,21 +367,38 @@ public class MetricService {
         minimumInputSideTokens,
         PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT));
 
+    // Reuses the Sessions grid's counts query purely for its firstUserPrompt
+    // column -- the ranking already comes back one row per session, so there is
+    // no second aggregation to write, just a lookup keyed on the same session ids.
+    List<String> sessionIds = rows.stream().map(row -> (String) row[0]).toList();
+    Map<String, SessionCounts> countsBySessionId = sessionIds.isEmpty()
+        ? Map.of()
+        : buildSessionCountsMap(logRecordRepository.aggregateSessionCounts(
+            sessionIds,
+            tuningProperties.getToolEventName(),
+            tuningProperties.getToolDecisionEventName(),
+            tuningProperties.getUserPromptEventName(),
+            tuningProperties.getPromptAttribute()));
+    SessionCounts zeroCounts = new SessionCounts(0L, 0L, 0L, null);
+
     // Row shape: session_id, cache_efficiency, cache_read_tokens, input_side_tokens
     // (read only by ORDER BY, not mapped into the record -- SessionCacheEfficiency
     // derives it from the three input-side token-kind fields, and derives
     // totalTokens from all four), input_tokens, cache_creation_tokens,
-    // output_tokens, cost_usd.
+    // output_tokens, cost_usd, last_seen.
     List<SessionCacheEfficiency> sessions = new ArrayList<>(rows.size());
     for (Object[] row : rows) {
+      String sessionId = (String) row[0];
       sessions.add(new SessionCacheEfficiency(
-          (String) row[0],
+          sessionId,
           ((Number) row[1]).doubleValue(),
           ((Number) row[2]).longValue(),
           ((Number) row[4]).longValue(),
           ((Number) row[5]).longValue(),
           ((Number) row[6]).longValue(),
-          ((Number) row[7]).doubleValue()));
+          ((Number) row[7]).doubleValue(),
+          (Instant) row[8],
+          countsBySessionId.getOrDefault(sessionId, zeroCounts).firstUserPrompt()));
     }
     return sessions;
   }

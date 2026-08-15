@@ -4,12 +4,12 @@
 // ratio and bands, so they live in `lib/cacheEfficiency.ts` alongside the note about
 // the three backend expressions that have to match. Import them from there.
 //
-// USD_FORMATTER also does NOT live here: the Tokens page needs the identical
-// formatter (session-detail dialog, rank card), so it's defined once in
-// `lib/format.ts` and re-exported below so existing SessionsPage imports keep
-// working unchanged.
+// USD_FORMATTER, formatTimestamp, and formatRelativeTime also do NOT live here:
+// the Tokens page's cache-efficiency rank card and detail dialog need the
+// identical formatters, so they're defined once in `lib/format.ts` and
+// re-exported below so existing SessionsPage imports keep working unchanged.
 
-export { USD_FORMATTER } from '../../../lib/format';
+export { USD_FORMATTER, formatTimestamp, formatRelativeTime } from '../../../lib/format';
 
 export const USD_PER_MINUTE_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -59,9 +59,6 @@ export const formatTokens = (value: number): string => {
   return `${Math.round(value)}`;
 };
 
-export const formatTimestamp = (value: string): string =>
-  value ? new Date(value).toLocaleString() : '';
-
 // Compact "Aug 9, 10:36 AM" — for the session detail drawer's metadata line,
 // where the full locale string formatTimestamp returns is too long to sit next
 // to three other facts. Seconds are dropped deliberately: the line describes
@@ -75,28 +72,3 @@ export const formatShortTimestamp = (value: string): string =>
         minute: '2-digit',
       })
     : '';
-
-// Relative "time ago" for the Last activity column (the default sort). Compact
-// buckets — just now / Nm / Nh / Nd ago.
-export const formatRelativeTime = (value: string): string => {
-  if (!value) {
-    return '—';
-  }
-  const secondsAgo = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
-  if (secondsAgo < 45) {
-    return 'just now';
-  }
-  if (secondsAgo < 90) {
-    return '1m ago';
-  }
-  if (secondsAgo < 3600) {
-    return `${Math.round(secondsAgo / 60)}m ago`;
-  }
-  if (secondsAgo < 5400) {
-    return '1h ago';
-  }
-  if (secondsAgo < 86400) {
-    return `${Math.round(secondsAgo / 3600)}h ago`;
-  }
-  return `${Math.round(secondsAgo / 86400)}d ago`;
-};

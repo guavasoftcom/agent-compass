@@ -203,7 +203,7 @@ Sections: failures by root cause, path near-misses, redundant file reads, edit f
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
 - **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body. Rows carry the trace's model spend and its initiating prompt, and are sortable by cost; they expand to an inline span summary, with a full per-trace span detail (waterfall, with cost attributed per span) and cross-signal logs.
-- **Report** — renders the report as monospace text with a one-click "Copy markdown" button.
+- **Tuning Report** — renders the report as monospace text with a one-click "Copy markdown" button.
 
 ## Reading the numbers
 

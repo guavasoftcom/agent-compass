@@ -225,6 +225,20 @@ export interface SessionCacheEfficiencyRow {
   totalTokens: number;
   /** Whole-session spend, matching the Sessions grid's Cost column. */
   costUsd: number;
+  /**
+   * Timestamp of the session's latest cost/active-time emission, matching
+   * `SessionSummaryRow.endTimestamp`. Null on the rare session whose every
+   * cost/active-time point in the window is a zero-delta re-export of an
+   * already-finished session.
+   */
+  endTimestamp: string | null;
+  /**
+   * Session's first meaningful user prompt, whitespace-collapsed and truncated
+   * to <=200 chars server-side, matching `SessionSummaryRow.firstUserPrompt`.
+   * Null when prompt capture was disabled (OTEL_LOG_USER_PROMPTS) or the
+   * session has no user-authored prompt.
+   */
+  firstUserPrompt: string | null;
 }
 
 /**

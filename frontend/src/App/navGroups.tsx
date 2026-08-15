@@ -42,7 +42,7 @@ const navGroups: NavGroup[] = [
   {
     heading: 'Reports',
     items: [
-      { to: '/report', label: 'Report', icon: <ReportIcon /> },
+      { to: '/report', label: 'Tuning Report', icon: <ReportIcon /> },
     ],
   },
 ];

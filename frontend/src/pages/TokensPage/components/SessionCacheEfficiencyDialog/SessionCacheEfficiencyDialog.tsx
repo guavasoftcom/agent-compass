@@ -1,12 +1,17 @@
 import { useState } from 'react';
-import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton, Stack } from '@mui/material';
+import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton, Stack, Tooltip } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CloseIcon from '@mui/icons-material/Close';
 import { Link as RouterLink } from 'react-router-dom';
 import type { SessionCacheEfficiencyRow } from '../../../../api';
 import { cacheEfficiencyBand, formatCacheEfficiency } from '../../../../lib/cacheEfficiency';
-import { formatCompact, USD_FORMATTER } from '../../../../lib/format';
+import {
+  USD_FORMATTER,
+  formatCompact,
+  formatRelativeTime,
+  formatTimestamp,
+} from '../../../../lib/format';
 import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 import { sessionsDeepLink } from '../../../SessionsPage/SessionsPage';
@@ -102,6 +107,13 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
         >
           {row.sessionId}
         </Box>
+        {row.endTimestamp ? (
+          <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
+            <Box component="span" sx={{ display: 'inline-block', mt: 0.5, fontSize: 12, color: 'text.secondary' }}>
+              Last activity {formatRelativeTime(row.endTimestamp)}
+            </Box>
+          </Tooltip>
+        ) : null}
         <Box
           sx={{
             mt: 1.1,

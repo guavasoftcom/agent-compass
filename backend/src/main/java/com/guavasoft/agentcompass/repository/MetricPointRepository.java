@@ -560,6 +560,17 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // to exactly 0). Adding the filter would be redundant here and not merely
   // redundant: cost and tokens are separate streams, so it could also drop a session
   // that genuinely moved tokens in the window without moving cost.
+  //
+  // last_seen (surfaced to the Tokens page's rank card as endTimestamp, for a
+  // human-readable "last activity" instead of a bare session id) reuses
+  // aggregateSessionSummaries' session_span shape: MAX(timestamp) FILTER (WHERE
+  // value_delta IS DISTINCT FROM 0). Unlike session_window's own membership test,
+  // this filter is NOT optional here -- Claude Code's exporter keeps re-emitting a
+  // finished session's cumulative cost/active-time counters once a minute forever
+  // at an unchanged value, so an unfiltered MAX(timestamp) would read every session
+  // as active in the current minute regardless of when it actually last did
+  // anything. Can be null when every one of a session's cost/active-time points in
+  // session_window is such a zero-delta re-export.
   @Query(value = """
       WITH session_window AS (
         SELECT attributes ->> 'session.id' AS session_id
@@ -568,6 +579,15 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND attributes ->> 'session.id' IS NOT NULL
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
+        GROUP BY 1
+      ),
+      session_span AS (
+        SELECT
+          w.session_id,
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
+        FROM session_window w
+        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
         GROUP BY 1
       ),
       token_per_session AS (
@@ -606,10 +626,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         t.input_tokens                                                       AS input_tokens,
         t.cache_creation_tokens                                              AS cache_creation_tokens,
         t.output_tokens                                                      AS output_tokens,
-        COALESCE(c.cost_usd, 0)::double precision                            AS cost_usd
+        COALESCE(c.cost_usd, 0)::double precision                            AS cost_usd,
+        s.last_seen                                                          AS last_seen
       FROM session_window w
       JOIN token_per_session t     ON t.session_id = w.session_id
       LEFT JOIN cost_per_session c ON c.session_id = w.session_id
+      LEFT JOIN session_span s     ON s.session_id = w.session_id
       WHERE (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens) >= :minimumInputSideTokens
       ORDER BY cache_efficiency ASC, input_side_tokens DESC, w.session_id ASC
       LIMIT :resultLimit

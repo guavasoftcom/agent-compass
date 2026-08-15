@@ -49,3 +49,36 @@ export const shortModelName = (model: string): string => {
   const [family, ...rest] = parts;
   return [family.charAt(0).toUpperCase() + family.slice(1), ...rest].join(' ');
 };
+
+// Full locale timestamp, e.g. "5/27/2026, 1:07:15 AM" — shared by the Sessions
+// grid and the Tokens page's cache-efficiency rank card/dialog so a session's
+// absolute timestamp reads identically wherever it's shown. `sessionsFormat.ts`
+// re-exports this rather than declaring its own copy (see the USD_FORMATTER
+// note there).
+export const formatTimestamp = (value: string): string =>
+  value ? new Date(value).toLocaleString() : '';
+
+// Relative "time ago" for a last-activity figure — compact buckets: just now /
+// Nm / Nh / Nd ago. Shared by the same two surfaces as formatTimestamp.
+export const formatRelativeTime = (value: string): string => {
+  if (!value) {
+    return '—';
+  }
+  const secondsAgo = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (secondsAgo < 45) {
+    return 'just now';
+  }
+  if (secondsAgo < 90) {
+    return '1m ago';
+  }
+  if (secondsAgo < 3600) {
+    return `${Math.round(secondsAgo / 60)}m ago`;
+  }
+  if (secondsAgo < 5400) {
+    return '1h ago';
+  }
+  if (secondsAgo < 86400) {
+    return `${Math.round(secondsAgo / 3600)}h ago`;
+  }
+  return `${Math.round(secondsAgo / 86400)}d ago`;
+};

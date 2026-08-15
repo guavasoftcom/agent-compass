@@ -89,8 +89,8 @@ TraceDetailPage/
     │   │                             the trace total — + a 4-item legend carrying each kind's share,
     │   │                             "N% cached" chip, model-call count, total cost) +
     │   │                             MetaFooter (full trace/session ids, root span, services, started).
-    │   │                             Tooltip fires only when a value element overflows; the collapse
-    │   │                             choice persists in localStorage
+    │   │                             Tooltip fires only when a value element overflows; the panel
+    │   │                             always starts expanded on navigation (collapse is per-view only)
     │   └── index.ts
     ├── WaterfallToolbar/
     │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens/cost legend
@@ -515,12 +515,12 @@ so the edge tracks the cursor 1:1.
   "—" placeholder), which is the normal state for traces
   rooted in a tool/model/mcp/compaction span and for traces recorded with prompt-body capture
   off (see the same gotcha in [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md)).
-- **The Overview panel's collapse state persists across page loads.** `SummaryStrip` reads
-  `localStorage['trace-detail-overview-collapsed']` in a `useState` lazy initializer (not an
-  effect — `react-hooks/set-state-in-effect` is an ESLint error here) and writes it back through
-  a guarded setter, the same shape `theme/colorMode.tsx` uses. A user who collapsed the panel on
-  one trace sees it collapsed on the next one; that's intended (the point is recovering vertical
-  space for the waterfall), so don't key the storage entry per trace.
+- **The Overview panel always starts expanded.** `SummaryStrip` owns `collapsed` as plain
+  `useState(false)` — no `localStorage` persistence. Navigating to a trace (including
+  `key={traceId}` remounting the view for a different trace) always shows the panel expanded;
+  a click-to-collapse only lasts for the current view. An earlier revision persisted the choice
+  to `localStorage['trace-detail-overview-collapsed']` so it carried across traces; that was
+  deliberately removed so the panel doesn't arrive collapsed from an unrelated earlier session.
 - **The cache hit-rate chip excludes output tokens.** `cacheHitRatePercent` in
   `../TracesPage/tokenBreakdown.ts` (shared by `SummaryStrip`'s trace-level chip and the drawer
   `TokensSection`'s per-span one — one formula, so the two can't drift)

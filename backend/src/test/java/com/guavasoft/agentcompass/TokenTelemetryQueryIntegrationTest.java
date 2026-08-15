@@ -84,18 +84,25 @@ class TokenTelemetryQueryIntegrationTest {
 
   private final List<Long> seededMetricPointIds = new ArrayList<>();
 
+  private Instant seededBase;
+
   @BeforeEach
   void seed() {
     metricPointRepository.deleteAll();
     logRecordRepository.deleteAll();
     seededMetricPointIds.clear();
     Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
+    seededBase = base;
 
-    // worst: 20% of input-side tokens cached.
+    // worst: 20% of input-side tokens cached. Also the only ranked session seeded
+    // with a user prompt, so the cache-efficiency ranking's firstUserPrompt/
+    // endTimestamp fields (T1's session-info addition) have exactly one non-null
+    // case and one null case (middle/best/tiny below) to distinguish.
     saveSessionActivity(SESSION_WORST, 9.0, base);
     saveTokens(SESSION_WORST, "input", 500_000, base);
     saveTokens(SESSION_WORST, "cacheCreation", 300_000, base);
     saveTokens(SESSION_WORST, "cacheRead", 200_000, base);
+    savePrompt(SESSION_WORST, "prompt-1", "Investigate the worst cache session", base);
 
     // middle: 70%.
     saveSessionActivity(SESSION_MIDDLE, 4.0, base);
@@ -173,6 +180,18 @@ class TokenTelemetryQueryIntegrationTest {
     SessionCacheEfficiency best = rankedSession(SESSION_BEST);
     assertThat(best.cacheCreationTokens()).isZero();
     assertThat(worst.outputTokens()).isZero();
+  }
+
+  @Test
+  void surfacesLastActivityAndFirstUserPromptPerRankedSession() {
+    SessionCacheEfficiency worst = rankedSession(SESSION_WORST);
+    assertThat(worst.endTimestamp()).isEqualTo(seededBase);
+    assertThat(worst.firstUserPrompt()).isEqualTo("Investigate the worst cache session");
+
+    // middle emitted no user_prompt log at all, so it must read null rather than
+    // an empty string or a fabricated placeholder.
+    SessionCacheEfficiency middle = rankedSession(SESSION_MIDDLE);
+    assertThat(middle.firstUserPrompt()).isNull();
   }
 
   @Test
