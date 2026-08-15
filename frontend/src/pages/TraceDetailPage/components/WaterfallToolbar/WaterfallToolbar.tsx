@@ -1,6 +1,7 @@
 import { Box, useTheme } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import GhostButton from '../../../../components/GhostButton';
+import { tokenFigureColor } from '../../../../theme/colors';
 
 interface Props {
   anyCollapsed: boolean;
@@ -61,11 +62,15 @@ const WaterfallToolbar = ({
           color: 'text.secondary',
         }}
       >
+        {/* Four keys, not three: tokens moved to the brand pink the row's token
+            chips use, and cost gets its own amber key — the legend was calling
+            amber "tokens" while the amber chip on the row was the cost. */}
         {(
           [
             ['ok', theme.palette.primary.main],
             ['error', theme.palette.error.main],
-            ['tokens', theme.palette.warning.main],
+            ['tokens', tokenFigureColor(theme.palette.mode)],
+            ['cost', theme.palette.warning.main],
           ] as const
         ).map(([label, color]) => (
           <Box

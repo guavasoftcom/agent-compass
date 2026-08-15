@@ -40,7 +40,9 @@ SpanInspectorDrawer ── right-side width-resizable drawer for the selected sp
   `api/` with sample-data support.
 - `NANOS_PER_MILLI`, `formatDuration`, `formatTokens`, `formatUsd` from `../TracesPage/tracesApi`.
 - `tokenBreakdownForSpan` from `../TracesPage/tokenBreakdown` — extracts `input / output /
-  cacheCreate / cacheRead` counts from any span's attribute bag.
+  cacheCreate / cacheRead` counts from any span's attribute bag; the same module's
+  `fullRateTokens`, `cacheHitRateLabel`, and `tokenShareLabel` are what the header card and the
+  waterfall chips scale and label with.
 - `isToolCallSpan` from `../TracesPage/traceDerivations` — the header's Tool calls tile counts
   spans through the same rule the Traces page uses, so the two never disagree.
 - `spanColor` from `../TracesPage/components/traceColors` — maps span name to a service hue
@@ -65,7 +67,11 @@ TraceDetailPage/
 │                               literal string, primitives → String()
 ├── spanCost.ts                 costOfSpan(span) → SpanRow.costUsd, a per-span cost breakdown figure
 │                               (0 when none was logged against it) — NOT the source of the header's
-│                               Cost KPI, which reads the backend-authoritative trace total instead
+│                               Cost KPI, which reads the backend-authoritative trace total instead;
+│                               costOfSpanRequests(logs) sums cost_usd over a span's own api_request
+│                               logs, and costOfSelectedSpan(span, logs) prefers the stamped figure
+│                               and falls back to the logs — 0 on a claude_code.interaction span,
+│                               whose rollup is the trace total (the row/drawer number — see Cost)
 ├── index.ts                    re-exports TraceDetailPage as default
 └── components/
     ├── TraceDetailHeader/
@@ -78,14 +84,16 @@ TraceDetailPage/
     │   │                             Tool calls/Depth/Errors (Cost leads, gradient-emphasized)
     │   ├── SummaryStrip.tsx           collapsible "Overview" panel: header (click to collapse) +
     │   │                             optional "Prompt" row + the KPI tile row + TokenCompositionCard
-    │   │                             (stacked bar + 4-item legend, "N% cached" chip, model-call
-    │   │                             count, total cost) +
+    │   │                             (two labelled TokenTrack bars — "Full rate" scaled to the
+    │   │                             input/output/cache-create subtotal, "Cache read 0.1×" scaled to
+    │   │                             the trace total — + a 4-item legend carrying each kind's share,
+    │   │                             "N% cached" chip, model-call count, total cost) +
     │   │                             MetaFooter (full trace/session ids, root span, services, started).
     │   │                             Tooltip fires only when a value element overflows; the collapse
     │   │                             choice persists in localStorage
     │   └── index.ts
     ├── WaterfallToolbar/
-    │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens legend
+    │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens/cost legend
     │   │                             + GhostButton "Expand all / Collapse all" + "Next error" (when errors > 0)
     │   └── index.ts
     ├── TraceMinimap/
@@ -94,12 +102,17 @@ TraceDetailPage/
     │   │                             double-click resets to full trace; exports ZoomView { s, e }
     │   └── index.ts
     ├── SpanWaterfallRow/
-    │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + tool_name chip + SpanTokenBadges
-    │   │                             (one combined total-token pill; the four-way split, cache read
-    │   │                             included, is in its hover tooltip) + SpanCostBadge (amber
-    │   │                             formatUsd chip, only when costOfSpan(span) > 0) +
-    │   │                             error/descendant-error/log-count pills + timeline bar +
-    │   │                             duration label; pure component (no view split)
+    │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + SpanFullRateBadge (pink
+    │   │                             input+output+cache-create pill, the three-way split in its
+    │   │                             tooltip) + SpanCacheReadBadge (the quiet neutral half of the
+    │   │                             pair, its tooltip carrying the hit rate and the 0.1x note) +
+    │   │                             SpanCostBadge (amber formatUsd chip, only when the resolved
+    │   │                             costUsd > 0; its tooltip says whether that is a rollup or one
+    │   │                             call) + model/effort pill + SpanToolBadge (tool_name chip whose
+    │   │                             tooltip shows the tool's status and the command it ran, clamped
+    │   │                             at 300 chars) + error/descendant-error pills + timeline bar +
+    │   │                             duration label. All badges share spanChipSx, so only palette and
+    │   │                             weight differ; pure component (no view split)
     │   └── index.ts
     └── SpanInspectorDrawer/
         ├── SpanInspectorDrawer.tsx    right-side drawer, a flex sibling of the waterfall card (no
@@ -115,7 +128,9 @@ TraceDetailPage/
         │                             rendered during the close animation (guarded render-phase
         │                             setState, compared by span id) and drops it on the closing
         │                             transitionend, with `inert` while closed so nothing behind
-        │                             `width: 0` stays tabbable
+        │                             `width: 0` stays tabbable. Wraps its content in
+        │                             LongValueModalProvider, so a clamped value in any section opens
+        │                             the same dialog
         ├── CollapsibleSection.tsx     collapsible section primitive: the header row is a real
         │                             <button> (Tab/Enter/Space, aria-expanded) that toggles the
         │                             body, 11px chevron rotates -90° when collapsed, optional
@@ -125,10 +140,12 @@ TraceDetailPage/
         ├── TokensSection.tsx          collapsible amber section — header count is the four-way
         │                             total with the input/output/cache-create/cache-read split in
         │                             its tooltip (so a collapsed header still explains itself);
-        │                             body rows are cost (formatUsd, only when costUsd > 0) +
+        │                             body rows are tokens only (no cost row — the drawer states
+        │                             cost once, in the meta grid):
         │                             input/output/cache_creation in amber, then cache_read below
         │                             a dashed rule, deliberately muted (text.disabled/secondary,
-        │                             neutral fill) with an outlined "N% HIT" badge. Renders its
+        │                             neutral fill) with an outlined hit-rate badge (cacheHitRateLabel,
+        │                             so a near-total hit reads ">99% HIT"). Renders its
         │                             own rows (not AttrRows) because that row needs its own
         │                             weight, separator, and trailing badge
         ├── ErrorSection.tsx           collapsible red section, rendered only for
@@ -142,14 +159,24 @@ TraceDetailPage/
         ├── SpanAttributeSections.tsx  filters redundant keys; renders a collapsible "Tool" section
         │                             (info-tinted, wrench icon) + collapsible "Attributes" section
         ├── SpanEventsList.tsx         collapsible Events section: timestamped cards (T+offset from
-        │                             span start) with each event's attribute grid
+        │                             span start) with each event's attribute grid, values clamped
+        │                             through LongAttrValue (a process.exit event carries the whole
+        │                             stderr dump)
         ├── LogEntry.tsx               per-log row: leading expand caret (▸→▾; same-width spacer on
         │                             rows with no detail so columns align) + offset + severity +
-        │                             event.name + tool badges + body; click to expand attributes;
-        │                             long values (> 240 chars) open a modal with tryParseJson
-        │                             repair + copy-to-clipboard
+        │                             event.name + tool badges + body; click to expand attributes,
+        │                             whose values clamp through LongAttrValue at LONG_VALUE_LOG
+        ├── longValue.tsx              the drawer's one truncate-and-expand path: LongValueModalProvider
+        │                             (hosted once at the drawer root, so N clamped rows don't mount N
+        │                             dialogs) + LongAttrValue (clamped preview + "view formatted (N
+        │                             chars)" button) + the two budgets, LONG_VALUE_LOG (240, full-width
+        │                             log rows) and LONG_VALUE_ATTR (110, the narrower grids). The modal
+        │                             runs the raw text through tryParseJson (jsonrepair) and offers
+        │                             copy-to-clipboard. Outside a provider the preview renders with no
+        │                             button rather than throwing
         ├── drawerParts.tsx            shared drawer primitives: clock(ms) wall-clock formatter,
-        │                             AttrRows (key/value grid with tinted borders per tone)
+        │                             AttrRows (key/value grid with tinted borders per tone; values go
+        │                             through LongAttrValue, numbers pre-formatted and never clamped)
         ├── useResizableWidth.ts       drag-to-resize hook for the left-edge grip; clamps 340px–62%
         │                             viewport width; width is null until first drag (drawer falls
         │                             back to min(440px, 42vw)) and persists across selections;
@@ -174,9 +201,11 @@ TraceDetailPage/
 │ ├──────┬────────┬───────┬────────────┬───────┬────────┬──────────────┤    firstUserPrompt
 │ │ Cost │Duration│ Spans │ Tool calls │ Depth │ Errors │              │  ← KPI tiles
 │ ├────────────────────────────────────────────────────────────────────┤
-│ │ TOKEN COMPOSITION 1.2M [96% cached] 3 model calls · $0.42          │
-│ │ ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇        │
-│ │ ■ Cache read 1.1M   ■ Input 42K   ■ Cache creation 9K  ■ Output 3K │
+│ │ TOKEN COMPOSITION 1.2M [>99% cached] 3 model calls · $0.42         │
+│ │ FULL RATE      ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇      54K   │
+│ │ CACHE READ 0.1× ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  1.1M · >99.9%│
+│ │ ■ Cache read 1.1M >99.9%  ■ Input 42K 3.5%  ■ Cache creation 9K 0.8%│
+│ │ ■ Output 3K 0.2%                                                    │
 │ ├────────────────────────────────────────────────────────────────────┤
 │ │ TRACE ID 0102…  SESSION abc…  ROOT SPAN ■ …  SERVICES 2  STARTED … │  ← MetaFooter
 │ └────────────────────────────────────────────────────────────────────┘          │
@@ -192,7 +221,7 @@ while every row stays visible at full height.
 
 ┌─ Waterfall card (flex: 1, min-width: 0) ────────────────┐ ┌─ SpanInspectorDrawer ────────┐
 │ WaterfallToolbar: ≡ Span waterfall  [ok ■] [error ■]   │▐│ claude_code.llm_request  [✕] │
-│                  [tokens ■] [Expand all] [▲ Next error] │▐├──────────────────────────────┤
+│         [tokens ■] [cost ■] [Expand all] [▲ Next error] │▐├──────────────────────────────┤
 ├─ TraceMinimap ──────────────────────────────────────────┤▐│ span id   <hex>              │
 │  drag to zoom · dbl-click resets                        │▐│ kind      CLIENT             │
 │  ░░░░░░░░▓▓▓▓▓▓▓▓░░░░░  ← span bars staggered by depth │▐│ scope     …                  │
@@ -200,11 +229,11 @@ while every row stays visible at full height.
 ├─ Axis (ticks at 0 / 25 / 50 / 75 / 100%) ──────────────┤▐│ started   HH:MM:SS.mmm       │
 │ Span              │  0ms   125ms   250ms   375ms  500ms │▐│ ended     HH:MM:SS.mmm       │
 ├─ Body (overflowY auto, overflowX hidden) ───────────────┤▐│ duration  310ms              │
-│ ▶ [1] claude_code.session ●tokens $0.42   [██████] 500ms│▐│ cost      $0.42  (amber)     │
-│   · [2] claude_code.llm_request ●2.4k  [████] 310ms   │▐│ self time [████░░] 87%       │
-│   · [3] claude_code.tool.execution [Bash] [█] 45ms err │▐│ ▾ ERROR   (red, error spans) │
-│   · [4] claude_code.tool.execution [Read] [█] 12ms     │▐│ ▾ TOKENS 2,400   (amber)     │
-│   (scroll continues …)                                   │▐│    cost / input / output / cc │
+│ ▶ [1] claude_code.interaction ●54k ⟳1.1M [██████] 500ms│▐│ cost      $0.42  (amber)     │
+│   · [2] llm_request ●2.4k ⟳98k $0.01 [Opus 5] [███] 310ms│▐│ self time [████░░] 87%     │
+│   · [3] tool.execution $0.03 [Bash] [█] 45ms err       │▐│ ▾ ERROR   (red, error spans) │
+│   · [4] tool.execution [Read] [█] 12ms                 │▐│ ▾ TOKENS 2,400   (amber)     │
+│   (scroll continues …)                                   │▐│    input / output / cache_cr  │
 │                                                          │▐│    ┄┄ cache_read  [88% HIT]  │
 │                                                          │▐│       (muted, not amber)     │
 │                                                          │▐│ ▾ TOOL (n) 🔧    (blue)      │
@@ -215,6 +244,10 @@ while every row stays visible at full height.
                                                             ▲
                                              left-edge grip (drag to resize, 340px–62vw)
 ```
+
+Row chips read left to right in a fixed order — `●` full-rate tokens (pink), `⟳` cache read
+(neutral), cost (amber), model/effort, tool name — so the eye can scan one column down the trace.
+The `interaction` root shows tokens but no cost (see Cost).
 
 Drawer behavior: closed = `width: 0; overflow: hidden` (no footprint, no gap); open =
 `min(440px, 42vw)` with a 16px left margin, animating `width 0.2s cubic-bezier(0.4, 0, 0.2, 1)`
@@ -304,17 +337,48 @@ land on a different, and specifically lower, number than the trace's real total 
 spans haven't finished ingesting yet, or a request logged without a span id still counts toward
 the trace total but has no span to attribute it to. `costOfSpan` is the per-span
 breakdown figure (its own read of `SpanRow.costUsd`, filled from the sibling `span_costs` view) —
-it's just not the source of the trace-level KPI. It feeds three per-span displays, all shown only
-when `costOfSpan(span) > 0`: the waterfall row's `SpanCostBadge` chip, the drawer meta grid's
-`cost` row (amber bold, after duration), and the `cost` row atop the drawer's Tokens section.
-These are real billed amounts (the summed `cost_usd` of the `api_request` logs stamped with the
-span's id), so they carry no "~"/"est." qualifier.
+it's just not the source of the trace-level KPI. These are real billed amounts, so they carry no
+"~"/"est." qualifier.
+
+**Both per-span displays resolve through `costOfSelectedSpan(span, logs)`** — the waterfall row's
+`SpanCostBadge` chip, and the drawer's meta grid `cost` row (amber bold, after duration; the
+drawer's Tokens section carries no cost row, so the drawer states cost once). It prefers
+`costOfSpan` and falls back to `costOfSpanRequests(logs)` — the summed
+`cost_usd` of the `api_request` logs bucketed onto that span — when nothing was stamped against the
+span itself. That fallback is the whole point: it is what puts a per-call price on an `llm_request`
+row, which `span_costs` leaves at 0 (see the consequence below). The two are never added, so a
+`tool.execution` span, which is both stamped *and* holds its own request logs, shows its stamped
+total once rather than twice.
+
+**A `claude_code.interaction` span shows no cost at all** — `costOfSelectedSpan` returns 0 for it
+whatever it was stamped with, so the row's badge and the drawer's `cost` row both disappear on the
+turn root. Its rollup *is* the whole turn, i.e. the trace-level number the header's Cost KPI
+already states in a place built for it; repeating it on a span row invited reading it as that
+span's own cost and adding it to the `llm_request` rows underneath. This is display-only
+suppression — `costOfSpan(span)` still returns the real `span_costs` figure, and the header KPI
+(from the `trace-summary` query) is unaffected. The match is on the span name, normalized the way
+`serviceOf` / `isToolCallSpan` do it, so `claude_code.interaction` and a bare `interaction` both
+hit.
+
+**The badge column still does not sum to the trace total, by construction.** A stamped
+`tool.execution` running a subagent covers every request made under it while the `llm_request` rows
+below show their own, so the same dollar appears at two depths. The `isRollupCost` prop (true when
+`costOfSpan(span) > 0`) picks the badge's tooltip — "Cost of the requests made under this span" vs
+"Cost of this model call" — which is what tells a reader which kind they're looking at. The
+authoritative total is the header KPI; don't try to reconcile it against a column sum.
 
 Two consequences worth remembering:
 
 - **The cost lands on the span that issued the request** — the `claude_code.interaction` root, or a
-  `tool.execution` span for a request made inside a tool run — **not on the `llm_request` child.** So a
-  waterfall row can show tokens with no cost, and the root row carries most of the trace's spend.
+  `tool.execution` span for a request made inside a tool run — **not on the `llm_request` child.** So
+  a waterfall row can show tokens with no cost, and the raw `span_costs` figure for a turn sits
+  entirely on its root — which, on an `interaction` root, is exactly the figure the row and drawer
+  now suppress. Both surfaces work around the misattribution client-side (above), which is why a
+  stamped `tool.execution` row can carry a rollup badge and its `llm_request` children their own.
+  Fixing it in the data instead — re-keying `span_costs` to `request_id`,
+  the way `span_efforts` (`V15`) already correlates — was considered and rejected: it would disperse
+  a Task subagent's cost across its children (4,652 logs / $360.81 locally) and move 37 cross-trace
+  requests out of the trace their logs were recorded under.
 - **There is no client-side estimate.** An earlier revision priced the span's tokens at published
   per-model rates; it ran 2-3x off real spend and disagreed with the Sessions page, which reports what
   Claude Code actually billed. A trace whose requests predate trace-id correlation totals 0 and renders
@@ -334,8 +398,11 @@ Within each bucket logs are sorted by `event.sequence` (when present on both sid
 `event.timestamp` attribute (the authoritative SDK wall-clock time) then by
 `log.timestamp` (the OTLP record time, which can lag by seconds when the exporter batches).
 
-The `logCount` badge on each waterfall row is `logsBySpanId.get(spanId)?.length ?? 0`.
-The drawer's Logs section receives the pre-bucketed array for the selected span.
+The buckets feed the drawer only — its Logs section receives the pre-bucketed array for the
+selected span, and `costOfSpanRequests` reads the same array for the per-call cost (see Cost).
+The waterfall row deliberately carries no log-count badge: a count of correlated log records is
+a property of the telemetry, not of what the span did, and it competed for row width with the
+token, cost, and error pills that answer questions someone actually scans the waterfall for.
 
 ### Zoom window and visible row filtering
 
@@ -397,7 +464,7 @@ slides the highlight instead of yanking the waterfall on every press. It's share
 `selected` is a `string | null` span ID. `selectSpan` toggles: clicking the already-selected
 span deselects it (closes the drawer). The view resolves `selected` into a
 `SpanInspectorSelection` (the full `SpanRow` plus pre-computed `selfTimeNanos`, `tokens` from
-`tokenBreakdownForSpan`, the `logs` bucket, `costUsd` via `costOfSpan`, and the span's
+`tokenBreakdownForSpan`, the `logs` bucket, `costUsd` via `costOfSelectedSpan`, and the span's
 `waterfallIndex`/`waterfallCount`) and passes it — or null — to `SpanInspectorDrawer`, which always
 stays mounted so the width transition can run and the dragged width survives across selections.
 
@@ -462,8 +529,27 @@ so the edge tracks the cursor 1:1.
   deflate the rate with a denominator the cache can't influence. Returns `null` (chip hidden, no
   "—" placeholder) when the trace logged no input-side tokens. Nothing is fetched for it; it's
   derived from the `TokenBreakdown` the header already computes. Its violet tint resolves through
-  `tokenComposition.cacheRead` + `primary.main`, matching the cache-read bar segment right below
+  `tokenComposition.cacheRead` + `primary.main`, matching the cache-read track right below
   it — not MUI's default `info` palette, which is an unrelated blue in this theme.
+  **Both chips render `cacheHitRateLabel`, not the raw percent** — it rounds asymmetrically at the
+  top of the range, so only an exact 100% prints "100%" and anything above 99 prints ">99%". On a
+  real trace cache read is 99.x% of every input-side token, and "100% cached" reads as "nothing was
+  billed", which is wrong by thousands of full-rate tokens. Use the label wherever a rate is shown;
+  `cacheHitRatePercent` is for the tooltip figures and arithmetic.
+- **The token figures split by rate, not by billed/free.** Cache read is billed too — at a tenth of
+  the input rate — but it routinely runs 10-1000x the other three counts, so anything that scales
+  all four together paints one solid bar and hides the numbers a reader is actually deciding on.
+  Both surfaces therefore split: `SummaryStrip`'s `TokenCompositionCard` renders two `TokenTrack`
+  bars (the full-rate three scaled to `fullRateTokens(breakdown)`, cache read scaled to the trace
+  total), and `SpanWaterfallRow` renders `SpanFullRateBadge` beside a deliberately quiet
+  `SpanCacheReadBadge`. Don't recombine them into one total. Legend and track values carry
+  `tokenShareLabel`, which clamps to "<0.1%" / ">99.9%" so a 40-token output row never reads "0%".
+- **Token chips are pink; amber means cost.** The row's token badges and the toolbar legend's
+  "tokens" key resolve through `tokenFigureColor(mode)` in `theme/colors.ts` (deeper pink on light,
+  the bright pink on dark). Amber is reserved for cost and the "+N below" warning, so one row never
+  shows two amber numbers meaning different things — which is why the toolbar legend has four keys,
+  not three. The drawer's Tokens *section* keeps its amber treatment: it reads as a panel, not as a
+  figure.
 - **The trace/session ids are plain text now, not copy chips.** The Aurora cost sync removed
   `IdChip.tsx` and its `useCopyToClipboard.ts` hook (nothing else imported them) and moved both
   ids, un-truncated, into the meta footer. Re-adding a copy affordance means bringing back a
@@ -473,8 +559,14 @@ so the edge tracks the cursor 1:1.
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace
   without conveying anything. `kind` is unchanged on `SpanRow` and still shown once in the
   drawer's meta grid, where the client/server distinction reads. Its slot now carries the span's
-  `attributes['tool_name']` as an info-colored chip after the span name, which is what actually
-  tells one tool-call row from the next. Don't re-add the kind pill.
+  `attributes['tool_name']` as an info-colored chip at the end of the chip run, which is what
+  actually tells one tool-call row from the next. Don't re-add the kind pill.
+- **The tool chip carries the command.** `SpanToolBadge`'s tooltip shows `tool.status` and the first
+  populated key of `full_command` / `command` / `file_path` / `pattern` / `query` / `url` —
+  `full_command` first because on a Bash span `command` is only the heredoc's first line. It clamps
+  at 300 chars and points at the drawer for the rest rather than growing a second expand path; the
+  drawer's `longValue.tsx` owns that. A span with none of those keys says so explicitly instead of
+  rendering an empty card.
 - **No window context.** This page does not use `useWindowContext()` or `useSectionContext()`.
   It has no `WindowSelector`, no auto-refresh, and no polling. The three query keys are keyed only
   on `traceId`; staleTime and refetchOnWindowFocus from the global `QueryClient` apply.
@@ -537,9 +629,15 @@ so the edge tracks the cursor 1:1.
   badge then shows the model alone. Never substitute a default level; "unrecorded" and "medium"
   are different facts. `speed` *is* a span attribute but is `normal` on 100% of rows, so it
   carries no information — don't add it.
-- **Long attribute value modal.** `LogEntry` truncates inline display at 240 chars and shows a
-  "view formatted" button. The modal runs the raw text through `tryParseJson` (jsonrepair) so
-  truncated OTLP payloads display as best-effort formatted JSON with a repair warning banner.
+- **Long attribute value modal.** `longValue.tsx` owns the whole truncate-and-expand path for the
+  drawer: `LongAttrValue` clamps and shows a "view formatted" button, and `LongValueModalProvider`
+  hosts the one dialog at the drawer root. The modal runs the raw text through `tryParseJson`
+  (jsonrepair) so truncated OTLP payloads display as best-effort formatted JSON with a repair
+  warning banner. Two budgets, because the columns differ: `LONG_VALUE_LOG` (240) for the
+  full-width log rows, `LONG_VALUE_ATTR` (110) for the attribute and event grids, where the key
+  takes up to 42% of the row. Reach for `LongAttrValue` in any new section rather than clamping
+  inline — the grids that had no clamp are exactly where a 4KB stderr or a heredoc `full_command`
+  pushed the layout out of shape.
 - **`traceColors.spanColor` (not `serviceColor`).** The minimap uses `spanColor(s.name)` to
   assign hues from the span *name*, not the OTel scope, because all real Claude Code spans share
   one scope. See `../TracesPage/components/traceColors.ts` for the name-to-hue mapping.

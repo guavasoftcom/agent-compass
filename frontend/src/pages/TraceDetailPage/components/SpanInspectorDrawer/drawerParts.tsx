@@ -1,5 +1,5 @@
 import { alpha, Box } from '@mui/material';
-import { attrValueAsString } from '../../attrFormat';
+import { LongAttrValue } from './longValue';
 import { radii } from '../../../../theme/theme';
 
 // Wall-clock HH:MM:SS.mmm for a millisecond timestamp.
@@ -20,7 +20,18 @@ export const AttrRows = ({ attrs, tone }: { attrs: Record<string, unknown>; tone
       return (
         <Box key={k} sx={{ display: 'grid', gridTemplateColumns: 'minmax(96px,42%) 1fr', gap: 1.25, px: 1.5, py: 0.9, borderBottom: 1, borderColor: (t) => (tone === 'token' ? alpha(t.palette.warning.main, 0.22) : tone === 'tool' ? alpha(t.palette.info.main, 0.20) : tone === 'error' ? alpha(t.palette.error.main, 0.20) : t.palette.divider), '&:last-of-type': { borderBottom: 'none' }, fontSize: 11.5, ...(isPrompt ? { bgcolor: (t) => alpha(t.palette.primary.main, 0.09), boxShadow: (t) => `inset 3px 0 0 ${t.palette.primary.main}` } : {}) }}>
           <Box component="span" sx={{ typography: 'mono', color: (t) => (tone === 'token' ? `color-mix(in srgb, ${t.palette.warning.main} 78%, ${t.palette.text.secondary})` : tone === 'tool' ? `color-mix(in srgb, ${t.palette.info.main} 76%, ${t.palette.text.secondary})` : tone === 'error' ? `color-mix(in srgb, ${t.palette.error.main} 76%, ${t.palette.text.secondary})` : isPrompt ? t.palette.primary.main : t.palette.text.secondary), fontWeight: isPrompt ? 600 : 400, wordBreak: 'break-word' }}>{k}</Box>
-          <Box component="span" sx={{ typography: 'mono', fontWeight: tone === 'token' ? 600 : 500, wordBreak: 'break-word', color: tone === 'token' ? 'warning.main' : tone === 'error' ? 'error.main' : num ? 'info.main' : str ? 'success.main' : 'text.primary' }}>{num ? (v as number).toLocaleString() : attrValueAsString(v)}</Box>
+          <Box component="span" sx={{ typography: 'mono', fontWeight: tone === 'token' ? 600 : 500, wordBreak: 'break-word' }}>
+            {/* Long strings (a heredoc full_command, a stderr dump, a prompt) clamp
+                here and hand the rest to the drawer's shared "view formatted" modal,
+                rather than pushing this grid out of shape. Numbers pass through
+                pre-formatted and never clamp. */}
+            <LongAttrValue
+              attrKey={k}
+              value={v}
+              text={num ? (v as number).toLocaleString() : undefined}
+              color={tone === 'token' ? 'warning.main' : tone === 'error' ? 'error.main' : num ? 'info.main' : str ? 'success.main' : 'text.primary'}
+            />
+          </Box>
         </Box>
       );
     })}

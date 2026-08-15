@@ -1,8 +1,8 @@
 import { Box } from '@mui/material';
 import type { SpanEvent } from '../../../../api';
 import { formatDuration } from '../../../TracesPage/tracesApi';
-import { attrValueAsString } from '../../attrFormat';
 import CollapsibleSection from './CollapsibleSection';
+import { LongAttrValue } from './longValue';
 import { radii } from '../../../../theme/theme';
 
 // Span events as a collapsible section of timestamped cards (offset from span
@@ -30,7 +30,12 @@ const SpanEventsList = ({ events, spanStartMs }: { events: SpanEvent[] | undefin
                   {attrEntries.map(([k, v]) => (
                     <Box key={k} sx={{ display: 'contents' }}>
                       <Box component="span" sx={{ typography: 'mono', fontSize: 10.5, color: 'text.secondary' }}>{k}</Box>
-                      <Box component="span" sx={{ typography: 'mono', fontSize: 10.5, color: 'text.primary', wordBreak: 'break-word' }}>{attrValueAsString(v)}</Box>
+                      {/* A process.exit event carries the whole stderr dump; clamp
+                          it and hand the rest to the modal instead of letting one
+                          event card run for a screen and a half. */}
+                      <Box component="span" sx={{ typography: 'mono', fontSize: 10.5 }}>
+                        <LongAttrValue attrKey={k} value={v} />
+                      </Box>
                     </Box>
                   ))}
                 </Box>

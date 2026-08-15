@@ -7,7 +7,9 @@ import { fontFamilies } from '../../../../theme/typography';
 import { gradients, tokenComposition } from '../../../../theme/colors';
 import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
 import {
-  cacheHitRatePercent,
+  cacheHitRateLabel,
+  fullRateTokens,
+  tokenShareLabel,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
 
@@ -41,6 +43,79 @@ const TOKEN_SEGMENTS: Array<{
 ];
 
 const COLLAPSE_STORAGE_KEY = 'trace-detail-overview-collapsed';
+
+// Label column of the two composition tracks. Fixed so both bars start on the
+// same x and can be read against each other.
+const TRACK_LABEL_WIDTH = 118;
+
+// One labelled bar: eyebrow label (with an optional rate note), the track, and
+// the figure it sums to.
+const TokenTrack = ({
+  label,
+  rateNote,
+  barTitle,
+  valueLabel,
+  children,
+}: {
+  label: string;
+  rateNote?: string;
+  barTitle: string;
+  valueLabel: string;
+  children: ReactNode;
+}) => (
+  <Box
+    sx={{
+      display: 'grid',
+      gridTemplateColumns: `${TRACK_LABEL_WIDTH}px 1fr auto`,
+      alignItems: 'center',
+      gap: 1.5,
+    }}
+  >
+    <Typography
+      sx={{ typography: 'eyebrowSm', color: 'text.disabled', whiteSpace: 'nowrap' }}
+    >
+      {label}
+      {rateNote ? (
+        <Box
+          component="span"
+          sx={{
+            typography: 'mono',
+            fontSize: 9.5,
+            letterSpacing: 0,
+            textTransform: 'none',
+            opacity: 0.8,
+            ml: 0.4,
+          }}
+        >
+          {rateNote}
+        </Box>
+      ) : null}
+    </Typography>
+    <Box
+      title={barTitle}
+      sx={{
+        display: 'flex',
+        height: 8,
+        borderRadius: radii.xs,
+        overflow: 'hidden',
+        bgcolor: 'action.hover',
+      }}
+    >
+      {children}
+    </Box>
+    <Box
+      component="span"
+      sx={{
+        typography: 'mono',
+        fontSize: 11,
+        color: 'text.secondary',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {valueLabel}
+    </Box>
+  </Box>
+);
 
 // Same read-once / write-guarded shape theme/colorMode.tsx uses for its own
 // persisted preference — the initial value is read lazily in useState rather
@@ -111,7 +186,21 @@ const TokenCompositionCard = ({
   const modelCallLabel = modelCallCount
     ? `${modelCallCount} model ${modelCallCount === 1 ? 'call' : 'calls'}`
     : 'no model calls';
-  const cacheHitRate = cacheHitRatePercent(tokenBreakdown);
+  const cacheHitLabel = cacheHitRateLabel(tokenBreakdown);
+  // Two tracks, not one. Cache read routinely runs 100-1000x the other counts, so
+  // a single stacked bar paints solid violet and the three numbers a reader is
+  // actually deciding on vanish into a hairline. The split is by rate, not by
+  // billed/free — cache read is billed too, at a tenth of the input rate — so the
+  // top track scales to the full-rate subtotal and cache read keeps its own
+  // track, measured against the trace total.
+  const fullRate = fullRateTokens(tokenBreakdown);
+  const cacheReadShare =
+    tokenBreakdown.total > 0
+      ? (tokenBreakdown.cacheRead / tokenBreakdown.total) * 100
+      : 0;
+  const fullRateSegments = TOKEN_SEGMENTS.filter(
+    ({ key }) => key !== 'cacheRead' && tokenBreakdown[key] > 0,
+  );
   return (
     <Box sx={{ px: 2.25, py: 1.75, borderTop: 1, borderColor: 'divider' }}>
       <Box
@@ -146,7 +235,7 @@ const TokenCompositionCard = ({
           >
             {formatTokens(tokenBreakdown.total)}
           </Box>
-          {cacheHitRate !== null ? (
+          {cacheHitLabel !== null ? (
             <Box
               component="span"
               title="Cache read ÷ (cache read + input + cache creation)"
@@ -164,7 +253,7 @@ const TokenCompositionCard = ({
                 py: 0.5,
               }}
             >
-              {cacheHitRate}% cached
+              {cacheHitLabel} cached
             </Box>
           ) : null}
         </Typography>
@@ -179,33 +268,45 @@ const TokenCompositionCard = ({
           {`${modelCallLabel} · ${formatUsd(totalCostUsd)}`}
         </Typography>
       </Box>
-      <Box
-        sx={{
-          display: 'flex',
-          height: 8,
-          borderRadius: radii.xs,
-          overflow: 'hidden',
-          bgcolor: 'action.hover',
-          mb: 1.5,
-        }}
-      >
-        {TOKEN_SEGMENTS.map(({ key, color }) => {
-          const tokenCount = tokenBreakdown[key];
-          if (tokenCount <= 0) {
-            return null;
-          }
-          return (
+      <Box sx={{ display: 'grid', gap: 1.125, mb: 1.625 }}>
+        <TokenTrack
+          label="Full rate"
+          barTitle="Input, cache creation and output — the tokens priced at full rate, scaled to their subtotal"
+          valueLabel={formatTokens(fullRate)}
+        >
+          {fullRateSegments.map(({ key, color }) => (
             <Box
               key={key}
               sx={{
                 height: '100%',
                 minWidth: 2,
                 bgcolor: color,
-                width: `${(tokenCount / tokenBreakdown.total) * 100}%`,
+                width: `${(tokenBreakdown[key] / Math.max(1, fullRate)) * 100}%`,
               }}
             />
-          );
-        })}
+          ))}
+        </TokenTrack>
+        <TokenTrack
+          label="Cache read"
+          rateNote="0.1×"
+          barTitle="Cache read as a share of all tokens in this trace — billed at a tenth of the input rate"
+          valueLabel={`${formatTokens(tokenBreakdown.cacheRead)} · ${tokenShareLabel(
+            tokenBreakdown.cacheRead,
+            tokenBreakdown.total,
+          )}`}
+        >
+          {tokenBreakdown.cacheRead > 0 ? (
+            <Box
+              sx={{
+                height: '100%',
+                minWidth: 2,
+                bgcolor: tokenComposition.cacheRead,
+                opacity: 0.85,
+                width: `${cacheReadShare}%`,
+              }}
+            />
+          ) : null}
+        </TokenTrack>
       </Box>
       <Box
         sx={{
@@ -257,6 +358,21 @@ const TokenCompositionCard = ({
               }}
             >
               {formatTokens(tokenBreakdown[key])}
+            </Box>
+            {/* Share of the trace total, so the legend answers "how much of this
+                trace was cache read?" without the reader doing the division. */}
+            <Box
+              component="span"
+              sx={{
+                typography: 'mono',
+                fontSize: 11,
+                color: 'text.disabled',
+                flexShrink: 0,
+                minWidth: 44,
+                textAlign: 'right',
+              }}
+            >
+              {tokenShareLabel(tokenBreakdown[key], tokenBreakdown.total)}
             </Box>
           </Box>
         ))}

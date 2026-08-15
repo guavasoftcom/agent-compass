@@ -75,7 +75,12 @@ TracesPage/
 │                             percent (null when there were no input-side tokens). The ratio itself is
 │                             NOT computed here — it delegates to lib/cacheEfficiency, the dashboard's
 │                             single definition; this only bridges the cacheCreate/cacheCreation field
-│                             name and rounds. Shared with TraceDetailPage's token split.
+│                             name and rounds. Shared with TraceDetailPage's token split, along with
+│                             fullRateTokens(breakdown) (input + output + cacheCreate — the tokens
+│                             priced at full rate, what the trace-detail token tracks and chips scale
+│                             to) and two label formatters: cacheHitRateLabel (the display form —
+│                             only an exact 100% prints "100%", anything above 99 prints ">99%") and
+│                             tokenShareLabel(value, total) (clamped "<0.1%" / ">99.9%").
 ├── tracesSampleData.ts       VITE_TRACES_SAMPLE synthetic store + in-memory query engine (sampleHistogram/
 │                             Facets/Cursor/Page/Spans); split out so it can't cycle with the network layer.
 │                             RNG + latency helpers come from lib/sampleData (shared with LogsPage)

@@ -15,6 +15,7 @@ import LogEntry from './LogEntry';
 import TokensSection from './TokensSection';
 import SpanAttributeSections from './SpanAttributeSections';
 import SpanEventsList from './SpanEventsList';
+import { LongValueModalProvider } from './longValue';
 import { radii } from '../../../../theme/theme';
 
 export interface SpanInspectorSelection {
@@ -22,9 +23,13 @@ export interface SpanInspectorSelection {
   selfTimeNanos: number;
   tokens: TokenBreakdown;
   logs: LogRow[];
-  // Real, billed cost for this span (costOfSpan(span) — see spanCost.ts). Not
+  // Real, billed cost for this span (costOfSelectedSpan — see spanCost.ts). Not
   // an estimate: the summed cost_usd of the api_request logs stamped with this
-  // span. 0 when none was logged against it.
+  // span, or — on a span nothing was stamped against, i.e. every llm_request
+  // row — of the request logs bucketed onto it, which is that call's own spend.
+  // 0 when the span neither was stamped nor issued a logged request, and on a
+  // claude_code.interaction span, whose rollup is the trace total the header
+  // KPI already states. The meta grid's cost row is omitted whenever it is 0.
   costUsd: number;
   // Span nav — the span's position among the waterfall's currently rendered
   // rows. Nav buttons are omitted entirely when there's nowhere to step
@@ -164,7 +169,7 @@ const DrawerContent = ({ selection }: { selection: SpanInspectorSelection }) => 
 
       <ErrorSection span={span} logs={logs} />
 
-      <TokensSection tokens={tokens} costUsd={costUsd} />
+      <TokensSection tokens={tokens} />
       <SpanAttributeSections attributes={span.attributes ?? undefined} />
       <SpanEventsList events={span.events ?? undefined} spanStartMs={startMs} />
       {logs.length ? (
@@ -403,7 +408,12 @@ const SpanInspectorDrawer = ({
             }}
           >
             {/* Keyed by span id: section collapse and log-row expand state reset per span selection. */}
-            <DrawerContent key={rendered.span.spanId} selection={rendered} />
+            {/* One "view formatted" modal for the whole drawer, so a clamped value
+                in any section — attributes, tool, events, logs — opens the same
+                dialog instead of each row mounting its own. */}
+            <LongValueModalProvider>
+              <DrawerContent key={rendered.span.spanId} selection={rendered} />
+            </LongValueModalProvider>
           </Box>
         </>
       ) : null}

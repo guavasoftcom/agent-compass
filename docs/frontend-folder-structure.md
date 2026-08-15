@@ -265,7 +265,7 @@ frontend/src/
       attrFormat.ts               // page-internal helpers; no barrel needed
       logBuckets.ts
       severity.ts
-      spanCost.ts                 // costOfSpan(span) — the api_request cost attributed to a span
+      spanCost.ts                 // costOfSpan / costOfSpanRequests / costOfSelectedSpan — the api_request cost shown for a span
       spanTree.ts
       index.ts
       components/
@@ -278,6 +278,7 @@ frontend/src/
           TokensSection.tsx
           LogEntry.tsx
           drawerParts.tsx         // shared leaf bits (AttrRows/clock)
+          longValue.tsx           // drawer-wide clamp + single "view formatted" modal
           useResizableWidth.ts
           index.ts
         SpanWaterfallRow/

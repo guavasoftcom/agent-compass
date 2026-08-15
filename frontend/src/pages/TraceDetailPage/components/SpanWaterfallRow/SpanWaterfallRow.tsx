@@ -1,10 +1,11 @@
 import { Box, Tooltip, alpha, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import { neutralColors } from '../../../../theme/colors';
+import { neutralColors, tokenFigureColor } from '../../../../theme/colors';
 import type { SpanRow } from '../../../../api';
 import { formatDuration, formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
-import { costOfSpan } from '../../spanCost';
 import {
+  cacheHitRatePercent,
+  fullRateTokens,
   tokenBreakdownForSpan,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
@@ -19,7 +20,12 @@ interface Props {
   isSelected: boolean;
   indexLabel: number | undefined;
   descendantErrorCount: number;
-  logCount: number;
+  // Cost attributable to this span, from costOfSelectedSpan. The view resolves
+  // it because it owns the log buckets the llm_request figure comes from.
+  costUsd: number;
+  // True when costUsd is the stamped span_costs rollup (requests made under
+  // this span) rather than the span's own call — drives the badge tooltip.
+  isRollupCost: boolean;
   gridColumns: string;
   // Horizontal bar geometry (percent of the visible zoom window).
   left: number;
@@ -29,13 +35,48 @@ interface Props {
   onSelect: (spanId: string) => void;
 }
 
-// Aurora sync: combined billable + cache-read into a single total badge (the
-// two separate pills duplicated the same figures shown in the span detail
-// dock's Tokens section). Full breakdown, including cache read, stays one
-// hover away in the tooltip.
-const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
-  const total = tokens.input + tokens.output + tokens.cacheCreate + tokens.cacheRead;
-  if (total <= 0) {
+// Shared chip metrics. Every badge in the name column is the same height and
+// radius; only the palette and font weight differ.
+const spanChipSx = {
+  ml: 0.9,
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: 17,
+  px: 0.75,
+  borderRadius: '5px',
+  typography: 'mono',
+  fontSize: 10,
+  fontWeight: 600,
+  flexShrink: 0,
+} as const;
+
+const tipGridSx = {
+  display: 'grid',
+  gridTemplateColumns: 'auto auto',
+  columnGap: 1.5,
+  rowGap: 0.3,
+  fontSize: 11,
+} as const;
+
+const TipRow = ({ label, value }: { label: string; value: string }) => (
+  <>
+    <Box component="span" sx={{ opacity: 0.75 }}>
+      {label}
+    </Box>
+    <Box component="span" sx={{ textAlign: 'right' }}>
+      {value}
+    </Box>
+  </>
+);
+
+// Two token badges, not one. Cache read routinely runs 10-100x the other three
+// counts, so a single combined total made every model row read as the same huge
+// number and the figures a reader is actually deciding on (input, output, cache
+// creation) disappeared inside it. The split is by rate, not by billed/free —
+// cache read is billed too, at a tenth of the input rate.
+const SpanFullRateBadge = ({ tokens }: { tokens: TokenBreakdown }) => {
+  const fullRate = fullRateTokens(tokens);
+  if (fullRate <= 0) {
     return null;
   }
   return (
@@ -45,41 +86,18 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
       title={
         <Box sx={{ py: 0.5, typography: 'mono' }}>
           <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
-            {formatTokens(total)} total tokens
+            {`${formatTokens(fullRate)} at full rate`}
           </Box>
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: 'auto auto',
-              columnGap: 1.5,
-              rowGap: 0.3,
-              fontSize: 11,
-            }}
-          >
-            <Box component="span" sx={{ opacity: 0.75 }}>
-              Input
-            </Box>
-            <Box component="span" sx={{ textAlign: 'right' }}>
-              {formatTokens(tokens.input)}
-            </Box>
-            <Box component="span" sx={{ opacity: 0.75 }}>
-              Output
-            </Box>
-            <Box component="span" sx={{ textAlign: 'right' }}>
-              {formatTokens(tokens.output)}
-            </Box>
-            <Box component="span" sx={{ opacity: 0.75 }}>
-              Cache creation
-            </Box>
-            <Box component="span" sx={{ textAlign: 'right' }}>
-              {formatTokens(tokens.cacheCreate)}
-            </Box>
-            <Box component="span" sx={{ opacity: 0.75 }}>
-              Cache read
-            </Box>
-            <Box component="span" sx={{ textAlign: 'right' }}>
-              {formatTokens(tokens.cacheRead)}
-            </Box>
+          {/* Cache read is deliberately absent: it has its own chip and card
+              immediately beside this one, so listing it here repeated the same
+              number and its 0.1x note a few pixels apart. */}
+          <Box sx={tipGridSx}>
+            <TipRow label="Input" value={tokens.input.toLocaleString()} />
+            <TipRow label="Output" value={tokens.output.toLocaleString()} />
+            <TipRow
+              label="Cache creation"
+              value={tokens.cacheCreate.toLocaleString()}
+            />
           </Box>
         </Box>
       }
@@ -87,19 +105,12 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
       <Box
         component="span"
         sx={{
-          ml: 0.9,
-          display: 'inline-flex',
-          alignItems: 'center',
+          ...spanChipSx,
           gap: 0.4,
-          px: 0.75,
-          height: 17,
-          borderRadius: '5px',
-          color: 'warning.main',
-          bgcolor: (t) => alpha(t.palette.warning.main, 0.16),
-          typography: 'mono',
-          fontSize: 10,
-          fontWeight: 600,
-          flexShrink: 0,
+          // Brand pink, not amber: amber is the cost hue, and a row carrying both
+          // in the same color read as one number split in two.
+          color: (t) => tokenFigureColor(t.palette.mode),
+          bgcolor: (t) => alpha(tokenFigureColor(t.palette.mode), 0.16),
         }}
       >
         <Box
@@ -108,43 +119,225 @@ const SpanTokenBadges = ({ tokens }: { tokens: TokenBreakdown }) => {
           fill="none"
           stroke="currentColor"
           strokeWidth={2}
-          sx={{ width: 10, height: 10 }}
+          sx={{ width: 10, height: 10, opacity: 0.8 }}
         >
           <circle cx="12" cy="12" r="8" />
           <circle cx="12" cy="12" r="3" fill="currentColor" />
         </Box>
-        {formatTokens(total)}
+        {formatTokens(fullRate)}
       </Box>
     </Tooltip>
   );
 };
 
-// Real, billed cost (costOfSpan → SpanRow.costUsd) — not an estimate. Omitted
-// for spans with no logged request (the vast majority of non-model spans).
-const SpanCostBadge = ({ costUsd }: { costUsd: number }) => {
+// The quiet half of the pair: same geometry, neutral palette, so a row's loud
+// figure stays the one that costs full rate.
+const SpanCacheReadBadge = ({ tokens }: { tokens: TokenBreakdown }) => {
+  if (tokens.cacheRead <= 0) {
+    return null;
+  }
+  const hitRate = cacheHitRatePercent(tokens);
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      title={
+        <Box sx={{ py: 0.5, typography: 'mono' }}>
+          <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
+            {`${formatTokens(tokens.cacheRead)} cache read`}
+          </Box>
+          {hitRate != null ? (
+            <Box sx={tipGridSx}>
+              <TipRow label="Of cacheable tokens" value={`${hitRate}%`} />
+            </Box>
+          ) : null}
+          <Box
+            sx={{
+              mt: 0.5,
+              fontFamily: fontFamilies.body,
+              fontSize: 10.5,
+              opacity: 0.75,
+            }}
+          >
+            billed at 0.1x the input rate
+          </Box>
+        </Box>
+      }
+    >
+      <Box
+        component="span"
+        sx={{
+          ...spanChipSx,
+          gap: 0.4,
+          color: 'text.disabled',
+          bgcolor: 'action.hover',
+        }}
+      >
+        <Box
+          component="svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          sx={{ width: 10, height: 10, opacity: 0.75 }}
+        >
+          <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+          <path d="M21 3v5h-5" />
+          <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+          <path d="M3 21v-5h5" />
+        </Box>
+        {formatTokens(tokens.cacheRead)}
+      </Box>
+    </Tooltip>
+  );
+};
+
+// Real, billed cost (costOfSelectedSpan — see spanCost.ts) — not an estimate.
+// Omitted for spans that neither were stamped with a request nor issued one,
+// and for claude_code.interaction rows, which resolve to 0 there because their
+// rollup is the whole turn (the header's Cost KPI).
+//
+// Two kinds of figure share this badge, and the tooltip is what tells them
+// apart: on a stamped span — now only a tool.execution running a subagent — it
+// covers every request made *under* that span, so a parent and its children can
+// each carry a badge and the column does not sum to the trace total. On an
+// llm_request row it is that one call's own spend.
+const SpanCostBadge = ({
+  costUsd,
+  isRollupCost,
+}: {
+  costUsd: number;
+  isRollupCost: boolean;
+}) => {
   if (costUsd <= 0) {
     return null;
   }
   return (
     <Box
       component="span"
+      title={
+        isRollupCost
+          ? 'Cost of the requests made under this span'
+          : 'Cost of this model call'
+      }
       sx={{
-        ml: 0.9,
-        display: 'inline-flex',
-        alignItems: 'center',
-        px: 0.75,
-        height: 17,
-        borderRadius: '5px',
+        ...spanChipSx,
+        fontWeight: 700,
         color: 'warning.main',
         bgcolor: (t) => alpha(t.palette.warning.main, 0.16),
-        typography: 'mono',
-        fontSize: 10,
-        fontWeight: 700,
-        flexShrink: 0,
       }}
     >
       {formatUsd(costUsd)}
     </Box>
+  );
+};
+
+// Whichever attribute carries what the tool was actually asked to do, in
+// preference order. `full_command` first: on a Bash span it is the whole
+// heredoc, where `command` is only its first line.
+const TOOL_ARG_KEYS = [
+  'full_command',
+  'command',
+  'file_path',
+  'pattern',
+  'query',
+  'url',
+] as const;
+
+// A full_command runs to several hundred characters often enough (heredoc commit
+// messages especially) that the card has to clamp. It clamps and points at the
+// drawer, which owns the truncate-and-expand path for the whole string.
+const TIP_COMMAND_MAX_CHARS = 300;
+
+const attrToText = (value: unknown): string =>
+  typeof value === 'string' ? value : JSON.stringify(value);
+
+// The tool chip stops being a bare label: hovering it answers "asked to do
+// what?" without opening the drawer, which is the question a reader scanning a
+// column of `Bash` / `Read` rows actually has.
+const SpanToolBadge = ({ span }: { span: SpanRow }) => {
+  const attributes = span.attributes;
+  const toolNameAttribute = attributes?.['tool_name'];
+  const toolName = typeof toolNameAttribute === 'string' ? toolNameAttribute : '';
+  if (!toolName) {
+    return null;
+  }
+  const statusAttribute = attributes?.['tool.status'];
+  const toolStatus = typeof statusAttribute === 'string' ? statusAttribute : '';
+  const argKey = attributes
+    ? TOOL_ARG_KEYS.find((key) => {
+        const value = attributes[key];
+        return value !== undefined && value !== null && String(value) !== '';
+      })
+    : undefined;
+  const argText = argKey && attributes ? attrToText(attributes[argKey]) : '';
+  const isClipped = argText.length > TIP_COMMAND_MAX_CHARS;
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      slotProps={{ tooltip: { sx: { maxWidth: 420 } } }}
+      title={
+        <Box sx={{ py: 0.5, typography: 'mono' }}>
+          <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
+            {toolName}
+            {toolStatus ? (
+              <Box component="span" sx={{ ml: 0.75, fontSize: 10, opacity: 0.7 }}>
+                {toolStatus}
+              </Box>
+            ) : null}
+          </Box>
+          {argKey ? (
+            <>
+              <Box sx={{ fontSize: 10, opacity: 0.7, mb: 0.4 }}>{argKey}</Box>
+              <Box
+                sx={{
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                  maxHeight: 150,
+                  overflow: 'hidden',
+                }}
+              >
+                {isClipped
+                  ? `${argText.slice(0, TIP_COMMAND_MAX_CHARS).replace(/\s+$/, '')}\u2026`
+                  : argText}
+              </Box>
+              {isClipped ? (
+                <Box
+                  sx={{
+                    mt: 0.5,
+                    fontFamily: fontFamilies.body,
+                    fontSize: 10.5,
+                    opacity: 0.75,
+                  }}
+                >
+                  {`${argText.length.toLocaleString()} chars · open the span for the full command`}
+                </Box>
+              ) : null}
+            </>
+          ) : (
+            <Box
+              sx={{ fontFamily: fontFamilies.body, fontSize: 10.5, opacity: 0.75 }}
+            >
+              no command recorded on this span
+            </Box>
+          )}
+        </Box>
+      }
+    >
+      <Box
+        component="span"
+        sx={{
+          ...spanChipSx,
+          color: 'info.main',
+          bgcolor: (t) => alpha(t.palette.info.main, 0.15),
+        }}
+      >
+        {toolName}
+      </Box>
+    </Tooltip>
   );
 };
 
@@ -156,7 +349,8 @@ const SpanWaterfallRow = ({
   isSelected,
   indexLabel,
   descendantErrorCount,
-  logCount,
+  costUsd,
+  isRollupCost,
   gridColumns,
   left,
   right,
@@ -166,13 +360,6 @@ const SpanWaterfallRow = ({
 }: Props) => {
   const theme = useTheme();
   const tokens = tokenBreakdownForSpan(span);
-  const costUsd = costOfSpan(span);
-  // Aurora sync: dropped the per-row `kind` pill (nearly every span is
-  // `internal`, so it repeated without informing — `kind` still shows once in
-  // the detail dock's meta grid) and replaced it with the span's tool name,
-  // which is what actually distinguishes one tool-call row from the next.
-  const toolNameAttribute = span.attributes?.['tool_name'];
-  const toolName = typeof toolNameAttribute === 'string' ? toolNameAttribute : '';
   // Which model an llm_request row actually went to — the tool chip's counterpart
   // for model spans, so a trace that switched models mid-run reads off the tree
   // instead of one drawer open at a time. `model` and `gen_ai.request.model` are
@@ -305,46 +492,22 @@ const SpanWaterfallRow = ({
         >
           {span.name}
         </Box>
-        {toolName ? (
-          <Box
-            component="span"
-            sx={{
-              ml: 0.9,
-              display: 'inline-flex',
-              alignItems: 'center',
-              height: 17,
-              px: 0.75,
-              borderRadius: '5px',
-              color: 'info.main',
-              bgcolor: (t) => alpha(t.palette.info.main, 0.15),
-              typography: 'mono',
-              fontSize: 10,
-              fontWeight: 600,
-              flexShrink: 0,
-            }}
-          >
-            {toolName}
-          </Box>
-        ) : null}
+        {/* Chip order is deliberate: the two token figures first (they are on
+            every model row, so a stable position lets the eye scan the column),
+            then cost, then the identity pills. */}
+        <SpanFullRateBadge tokens={tokens} />
+        <SpanCacheReadBadge tokens={tokens} />
+        <SpanCostBadge costUsd={costUsd} isRollupCost={isRollupCost} />
         {modelName ? (
           <Box
             component="span"
             title={effort ? `${modelName} · ${effort} effort` : modelName}
             sx={{
-              ml: 0.9,
-              display: 'inline-flex',
-              alignItems: 'center',
+              ...spanChipSx,
               gap: 0.4,
-              height: 17,
-              px: 0.75,
-              borderRadius: '5px',
               color: 'primary.main',
               bgcolor: (t) => alpha(t.palette.primary.main, 0.15),
-              typography: 'mono',
-              fontSize: 10,
-              fontWeight: 600,
               whiteSpace: 'nowrap',
-              flexShrink: 0,
             }}
           >
             {shortModelName(modelName)}
@@ -355,8 +518,7 @@ const SpanWaterfallRow = ({
             ) : null}
           </Box>
         ) : null}
-        <SpanTokenBadges tokens={tokens} />
-        <SpanCostBadge costUsd={costUsd} />
+        <SpanToolBadge span={span} />
         {isError ? (
           <Box
             component="span"
@@ -393,25 +555,6 @@ const SpanWaterfallRow = ({
             }}
           >
             +{descendantErrorCount} below
-          </Box>
-        ) : null}
-        {logCount > 0 ? (
-          <Box
-            component="span"
-            sx={{
-              ml: 0.9,
-              px: 0.75,
-              py: 0.1,
-              borderRadius: '5px',
-              color: 'info.main',
-              bgcolor: (t) => alpha(t.palette.info.main, 0.14),
-              fontFamily: fontFamilies.display,
-              fontSize: 9.5,
-              fontWeight: 700,
-              flexShrink: 0,
-            }}
-          >
-            {logCount} log{logCount === 1 ? '' : 's'}
           </Box>
         ) : null}
       </Box>
