@@ -514,8 +514,8 @@ export interface SummaryStripProps {
 // tile row, the Token composition card, and the de-emphasized meta footer. Each
 // tile value is ellipsis-truncated and only shows a tooltip when it overflows.
 // Collapsing hides everything but the header — a one-line caption stands in and
-// the recovered vertical space goes to the span waterfall below — and the choice
-// persists in localStorage so it survives a reload.
+// the recovered vertical space goes to the span waterfall below — the panel
+// always starts expanded and the choice does not persist across navigation.
 const SummaryStrip = ({
   items,
   prompt,
