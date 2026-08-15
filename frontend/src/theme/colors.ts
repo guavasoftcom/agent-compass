@@ -15,7 +15,8 @@ export const auroraColors = {
   violetDeep: '#6a3df0', // softer violet (light "primarySoft")
   violetPale: '#b89bff', // softer violet (dark "primarySoft")
   pink: '#e84bc0', // chart pink / cache-creation tokens
-  pinkBright: '#ff6ad5', // gradient end + model-trace hue
+  pinkDeep: '#c0399f', // token figures on the light surface (chips, legend)
+  pinkBright: '#ff6ad5', // gradient end + model-trace hue + token figures (dark)
   cyan: '#1aa7dd', // chart cyan / info / input tokens
   cyanBright: '#13b6e6', // tool-trace hue + live-tail gradient
   cyanGlow: '#42d6ff', // backdrop radial glow only
@@ -70,6 +71,22 @@ export const tokenComposition = {
   cacheCreate: auroraColors.pink,
   output: auroraColors.green,
 } as const;
+
+// Token *figures* — the waterfall row's token chips and the waterfall legend's
+// "tokens" swatch — take the brand pink. Amber stays reserved for cost (and the
+// "+N below" warning), so one row never shows two amber numbers that mean
+// different things. Deeper pink on the light surface, the bright pink on dark,
+// for the same reason the theme's primary shifts between modes.
+//
+// This is a chip/label hue only: the drawer's Tokens *section* keeps its amber
+// treatment, which reads as a panel, not as a figure.
+export const tokenFigure = {
+  light: auroraColors.pinkDeep,
+  dark: auroraColors.pinkBright,
+} as const;
+
+export const tokenFigureColor = (mode: 'light' | 'dark'): string =>
+  tokenFigure[mode];
 
 // ─── Signature gradients ────────────────────────────────────────────────────
 // The violet -> pink "Aurora" action gradient (and friends) reused across

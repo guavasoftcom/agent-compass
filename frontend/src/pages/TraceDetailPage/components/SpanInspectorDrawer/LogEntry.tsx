@@ -1,13 +1,10 @@
 import { useState } from 'react';
-import { Alert, alpha, Box, Dialog, DialogContent, DialogTitle, IconButton, Tooltip, useTheme } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import { alpha, Box, useTheme } from '@mui/material';
 import type { LogRow } from '../../../../api';
-import { tryParseJson } from '../../../../components/AttributeList/utils';
 import { formatDuration } from '../../../TracesPage/tracesApi';
-import { attrValueAsString } from '../../attrFormat';
 import { severityColor, severityLabel } from '../../severity';
 import { clock } from './drawerParts';
+import { LongAttrValue, LONG_VALUE_LOG } from './longValue';
 import { fontFamilies } from '../../../../theme/typography';
 
 // Keys already surfaced in the row header — don't repeat them in the expanded
@@ -18,52 +15,17 @@ const LOG_HEADER_KEYS = new Set([
   'tool',
   'session.id',
 ]);
-// Anything longer than this gets a "view formatted" link that opens a modal.
-// 240 chars fits a couple of inline lines without crowding the dock.
-const LONG_VALUE_THRESHOLD = 240;
-
-interface ModalValue {
-  key: string;
-  raw: string;
-}
-
-// Renders one attribute value. Falls back to a "view formatted" link when the
-// value is too long for the inline list — the dock would otherwise drown in
-// 60 KB tool payloads.
-const AttrValue = ({ value, onViewFull }: { value: unknown; onViewFull: (text: string) => void }) => {
-  const text = attrValueAsString(value);
-  const color = typeof value === 'number' ? 'info.main' : typeof value === 'string' ? 'success.main' : 'text.primary';
-  if (text.length <= LONG_VALUE_THRESHOLD) {
-    return <Box component="span" sx={{ color, wordBreak: 'break-word' }}>{text}</Box>;
-  }
-  const preview = text.slice(0, LONG_VALUE_THRESHOLD).replace(/\s+$/, '');
-  return (
-    <Box component="span" sx={{ color, wordBreak: 'break-word' }}>
-      {preview}…{' '}
-      <Box
-        component="button"
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onViewFull(text);
-        }}
-        sx={{ ml: 0.25, px: 0.6, py: 0.05, border: 'none', borderRadius: '4px', bgcolor: (t) => alpha(t.palette.primary.main, 0.14), color: 'primary.main', typography: 'eyebrowSm', cursor: 'pointer', '&:hover': { bgcolor: (t) => alpha(t.palette.primary.main, 0.22) } }}
-      >
-        view formatted ({text.length.toLocaleString()} chars)
-      </Box>
-    </Box>
-  );
-};
 
 // Per-row presentation for a log inside the span dock. Click to expand the
-// full attribute payload — long values open in a modal that runs the raw text
-// through `tryParseJson` (jsonrepair under the hood) so the 60 KB-truncated
-// payloads OTLP ships still display as formatted JSON.
+// full attribute payload — long values clamp and open in the drawer's shared
+// "view formatted" modal (see longValue.tsx), which runs the raw text through
+// `tryParseJson` (jsonrepair under the hood) so the 60 KB-truncated payloads
+// OTLP ships still display as formatted JSON. The clamp, the button, and the
+// modal used to live here; they moved out unchanged so the Events and
+// Attributes grids get the same treatment.
 const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) => {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
-  const [modalValue, setModalValue] = useState<ModalValue | null>(null);
-  const [copied, setCopied] = useState(false);
   const sev = severityLabel(log.severityNumber);
   const sevColor = severityColor(log.severityNumber);
   const sevPalette = sevColor === 'error' ? theme.palette.error.main : sevColor === 'warning' ? theme.palette.warning.main : sevColor === 'info' ? theme.palette.primary.main : theme.palette.text.disabled;
@@ -73,19 +35,6 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
   const tool = typeof log.attributes?.['tool'] === 'string' ? (log.attributes['tool'] as string) : null;
   const detailEntries = Object.entries(log.attributes ?? {}).filter(([k]) => !LOG_HEADER_KEYS.has(k));
   const hasDetail = detailEntries.length > 0 || Boolean(log.scopeName);
-  const parsed = modalValue ? tryParseJson(modalValue.raw) : undefined;
-  const displayText = parsed?.value !== undefined ? JSON.stringify(parsed.value, null, 2) : (modalValue?.raw ?? '');
-  const closeModal = () => {
-    setModalValue(null);
-    setCopied(false);
-  };
-  const copyDisplayed = () => {
-    if (navigator.clipboard) {
-      void navigator.clipboard.writeText(displayText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }
-  };
   return (
     <Box
       onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
@@ -135,28 +84,15 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
           {detailEntries.map(([k, v]) => (
             <Box key={k} sx={{ display: 'grid', gridTemplateColumns: 'minmax(140px,auto) 1fr', gap: 1.5, typography: 'mono', fontSize: 11.5 }}>
               <Box component="span" sx={{ color: 'text.secondary' }}>{k}</Box>
-              <AttrValue value={v} onViewFull={(text) => setModalValue({ key: k, raw: text })} />
-            </Box>
+              <LongAttrValue
+                attrKey={k}
+                value={v}
+                limit={LONG_VALUE_LOG}
+                color={typeof v === 'number' ? 'info.main' : typeof v === 'string' ? 'success.main' : 'text.primary'}
+              />            </Box>
           ))}
         </Box>
       ) : null}
-      <Dialog open={modalValue != null} onClose={closeModal} maxWidth="md" fullWidth onClick={(e) => e.stopPropagation()}>
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, typography: 'mono', fontSize: 14 }}>
-          <Box component="span" sx={{ flex: 1, wordBreak: 'break-word' }}>{modalValue?.key}</Box>
-          <Tooltip arrow placement="top" title={copied ? 'Copied' : 'Copy displayed value'}>
-            <IconButton size="small" onClick={copyDisplayed} sx={{ color: copied ? 'success.main' : 'text.secondary' }}>
-              <ContentCopyIcon sx={{ fontSize: 16 }} />
-            </IconButton>
-          </Tooltip>
-          <IconButton size="small" onClick={closeModal} sx={{ color: 'text.secondary' }}>
-            <CloseIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers sx={{ p: 0 }}>
-          {parsed?.repaired ? <Alert severity="warning" sx={{ borderRadius: 0 }}>Repaired from truncated JSON — trailing values may be missing or incomplete.</Alert> : null}
-          <Box component="pre" sx={{ m: 0, p: 2, typography: 'mono', fontSize: 12.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'text.primary' }}>{displayText}</Box>
-        </DialogContent>
-      </Dialog>
     </Box>
   );
 };

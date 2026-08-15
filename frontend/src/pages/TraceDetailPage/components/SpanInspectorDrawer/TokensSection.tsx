@@ -1,6 +1,6 @@
 import { alpha, Box } from '@mui/material';
 import {
-  cacheHitRatePercent,
+  cacheHitRateLabel,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
 import { formatTokens } from '../../../TracesPage/tracesApi';
@@ -51,7 +51,7 @@ const TokensSection = ({ tokens }: TokensSectionProps) => {
   pricedRows.push(['input', tokens.input.toLocaleString()]);
   pricedRows.push(['output', tokens.output.toLocaleString()]);
   pricedRows.push(['cache_creation', tokens.cacheCreate.toLocaleString()]);
-  const cacheHitRate = cacheHitRatePercent(tokens);
+  const cacheHitRate = cacheHitRateLabel(tokens);
   return (
     <CollapsibleSection
       title="Tokens"
@@ -154,7 +154,7 @@ const TokensSection = ({ tokens }: TokensSectionProps) => {
                   flexShrink: 0,
                 }}
               >
-                {cacheHitRate}% hit
+                {cacheHitRate} hit
               </Box>
             ) : null}
           </Box>

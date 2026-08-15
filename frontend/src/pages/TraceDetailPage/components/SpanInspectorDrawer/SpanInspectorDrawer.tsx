@@ -15,6 +15,7 @@ import LogEntry from './LogEntry';
 import TokensSection from './TokensSection';
 import SpanAttributeSections from './SpanAttributeSections';
 import SpanEventsList from './SpanEventsList';
+import { LongValueModalProvider } from './longValue';
 import { radii } from '../../../../theme/theme';
 
 export interface SpanInspectorSelection {
@@ -407,7 +408,12 @@ const SpanInspectorDrawer = ({
             }}
           >
             {/* Keyed by span id: section collapse and log-row expand state reset per span selection. */}
-            <DrawerContent key={rendered.span.spanId} selection={rendered} />
+            {/* One "view formatted" modal for the whole drawer, so a clamped value
+                in any section — attributes, tool, events, logs — opens the same
+                dialog instead of each row mounting its own. */}
+            <LongValueModalProvider>
+              <DrawerContent key={rendered.span.spanId} selection={rendered} />
+            </LongValueModalProvider>
           </Box>
         </>
       ) : null}

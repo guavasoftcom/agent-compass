@@ -2,6 +2,13 @@ import type { SpanRow } from '../../api';
 import { cacheEfficiencyRatio } from '../../lib/cacheEfficiency';
 
 const PERCENT_SCALE = 100;
+// A cache hit rate above this prints as ">99%" rather than rounding to 100%.
+const NEAR_COMPLETE_PERCENT = 99;
+// Below this a share prints as "<0.1%"; at or above the upper bound, ">99.9%".
+const SHARE_FLOOR_PERCENT = 0.1;
+const SHARE_CEILING_PERCENT = 99.95;
+// One decimal below this, none above — 3.2% is worth a decimal, 84% is not.
+const SHARE_DECIMAL_CUTOFF = 10;
 
 export interface TokenBreakdown {
   input: number;
@@ -88,6 +95,67 @@ export const cacheHitRatePercent = (
     cacheRead: tokenBreakdown.cacheRead,
   });
   return ratio == null ? null : Math.round(ratio * PERCENT_SCALE);
+};
+
+// The tokens priced at the full input/output rate — everything except cache
+// read, which bills at a tenth of the input rate. The trace summary's top track
+// and the waterfall row's loud token chip both scale to this subtotal rather
+// than to the four-way total, where cache read (routinely 10-1000x the rest)
+// flattens every other figure into a hairline.
+export const fullRateTokens = (tokenBreakdown: TokenBreakdown): number =>
+  tokenBreakdown.input + tokenBreakdown.output + tokenBreakdown.cacheCreate;
+
+// Unrounded percent, for cacheHitRateLabel's >99% guard — rounding first would
+// destroy exactly the distinction the guard exists to keep.
+const cacheHitRatePercentPrecise = (
+  tokenBreakdown: TokenBreakdown,
+): number | null => {
+  const ratio = cacheEfficiencyRatio({
+    input: tokenBreakdown.input,
+    output: tokenBreakdown.output,
+    cacheCreation: tokenBreakdown.cacheCreate,
+    cacheRead: tokenBreakdown.cacheRead,
+  });
+  return ratio == null ? null : ratio * PERCENT_SCALE;
+};
+
+// Display form of cacheHitRatePercent, and the only form the chips should use.
+// The rounding is deliberately asymmetric at the top of the range: on a real
+// trace cache read is 99.x% of every input-side token, and a rounded "100%
+// cached" reads as "nothing was billed" — which is wrong, and the difference
+// between 99.4% and 100% is thousands of full-rate tokens. Only an exact 100%
+// prints 100%.
+export const cacheHitRateLabel = (
+  tokenBreakdown: TokenBreakdown,
+): string | null => {
+  const percent = cacheHitRatePercentPrecise(tokenBreakdown);
+  if (percent == null) {
+    return null;
+  }
+  if (percent >= PERCENT_SCALE) {
+    return '100%';
+  }
+  if (percent > NEAR_COMPLETE_PERCENT) {
+    return `>${NEAR_COMPLETE_PERCENT}%`;
+  }
+  return `${Math.round(percent)}%`;
+};
+
+// One token kind's share of a trace's total, as a label. Clamped at both ends so
+// a real cache-heavy trace reads honestly: a 40-token output row is "<0.1%", not
+// "0%", and a cache-read row is ">99.9%", not "100%".
+export const tokenShareLabel = (value: number, total: number): string => {
+  if (value <= 0 || total <= 0) {
+    return '0%';
+  }
+  const percent = (value / total) * PERCENT_SCALE;
+  if (percent < SHARE_FLOOR_PERCENT) {
+    return `<${SHARE_FLOOR_PERCENT}%`;
+  }
+  if (percent >= SHARE_CEILING_PERCENT) {
+    return '>99.9%';
+  }
+  return `${percent.toFixed(percent < SHARE_DECIMAL_CUTOFF ? 1 : 0)}%`;
 };
 
 export const tokenBreakdownForSpan = (span: SpanRow): TokenBreakdown => {
