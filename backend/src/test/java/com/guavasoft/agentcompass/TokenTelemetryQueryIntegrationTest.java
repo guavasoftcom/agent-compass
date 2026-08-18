@@ -91,7 +91,7 @@ class TokenTelemetryQueryIntegrationTest {
     metricPointRepository.deleteAll();
     logRecordRepository.deleteAll();
     seededMetricPointIds.clear();
-    Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
+    Instant base = Instant.now().minus(10, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.MICROS);
     seededBase = base;
 
     // worst: 20% of input-side tokens cached. Also the only ranked session seeded
