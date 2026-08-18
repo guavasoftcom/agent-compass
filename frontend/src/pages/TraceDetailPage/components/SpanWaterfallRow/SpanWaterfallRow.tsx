@@ -11,6 +11,7 @@ import {
 } from '../../../TracesPage/tokenBreakdown';
 import { fontFamilies } from '../../../../theme/typography';
 import { shortModelName } from '../../../../lib/format';
+import { useLongValueModal } from '../SpanInspectorDrawer/longValue';
 
 interface Props {
   span: SpanRow;
@@ -26,6 +27,9 @@ interface Props {
   // True when costUsd is the stamped span_costs rollup (requests made under
   // this span) rather than the span's own call — drives the badge tooltip.
   isRollupCost: boolean;
+  // Markdown text of this span's assistant_response log, if it has one (see
+  // assistantResponseOfLogs in logBuckets.ts). Null renders no chip.
+  agentResponseText: string | null;
   gridColumns: string;
   // Horizontal bar geometry (percent of the visible zoom window).
   left: number;
@@ -341,6 +345,41 @@ const SpanToolBadge = ({ span }: { span: SpanRow }) => {
   );
 };
 
+// Links to the same markdown modal LongAttrValue opens in the drawer, so a
+// span carrying an assistant_response log can be read without selecting the
+// span, opening the drawer, and expanding its Logs section three levels deep.
+// A real <button> (not the read-only badges around it) since it triggers an
+// action rather than just carrying a tooltip; stopPropagation keeps the click
+// from also selecting the row underneath it.
+const SpanAgentResponseBadge = ({ responseText }: { responseText: string | null }) => {
+  const openModal = useLongValueModal();
+  if (!responseText) {
+    return null;
+  }
+  return (
+    <Box
+      component="button"
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (openModal) {
+          openModal({ key: 'response', raw: responseText, type: 'markdown' });
+        }
+      }}
+      sx={{
+        ...spanChipSx,
+        gap: 0.4,
+        border: 'none',
+        cursor: 'pointer',
+        color: 'success.main',
+        bgcolor: (t) => alpha(t.palette.success.main, 0.15),
+      }}
+    >
+      Agent Response
+    </Box>
+  );
+};
+
 const SpanWaterfallRow = ({
   span,
   depth,
@@ -351,6 +390,7 @@ const SpanWaterfallRow = ({
   descendantErrorCount,
   costUsd,
   isRollupCost,
+  agentResponseText,
   gridColumns,
   left,
   right,
@@ -519,6 +559,7 @@ const SpanWaterfallRow = ({
           </Box>
         ) : null}
         <SpanToolBadge span={span} />
+        <SpanAgentResponseBadge responseText={agentResponseText} />
         {isError ? (
           <Box
             component="span"

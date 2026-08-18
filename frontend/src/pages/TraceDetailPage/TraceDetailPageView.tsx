@@ -6,10 +6,12 @@ import type { LogRow, SpanRow } from '../../api';
 import { formatDuration } from '../TracesPage/tracesApi';
 import { tokenBreakdownForSpan } from '../TracesPage/tokenBreakdown';
 import { costOfSelectedSpan, costOfSpan } from './spanCost';
+import { assistantResponseOfLogs } from './logBuckets';
 import { type SpanTree, type TraceWindow } from './spanTree';
 import SpanInspectorDrawer, {
   type SpanInspectorSelection,
 } from './components/SpanInspectorDrawer';
+import { LongValueModalProvider } from './components/SpanInspectorDrawer/longValue';
 import TraceDetailHeader from './components/TraceDetailHeader';
 import TraceMinimap, { type ZoomView } from './components/TraceMinimap';
 import WaterfallToolbar from './components/WaterfallToolbar';
@@ -337,7 +339,9 @@ const TraceDetailPageView = ({
           waterfall's width recalculates live as the drawer opens/resizes and
           keeps its full height (all rows) while a span is inspected */}
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row' }}>
-        {/* waterfall card */}
+        {/* waterfall card. Its own LongValueModalProvider (independent of the
+            drawer's) hosts the modal a row's "Agent Response" chip opens, so
+            the markdown view works without a span being selected. */}
         <Box
           sx={{
             flex: 1,
@@ -352,99 +356,102 @@ const TraceDetailPageView = ({
             bgcolor: 'background.paper',
           }}
         >
-          <WaterfallToolbar
-            anyCollapsed={anyCollapsed}
-            errorCount={errorSpans.length}
-            onToggleAll={toggleAll}
-            onNextError={nextError}
-          />
+          <LongValueModalProvider>
+            <WaterfallToolbar
+              anyCollapsed={anyCollapsed}
+              errorCount={errorSpans.length}
+              onToggleAll={toggleAll}
+              onNextError={nextError}
+            />
 
-          <TraceMinimap
-            spans={spans}
-            earliestStartMs={earliest}
-            totalMs={totalMs}
-            depthBySpanId={depthBySpanId}
-            view={view}
-            onViewChange={setView}
-          />
+            <TraceMinimap
+              spans={spans}
+              earliestStartMs={earliest}
+              totalMs={totalMs}
+              depthBySpanId={depthBySpanId}
+              view={view}
+              onViewChange={setView}
+            />
 
-          {/* axis */}
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: gridColumns,
-              height: 22,
-              alignItems: 'center',
-              borderBottom: 1,
-              borderColor: 'divider',
-              flexShrink: 0,
-            }}
-          >
+            {/* axis */}
             <Box
               sx={{
-                pl: 1.75,
-                typography: 'eyebrowSm',
-                color: 'text.disabled',
+                display: 'grid',
+                gridTemplateColumns: gridColumns,
+                height: 22,
+                alignItems: 'center',
+                borderBottom: 1,
+                borderColor: 'divider',
+                flexShrink: 0,
               }}
             >
-              Span
+              <Box
+                sx={{
+                  pl: 1.75,
+                  typography: 'eyebrowSm',
+                  color: 'text.disabled',
+                }}
+              >
+                Span
+              </Box>
+              <Box sx={{ position: 'relative', height: '100%', mx: 1.5 }}>
+                {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
+                  <Box
+                    key={fraction}
+                    component="span"
+                    sx={{
+                      position: 'absolute',
+                      top: '50%',
+                      transform:
+                        fraction === 1
+                          ? 'translate(-100%,-50%)'
+                          : 'translate(-50%,-50%)',
+                      left: `${fraction * 100}%`,
+                      typography: 'mono',
+                      fontSize: 9.5,
+                      color: 'text.disabled',
+                    }}
+                  >
+                    {formatDuration((view.s + fraction * visibleSpanMs) * 1e6)}
+                  </Box>
+                ))}
+              </Box>
             </Box>
-            <Box sx={{ position: 'relative', height: '100%', mx: 1.5 }}>
-              {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
-                <Box
-                  key={fraction}
-                  component="span"
-                  sx={{
-                    position: 'absolute',
-                    top: '50%',
-                    transform:
-                      fraction === 1
-                        ? 'translate(-100%,-50%)'
-                        : 'translate(-50%,-50%)',
-                    left: `${fraction * 100}%`,
-                    typography: 'mono',
-                    fontSize: 9.5,
-                    color: 'text.disabled',
-                  }}
-                >
-                  {formatDuration((view.s + fraction * visibleSpanMs) * 1e6)}
-                </Box>
-              ))}
-            </Box>
-          </Box>
 
-          {/* body */}
-          <Box
-            ref={waterfallRef}
-            sx={{ flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}
-          >
-            {visible.map((s) => {
-              const left = Math.max(0, percentOf(offMsOf(s)));
-              const right = Math.min(100, percentOf(offMsOf(s) + durMsOf(s)));
-              return (
-                <SpanWaterfallRow
-                  key={s.spanId}
-                  span={s}
-                  depth={depthBySpanId.get(s.spanId) ?? 0}
-                  hasChildren={
-                    (tree.childrenByParentId.get(s.spanId) ?? []).length > 0
-                  }
-                  isCollapsed={collapsed.has(s.spanId)}
-                  isSelected={selected === s.spanId}
-                  indexLabel={spanIndices.get(s.spanId)}
-                  descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
-                  costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
-                  isRollupCost={costOfSpan(s) > 0}
-                  gridColumns={gridColumns}
-                  left={left}
-                  right={right}
-                  width={Math.max(0, right - left)}
-                  onToggleCollapse={toggleCollapse}
-                  onSelect={selectSpan}
-                />
-              );
-            })}
-          </Box>
+            {/* body */}
+            <Box
+              ref={waterfallRef}
+              sx={{ flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}
+            >
+              {visible.map((s) => {
+                const left = Math.max(0, percentOf(offMsOf(s)));
+                const right = Math.min(100, percentOf(offMsOf(s) + durMsOf(s)));
+                return (
+                  <SpanWaterfallRow
+                    key={s.spanId}
+                    span={s}
+                    depth={depthBySpanId.get(s.spanId) ?? 0}
+                    hasChildren={
+                      (tree.childrenByParentId.get(s.spanId) ?? []).length > 0
+                    }
+                    isCollapsed={collapsed.has(s.spanId)}
+                    isSelected={selected === s.spanId}
+                    indexLabel={spanIndices.get(s.spanId)}
+                    descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
+                    costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
+                    isRollupCost={costOfSpan(s) > 0}
+                    agentResponseText={assistantResponseOfLogs(logsBySpanId.get(s.spanId) ?? [])}
+                    gridColumns={gridColumns}
+                    left={left}
+                    right={right}
+                    width={Math.max(0, right - left)}
+                    onToggleCollapse={toggleCollapse}
+                    onSelect={selectSpan}
+                  />
+                );
+              })}
+            </Box>
+          </LongValueModalProvider>
         </Box>
 
         <SpanInspectorDrawer

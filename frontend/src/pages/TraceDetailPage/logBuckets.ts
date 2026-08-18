@@ -82,3 +82,13 @@ export const bucketLogsBySpan = (
 
   return logsBySpanId;
 };
+
+// The markdown text of a span's assistant_response log, if it has one — used by
+// the waterfall row's "Agent Response" chip. `attributes['event.name']` carries
+// the short form (`assistant_response`); the `claude_code.` prefix only appears
+// in `log.body`, not this attribute.
+export const assistantResponseOfLogs = (logs: LogRow[]): string | null => {
+  const log = logs.find((l) => l.attributes?.['event.name'] === 'assistant_response');
+  const response = log?.attributes?.['response'];
+  return typeof response === 'string' ? response : null;
+};

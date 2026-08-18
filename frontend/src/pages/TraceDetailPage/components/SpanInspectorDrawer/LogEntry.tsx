@@ -61,8 +61,6 @@ const LogEntry = ({ log, spanStartMs }: { log: LogRow; spanStartMs: number }) =>
             <path d="M9 6l6 6-6 6" />
           </Box>
         ) : (
-          // Same-width spacer so timestamps and severity badges stay aligned in
-          // a column across expandable and non-expandable rows.
           <Box component="span" sx={{ width: 11, flexShrink: 0 }} />
         )}
         <Box component="span" sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled', whiteSpace: 'nowrap' }} title={new Date(logMs).toISOString()}>
