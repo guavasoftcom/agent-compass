@@ -43,7 +43,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants, including `MAX_WINDOW_SPAN_MS` (mirrors the backend's `@ValidDateRange(maxDays = 30)` cap — keep the two in lockstep).
   - `lib/resolveWindow.ts` — shared `WindowSelection` → concrete `startTimestamp`/`endTimestamp` + label resolution used by Logs, Traces, and Sessions; clamps preset spans to `MAX_WINDOW_SPAN_MS` so no request can exceed the backend's 30-day cap.
   - `lib/useDebouncedValue.ts` — debounce hook; the Logs and Traces free-text search inputs run through it before the value enters a query key, so typing doesn't fire a fetch per keystroke.
-  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, and `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents).
+  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents), and `USD_FORMATTER`/`formatTimestamp`/`formatRelativeTime` shared by the Sessions grid and the Tokens page's cache-efficiency rank card/dialog (`pages/SessionsPage/components/sessionsFormat.ts` re-exports them for that page's existing imports).
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
 
 ## Page structure (container/presentational)
@@ -114,6 +114,32 @@ declares 80% coverage thresholds that the suite doesn't meet yet, which is why C
 Package manager is Yarn Berry, pinned by the `packageManager` field in `package.json` and resolved
 through Corepack (`corepack enable`) — don't install Yarn globally or bump the pin casually, since
 CI resolves the same field. The stray `package-lock.json` is legacy — don't `npm install`.
+
+## Stacked chart labeling conventions
+
+When a chart renders data that is **stacked** (cumulative bands where the top edge is the total):
+
+1. **Y-axis label includes `(stacked)`.** Examples: `calls (stacked)`, `tokens (stacked)`, `USD (stacked)`. 
+   This is the signal that separates stacked charts from unstacked ones — when a chart omits the label
+   (e.g. Token usage is `tokens (log)`, not stacked), users know the bands are independent.
+   
+2. **Tooltip `Total` row appears only in stacked charts.** The Tool Calls chart has one; the Token 
+   usage chart deliberately does not. Adding a Total row to an unstacked chart would destroy the 
+   signal — its presence is how a reader knows the bands sum. Stacked charts always include it; 
+   unstacked charts never do.
+
+3. **Metrics' y-axis label is derived from split state, never hardcoded.** When `split === 'None'`, 
+   the yLabel is just the unit (e.g. `tokens`). When any split is active, it becomes 
+   `unit (stacked)` (e.g. `tokens (stacked)`). A refactor that pins it to a constant makes the 
+   chart lie when the user switches between split modes.
+
+4. **Info tooltip explains stacking behavior when applicable.** Stacked charts benefit from an 
+   explanatory tooltip on the card title: "Areas sit on top of one another — the top edge is 
+   the total across all tools, and each band's thickness is that tool's own count."
+   For Metrics (which switches stacking based on split), the tooltip covers both modes.
+
+5. **Existing note stands: Token usage over time is unstacked + log** (`stacked={false}`, 
+   `yScale="log"`) and must not be made linear or stacked.
 
 ## Skills
 

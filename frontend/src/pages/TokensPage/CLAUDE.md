@@ -84,8 +84,9 @@ TokensPage/
 ├─ tab: Cache & Context ──────────────────────────────────────────────────────┤
 │ ┌─ CacheEfficiencyRankCard ─────────────────────────────────────────────┐  │
 │ │ "Worst cache efficiency" + ⓘ · noise-floor subtitle                   │  │
-│ │ Session                              │ Efficiency    │  Cost │ Cached   │  │
-│ │ 8f2a91cd-6b34-4e02-9a71-c5d0e8f21a44 │ ▇▇▇░░░░░ 18%  │ $9.42 │ 210K/1.2M│  │
+│ │ Session                  │ Last activity │ Efficiency   │ Cost │Cached │  │
+│ │ Fix the auth middleware… │ 2h ago        │ ▇▇▇░░░░░ 18% │$9.42 │210K/  │  │
+│ │ 8f2a91cd-6b34-…-c5d0e8f2 │               │              │      │1.2M   │  │
 │ │ … click a row → SessionCacheEfficiencyDialog                          │  │
 │ └───────────────────────────────────────────────────────────────────────┘  │
 │ ┌─ ContextFootprintCard ────────────────────────────────────────────────┐  │
@@ -95,7 +96,8 @@ TokensPage/
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─ SessionCacheEfficiencyDialog (MUI Dialog, maxWidth="xs") ──────────────┐
-│ full session id (mono)                                             [×]  │
+│ 8f2a91cd-6b34-4e02-9a71-c5d0e8f21a44                              [×]    │
+│ Last activity 2h ago                                                    │
 │ ( Poor cache efficiency )   ← band chip, band color at 16% tint         │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ CACHE EFFICIENCY        │ COST          ← two KPI tiles                 │
@@ -226,13 +228,43 @@ that card showing its own empty state. `onReload` refetches all three.
   inner `DialogBody`) renders against `row ?? lastRow`. `DialogBody` never sees a null row, so it
   has no `row?.` fallbacks — don't reintroduce optional chaining there as a shortcut; render
   `DialogBody` only when `row ?? lastRow` is non-null instead.
-- **Session ids print in full in the ranking table**, not as the mockup's leading uuid segment
-  with the rest on hover. Every other surface that names a session — the prompt-timeline panel
-  header, the detail dialog, the `?sessionId=` deep link — prints the whole id, and a truncated
-  one here would be an id the user can't match against any of them. The column is `nowrap` mono
-  and sized for a full uuid; don't re-shorten it to buy horizontal room. The table itself is
-  wrapped in an `overflowX: 'auto'` `Box` (same idiom as `SessionsPageView`'s table wrapper) so a
-  narrow viewport scrolls the ~700px-wide table instead of overflowing the card.
+- **The Session column leads with the first user prompt, not the raw id — but the id still
+  prints in full underneath it, never truncated to the mockup's leading uuid segment.** A bare
+  uuid told the user nothing about which session it was; `SessionCacheEfficiencyRow.firstUserPrompt`
+  (added alongside `endTimestamp` specifically for this card) gives the human-readable identity,
+  ellipsized to one line with the full text in a native `title` tooltip, falling back to a dimmed
+  "No prompt captured" when prompt-body capture was disabled (`OTEL_LOG_USER_PROMPTS`) or the
+  session has no user-authored prompt — never an empty cell. The id is still printed in full
+  (small, mono, `text.secondary`) right below it rather than dropped: every other surface that
+  names a session — the prompt-timeline panel header, the detail dialog, the `?sessionId=` deep
+  link — prints the whole id, and a truncated or missing one here would be an id the user can't
+  match against any of them. **Deliberately NOT shown in `SessionCacheEfficiencyDialog`'s header**
+  — an earlier revision put it there too, but a raw prompt can contain a long unbroken token (a
+  URL, a hash) that overflows the `maxWidth="xs"` dialog even with `overflowWrap`, so the dialog
+  stays id-first-only; the rank card row is the one place `firstUserPrompt` renders. A **Last
+  activity** column (`endTimestamp`, via the shared `lib/format.ts`
+  `formatRelativeTime`/`formatTimestamp` — the same formatters `SessionsTable`'s Last-activity
+  column uses, re-exported through `sessionsFormat.ts` for that page's existing imports) sits next
+  to it; relative text with the absolute timestamp in a `Tooltip`, an em dash when the session's
+  every cost/active-time point in the window is a zero-delta re-export (see
+  `MetricPointRepository.aggregateWorstCacheEfficiencySessions`'s `session_span` CTE).
+  `SessionCacheEfficiencyDialog`'s header does still gain the same "Last activity Nh ago" caption
+  below the session id, since the row already carries the field and opening the dialog costs no
+  fetch.
+- **The rank table is `table-layout: fixed` with an explicit `<colgroup>`, not the browser's
+  default content-driven auto layout.** Every column except Session (Last activity, Efficiency,
+  Cost, Cached) gets a fixed px width from the `*_COLUMN_WIDTH` constants at the top of
+  `CacheEfficiencyRankCard.tsx`; the Session `<col>` is left unset, which under fixed layout hands
+  it 100% of whatever width the other four don't need — that's what lets the prompt line stretch
+  to fill the card on a wide viewport instead of shrink-wrapping to whatever the prompt text's own
+  rendered width happens to be (auto layout's behavior, and the bug a hardcoded `maxWidth` on the
+  prompt span was papering over before this). The Session `<td>` overrides the table's default
+  `whiteSpace: 'nowrap'` back to `'normal'` so the id line (which must never truncate — see above)
+  wraps onto a second line rather than getting clipped when the column runs narrow; the prompt
+  line keeps its own `nowrap` + ellipsis for single-line truncation. `TABLE_MINIMUM_WIDTH` (the
+  four fixed columns plus a floor for Session) is what the `overflowX: 'auto'` wrapper Box (same
+  idiom as `SessionsPageView`'s table wrapper) falls back to scrolling on narrow viewports instead
+  of squeezing the prompt unreadably.
 - **Band colors live in `components/cacheEfficiencyBandColors.ts`, not in either component —
   and not just this page's components anymore.** The rank table's fill/percentage, the dialog's
   chip/KPI, and (via a cross-page import) the Sessions grid's `CacheEfficiencyCell` must always

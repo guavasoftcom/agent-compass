@@ -9,8 +9,10 @@ export interface ChartCardLegendItem {
 export interface ChartCardProps {
   /**
    * Primary heading rendered in `subtitle1` weight at the top-left of the card.
+   * Usually a plain string; pass a ReactNode (e.g. title text + an info-icon
+   * Tooltip) when the heading needs an inline adornment.
    */
-  title: string;
+  title: ReactNode;
   /**
    * Optional secondary line rendered below the title row in `body2` / secondary
    * color — used by cards that need a one-line description under the heading.

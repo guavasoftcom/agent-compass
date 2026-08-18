@@ -176,7 +176,9 @@ To prevent accidentally running sessions that won't be captured (because the tel
 }
 ```
 
-This hook runs before each prompt, checks if the backend's `/v1/logs` endpoint responds, and blocks the session with a clear message if unreachable. It respects your `OTEL_EXPORTER_OTLP_ENDPOINT` setting, so you can use it with either the docker-compose stack (`:18080`) or the dev backend (`:8080`). If you move the container with `APP_PORT`, the hook will follow automatically.
+This hook runs before each prompt and checks if the backend's `/v1/logs` endpoint responds. It respects your `OTEL_EXPORTER_OTLP_ENDPOINT` setting, so you can use it with either the docker-compose stack (`:18080`) or the dev backend (`:8080`). If you move the container with `APP_PORT`, the hook will follow automatically.
+
+⚠️ **Note:** If Agent Compass is not running when the hook executes, Claude Code will silently block the prompt without displaying an error message. This is a limitation of the current hook implementation. If your prompts seem to hang or silently fail to execute, first verify that Agent Compass is running with `docker compose ps` or `curl http://localhost:18080` (or your configured `APP_PORT`). Then resubmit your prompt.
 
 ### Verify it's flowing
 

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { Box, Paper, Typography } from '@mui/material';
+import { Box, Paper, Tooltip, Typography } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import AreaTrendChart from '../../../../components/AreaTrendChart';
 import SegmentedToggle from '../../../../components/SegmentedToggle';
 import { colorForIndex } from '../../../../theme/theme';
@@ -76,6 +77,9 @@ const MetricTrendCard = ({
     return peakValue <= DISCRETE_PEAK_CEILING && metric.trend.every((value) => Number.isInteger(value));
   }, [metric.trend]);
 
+  const yUnit = metric.unit.replace(/[{}]/g, '');
+  const yLabel = `${yUnit}${split === SPLIT_NONE ? '' : ' (stacked)'}`;
+
   return (
     <Paper variant="outlined" sx={{ p: '20px 24px', minWidth: 0 }}>
       <Box
@@ -88,9 +92,17 @@ const MetricTrendCard = ({
           mb: 1.25,
         }}
       >
-        <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 16 }}>
-          {metric.name.replace('claude_code.', '')} over time
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 16 }}>
+            {metric.name.replace('claude_code.', '')} over time
+          </Typography>
+          <Tooltip
+            title="With **Split by** set, the areas stack — the top edge is the metric's total and each band's thickness is that slice's own value. With **None** the chart is a single total series; the y-axis label says which you're looking at."
+            arrow
+          >
+            <InfoOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', cursor: 'help' }} />
+          </Tooltip>
+        </Box>
         {hasSplits && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.125 }}>
             <Box
@@ -133,7 +145,7 @@ const MetricTrendCard = ({
         <AreaTrendChart
           axisDates={axisDates}
           series={series}
-          yLabel={metric.unit.replace(/[{}]/g, '')}
+          yLabel={yLabel}
           formatY={formatCompact}
           height={290}
           isDiscrete={isDiscrete}

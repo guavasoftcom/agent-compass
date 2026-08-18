@@ -42,8 +42,6 @@ const TOKEN_SEGMENTS: Array<{
   { key: 'output', label: 'Output', color: tokenComposition.output },
 ];
 
-const COLLAPSE_STORAGE_KEY = 'trace-detail-overview-collapsed';
-
 // Label column of the two composition tracks. Fixed so both bars start on the
 // same x and can be read against each other.
 const TRACK_LABEL_WIDTH = 118;
@@ -116,27 +114,6 @@ const TokenTrack = ({
     </Box>
   </Box>
 );
-
-// Same read-once / write-guarded shape theme/colorMode.tsx uses for its own
-// persisted preference — the initial value is read lazily in useState rather
-// than set from an effect (which is a react-hooks/set-state-in-effect error).
-const readInitialCollapsed = (): boolean => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  return window.localStorage?.getItem(COLLAPSE_STORAGE_KEY) === '1';
-};
-
-const persistCollapsed = (collapsed: boolean): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage?.setItem(COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0');
-  } catch {
-    // ignore quota / disabled storage
-  }
-};
 
 // Token composition: a stacked bar + 4-item legend (cache read / input / cache
 // creation / output) with each segment's raw count, plus the model-call count
@@ -537,8 +514,8 @@ export interface SummaryStripProps {
 // tile row, the Token composition card, and the de-emphasized meta footer. Each
 // tile value is ellipsis-truncated and only shows a tooltip when it overflows.
 // Collapsing hides everything but the header — a one-line caption stands in and
-// the recovered vertical space goes to the span waterfall below — and the choice
-// persists in localStorage so it survives a reload.
+// the recovered vertical space goes to the span waterfall below — the panel
+// always starts expanded and the choice does not persist across navigation.
 const SummaryStrip = ({
   items,
   prompt,
@@ -556,14 +533,10 @@ const SummaryStrip = ({
   toolCallCount,
   errorCount,
 }: SummaryStripProps) => {
-  const [collapsed, setCollapsed] = useState(readInitialCollapsed);
+  const [collapsed, setCollapsed] = useState(false);
 
   const toggleCollapsed = () => {
-    setCollapsed((previous) => {
-      const next = !previous;
-      persistCollapsed(next);
-      return next;
-    });
+    setCollapsed((previous) => !previous);
   };
 
   return (

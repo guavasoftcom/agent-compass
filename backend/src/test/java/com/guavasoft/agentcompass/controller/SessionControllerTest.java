@@ -261,13 +261,14 @@ class SessionControllerTest {
 
     @Test
     void cacheEfficiencyReturnsRankedSessionsAndDefaultsToTwentyFourHoursAndEightRows() throws Exception {
+        Instant lastActivity = Instant.parse("2026-05-27T01:07:15.208Z");
         when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt())).thenReturn(List.of(
                 new SessionCacheEfficiency(
                         "7b3fc524-7f3c-4db5-9bb4-da27b77df56b", 0.41, 410_000L,
-                        130_000L, 460_000L, 240_000L, 4.12),
+                        130_000L, 460_000L, 240_000L, 4.12, lastActivity, "Add user-prompt context"),
                 new SessionCacheEfficiency(
                         "025a8c32-26ff-409d-b704-dc19dcecbb47", 0.88, 880_000L,
-                        40_000L, 80_000L, 100_000L, 1.05)));
+                        40_000L, 80_000L, 100_000L, 1.05, null, null)));
 
         mockMvc.perform(get("/api/sessions/cache-efficiency"))
                 .andExpect(status().isOk())
@@ -283,7 +284,11 @@ class SessionControllerTest {
                 // kinds summed and totalTokens adds output on top of it.
                 .andExpect(jsonPath("$[0].totalTokens").value(1240000))
                 .andExpect(jsonPath("$[0].costUsd").value(4.12))
-                .andExpect(jsonPath("$[1].cacheEfficiency").value(0.88));
+                .andExpect(jsonPath("$[0].endTimestamp").value("2026-05-27T01:07:15.208Z"))
+                .andExpect(jsonPath("$[0].firstUserPrompt").value("Add user-prompt context"))
+                .andExpect(jsonPath("$[1].cacheEfficiency").value(0.88))
+                .andExpect(jsonPath("$[1].endTimestamp").value(nullValue()))
+                .andExpect(jsonPath("$[1].firstUserPrompt").value(nullValue()));
 
         verify(metricService).worstCacheEfficiencySessions(1440, 8);
     }

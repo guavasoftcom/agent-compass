@@ -95,8 +95,13 @@ const AuroraCalendar = ({
     });
   };
 
+  const atCurrentMonth = view.year === today.getFullYear() && view.month === today.getMonth();
+
   const handleDayClick = (date: Date) => {
     const key = dayKey(date);
+    if (key > todayKey) {
+      return;
+    }
     const startExists = start != null;
     const endExists = end != null;
 
@@ -166,6 +171,7 @@ const AuroraCalendar = ({
           <IconButton
             size="small"
             onClick={() => moveMonth(1)}
+            disabled={atCurrentMonth}
             aria-label="next month"
             sx={(t) => ({
               border: `1px solid ${t.palette.divider}`,
@@ -214,12 +220,14 @@ const AuroraCalendar = ({
             startKey != null && endKey != null && key >= startKey && key <= endKey;
           const isToday = key === todayKey;
           const isEdge = isStart || isEnd;
+          const isFuture = key > todayKey;
 
           return (
             <Box
               key={key}
               role="button"
-              onClick={() => handleDayClick(cell.date as Date)}
+              aria-disabled={isFuture}
+              onClick={isFuture ? undefined : () => handleDayClick(cell.date as Date)}
               sx={(t) => ({
                 aspectRatio: '1 / 1',
                 display: 'grid',
@@ -227,8 +235,9 @@ const AuroraCalendar = ({
                 fontSize: 13,
                 fontWeight: isEdge ? 700 : 500,
                 borderRadius: inRange && !isEdge ? 0 : radii.sm,
-                cursor: 'pointer',
-                color: isEdge ? neutralColors.white : 'text.primary',
+                cursor: isFuture ? 'not-allowed' : 'pointer',
+                color: isEdge ? neutralColors.white : isFuture ? 'text.disabled' : 'text.primary',
+                opacity: isFuture ? 0.38 : 1,
                 position: 'relative',
                 ...(inRange &&
                   !isEdge && {
@@ -251,7 +260,7 @@ const AuroraCalendar = ({
                   background: gradients.auroraAction,
                   boxShadow: `0 5px 14px ${alpha(auroraColors.violet, 0.45)}`,
                 }),
-                '&:hover': isEdge
+                '&:hover': isEdge || isFuture
                   ? undefined
                   : { bgcolor: t.palette.action.hover },
               })}

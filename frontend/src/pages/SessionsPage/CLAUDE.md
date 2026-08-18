@@ -26,12 +26,13 @@ SessionsPage/
 └── components/
     ├── sessionsFormat.ts        shared formatters: USD_PER_MINUTE_FORMATTER, formatDuration
     │                            (seconds), formatTokens (K/M compact — see the boundary-rounding
-    │                            gotcha below), formatTimestamp, formatShortTimestamp ("Aug 9,
+    │                            gotcha below), and formatShortTimestamp ("Aug 9,
     │                            10:36 AM" — the drawer header's metadata line, where the full
-    │                            locale string is too long), and formatRelativeTime
-    │                            (Last-activity column's "Nm/Nh/Nd ago"). USD_FORMATTER is
+    │                            locale string is too long). USD_FORMATTER, formatTimestamp, and
+    │                            formatRelativeTime (Last-activity column's "Nm/Nh/Nd ago") are
     │                            re-exported from here but defined in lib/format.ts — the Tokens
-    │                            page needs the identical formatter. Cache efficiency deliberately
+    │                            page's cache-efficiency rank card and detail dialog need the
+    │                            identical formatters. Cache efficiency deliberately
     │                            does NOT live here either — the Tokens page needs the same ratio,
     │                            so it lives in lib/cacheEfficiency.ts
     ├── SessionsKpiStrip/        4-card StatCard grid; renders the shared LineSparkline

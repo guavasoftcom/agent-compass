@@ -29,7 +29,7 @@ export default function ReportPageView({
   return (
     <PageLayout
       eyebrow={groupForPath('/report')}
-      title="Markdown Report"
+      title="Tuning Report"
       subtitle="Paste the rendered summary back into your coding agent to tune its prompts and skills."
       error={error}
       actions={

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.time.Instant;
+
 @Schema(name = "SessionCacheEfficiency",
         description = "One session in the worst-cache-efficiency ranking. cacheEfficiency is "
                 + "cacheRead / (input + cacheCreation + cacheRead) — the share of the session's "
@@ -35,7 +37,18 @@ public record SessionCacheEfficiency(
 
         @Schema(description = "Whole-session spend in USD, matching the Sessions grid's Cost column "
                 + "(not clipped to the window). 0 when the session emitted no cost metric.",
-                example = "4.12") double costUsd) {
+                example = "4.12") double costUsd,
+
+        @Schema(description = "Timestamp of the session's latest cost / active-time emission, matching "
+                + "SessionSummary.endTimestamp on the Sessions grid. Null on the rare session whose every "
+                + "cost/active-time point in the window is a zero-delta re-export of an already-finished "
+                + "session.", example = "2026-05-27T01:07:15.208Z") Instant endTimestamp,
+
+        @Schema(description = "The session's first meaningful user prompt (deprioritizing a bare slash "
+                + "command), whitespace-collapsed and truncated to 200 characters, matching "
+                + "SessionSummary.firstUserPrompt. Null when prompt-body capture was disabled "
+                + "(OTEL_LOG_USER_PROMPTS) or the session has no user-authored prompt.",
+                example = "Add user-prompt context to the sessions API") String firstUserPrompt) {
 
     /**
      * The ratio's denominator — input + cacheCreation + cacheRead over the window.
