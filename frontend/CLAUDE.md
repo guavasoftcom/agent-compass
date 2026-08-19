@@ -17,7 +17,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `StatCard`, `AttributeList`, `Sparkline`, `DonutCard`, etc. — leaf presentational primitives.
   - `TablePager` — shared offset-pager footer (rows-per-page `SegmentedToggle` + range label + prev/next); used by Sessions, Logs, and Traces tables.
   - `StreamTableToggle` — shared Stream|Table view-mode `SegmentedToggle`; used by Logs and (via `TraceViewToggle`) Traces.
-  - `LineSparkline` — shared area+line SVG sparkline (guards `values.length < 2`); used by the Sessions and Metrics KPI strips.
+  - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.
   - `FacetRail` — shared filter-rail (search box + checkbox facet sections); Logs' `LogFacetRail` and Traces' `TraceFacetRail` build sections for it.
   - `LiveTailToggle` — shared live-tail pill; Traces' `TraceTailToggle` wraps it.
   - `BreakdownList` — shared ranked-breakdown list; used by the metric and token breakdowns. The
@@ -43,7 +43,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `lib/constants.ts` — `WINDOWS` (the preset minute options offered by `WindowSelector`) and other shared constants, including `MAX_WINDOW_SPAN_MS` (mirrors the backend's `@ValidDateRange(maxDays = 30)` cap — keep the two in lockstep).
   - `lib/resolveWindow.ts` — shared `WindowSelection` → concrete `startTimestamp`/`endTimestamp` + label resolution used by Logs, Traces, and Sessions; clamps preset spans to `MAX_WINDOW_SPAN_MS` so no request can exceed the backend's 30-day cap.
   - `lib/useDebouncedValue.ts` — debounce hook; the Logs and Traces free-text search inputs run through it before the value enters a query key, so typing doesn't fire a fetch per keystroke.
-  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents), and `USD_FORMATTER`/`formatTimestamp`/`formatRelativeTime` shared by the Sessions grid and the Tokens page's cache-efficiency rank card/dialog (`pages/SessionsPage/components/sessionsFormat.ts` re-exports them for that page's existing imports).
+  - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, `isSparseCounter` (peak ≤ 5, every bucket a whole number) shared by `MetricTrendCard` and `LineSparkline` so a metric's card and detail chart never disagree about drawing bars vs. an area, `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents), and `USD_FORMATTER`/`formatTimestamp`/`formatRelativeTime` shared by the Sessions grid and the Tokens page's cache-efficiency rank card/dialog (`pages/SessionsPage/components/sessionsFormat.ts` re-exports them for that page's existing imports).
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
 
 ## Page structure (container/presentational)
@@ -79,10 +79,10 @@ Documented deviation: `TracesPage` is data-dense enough that prop-drilling produ
 
 ## Routing
 
-- React Router 7, declared in `App.tsx`. Nested sections (`/tool-activity/*`) use a parent route rendering `SectionLayout` and child routes (`calls`, `reliability`, `skills-agents`) rendered via `<Outlet context={...} />`.
+- React Router 7, declared in `App.tsx`. Nested sections (`/tools/*`) use a parent route rendering `SectionLayout` and child routes (`calls`, `reliability`, `skills-agents`) rendered via `<Outlet context={...} />`.
 - **Routes are code-split.** Every page in `App.tsx` is a `React.lazy(() => import('../pages/XxxPage'))` chunk; `AppShell` wraps the routed `<Outlet />` in `<Suspense>` (inside the `ErrorBoundary`, which also catches a failed chunk load). Declare new pages the same way. `vite.config.js` additionally splits React/MUI/Emotion into a shared `vendor` chunk.
 - `useSectionContext()` is how child pages of a `SectionLayout` read `selection` + `autoRefresh`; top-level pages read the same values from `useWindowContext()` directly.
-- Leave the legacy redirect routes (`/tool-calls → /tool-activity/calls`, etc.) in place — external links rely on them.
+- Leave the legacy redirect routes (`/tool-calls → /tools/calls`, etc.) in place — external links rely on them.
 
 ## Style and linting
 

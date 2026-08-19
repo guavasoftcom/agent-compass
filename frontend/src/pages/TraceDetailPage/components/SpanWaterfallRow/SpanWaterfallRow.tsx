@@ -264,12 +264,24 @@ const SpanToolBadge = ({ span }: { span: SpanRow }) => {
   }
   const statusAttribute = attributes?.['tool.status'];
   const toolStatus = typeof statusAttribute === 'string' ? statusAttribute : '';
-  const argKey = attributes
-    ? TOOL_ARG_KEYS.find((key) => {
-        const value = attributes[key];
-        return value !== undefined && value !== null && String(value) !== '';
-      })
-    : undefined;
+  // An Agent span's "what was it asked to do" is subagent_type, not any of the
+  // TOOL_ARG_KEYS — those describe a shell/file/search tool's own arguments,
+  // which an Agent span doesn't carry. subagent_type wins whenever it's
+  // populated; every other tool falls back to the normal key search.
+  const subagentTypeAttribute = attributes?.['subagent_type'];
+  const hasSubagentType =
+    subagentTypeAttribute !== undefined &&
+    subagentTypeAttribute !== null &&
+    String(subagentTypeAttribute) !== '';
+  const argKey =
+    toolName === 'Agent' && hasSubagentType
+      ? 'subagent_type'
+      : attributes
+        ? TOOL_ARG_KEYS.find((key) => {
+            const value = attributes[key];
+            return value !== undefined && value !== null && String(value) !== '';
+          })
+        : undefined;
   const argText = argKey && attributes ? attrToText(attributes[argKey]) : '';
   const isClipped = argText.length > TIP_COMMAND_MAX_CHARS;
   return (

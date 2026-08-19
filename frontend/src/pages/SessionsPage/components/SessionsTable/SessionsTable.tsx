@@ -54,7 +54,7 @@ const COLUMNS: SessionColumn[] = [
     label: 'Prompt',
     numeric: false,
     sortable: false,
-    tip: "The session's first meaningful user prompt. Blank when prompt capture is disabled (OTEL_LOG_USER_PROMPTS) — the count can still be nonzero.",
+    tip: "The session's first user prompt. Blank when prompt capture is disabled (OTEL_LOG_USER_PROMPTS) — the count can still be nonzero.",
   },
   { field: 'costUsd', label: 'Cost', numeric: true, sortable: true },
   {

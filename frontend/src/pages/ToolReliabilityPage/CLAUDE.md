@@ -6,7 +6,7 @@ same-tool repeat-run table that surfaces agent hunting behaviour. Backend counte
 `ToolActivityController` (`backend/.../controller/ToolActivityController.java`),
 endpoints `GET /api/tool-activity/failure-rates` and `GET /api/tool-activity/repeats`.
 
-This page is the `/tool-activity/reliability` child tab of `ToolActivitySection`. Read
+This page is the `/tools/reliability` child tab of `ToolActivitySection`. Read
 [`../ToolActivitySection/CLAUDE.md`](../ToolActivitySection/CLAUDE.md) for routing,
 section-scoped reload, and how `useSectionContext()` is wired up.
 

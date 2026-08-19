@@ -128,7 +128,7 @@ class MetricSeriesQueryIntegrationTest {
   void returnsEveryCuratedMetricEvenWhenUnseeded() {
     List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now());
     assertThat(series).extracting(MetricSeries::id)
-        .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit");
+        .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit", "pull_request");
     // Metrics with no rows still return a well-formed zero series, no splits populated.
     MetricSeries session = series.stream().filter(s -> "session".equals(s.id())).findFirst().orElseThrow();
     assertThat(session.sum()).isEqualTo("0");
@@ -151,7 +151,7 @@ class MetricSeriesQueryIntegrationTest {
     // Curated order is preserved and the unknown metric lands after it.
     assertThat(series).extracting(MetricSeries::id)
         .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit",
-            "acme-agent-spend-total");
+            "pull_request", "acme-agent-spend-total");
 
     MetricSeries discovered = series.get(series.size() - 1);
     assertThat(discovered.name()).isEqualTo("acme.agent.spend.total");

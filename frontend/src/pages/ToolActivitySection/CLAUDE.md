@@ -1,7 +1,7 @@
 # Tool activity section
 
 A `SectionLayout` wrapper that groups the four tool-activity tabs — Calls, Reliability,
-Skills & Subagents, and Denials — under the `/tool-activity/*` parent route with a shared
+Skills & Subagents, and Denials — under the `/tools/*` parent route with a shared
 `selection` / `autoRefresh` context. It makes no backend calls of its own; all data
 fetching happens inside the child tab pages.
 
@@ -15,17 +15,17 @@ ToolActivitySection/
 
 Child tab pages (each in its own folder):
 
-- [`../ToolCallsPage/`](../ToolCallsPage/) — `/tool-activity/calls`
-- [`../ToolReliabilityPage/`](../ToolReliabilityPage/) — `/tool-activity/reliability`
-- [`../SkillsAgentsPage/`](../SkillsAgentsPage/) — `/tool-activity/skills-agents`
-- [`../PermissionDenialsPage/`](../PermissionDenialsPage/) — `/tool-activity/permissions`
+- [`../ToolCallsPage/`](../ToolCallsPage/) — `/tools/calls`
+- [`../ToolReliabilityPage/`](../ToolReliabilityPage/) — `/tools/reliability`
+- [`../SkillsAgentsPage/`](../SkillsAgentsPage/) — `/tools/skills-agents`
+- [`../PermissionDenialsPage/`](../PermissionDenialsPage/) — `/tools/permissions`
 
 ## Routing
 
 In `App.tsx` the section is a React Router 7 nested route:
 
 ```
-<Route path="/tool-activity" element={<ToolActivitySection />}>
+<Route path="/tools" element={<ToolActivitySection />}>
   <Route index element={<Navigate to="calls" replace />} />
   <Route path="calls" element={<ToolCallsPage />} />
   <Route path="reliability" element={<ToolReliabilityPage />} />
@@ -40,7 +40,7 @@ In `App.tsx` the section is a React Router 7 nested route:
 
 Legacy redirects in `App.tsx` preserve old paths:
 `/tool-calls`, `/tool-reliability`, `/skills-agents` each redirect to their
-`/tool-activity/*` equivalents.
+`/tools/*` equivalents.
 
 ## Section-scoped reload and polling
 

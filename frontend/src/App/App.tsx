@@ -23,9 +23,9 @@ const App = () => {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route path="/" element={<Navigate to="/tool-activity/calls" replace />} />
+        <Route path="/" element={<Navigate to="/tools/calls" replace />} />
 
-        <Route path="/tool-activity" element={<ToolActivitySection />}>
+        <Route path="/tools" element={<ToolActivitySection />}>
           <Route index element={<Navigate to="calls" replace />} />
           <Route path="calls" element={<ToolCallsPage />} />
           <Route path="reliability" element={<ToolReliabilityPage />} />
@@ -35,16 +35,16 @@ const App = () => {
 
         <Route path="/tokens" element={<TokensPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
-        <Route path="/insights" element={<MetricsPage />} />
+        <Route path="/metrics" element={<MetricsPage />} />
         <Route path="/logs" element={<LogsPage />} />
         <Route path="/traces" element={<TracesPage />} />
         <Route path="/traces/:traceId" element={<TraceDetailPage />} />
         <Route path="/report" element={<ReportPage />} />
 
         {/* Legacy paths from before the Tool activity section existed. */}
-        <Route path="/tool-calls" element={<Navigate to="/tool-activity/calls" replace />} />
-        <Route path="/tool-reliability" element={<Navigate to="/tool-activity/reliability" replace />} />
-        <Route path="/skills-agents" element={<Navigate to="/tool-activity/skills-agents" replace />} />
+        <Route path="/tool-calls" element={<Navigate to="/tools/calls" replace />} />
+        <Route path="/tool-reliability" element={<Navigate to="/tools/reliability" replace />} />
+        <Route path="/skills-agents" element={<Navigate to="/tools/skills-agents" replace />} />
       </Route>
     </Routes>
   );

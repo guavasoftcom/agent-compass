@@ -4,6 +4,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { formatDuration, formatUsd } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
 import SummaryStrip, { type SummaryItem } from './SummaryStrip';
+import IdChip from './IdChip';
 import { fontFamilies } from '../../../../theme/typography';
 import type { TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
 
@@ -28,12 +29,13 @@ export interface TraceDetailHeaderViewProps {
   firstUserPrompt?: string | null;
 }
 
-// Aurora sync: the breadcrumb no longer carries copy-to-clipboard IdChips — the
-// trace and session ids moved into the Overview panel's meta footer as full,
-// un-truncated plain text, alongside Services / Root span / Started (see
-// SummaryStrip). What's left up here is the five at-a-glance KPI tiles, Cost
-// leading and gradient-emphasized; the old single "Tokens" tile became the
-// richer Token composition card inside the panel.
+// The breadcrumb carries copy-to-clipboard IdChips for the trace id, and the
+// session id when the trace has one, right after the "Trace detail" h1 — see
+// IdChip. The Overview panel's meta footer (SummaryStrip) is left with just
+// Root span / Services / Started. What's left up here below the chips is the
+// five at-a-glance KPI tiles, Cost leading and gradient-emphasized; the old
+// single "Tokens" tile became the richer Token composition card inside the
+// panel.
 const TraceDetailHeaderView = ({
   traceId,
   sessionId,
@@ -166,6 +168,8 @@ const TraceDetailHeaderView = ({
             >
               Trace detail
             </Typography>
+            <IdChip label="TRACE" value={traceId} />
+            {sessionId ? <IdChip label="SESSION" value={sessionId} /> : null}
           </Box>
         </Box>
       </Box>
@@ -175,8 +179,6 @@ const TraceDetailHeaderView = ({
         tokenBreakdown={tokenBreakdown}
         modelCallCount={modelCallCount}
         totalCostUsd={totalCostUsd}
-        traceId={traceId}
-        sessionId={sessionId}
         rootName={rootName}
         rootColor={spanColor(rootName)}
         serviceLabels={serviceLabels}

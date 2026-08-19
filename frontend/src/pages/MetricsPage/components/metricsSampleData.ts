@@ -1,14 +1,14 @@
 // Sample data for the simplified Metrics page.
 //
-// The seven curated counters in the claude_code.* namespace. Each carries a
+// The eight curated counters in the claude_code.* namespace. Each carries a
 // headline value, a 24-point trend (for the catalog sparkline + the detail
 // chart), and an optional set of attribute "splits" (e.g. token usage by model
 // or type). These render until the API lands — see BACKEND.md
 // (`GET /api/metrics/series`).
 //
-// The live endpoint can return MORE than these seven: it appends a generated
+// The live endpoint can return MORE than these eight: it appends a generated
 // card for any metric name in the database that has no curated spec. There is no
-// fixture for that case, so sample mode always shows exactly seven — don't treat
+// fixture for that case, so sample mode always shows exactly eight — don't treat
 // this array's length as the number of cards the page can render.
 
 export interface MetricSplitRow {
@@ -202,6 +202,25 @@ export const METRICS: MetricSeries[] = [
       'Git commits created during Claude Code sessions. A low-volume counter — it moves only when ' +
       'the agent actually commits, so read it as a throughput signal rather than a rate.',
     trend: [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0],
+    splits: {},
+  },
+  {
+    id: 'pull_request',
+    name: 'claude_code.pull_request.count',
+    type: 'counter',
+    unit: '',
+    sum: '1',
+    sumLabel: 'Sum (24h)',
+    rate: '0.0',
+    rateUnit: '/h',
+    peak: '1',
+    delta: '+0.0%',
+    dir: 'up',
+    description:
+      'Pull requests opened during Claude Code sessions. The narrowest funnel on this page — ' +
+      'commits show work happening, this shows work being handed to a reviewer, so a day of ' +
+      'commits with no PR is worth a look.',
+    trend: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     splits: {},
   },
 ];

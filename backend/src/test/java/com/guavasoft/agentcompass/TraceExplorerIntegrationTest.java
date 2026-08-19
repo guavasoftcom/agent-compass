@@ -181,7 +181,7 @@ class TraceExplorerIntegrationTest {
         // Prompt context, correlated to traces by log_records.trace_id:
         // - TRACE_SESSION_OK: one multi-line prompt (collapse + truncation coverage).
         // - TRACE_IN_FLIGHT: a bare slash command followed by a later prompt; the
-        //   earliest wins, with no slash-command deprioritization (unlike Sessions).
+        //   earliest wins (same chronological-first semantics as Sessions).
         // - TRACE_MODEL_ERROR: a user_prompt event with no prompt attribute, i.e.
         //   prompt-body capture was disabled -> null.
         // - TRACE_TOOL_OK: no user_prompt event at all -> null.
@@ -1174,8 +1174,9 @@ class TraceExplorerIntegrationTest {
         TracePage page = service.offsetPage(fullWindowCriteria(), "new", 0, 25);
 
         // The in-flight trace carries a bare slash command first, then a follow-up.
-        // Unlike the Sessions grid there is no slash-command deprioritization: a
-        // trace has one initiating turn, so the earliest prompt wins as-is.
+        // The earliest prompt wins as-is, same chronological-first semantics as
+        // the Sessions grid: a trace has one initiating turn, so no
+        // deprioritization is needed either way.
         assertThat(traceFrom(page, TRACE_IN_FLIGHT).getFirstUserPrompt()).isEqualTo(SLASH_COMMAND_PROMPT);
     }
 
