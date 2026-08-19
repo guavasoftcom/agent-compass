@@ -938,13 +938,20 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
               THEN COALESCE(
                 NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', ''),
                 '(no scope)')
+            -- A bare first token collapses e.g. `cd backend && ./mvnw test` and `cd frontend &&
+            -- yarn dev` onto the same scope (cd), and `git status`/`git commit` onto git --
+            -- so unrelated commands in a row looked like a repeat run. Strip a leading cd-chain
+            -- and keep the program plus subcommand (two tokens) so distinct commands stay distinct.
             WHEN attributes ->> :toolAttribute = 'Bash'
               THEN COALESCE(
                 NULLIF(
-                  split_part(
-                    (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                    ' ',
-                    1),
+                  array_to_string(
+                    (regexp_split_to_array(
+                      trim(regexp_replace(
+                        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                        '^(cd\\s+\\S+\\s*(&&|;)\\s*)+', '', 'i')),
+                      '\\s+'))[1:2],
+                    ' '),
                   ''),
                 '(no scope)')
             ELSE '(no scope)'
@@ -967,8 +974,13 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         GROUP BY session_id, tool, scope, (rn_session - rn_group)
       ),
       longest_per_session AS (
+        -- (no scope) is not a real scope match: it means we could not tell what this call
+        -- targeted, so any run under it (e.g. two unrelated mcp_tool calls in a row) is not
+        -- evidence of repeating the same action. Drop it here, after run detection (where it
+        -- still correctly breaks adjacency for the surrounding scoped calls), not from events.
         SELECT session_id, tool, scope, MAX(run_length) AS longest_run
         FROM runs
+        WHERE scope <> '(no scope)'
         GROUP BY session_id, tool, scope
         HAVING MAX(run_length) >= 2
       )
@@ -999,13 +1011,20 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
               THEN COALESCE(
                 NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', ''),
                 '(no scope)')
+            -- A bare first token collapses e.g. `cd backend && ./mvnw test` and `cd frontend &&
+            -- yarn dev` onto the same scope (cd), and `git status`/`git commit` onto git --
+            -- so unrelated commands in a row looked like a repeat run. Strip a leading cd-chain
+            -- and keep the program plus subcommand (two tokens) so distinct commands stay distinct.
             WHEN attributes ->> :toolAttribute = 'Bash'
               THEN COALESCE(
                 NULLIF(
-                  split_part(
-                    (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                    ' ',
-                    1),
+                  array_to_string(
+                    (regexp_split_to_array(
+                      trim(regexp_replace(
+                        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                        '^(cd\\s+\\S+\\s*(&&|;)\\s*)+', '', 'i')),
+                      '\\s+'))[1:2],
+                    ' '),
                   ''),
                 '(no scope)')
             ELSE '(no scope)'
@@ -1029,8 +1048,13 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         GROUP BY session_id, tool, scope, (rn_session - rn_group)
       ),
       longest_per_session AS (
+        -- (no scope) is not a real scope match: it means we could not tell what this call
+        -- targeted, so any run under it (e.g. two unrelated mcp_tool calls in a row) is not
+        -- evidence of repeating the same action. Drop it here, after run detection (where it
+        -- still correctly breaks adjacency for the surrounding scoped calls), not from events.
         SELECT session_id, tool, scope, MAX(run_length) AS longest_run
         FROM runs
+        WHERE scope <> '(no scope)'
         GROUP BY session_id, tool, scope
         HAVING MAX(run_length) >= 2
       )
