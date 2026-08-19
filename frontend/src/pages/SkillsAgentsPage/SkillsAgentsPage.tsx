@@ -6,8 +6,8 @@ import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
 import SkillsAgentsPageView from './SkillsAgentsPageView';
 import {
   buildModelColorIndexes,
-  buildModelLegendItems,
-  toModelBreakdownRows,
+  buildModelCoverageModels,
+  buildModelFirstBlocks,
   withShare,
 } from './skillsAgentsDerivations';
 
@@ -40,26 +40,26 @@ export default function SkillsAgentsPage() {
   );
 
   // One palette index per model across both cards, so a model keeps the same
-  // colour whether it shows up under a skill or under a subagent.
+  // colour (and the same fixed Sonnet/Opus/Haiku position) whether it shows
+  // up under a skill or under a subagent.
   const modelColorIndexes = useMemo(
     () => buildModelColorIndexes(skills.rows, subagents.rows),
     [skills.rows, subagents.rows],
   );
 
-  const skillModelRows = useMemo(
-    () => toModelBreakdownRows(skills.rows, modelColorIndexes),
+  // Shared by both DonutCards' coverage ticks + legend caption, and implicitly
+  // fixes the by-model blocks' order too.
+  const modelCoverageModels = useMemo(
+    () => buildModelCoverageModels(modelColorIndexes),
+    [modelColorIndexes],
+  );
+
+  const skillModelBlocks = useMemo(
+    () => buildModelFirstBlocks(skills.rows, modelColorIndexes),
     [skills.rows, modelColorIndexes],
   );
-  const subagentModelRows = useMemo(
-    () => toModelBreakdownRows(subagents.rows, modelColorIndexes),
-    [subagents.rows, modelColorIndexes],
-  );
-  const skillModelLegendItems = useMemo(
-    () => buildModelLegendItems(skills.rows, modelColorIndexes),
-    [skills.rows, modelColorIndexes],
-  );
-  const subagentModelLegendItems = useMemo(
-    () => buildModelLegendItems(subagents.rows, modelColorIndexes),
+  const subagentModelBlocks = useMemo(
+    () => buildModelFirstBlocks(subagents.rows, modelColorIndexes),
     [subagents.rows, modelColorIndexes],
   );
 
@@ -71,10 +71,9 @@ export default function SkillsAgentsPage() {
       subagentRows={subagents.rows}
       subagentTotal={subagents.total}
       isSubagentsLoading={subagentsQuery.isLoading}
-      skillModelRows={skillModelRows}
-      skillModelLegendItems={skillModelLegendItems}
-      subagentModelRows={subagentModelRows}
-      subagentModelLegendItems={subagentModelLegendItems}
+      modelCoverageModels={modelCoverageModels}
+      skillModelBlocks={skillModelBlocks}
+      subagentModelBlocks={subagentModelBlocks}
       error={(skillsQuery.error ?? subagentsQuery.error) as Error | null}
     />
   );

@@ -20,13 +20,13 @@ export interface NavGroup {
   items: NavLeaf[];
 }
 
-// Sidebar order + grouping only. Routes (including the children of /tool-activity)
+// Sidebar order + grouping only. Routes (including the children of /tools)
 // live in App.tsx. Headings are presentational — they don't map to routes.
 const navGroups: NavGroup[] = [
   {
     heading: 'Activity',
     items: [
-      { to: '/tool-activity', label: 'Tool Usage', icon: <ToolUsageIcon /> },
+      { to: '/tools', label: 'Tool Usage', icon: <ToolUsageIcon /> },
       { to: '/tokens', label: 'Token Usage', icon: <TokenUsageIcon /> },
       { to: '/sessions', label: 'Sessions', icon: <SessionsIcon /> },
     ],
@@ -35,7 +35,7 @@ const navGroups: NavGroup[] = [
     heading: 'Observability',
     items: [
       { to: '/logs', label: 'Logs', icon: <LogsIcon /> },
-      { to: '/insights', label: 'Metrics', icon: <MetricsIcon /> },
+      { to: '/metrics', label: 'Metrics', icon: <MetricsIcon /> },
       { to: '/traces', label: 'Traces', icon: <TracesIcon /> },
     ],
   },

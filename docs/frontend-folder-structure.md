@@ -209,8 +209,8 @@ frontend/src/
       skillsAgentsDerivations.ts  // skill/subagent row derivations + per-model split
       index.ts
       components/
-        ModelBreakdownCard/
-          ModelBreakdownCard.tsx
+        ModelFirstBlocks/
+          ModelFirstBlocks.tsx
           index.ts
     TokensPage/
       CLAUDE.md
@@ -288,6 +288,8 @@ frontend/src/
           TraceDetailHeader.tsx
           TraceDetailHeaderView.tsx
           SummaryStrip.tsx
+          IdChip.tsx
+          useCopyToClipboard.ts
           index.ts
         TraceMinimap/
           TraceMinimap.tsx

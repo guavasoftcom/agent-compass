@@ -130,8 +130,9 @@ class SessionsQueryIntegrationTest {
 
     // Prompt context: A has a single multi-line prompt (whitespace-collapse +
     // 200-char truncation coverage); B has a bare slash command followed by a
-    // real prompt (the real prompt must win as firstUserPrompt); C has no
-    // user_prompt events at all (firstUserPrompt null, count 0).
+    // real prompt (the literal chronologically-first prompt, the slash
+    // command, must win as firstUserPrompt); C has no user_prompt events at
+    // all (firstUserPrompt null, count 0).
     // B's prompts also cover trace-id normalization: the bare slash command
     // predates tracing (all-zero placeholder -> null in the API), the real
     // prompt carries the claude_code.interaction root span's real trace id.
@@ -417,7 +418,7 @@ class SessionsQueryIntegrationTest {
     SessionSummary sessionB = page.items().stream()
         .filter(item -> "B".equals(item.sessionId())).findFirst().orElseThrow();
     assertThat(sessionB.userPromptCount()).isEqualTo(2L);
-    assertThat(sessionB.firstUserPrompt()).isEqualTo("Add authentication support to the login flow");
+    assertThat(sessionB.firstUserPrompt()).isEqualTo("/ship");
 
     SessionSummary sessionC = page.items().stream()
         .filter(item -> "C".equals(item.sessionId())).findFirst().orElseThrow();
@@ -426,7 +427,7 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
-  void promptInfoFallsBackToTheLiteralFirstPromptWhenEveryPromptIsASlashCommand() {
+  void promptInfoReturnsTheLiteralChronologicallyFirstPromptEvenWhenItIsASlashCommand() {
     Instant base = Instant.now().minus(5, ChronoUnit.MINUTES);
     saveUserPrompt("D", "/compact", base, null);
     saveUserPrompt("D", "/clear", base.plusSeconds(30), null);

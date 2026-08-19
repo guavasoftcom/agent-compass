@@ -44,6 +44,13 @@ export interface StatCardProps {
    * directional arrow). Green for "up", red for "down".
    */
   trend?: StatCardTrend;
+  /**
+   * When true, shrinks the value to a smaller size step (23px, tighter
+   * letter-spacing, word-break: break-word) instead of wrapping a long
+   * identifier onto a third line. Callers compute this from the value's own
+   * length (see `isLongStatValue`) rather than hardcoding it per card.
+   */
+  long?: boolean;
   /** Optional slot rendered below the sub (e.g. a sparkline). */
   children?: ReactNode;
   /**
@@ -60,6 +67,17 @@ export interface StatCardProps {
    */
   PaperProps?: PaperProps;
 }
+
+/** Above this character count a value string shrinks via the `long` prop's size step. */
+export const LONG_STAT_VALUE_THRESHOLD = 20;
+
+/**
+ * Whether a stat value is long enough to need the `long` size step. Callers
+ * pass the concrete string (e.g. a skill/subagent identifier) rather than a
+ * hardcoded flag, so the shrink only kicks in when the value actually runs
+ * long — a short identifier still renders at the default size.
+ */
+export const isLongStatValue = (value: string): boolean => value.length > LONG_STAT_VALUE_THRESHOLD;
 
 const TrendArrowUp = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} width={11} height={11}>
@@ -82,6 +100,7 @@ const StatCard = ({
   displayFontSize = 30,
   labelUppercase = true,
   trend,
+  long = false,
   adornment,
   children,
   PaperProps: paperProps,
@@ -163,9 +182,10 @@ const StatCard = ({
             mt: 0.75,
             fontFamily: fontFamilies.display,
             fontWeight: 800,
-            fontSize: displayFontSize,
+            fontSize: long ? 23 : displayFontSize,
             lineHeight: 1.05,
-            letterSpacing: '-0.6px',
+            letterSpacing: long ? '-0.4px' : '-0.6px',
+            ...(long && { wordBreak: 'break-word' }),
             minHeight: 36,
             display: 'flex',
             alignItems: 'center',
@@ -188,6 +208,7 @@ const StatCard = ({
             mt: 0.75,
             fontWeight: 800,
             lineHeight: 1.05,
+            ...(long && { fontSize: 23, letterSpacing: '-0.4px', wordBreak: 'break-word' }),
             ...(accent
               ? {
                   backgroundImage: gradients.auroraActionSoft,

@@ -255,6 +255,13 @@ public class TuningProperties {
   private String commitCountMetric = "claude_code.commit.count";
 
   /**
+   * OTLP metric name carrying the cumulative count of pull requests opened during
+   * a session. Drives the Metrics page. Carries only identity attributes, so it
+   * has no meaningful split.
+   */
+  private String pullRequestCountMetric = "claude_code.pull_request.count";
+
+  /**
    * OTLP metric name carrying cumulative lines added/removed by edit tools, split
    * on the {@code type} attribute (added | removed). Drives the Metrics page.
    */

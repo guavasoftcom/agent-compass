@@ -7,13 +7,14 @@ chart by attribute (model, type, change, …) when the selected metric supports 
 Backend counterpart: `MetricsController` → `MetricSeriesService`
 (`backend/.../controller/MetricsController.java`, `GET /api/metrics/series`).
 
-**The card count is not fixed.** `MetricSeriesService` returns seven *curated*
-metrics (token, cost, session, active, loc, decision, commit) followed by a
-generated card for every other metric name present in `metric_points` — so a
+**The card count is not fixed.** `MetricSeriesService` returns eight *curated*
+metrics (token, cost, session, active, loc, decision, commit, pull_request) followed
+by a generated card for every other metric name present in `metric_points` — so a
 counter introduced by a newer Claude Code release appears here with no frontend
 change. Discovered cards have a placeholder description and no splits; promoting
 one means adding a `MetricSpec` to `curatedMetricSpecs()` in the backend. Nothing
-in this folder may assume six metrics, or seven.
+in this folder may assume a fixed metric count — the strip is a single uniform grid
+for exactly this reason (see the gotcha below).
 
 ## Files
 
@@ -31,10 +32,9 @@ MetricsPage/
 │   ├── metricsSampleData.ts  MetricSeries + MetricSplitRow types; the METRICS
 │   │                         fixture array; re-exported by metricsApi.ts as the
 │   │                         default prop value and by all four components
-│   ├── MetricKpiStrip/       two-tier picker: three headline metrics as full
-│   │   ├── MetricKpiStrip.tsx  StatCards (LineSparkline + Δ), everything else as
-│   │   └── index.ts            hand-built compact cards; selected card gets an
-│   │                           accent ring, identical in both tiers
+│   ├── MetricKpiStrip/       uniform-grid picker: every metric a full StatCard
+│   │   ├── MetricKpiStrip.tsx  (LineSparkline + Δ); selected card gets an accent
+│   │   └── index.ts            ring; layout never depends on which/how many metrics
 │   ├── MetricHeader/         selected-metric detail header: full name, type/unit
 │   │   ├── MetricHeader.tsx    badges, description, sum/rate/peak/delta stats
 │   │   └── index.ts
@@ -54,11 +54,9 @@ MetricsPage/
 │ eyebrow "Observability" / title "Metrics" / subtitle          [PageActions] │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ ┌─ MetricKpiStrip ──────────────────────────────────────────────────────┐ │
-│ │ primary (3 cols → 2 ≤900px → 1 ≤620px), full cards:                  │ │
-│ │   [token] [cost] [session]   name · sum · sparkline · Δ               │ │
-│ │ secondary (4 cols → 2 ≤1080px), compact, no sparkline:               │ │
-│ │   [active] [loc] [decision] [commit] [discovered…]  name / sum + Δ    │ │
-│ │  selected = accent ring + action.selected, both tiers                 │ │
+│ │ one uniform grid (4 cols ≥1081px → 3 ≥901px → 2 ≥621px → 1), every    │ │
+│ │ metric the same full card: name · sum · sparkline (bars if sparse) · Δ │ │
+│ │  selected = accent ring + action.selected                             │ │
 │ └───────────────────────────────────────────────────────────────────────┘ │
 │ ┌─ MetricHeader (Paper) ─────────────────────────────────────────────────┐ │
 │ │ claude_code.token.usage  [Counter]  [tokens]                           │ │
@@ -102,18 +100,24 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
 - **Split state lives in the view.** `MetricsPageView` owns `selectedId` (which metric card is
   active) and `split` (current breakdown key, or `'None'`). Selecting a different metric card
   via `selectMetric` resets the split to `'None'` so stale split labels never bleed across metrics.
-- **Strip tiers are an allow-list, not a rank.** `PRIMARY_METRIC_IDS` in `MetricKpiStrip` names
-  exactly `token` / `cost` / `session`; every other metric — including a discovered one whose id is
-  its dotted name with dashes (`claude_code-commit-count`) — falls through to the compact tier. A
-  new metric therefore never requires a layout decision, and an unknown metric is by definition not
-  a headline. The compact card is hand-built rather than a denser `StatCard` because it puts value
-  and Δ on one baseline row, which `StatCard`'s label → value → children stack can't express.
-- **Sparse whole-number counters draw as bars.** `MetricTrendCard` sets `isDiscrete` when the
-  trend's peak is ≤ 5 and every value is an integer, which switches `AreaTrendChart` from an
-  interpolated area to per-bucket bars, steps the y-axis by whole numbers, and adds a bucket of
-  headroom above the peak. It's a threshold, not a per-metric flag, so a discovered counter gets it
-  without a spec. `commit.count` hits it; `session.count` does not (its bucket values are
-  fractional), so it keeps the area chart.
+- **The strip is one uniform grid, not tiered by importance.** `MetricKpiStrip` renders every
+  metric — curated or discovered (including one whose id is its dotted name with dashes,
+  `claude_code-commit-count`) — as the same full `StatCard` with its own sparkline. The layout
+  therefore never requires a decision when the backend appends a new counter; it lands in the next
+  grid cell. Breakpoints are the design's own raw `min-width` queries (621 / 901 / 1081px), not
+  MUI's `sm`/`md`/`lg` keys.
+- **Sparse whole-number counters draw as bars, in the card and the chart.** `isSparseCounter`
+  (`lib/format.ts`) is true when a trend's peak is ≤ 5 and every value is an integer; both
+  `MetricTrendCard` (switches `AreaTrendChart` from an interpolated area to per-bucket bars, steps
+  the y-axis by whole numbers, and adds a bucket of headroom above the peak) and `LineSparkline`
+  (switches the KPI-strip card's sparkline the same way) import the one predicate, so a card never
+  shows bars while its chart shows an area. It's a threshold, not a per-metric flag, so a discovered
+  counter gets it without a spec. `commit.count` and `pull_request.count` hit it; `session.count`
+  does not (its bucket values are fractional), so it keeps the area/line form.
+- **Unit-less metrics need two guards.** `pull_request.count` is the first curated metric with an
+  empty `unit`. `MetricKpiStrip`'s `unitSuffix` returns `null` (not an empty `Box`) when
+  `metric.unit` is falsy, and `MetricHeader`'s unit badge prints `metric.unit || '—'` so the badge
+  keeps its pill shape instead of collapsing to 6px.
 - **Chart series derivation.** When `split === 'None'` the chart renders one series (the metric's
   raw `trend` array). When a split is active, `MetricTrendCard` maps each `MetricSplitRow` to a
   scaled series: `data[i] = trend[i] * row.pct / 100`. Colors come from
@@ -122,9 +126,11 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
   `Date.now()` at render time and the length of `metric.trend` — 24 points spaced evenly over
   24 h. It is NOT tied to the `from`/`to` params, so the axis is an approximation of the window
   rather than an exact label.
-- **`SegmentedToggle` appears only when `splitKeys.length > 1`** (i.e. the selected metric
-  has at least one attribute split). Metrics without splits (`session.count`, `active_time.total`,
-  `commit.count`, and every discovered metric) show no toggle.
+- **`SegmentedToggle` (and the title's ⓘ tooltip) appear only when `splitKeys.length > 1`**
+  (i.e. the selected metric has at least one attribute split) — both gated by the same `hasSplits`
+  flag, since the tooltip explains what the toggle does and has nothing to say without it. Metrics
+  without splits (`session.count`, `active_time.total`, `commit.count`, `pull_request.count`, and
+  every discovered metric) show neither.
 - **`MetricBreakdown` doubles as two cards in one.** With `split === 'None'` it shows a compact
   summary panel. With a split active it passes `BreakdownRow[]` (derived from `MetricSplitRow`)
   to the shared `BreakdownList` component with `layout="stacked"`.
@@ -138,7 +144,7 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
   `metricsApi.ts`. All four sub-components import from `'../metricsSampleData'`; `metricsApi.ts`
   re-exports the type. Keep the type source in `metricsSampleData.ts` until the API is stable
   enough to own the shape.
-- `VITE_METRICS_SAMPLE=1` returns static data for the seven curated metrics immediately; the
+- `VITE_METRICS_SAMPLE=1` returns static data for the eight curated metrics immediately; the
   `isLoading` and `error` paths are therefore untested without a live backend. The chart renders a
   `Loading…` placeholder only when `isLoading === true`. Sample mode has no fixture for a
   *discovered* metric, so that path only exercises against a real database.

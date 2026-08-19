@@ -7,6 +7,20 @@ const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
 
 export const formatCompact = (value: number): string => COMPACT_NUMBER_FORMATTER.format(value);
 
+/** Above this peak a whole-number series is dense enough to read as a curve. */
+const SPARSE_COUNTER_PEAK_CEILING = 5;
+
+// A sparse whole-number counter (peak <= 5, every bucket an integer) reads as
+// discrete events rather than a rate — a commit or a PR either happened in that
+// bucket or it didn't. Shared by MetricTrendCard (switches the detail chart from
+// an interpolated area to bars) and LineSparkline (switches the KPI-strip card's
+// sparkline the same way), so a card never shows bars while its chart shows an
+// area, or vice versa.
+export const isSparseCounter = (trend: number[]): boolean =>
+  trend.length > 0 &&
+  Math.max(...trend) <= SPARSE_COUNTER_PEAK_CEILING &&
+  trend.every((value) => Number.isInteger(value));
+
 // USD currency formatter (e.g. "$4.23") shared across the Sessions and Tokens
 // pages — costs render identically wherever a session or a token summary
 // names a dollar figure. `sessionsFormat.ts` re-exports this rather than

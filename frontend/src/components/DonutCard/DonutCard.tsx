@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { alpha, Box, Paper, Stack, Typography } from '@mui/material';
+import { alpha, Box, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { neutralColors } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
@@ -10,6 +10,20 @@ export interface DonutSlice {
   color: string;
   /** Render the legend label dimmed + italic (e.g. an "unknown" bucket). */
   muted?: boolean;
+  /**
+   * Model id → calls for this row, used to light up the `coverageTicks` dots.
+   * Omit (or leave a model out) when the row carries no per-model split.
+   */
+  coverageByModel?: Record<string, number>;
+}
+
+/** One model in the fixed left-to-right order shared by `coverageTicks` and `legendCaption`. */
+export interface DonutCoverageModel {
+  /** Key into a slice's `coverageByModel` map (the raw model id). */
+  key: string;
+  /** Short display name (e.g. "Sonnet 5"). */
+  label: string;
+  color: string;
 }
 
 export interface DonutCardProps {
@@ -24,6 +38,19 @@ export interface DonutCardProps {
   hasData?: boolean;
   isLoading?: boolean;
   emptyLabel?: string;
+  /**
+   * Fixed model order for a per-row "which models touched this" tick group,
+   * inserted between the legend name and its value. Each dot is lit with the
+   * model's color when that row's `coverageByModel[key] > 0`, otherwise a flat
+   * gray square. Omit to render the legend without ticks.
+   */
+  coverageTicks?: DonutCoverageModel[];
+  /**
+   * Caption row below the legend keying each `coverageTicks` color to its model
+   * name. Typically the same list passed to `coverageTicks`. Omit to skip the
+   * caption row.
+   */
+  legendCaption?: DonutCoverageModel[];
 }
 
 const SIZE = 200;
@@ -48,6 +75,8 @@ const DonutCard = ({
   hasData = true,
   isLoading = false,
   emptyLabel = 'No data in this window.',
+  coverageTicks,
+  legendCaption,
 }: DonutCardProps) => {
   const theme = useTheme();
   const sum = slices.reduce((acc, slice) => acc + slice.value, 0);
@@ -55,6 +84,7 @@ const DonutCard = ({
     theme.palette.mode === 'dark'
       ? alpha(neutralColors.white, 0.07)
       : alpha(neutralColors.inkLight, 0.07);
+  const tickTrackColor = theme.custom?.progressTrack ?? trackColor;
 
   // Build one arc per slice, positioned by rotating from -90° (12 o'clock).
   const positiveSlices = slices.filter((slice) => slice.value > 0);
@@ -190,6 +220,32 @@ const DonutCard = ({
                   >
                     {slice.label}
                   </Typography>
+                  {coverageTicks && coverageTicks.length > 0 && (
+                    <Stack direction="row" spacing={0.6} sx={{ flexShrink: 0 }}>
+                      {coverageTicks.map((model) => {
+                        const calls = slice.coverageByModel?.[model.key] ?? 0;
+                        const lit = calls > 0;
+                        return (
+                          <Tooltip
+                            key={model.key}
+                            title={`${model.label} · ${lit ? `${calls.toLocaleString()} calls` : 'not used'}`}
+                            placement="top"
+                            arrow
+                            disableInteractive
+                          >
+                            <Box
+                              sx={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: '3px',
+                                bgcolor: lit ? model.color : tickTrackColor,
+                              }}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+                    </Stack>
+                  )}
                   <Typography
                     variant="body2"
                     color="text.secondary"
@@ -204,6 +260,31 @@ const DonutCard = ({
               );
             })}
           </Stack>
+
+          {legendCaption && legendCaption.length > 0 && (
+            <Stack
+              direction="row"
+              spacing={1.75}
+              sx={{
+                mt: 1.5,
+                pt: 1.5,
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                flexWrap: 'wrap',
+              }}
+            >
+              {legendCaption.map((model) => (
+                <Stack key={model.key} direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+                  <Box
+                    sx={{ width: 8, height: 8, borderRadius: '3px', flexShrink: 0, bgcolor: model.color }}
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: 11.5 }}>
+                    {model.label}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          )}
         </>
       )}
     </Paper>

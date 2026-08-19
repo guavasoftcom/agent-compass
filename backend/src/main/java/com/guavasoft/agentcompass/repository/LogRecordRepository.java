@@ -1058,13 +1058,10 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // both into one GROUP BY halves the table scans the Sessions grid needs).
   // Tool calls are log records whose event.name = :toolEventName. Denials are
   // tool_decision records whose decision attribute = 'reject'.
-  // userPromptCount is the total user_prompt event count. firstUserPrompt picks
-  // the first *meaningful* prompt body: ARRAY_AGG collects every non-null prompt
-  // text for the session ordered with bare slash commands ('/ship', optionally
-  // trailing whitespace) sorted after every other prompt so a real prompt wins
-  // whenever the session has one, falling back to the literal first prompt only
-  // when every prompt in the session is a slash command; [1] takes the head of
-  // that ordered array. Whitespace (including embedded newlines from multi-line
+  // userPromptCount is the total user_prompt event count. firstUserPrompt is the
+  // session's literal chronologically-first prompt body: ARRAY_AGG collects
+  // every non-null prompt text for the session ordered by timestamp and [1]
+  // takes the head. Whitespace (including embedded newlines from multi-line
   // prompts) collapses to single spaces and the result truncates to 200
   // characters, both in SQL so the service never handles untruncated prompt
   // text. Sessions with no prompt attribute value at all (NULL after NULLIF)
@@ -1081,7 +1078,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :userPromptEventName) AS user_prompt_count,
           (ARRAY_AGG(
               left(regexp_replace(NULLIF(lr.attributes ->> :promptAttribute, ''), '\\s+', ' ', 'g'), 200)
-              ORDER BY (NULLIF(lr.attributes ->> :promptAttribute, '') ~ '^\\s*/\\S*\\s*$') ASC, lr.timestamp ASC
+              ORDER BY lr.timestamp ASC
             ) FILTER (WHERE lr.attributes ->> 'event.name' = :userPromptEventName
                         AND NULLIF(lr.attributes ->> :promptAttribute, '') IS NOT NULL)
           )[1]                                                                      AS first_user_prompt

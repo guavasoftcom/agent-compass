@@ -79,18 +79,29 @@ TraceDetailPage/
     │   │                             and model-call/tool-call counts in one pass over spans; max depth
     │   │                             comes from the page's depthBySpanId and cost from the trace-summary
     │   │                             query (traceCostUsd), both threaded down rather than recomputed here
-    │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb (no id chips)
-    │   │                             + SummaryStrip, whose KPI tiles are Cost/Duration/Spans/
-    │   │                             Tool calls/Depth/Errors (Cost leads, gradient-emphasized)
+    │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb, with a copy-to-
+    │   │                             clipboard IdChip for the trace id (and, when present, the session
+    │   │                             id) right after the h1, + SummaryStrip, whose KPI tiles are
+    │   │                             Cost/Duration/Spans/Tool calls/Depth/Errors (Cost leads,
+    │   │                             gradient-emphasized)
+    │   ├── IdChip.tsx                 breadcrumb-row copy chip: eyebrow label + mono value (ellipsized
+    │   │                             past 150px, `title` carries the full value) + a small copy icon;
+    │   │                             click copies the untruncated value via useCopyToClipboard and
+    │   │                             flashes "copied!" for 1.2s. Hover brightens the border to
+    │   │                             primary.main, the same treatment SpanWaterfallRow uses for a
+    │   │                             selected row
+    │   ├── useCopyToClipboard.ts      copied/copy() hook backing IdChip — writes to navigator.clipboard,
+    │   │                             resets the flashed "copied!" state after resetAfterMs (1.2s default)
     │   ├── SummaryStrip.tsx           collapsible "Overview" panel: header (click to collapse) +
     │   │                             optional "Prompt" row + the KPI tile row + TokenCompositionCard
-    │   │                             (two labelled TokenTrack bars — "Full rate" scaled to the
-    │   │                             input/output/cache-create subtotal, "Cache read 0.1×" scaled to
-    │   │                             the trace total — + a 4-item legend carrying each kind's share,
-    │   │                             "N% cached" chip, model-call count, total cost) +
-    │   │                             MetaFooter (full trace/session ids, root span, services, started).
-    │   │                             Tooltip fires only when a value element overflows; the panel
-    │   │                             always starts expanded on navigation (collapse is per-view only)
+    │   │                             (one log-scaled list — one row per nonzero token category, sorted
+    │   │                             by magnitude, swatch + label [+ "0.1×" rate tag, cache-read row
+    │   │                             only] + bar + value + share%, plus the "N% cached" chip, model-call
+    │   │                             count, and total cost) + MetaFooter (root span, services, started —
+    │   │                             no ids; those live in the header's IdChips), laid out
+    │   │                             space-between across the card's full width. Tooltip fires only
+    │   │                             when a value element overflows; the panel always starts expanded
+    │   │                             on navigation (collapse is per-view only)
     │   └── index.ts
     ├── WaterfallToolbar/
     │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens/cost legend
@@ -193,7 +204,7 @@ TraceDetailPage/
 ```
 ┌─ TraceDetailHeaderView ──────────────────────────────────────────────────────────┐
 │ Observability                                                                    │
-│ Traces › Trace detail                                                            │
+│ Traces › Trace detail  [TRACE 0102…⧉]  [SESSION abc…⧉]  ← IdChips, next to the h1 │
 │ ┌─ SummaryStrip: "Overview" ─────────────────────────────────────────┐          │
 │ │ ▾ OVERVIEW                                                          │  ← click to
 │ ├────────────────────────────────────────────────────────────────────┤    collapse
@@ -201,14 +212,15 @@ TraceDetailPage/
 │ ├──────┬────────┬───────┬────────────┬───────┬────────┬──────────────┤    firstUserPrompt
 │ │ Cost │Duration│ Spans │ Tool calls │ Depth │ Errors │              │  ← KPI tiles
 │ ├────────────────────────────────────────────────────────────────────┤
-│ │ TOKEN COMPOSITION 1.2M [>99% cached] 3 model calls · $0.42         │
-│ │ FULL RATE      ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇      54K   │
-│ │ CACHE READ 0.1× ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  1.1M · >99.9%│
-│ │ ■ Cache read 1.1M >99.9%  ■ Input 42K 3.5%  ■ Cache creation 9K 0.8%│
-│ │ ■ Output 3K 0.2%                                                    │
+│ │ TOKEN COMPOSITION 1.2M [>99% cached]         3 model calls · $0.42 │
+│ │ ■ Cache read 0.1× ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇   1.1M   >99.9% │  ← one row per
+│ │ ■ Input           ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                42K    3.5% │    nonzero
+│ │ ■ Cache creation   ▇▇▇▇▇▇▇▇▇▇▇▇▇▇                        9K    0.8% │    category,
+│ │ ■ Output            ▇▇▇▇▇▇▇▇▇                             3K    0.2% │    log-scaled,
+│ │ Bars scaled logarithmically — cache read runs 10–100× the other …  │    sorted desc
 │ ├────────────────────────────────────────────────────────────────────┤
-│ │ TRACE ID 0102…  SESSION abc…  ROOT SPAN ■ …  SERVICES 2  STARTED … │  ← MetaFooter
-│ └────────────────────────────────────────────────────────────────────┘          │
+│ │ ROOT SPAN ■ …                SERVICES 2                STARTED …  │  ← MetaFooter,
+│ └────────────────────────────────────────────────────────────────────┘    space-between
 └──────────────────────────────────────────────────────────────────────────────────┘
 
 Collapsed, the whole panel is one line: `▸ OVERVIEW   $0.42 · 4.2s · 31 spans ·
@@ -529,8 +541,9 @@ so the edge tracks the cursor 1:1.
   deflate the rate with a denominator the cache can't influence. Returns `null` (chip hidden, no
   "—" placeholder) when the trace logged no input-side tokens. Nothing is fetched for it; it's
   derived from the `TokenBreakdown` the header already computes. Its violet tint resolves through
-  `tokenComposition.cacheRead` + `primary.main`, matching the cache-read track right below
-  it — not MUI's default `info` palette, which is an unrelated blue in this theme.
+  `tokenComposition.cacheRead` + `primary.main`, matching the cache-read row in the composition list
+  below it (usually the top row, since rows sort by magnitude and cache read is normally the
+  largest) — not MUI's default `info` palette, which is an unrelated blue in this theme.
   **Both chips render `cacheHitRateLabel`, not the raw percent** — it rounds asymmetrically at the
   top of the range, so only an exact 100% prints "100%" and anything above 99 prints ">99%". On a
   real trace cache read is 99.x% of every input-side token, and "100% cached" reads as "nothing was
@@ -539,21 +552,30 @@ so the edge tracks the cursor 1:1.
 - **The token figures split by rate, not by billed/free.** Cache read is billed too — at a tenth of
   the input rate — but it routinely runs 10-1000x the other three counts, so anything that scales
   all four together paints one solid bar and hides the numbers a reader is actually deciding on.
-  Both surfaces therefore split: `SummaryStrip`'s `TokenCompositionCard` renders two `TokenTrack`
-  bars (the full-rate three scaled to `fullRateTokens(breakdown)`, cache read scaled to the trace
-  total), and `SpanWaterfallRow` renders `SpanFullRateBadge` beside a deliberately quiet
-  `SpanCacheReadBadge`. Don't recombine them into one total. Legend and track values carry
-  `tokenShareLabel`, which clamps to "<0.1%" / ">99.9%" so a 40-token output row never reads "0%".
+  `SummaryStrip`'s `TokenCompositionCard` handles this with a single **log-scaled** list instead —
+  one `TokenRow` per nonzero token category (cache read / input / cache creation / output), sorted
+  by magnitude descending, each bar's width `Math.log10(value + 1) / Math.log10(maxValue + 1) * 100`
+  (clamped to a 4% floor) against the unfiltered max across all four categories — same reasoning as
+  the Token Usage "over time" chart's log y-axis (see frontend/CLAUDE.md's stacked-chart-labeling
+  section). The cache-read row alone carries an inline "0.1×" rate tag. `SpanWaterfallRow` still
+  renders `SpanFullRateBadge` beside a deliberately quiet `SpanCacheReadBadge` — that two-badge split
+  is unaffected by this and follows the same "don't recombine into one total" rule. Row and badge
+  values carry `tokenShareLabel`, which clamps to "<0.1%" / ">99.9%" so a 40-token output row never
+  reads "0%".
 - **Token chips are pink; amber means cost.** The row's token badges and the toolbar legend's
   "tokens" key resolve through `tokenFigureColor(mode)` in `theme/colors.ts` (deeper pink on light,
   the bright pink on dark). Amber is reserved for cost and the "+N below" warning, so one row never
   shows two amber numbers meaning different things — which is why the toolbar legend has four keys,
   not three. The drawer's Tokens *section* keeps its amber treatment: it reads as a panel, not as a
   figure.
-- **The trace/session ids are plain text now, not copy chips.** The Aurora cost sync removed
-  `IdChip.tsx` and its `useCopyToClipboard.ts` hook (nothing else imported them) and moved both
-  ids, un-truncated, into the meta footer. Re-adding a copy affordance means bringing back a
-  component, not flipping a prop.
+- **The trace/session ids are copy-to-clipboard chips in the header, not footer text.**
+  `TraceDetailHeaderView` renders `IdChip` (`TraceDetailHeader/IdChip.tsx` +
+  `useCopyToClipboard.ts`) inline in the breadcrumb row, right after the "Trace detail" h1 — always
+  for the trace id, and for the session id only when it's truthy. The value truncates at 150px with
+  an ellipsis; the `title` attribute and the click-to-copy both use the full untruncated value.
+  `SummaryStrip`'s `MetaFooter` no longer takes `traceId`/`sessionId` props at all — it's down to
+  Root span / Services / Started, laid out `justifyContent: 'space-between'` across the card's full
+  width instead of left-clustered.
 - **`kind` is deliberately not on the waterfall row.** Nearly every real Claude Code span is
   `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace
@@ -566,7 +588,11 @@ so the edge tracks the cursor 1:1.
   `full_command` first because on a Bash span `command` is only the heredoc's first line. It clamps
   at 300 chars and points at the drawer for the rest rather than growing a second expand path; the
   drawer's `longValue.tsx` owns that. A span with none of those keys says so explicitly instead of
-  rendering an empty card.
+  rendering an empty card. **`tool_name === 'Agent'` is a special case**: `subagent_type` (when
+  populated) wins over every `TOOL_ARG_KEYS` entry, since an Agent span's "what was it asked to do"
+  is which subagent it dispatched to, not a shell/file/search argument it doesn't carry. Every other
+  tool is unaffected — the fallback to `TOOL_ARG_KEYS.find(...)` only runs when the span isn't an
+  Agent span or `subagent_type` is absent/empty.
 - **No window context.** This page does not use `useWindowContext()` or `useSectionContext()`.
   It has no `WindowSelector`, no auto-refresh, and no polling. The three query keys are keyed only
   on `traceId`; staleTime and refetchOnWindowFocus from the global `QueryClient` apply.

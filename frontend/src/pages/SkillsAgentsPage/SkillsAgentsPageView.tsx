@@ -1,12 +1,12 @@
 import { Box } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
-import StatCard from '../../components/StatCard';
+import StatCard, { isLongStatValue } from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
+import type { DonutCoverageModel } from '../../components/DonutCard';
 import { colorForIndex } from '../../theme/theme';
-import type { ChartCardLegendItem } from '../../components/ChartCard';
-import ModelBreakdownCard from './components/ModelBreakdownCard';
-import type { ModelBreakdownRow } from './components/ModelBreakdownCard';
-import type { IdentifierRowWithShare } from './skillsAgentsDerivations';
+import ModelFirstBlocks from './components/ModelFirstBlocks';
+import type { ModelFirstBlock } from './components/ModelFirstBlocks';
+import { UNKNOWN_IDENTIFIER, type IdentifierRowWithShare } from './skillsAgentsDerivations';
 
 export type { IdentifierRowWithShare };
 
@@ -17,21 +17,19 @@ export interface SkillsAgentsPageViewProps {
   subagentRows: IdentifierRowWithShare[];
   subagentTotal: number;
   isSubagentsLoading: boolean;
-  skillModelRows: ModelBreakdownRow[];
-  skillModelLegendItems: ChartCardLegendItem[];
-  subagentModelRows: ModelBreakdownRow[];
-  subagentModelLegendItems: ChartCardLegendItem[];
+  modelCoverageModels: DonutCoverageModel[];
+  skillModelBlocks: ModelFirstBlock[];
+  subagentModelBlocks: ModelFirstBlock[];
   error: Error | null;
 }
-
-const UNKNOWN_BUCKET = 'unknown';
 
 const toSlices = (rows: IdentifierRowWithShare[]) =>
   rows.map((row, index) => ({
     label: row.tool,
     value: row.calls,
     color: colorForIndex(index),
-    muted: row.tool === UNKNOWN_BUCKET,
+    muted: row.tool === UNKNOWN_IDENTIFIER,
+    coverageByModel: row.byModel,
   }));
 
 const Accent = ({ children }: { children: React.ReactNode }) => (
@@ -47,10 +45,9 @@ const SkillsAgentsPageView = ({
   subagentRows,
   subagentTotal,
   isSubagentsLoading,
-  skillModelRows,
-  skillModelLegendItems,
-  subagentModelRows,
-  subagentModelLegendItems,
+  modelCoverageModels,
+  skillModelBlocks,
+  subagentModelBlocks,
   error,
 }: SkillsAgentsPageViewProps) => {
   const topSkill = skillRows[0] ?? null;
@@ -82,6 +79,7 @@ const SkillsAgentsPageView = ({
           label="Top skill"
           value={topSkill ? topSkill.tool : '—'}
           accent={Boolean(topSkill)}
+          long={topSkill ? isLongStatValue(topSkill.tool) : false}
           sub={topSkill ? <><Accent>{topSkill.share.toFixed(1)}%</Accent> of skill calls</> : undefined}
         />
         <StatCard
@@ -93,6 +91,7 @@ const SkillsAgentsPageView = ({
           label="Top subagent"
           value={topSubagent ? topSubagent.tool : '—'}
           accent={Boolean(topSubagent)}
+          long={topSubagent ? isLongStatValue(topSubagent.tool) : false}
           sub={
             topSubagent ? (
               <><Accent>{topSubagent.share.toFixed(1)}%</Accent> of subagent calls</>
@@ -101,7 +100,8 @@ const SkillsAgentsPageView = ({
         />
       </Box>
 
-      {/* Skill mix beside Subagent mix — each donut's legend carries the full breakdown */}
+      {/* Skill mix beside Subagent mix — each donut's legend carries the full breakdown,
+          plus a per-model coverage tick group and a shared colour-key caption. */}
       <Box
         sx={{
           display: 'grid',
@@ -119,6 +119,8 @@ const SkillsAgentsPageView = ({
           hasData={skillRows.length > 0}
           isLoading={isSkillsLoading}
           emptyLabel="No Skill invocations in this window."
+          coverageTicks={modelCoverageModels}
+          legendCaption={modelCoverageModels}
         />
         <DonutCard
           title="Subagent mix"
@@ -129,10 +131,13 @@ const SkillsAgentsPageView = ({
           hasData={subagentRows.length > 0}
           isLoading={isSubagentsLoading}
           emptyLabel="No subagent invocations in this window."
+          coverageTicks={modelCoverageModels}
+          legendCaption={modelCoverageModels}
         />
       </Box>
 
-      {/* Same pairing, split by the model behind each call */}
+      {/* Same pairing, grouped by the model behind each call — model-first blocks,
+          each ranking what that model actually ran. */}
       <Box
         sx={{
           display: 'grid',
@@ -141,19 +146,17 @@ const SkillsAgentsPageView = ({
           alignItems: 'stretch',
         }}
       >
-        <ModelBreakdownCard
+        <ModelFirstBlocks
           title="Skills by model"
-          subtitle="Skill invocations split by the model that made the call."
-          rows={skillModelRows}
-          legendItems={skillModelLegendItems}
+          subtitle="Skill invocations split by the model that made the call, ranked within each model."
+          blocks={skillModelBlocks}
           isLoading={isSkillsLoading}
           emptyLabel="No Skill invocations in this window."
         />
-        <ModelBreakdownCard
+        <ModelFirstBlocks
           title="Subagents by model"
-          subtitle="Subagent invocations split by the model that dispatched the call."
-          rows={subagentModelRows}
-          legendItems={subagentModelLegendItems}
+          subtitle="Subagent invocations split by the model that made the call, ranked within each model."
+          blocks={subagentModelBlocks}
           isLoading={isSubagentsLoading}
           emptyLabel="No subagent invocations in this window."
         />

@@ -1,10 +1,10 @@
 import SectionLayout, { type SectionTab } from '../../components/SectionLayout';
 
 const TABS: readonly SectionTab[] = [
-  { to: '/tool-activity/calls', label: 'Calls' },
-  { to: '/tool-activity/reliability', label: 'Reliability' },
-  { to: '/tool-activity/skills-agents', label: 'Skills & Subagents' },
-  { to: '/tool-activity/permissions', label: 'Denials' },
+  { to: '/tools/calls', label: 'Calls' },
+  { to: '/tools/reliability', label: 'Reliability' },
+  { to: '/tools/skills-agents', label: 'Skills & Subagents' },
+  { to: '/tools/permissions', label: 'Denials' },
 ];
 
 // React Query key prefixes used by the four child pages. Drives the section-level

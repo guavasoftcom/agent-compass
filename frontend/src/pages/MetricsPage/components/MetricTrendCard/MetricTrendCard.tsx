@@ -5,7 +5,7 @@ import AreaTrendChart from '../../../../components/AreaTrendChart';
 import SegmentedToggle from '../../../../components/SegmentedToggle';
 import { colorForIndex } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
-import { formatCompact } from '../../../../lib/format';
+import { formatCompact, isSparseCounter } from '../../../../lib/format';
 import type { MetricSeries } from '../metricsSampleData';
 
 export interface MetricTrendCardProps {
@@ -17,9 +17,6 @@ export interface MetricTrendCardProps {
 }
 
 const SPLIT_NONE = 'None';
-
-/** Above this peak a whole-number series is dense enough to read as a curve. */
-const DISCRETE_PEAK_CEILING = 5;
 
 /**
  * Trend chart card for the selected metric. Renders a titled Paper with an
@@ -69,13 +66,7 @@ const MetricTrendCard = ({
    * rather than a per-metric flag so an uncurated counter the backend discovers
    * gets the same treatment without a spec.
    */
-  const isDiscrete = useMemo(() => {
-    if (metric.trend.length === 0) {
-      return false;
-    }
-    const peakValue = metric.trend.reduce((peak, value) => Math.max(peak, value), 0);
-    return peakValue <= DISCRETE_PEAK_CEILING && metric.trend.every((value) => Number.isInteger(value));
-  }, [metric.trend]);
+  const isDiscrete = useMemo(() => isSparseCounter(metric.trend), [metric.trend]);
 
   const yUnit = metric.unit.replace(/[{}]/g, '');
   const yLabel = `${yUnit}${split === SPLIT_NONE ? '' : ' (stacked)'}`;
@@ -96,12 +87,14 @@ const MetricTrendCard = ({
           <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 16 }}>
             {metric.name.replace('claude_code.', '')} over time
           </Typography>
-          <Tooltip
-            title="With **Split by** set, the areas stack — the top edge is the metric's total and each band's thickness is that slice's own value. With **None** the chart is a single total series; the y-axis label says which you're looking at."
-            arrow
-          >
-            <InfoOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', cursor: 'help' }} />
-          </Tooltip>
+          {hasSplits && (
+            <Tooltip
+              title="With **Split by** set, the areas stack — the top edge is the metric's total and each band's thickness is that slice's own value. With **None** the chart is a single total series; the y-axis label says which you're looking at."
+              arrow
+            >
+              <InfoOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', cursor: 'help' }} />
+            </Tooltip>
+          )}
         </Box>
         {hasSplits && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.125 }}>

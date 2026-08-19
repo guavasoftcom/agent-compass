@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { colorForIndex } from '../../theme/theme';
 import {
   buildModelColorIndexes,
-  buildModelLegendItems,
-  toModelBreakdownRows,
+  buildModelCoverageModels,
+  buildModelFirstBlocks,
   withShare,
 } from './skillsAgentsDerivations';
 import type { IdentifierUsageRow } from '../../api';
@@ -11,23 +11,28 @@ import type { IdentifierUsageRow } from '../../api';
 const OPUS = 'claude-opus-4-8';
 const SONNET = 'claude-sonnet-4-6';
 const HAIKU = 'claude-haiku-4-5-20251001';
+const MYSTERY = 'claude-mystery-9';
 
 const skillRows: IdentifierUsageRow[] = [
-  { tool: 'ship', calls: 30, byModel: { [SONNET]: 20, [OPUS]: 10 } },
-  { tool: 'verify', calls: 10, byModel: { [OPUS]: 6, [HAIKU]: 4 } },
+  { tool: 'sync-docs', calls: 75, byModel: { [SONNET]: 40, [OPUS]: 28, [HAIKU]: 7 } },
+  { tool: 'ship', calls: 49, byModel: { [HAIKU]: 49 } },
+  { tool: 'claude-api', calls: 13, byModel: { [OPUS]: 13 } },
+  { tool: 'artifact-design', calls: 9, byModel: { [OPUS]: 9 } },
 ];
 
 const subagentRows: IdentifierUsageRow[] = [
-  { tool: 'Explore', calls: 12, byModel: { [OPUS]: 12 } },
+  { tool: 'claude-code-guide', calls: 4, byModel: { [OPUS]: 1, [HAIKU]: 3 } },
+  { tool: 'Explore', calls: 4, byModel: { [SONNET]: 2, [HAIKU]: 2 } },
+  { tool: 'unknown', calls: 1, byModel: { [SONNET]: 1 } },
 ];
 
 describe('withShare', () => {
   it('computes each row share against the total', () => {
     const { rows, total } = withShare(skillRows);
 
-    expect(total).toBe(40);
-    expect(rows[0].share).toBeCloseTo(75);
-    expect(rows[1].share).toBeCloseTo(25);
+    expect(total).toBe(146);
+    expect(rows[0].share).toBeCloseTo((75 / 146) * 100);
+    expect(rows[1].share).toBeCloseTo((49 / 146) * 100);
   });
 
   it('reports zero share instead of dividing by zero on an empty window', () => {
@@ -39,19 +44,22 @@ describe('withShare', () => {
 });
 
 describe('buildModelColorIndexes', () => {
-  it('orders models by total calls across every row set', () => {
+  it('orders the known model families Sonnet, Opus, Haiku regardless of call volume', () => {
     const indexes = buildModelColorIndexes(skillRows, subagentRows);
 
-    // Opus 28 across both sets, Sonnet 20, Haiku 4.
-    expect([...indexes.entries()]).toEqual([[OPUS, 0], [SONNET, 1], [HAIKU, 2]]);
+    // Opus has the most calls overall (28+13+9+1=51), but the family order is
+    // fixed — Sonnet still gets index 0 (the violet aurora slot).
+    expect([...indexes.entries()]).toEqual([[SONNET, 0], [OPUS, 1], [HAIKU, 2]]);
   });
 
-  it('breaks ties on model id so the assignment is stable', () => {
-    const tied: IdentifierUsageRow[] = [
-      { tool: 'ship', calls: 2, byModel: { [SONNET]: 1, [OPUS]: 1 } },
+  it('places an unrecognized model family after the known trio, ordered by call volume', () => {
+    const withMystery: IdentifierUsageRow[] = [
+      { tool: 'ship', calls: 5, byModel: { [MYSTERY]: 5, [SONNET]: 1 } },
     ];
 
-    expect([...buildModelColorIndexes(tied).keys()]).toEqual([OPUS, SONNET]);
+    const indexes = buildModelColorIndexes(withMystery);
+
+    expect([...indexes.entries()]).toEqual([[SONNET, 0], [MYSTERY, 1]]);
   });
 
   it('tolerates rows whose byModel map is missing', () => {
@@ -61,49 +69,76 @@ describe('buildModelColorIndexes', () => {
   });
 });
 
-describe('buildModelLegendItems', () => {
-  it('lists only the models present in the given rows, in palette order', () => {
+describe('buildModelCoverageModels', () => {
+  it('lists every known model in palette order with a short label and colour', () => {
     const indexes = buildModelColorIndexes(skillRows, subagentRows);
 
-    expect(buildModelLegendItems(subagentRows, indexes)).toEqual([
-      { label: 'Opus 4 8', color: colorForIndex(0) },
-    ]);
-    expect(buildModelLegendItems(skillRows, indexes).map((item) => item.label)).toEqual([
-      'Opus 4 8',
-      'Sonnet 4 6',
-      'Haiku 4 5 20251001',
+    expect(buildModelCoverageModels(indexes)).toEqual([
+      { key: SONNET, label: 'Sonnet 4 6', color: colorForIndex(0) },
+      { key: OPUS, label: 'Opus 4 8', color: colorForIndex(1) },
+      { key: HAIKU, label: 'Haiku 4 5 20251001', color: colorForIndex(2) },
     ]);
   });
 });
 
-describe('toModelBreakdownRows', () => {
-  it('keeps the row total and orders segments to match the legend', () => {
+describe('buildModelFirstBlocks', () => {
+  it('gives every known model a block, ranked by that model\'s own calls', () => {
     const indexes = buildModelColorIndexes(skillRows, subagentRows);
-    const rows = toModelBreakdownRows(skillRows, indexes);
+    const blocks = buildModelFirstBlocks(skillRows, indexes);
 
-    expect(rows[0].identifier).toBe('ship');
-    expect(rows[0].totalCalls).toBe(30);
-    expect(rows[0].segments).toEqual([
-      { model: OPUS, label: 'Opus 4 8', calls: 10, color: colorForIndex(0) },
-      { model: SONNET, label: 'Sonnet 4 6', calls: 20, color: colorForIndex(1) },
+    expect(blocks.map((block) => block.model)).toEqual([SONNET, OPUS, HAIKU]);
+
+    const sonnetBlock = blocks[0];
+    expect(sonnetBlock.totalCalls).toBe(40);
+    expect(sonnetBlock.rows).toEqual([{ identifier: 'sync-docs', calls: 40, muted: false }]);
+
+    const opusBlock = blocks[1];
+    expect(opusBlock.totalCalls).toBe(50);
+    expect(opusBlock.rows).toEqual([
+      { identifier: 'claude-api', calls: 13, muted: false },
+      { identifier: 'artifact-design', calls: 9, muted: false },
+      { identifier: 'sync-docs', calls: 28, muted: false },
+    ].sort((left, right) => right.calls - left.calls));
+
+    const haikuBlock = blocks[2];
+    expect(haikuBlock.totalCalls).toBe(56);
+    expect(haikuBlock.rows[0]).toEqual({ identifier: 'ship', calls: 49, muted: false });
+  });
+
+  it('renders an empty-rows block (not an omitted block) for a model with zero calls in this row set', () => {
+    const onlyOpus: IdentifierUsageRow[] = [{ tool: 'ship', calls: 4, byModel: { [OPUS]: 4 } }];
+    const indexes = buildModelColorIndexes(onlyOpus, [
+      { tool: 'other', calls: 1, byModel: { [SONNET]: 1, [HAIKU]: 1 } },
     ]);
+
+    const blocks = buildModelFirstBlocks(onlyOpus, indexes);
+    const sonnetBlock = blocks.find((block) => block.model === SONNET);
+
+    expect(sonnetBlock).toEqual({ model: SONNET, label: 'Sonnet 4 6', color: colorForIndex(0), totalCalls: 0, rows: [] });
   });
 
-  it('gives every row the same colour for the same model', () => {
+  it('marks the unknown bucket as muted', () => {
+    const indexes = buildModelColorIndexes(subagentRows);
+    const blocks = buildModelFirstBlocks(subagentRows, indexes);
+    const sonnetBlock = blocks.find((block) => block.model === SONNET);
+
+    expect(sonnetBlock?.rows).toContainEqual({ identifier: 'unknown', calls: 1, muted: true });
+  });
+
+  it('gives every block the same colour for the same model as buildModelCoverageModels', () => {
     const indexes = buildModelColorIndexes(skillRows, subagentRows);
-    const [skillRow] = toModelBreakdownRows(skillRows, indexes);
-    const [subagentRow] = toModelBreakdownRows(subagentRows, indexes);
+    const coverageModels = buildModelCoverageModels(indexes);
+    const skillBlocks = buildModelFirstBlocks(skillRows, indexes);
 
-    const opusInSkill = skillRow.segments.find((segment) => segment.model === OPUS);
-    const opusInSubagent = subagentRow.segments.find((segment) => segment.model === OPUS);
-    expect(opusInSkill?.color).toBe(opusInSubagent?.color);
+    for (const model of coverageModels) {
+      const block = skillBlocks.find((candidate) => candidate.model === model.key);
+      expect(block?.color).toBe(model.color);
+    }
   });
 
-  it('yields a row with no segments when the backend sends no split', () => {
+  it('yields empty-rows blocks when the backend sends no split at all', () => {
     const withoutSplit = [{ tool: 'ship', calls: 3 }] as unknown as IdentifierUsageRow[];
 
-    expect(toModelBreakdownRows(withoutSplit, new Map())).toEqual([
-      { identifier: 'ship', totalCalls: 3, segments: [] },
-    ]);
+    expect(buildModelFirstBlocks(withoutSplit, new Map())).toEqual([]);
   });
 });

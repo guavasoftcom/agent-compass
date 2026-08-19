@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  * {@code claude_code.*} counter, each with a windowed trend and any attribute
  * splits, for the Metrics page master-detail.
  *
- * <p>The counter list is curated-plus-discovered rather than fixed. Seven counters
+ * <p>The counter list is curated-plus-discovered rather than fixed. Eight counters
  * have hand-written descriptions, units, and splits; any other metric name the
  * database has ever received is appended with a generated spec, so a metric added
  * by a newer agent release shows up without a code change. See
@@ -146,7 +146,7 @@ public class MetricSeriesService {
     return ValueFormat.NUMBER;
   }
 
-  // The seven known counters and how each one reads. Metric names come from
+  // The eight known counters and how each one reads. Metric names come from
   // TuningProperties so deployments can override the emission namespace; split
   // attribute keys (model / type / decision) are the OTLP attribute names.
   private List<MetricSpec> curatedMetricSpecs() {
@@ -185,6 +185,12 @@ public class MetricSeriesService {
             "Git commits created during Claude Code sessions. A low-volume counter — it moves only "
                 + "when the agent actually commits, so read it as a throughput signal rather than a "
                 + "rate. No split: it carries only session and user identity attributes.",
+            ValueFormat.NUMBER, Map.of()),
+        new MetricSpec(
+            "pull_request", tuningProperties.getPullRequestCountMetric(), "", "Sum",
+            "Pull requests opened during Claude Code sessions. The narrowest funnel on this page — "
+                + "commits show work happening, this shows work being handed to a reviewer, so a day "
+                + "of commits with no PR is worth a look.",
             ValueFormat.NUMBER, Map.of()));
   }
 

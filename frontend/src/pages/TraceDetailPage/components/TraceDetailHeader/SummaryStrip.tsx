@@ -8,7 +8,6 @@ import { gradients, tokenComposition } from '../../../../theme/colors';
 import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
 import {
   cacheHitRateLabel,
-  fullRateTokens,
   tokenShareLabel,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
@@ -42,64 +41,87 @@ const TOKEN_SEGMENTS: Array<{
   { key: 'output', label: 'Output', color: tokenComposition.output },
 ];
 
-// Label column of the two composition tracks. Fixed so both bars start on the
-// same x and can be read against each other.
-const TRACK_LABEL_WIDTH = 118;
+// Label column of the token rows. Fixed so every bar starts on the same x and
+// the swatch + label + rate tag never wraps.
+const TOKEN_ROW_LABEL_WIDTH = 132;
 
-// One labelled bar: eyebrow label (with an optional rate note), the track, and
-// the figure it sums to.
-const TokenTrack = ({
+// One labelled row in the composition list: color swatch + label (+ optional
+// rate tag, cache-read only) + a log-scaled bar + raw value + share of the
+// trace total. Replaces the old two-track + legend-grid layout with a single
+// list, one row per nonzero token category.
+const TokenRow = ({
   label,
   rateNote,
+  color,
+  widthPercent,
   barTitle,
   valueLabel,
-  children,
+  shareLabel,
 }: {
   label: string;
   rateNote?: string;
+  color: string;
+  widthPercent: number;
   barTitle: string;
   valueLabel: string;
-  children: ReactNode;
+  shareLabel: string;
 }) => (
   <Box
     sx={{
       display: 'grid',
-      gridTemplateColumns: `${TRACK_LABEL_WIDTH}px 1fr auto`,
+      gridTemplateColumns: `${TOKEN_ROW_LABEL_WIDTH}px 1fr auto auto`,
       alignItems: 'center',
       gap: 1.5,
     }}
   >
-    <Typography
-      sx={{ typography: 'eyebrowSm', color: 'text.disabled', whiteSpace: 'nowrap' }}
-    >
-      {label}
-      {rateNote ? (
-        <Box
-          component="span"
-          sx={{
-            typography: 'mono',
-            fontSize: 9.5,
-            letterSpacing: 0,
-            textTransform: 'none',
-            opacity: 0.8,
-            ml: 0.4,
-          }}
-        >
-          {rateNote}
-        </Box>
-      ) : null}
-    </Typography>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.85, minWidth: 0 }}>
+      <Box
+        sx={{
+          width: 9,
+          height: 9,
+          borderRadius: radii.xs,
+          bgcolor: color,
+          flexShrink: 0,
+        }}
+      />
+      <Typography
+        sx={{ typography: 'eyebrowSm', color: 'text.disabled', whiteSpace: 'nowrap' }}
+      >
+        {label}
+        {rateNote ? (
+          <Box
+            component="span"
+            sx={{
+              typography: 'mono',
+              fontSize: 9.5,
+              letterSpacing: 0,
+              textTransform: 'none',
+              opacity: 0.8,
+              ml: 0.4,
+            }}
+          >
+            {rateNote}
+          </Box>
+        ) : null}
+      </Typography>
+    </Box>
     <Box
       title={barTitle}
       sx={{
-        display: 'flex',
         height: 8,
         borderRadius: radii.xs,
         overflow: 'hidden',
         bgcolor: 'action.hover',
       }}
     >
-      {children}
+      <Box
+        sx={{
+          height: '100%',
+          minWidth: 2,
+          bgcolor: color,
+          width: `${widthPercent}%`,
+        }}
+      />
     </Box>
     <Box
       component="span"
@@ -111,6 +133,19 @@ const TokenTrack = ({
       }}
     >
       {valueLabel}
+    </Box>
+    <Box
+      component="span"
+      sx={{
+        typography: 'mono',
+        fontSize: 11,
+        color: 'text.disabled',
+        whiteSpace: 'nowrap',
+        minWidth: 44,
+        textAlign: 'right',
+      }}
+    >
+      {shareLabel}
     </Box>
   </Box>
 );
@@ -164,19 +199,23 @@ const TokenCompositionCard = ({
     ? `${modelCallCount} model ${modelCallCount === 1 ? 'call' : 'calls'}`
     : 'no model calls';
   const cacheHitLabel = cacheHitRateLabel(tokenBreakdown);
-  // Two tracks, not one. Cache read routinely runs 100-1000x the other counts, so
-  // a single stacked bar paints solid violet and the three numbers a reader is
-  // actually deciding on vanish into a hairline. The split is by rate, not by
-  // billed/free — cache read is billed too, at a tenth of the input rate — so the
-  // top track scales to the full-rate subtotal and cache read keeps its own
-  // track, measured against the trace total.
-  const fullRate = fullRateTokens(tokenBreakdown);
-  const cacheReadShare =
-    tokenBreakdown.total > 0
-      ? (tokenBreakdown.cacheRead / tokenBreakdown.total) * 100
-      : 0;
-  const fullRateSegments = TOKEN_SEGMENTS.filter(
-    ({ key }) => key !== 'cacheRead' && tokenBreakdown[key] > 0,
+  // One list, log-scaled, not two tracks + a legend grid. Cache read routinely
+  // runs 10-100x the other three counts, so a linear scale paints one solid bar
+  // and the figures a reader is actually deciding on vanish into a hairline —
+  // the same reasoning behind the Token Usage "over time" chart's log y-axis
+  // (see frontend/CLAUDE.md's stacked-chart-labeling section). `maxValue` is
+  // taken across all four categories, unfiltered, so a trace with only one
+  // nonzero category still scales sensibly rather than filling the bar.
+  const maxValue = Math.max(
+    1,
+    tokenBreakdown.cacheRead,
+    tokenBreakdown.input,
+    tokenBreakdown.cacheCreate,
+    tokenBreakdown.output,
+  );
+  const logMax = Math.log10(maxValue + 1) || 1;
+  const rows = TOKEN_SEGMENTS.filter(({ key }) => tokenBreakdown[key] > 0).sort(
+    (a, b) => tokenBreakdown[b.key] - tokenBreakdown[a.key],
   );
   return (
     <Box sx={{ px: 2.25, py: 1.75, borderTop: 1, borderColor: 'divider' }}>
@@ -245,115 +284,33 @@ const TokenCompositionCard = ({
           {`${modelCallLabel} · ${formatUsd(totalCostUsd)}`}
         </Typography>
       </Box>
-      <Box sx={{ display: 'grid', gap: 1.125, mb: 1.625 }}>
-        <TokenTrack
-          label="Full rate"
-          barTitle="Input, cache creation and output — the tokens priced at full rate, scaled to their subtotal"
-          valueLabel={formatTokens(fullRate)}
-        >
-          {fullRateSegments.map(({ key, color }) => (
-            <Box
+      <Box sx={{ display: 'grid', gap: 0.875, mb: 1.25 }}>
+        {rows.map(({ key, label, color }) => {
+          const value = tokenBreakdown[key];
+          const widthPercent = Math.max(4, (Math.log10(value + 1) / logMax) * 100);
+          return (
+            <TokenRow
               key={key}
-              sx={{
-                height: '100%',
-                minWidth: 2,
-                bgcolor: color,
-                width: `${(tokenBreakdown[key] / Math.max(1, fullRate)) * 100}%`,
-              }}
+              label={label}
+              rateNote={key === 'cacheRead' ? '0.1×' : undefined}
+              color={color}
+              widthPercent={widthPercent}
+              barTitle={`${label} — ${formatTokens(value)} tokens, ${tokenShareLabel(
+                value,
+                tokenBreakdown.total,
+              )} of the trace`}
+              valueLabel={formatTokens(value)}
+              shareLabel={tokenShareLabel(value, tokenBreakdown.total)}
             />
-          ))}
-        </TokenTrack>
-        <TokenTrack
-          label="Cache read"
-          rateNote="0.1×"
-          barTitle="Cache read as a share of all tokens in this trace — billed at a tenth of the input rate"
-          valueLabel={`${formatTokens(tokenBreakdown.cacheRead)} · ${tokenShareLabel(
-            tokenBreakdown.cacheRead,
-            tokenBreakdown.total,
-          )}`}
-        >
-          {tokenBreakdown.cacheRead > 0 ? (
-            <Box
-              sx={{
-                height: '100%',
-                minWidth: 2,
-                bgcolor: tokenComposition.cacheRead,
-                opacity: 0.85,
-                width: `${cacheReadShare}%`,
-              }}
-            />
-          ) : null}
-        </TokenTrack>
+          );
+        })}
       </Box>
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: '8px 18px',
-        }}
+      <Typography
+        sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled' }}
       >
-        {TOKEN_SEGMENTS.map(({ key, label, color }) => (
-          <Box
-            key={key}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-              fontSize: 12,
-              minWidth: 0,
-            }}
-          >
-            <Box
-              sx={{
-                width: 9,
-                height: 9,
-                borderRadius: radii.xs,
-                bgcolor: color,
-                flexShrink: 0,
-              }}
-            />
-            <Box
-              component="span"
-              sx={{
-                flex: 1,
-                color: 'text.secondary',
-                fontFamily: fontFamilies.body,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {label}
-            </Box>
-            <Box
-              component="span"
-              sx={{
-                typography: 'mono',
-                color: 'text.primary',
-                fontWeight: 600,
-                flexShrink: 0,
-              }}
-            >
-              {formatTokens(tokenBreakdown[key])}
-            </Box>
-            {/* Share of the trace total, so the legend answers "how much of this
-                trace was cache read?" without the reader doing the division. */}
-            <Box
-              component="span"
-              sx={{
-                typography: 'mono',
-                fontSize: 11,
-                color: 'text.disabled',
-                flexShrink: 0,
-                minWidth: 44,
-                textAlign: 'right',
-              }}
-            >
-              {tokenShareLabel(tokenBreakdown[key], tokenBreakdown.total)}
-            </Box>
-          </Box>
-        ))}
-      </Box>
+        Bars scaled logarithmically — cache read runs 10–100× the other
+        categories, at a tenth of their rate.
+      </Typography>
     </Box>
   );
 };
@@ -375,19 +332,17 @@ const metaRowSx = {
   minWidth: 0,
 } as const;
 
-// De-emphasized footer for reference info that isn't a glanceable KPI: the full
-// trace/session ids (plain text — the Aurora sync dropped the breadcrumb's
-// copy-to-clipboard IdChip), root span, services, and start time.
+// De-emphasized footer for reference info that isn't a glanceable KPI: root
+// span, services, and start time. The trace/session ids live in the header's
+// IdChips now (TraceDetailHeaderView), not here — spread with
+// justifyContent: 'space-between' rather than left-clustered, since three
+// short items left a large dead gap on wide viewports.
 const MetaFooter = ({
-  traceId,
-  sessionId,
   rootName,
   rootColor,
   serviceLabels,
   startedAtLabel,
 }: {
-  traceId: string;
-  sessionId: string | null;
   rootName: string;
   rootColor: string;
   serviceLabels: string[];
@@ -397,44 +352,15 @@ const MetaFooter = ({
     sx={{
       display: 'flex',
       alignItems: 'center',
-      gap: 3.25,
+      justifyContent: 'space-between',
       px: 2.25,
       py: 1.4,
       borderTop: 1,
       borderColor: 'divider',
       flexWrap: 'wrap',
+      gap: 1.5,
     }}
   >
-    <Box sx={metaRowSx}>
-      <MetaLabel>Trace ID</MetaLabel>
-      <Box
-        component="span"
-        sx={{
-          typography: 'mono',
-          color: 'text.primary',
-          fontWeight: 600,
-          wordBreak: 'break-all',
-        }}
-      >
-        {traceId}
-      </Box>
-    </Box>
-    {sessionId ? (
-      <Box sx={metaRowSx}>
-        <MetaLabel>Session</MetaLabel>
-        <Box
-          component="span"
-          sx={{
-            typography: 'mono',
-            color: 'text.primary',
-            fontWeight: 600,
-            wordBreak: 'break-all',
-          }}
-        >
-          {sessionId}
-        </Box>
-      </Box>
-    ) : null}
     <Box sx={metaRowSx}>
       <MetaLabel>Root span</MetaLabel>
       <Box
@@ -497,8 +423,6 @@ export interface SummaryStripProps {
   tokenBreakdown: TokenBreakdown;
   modelCallCount: number;
   totalCostUsd: number;
-  traceId: string;
-  sessionId: string | null;
   rootName: string;
   rootColor: string;
   serviceLabels: string[];
@@ -522,8 +446,6 @@ const SummaryStrip = ({
   tokenBreakdown,
   modelCallCount,
   totalCostUsd,
-  traceId,
-  sessionId,
   rootName,
   rootColor,
   serviceLabels,
@@ -736,8 +658,6 @@ const SummaryStrip = ({
             totalCostUsd={totalCostUsd}
           />
           <MetaFooter
-            traceId={traceId}
-            sessionId={sessionId}
             rootName={rootName}
             rootColor={rootColor}
             serviceLabels={serviceLabels}

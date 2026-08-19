@@ -1,10 +1,10 @@
 # Skills & Subagents page
 
-A section tab under [Tool Usage (`/tool-activity`)](../ToolActivitySection/ToolActivitySection.tsx)
+A section tab under [Tool Usage (`/tools`)](../ToolActivitySection/ToolActivitySection.tsx)
 that shows skill and subagent invocation breakdowns for the selected window: four KPI tiles, a
-side-by-side pair of `DonutCard` mix charts, and a side-by-side pair of by-model segmented-bar
-cards. Backend counterpart: `ToolActivityController` → `LogService`
-(`backend/.../controller/ToolActivityController.java`), endpoints
+side-by-side pair of `DonutCard` mix charts (with per-model coverage ticks), and a side-by-side
+pair of model-first "by model" ranked-block cards. Backend counterpart: `ToolActivityController`
+→ `LogService` (`backend/.../controller/ToolActivityController.java`), endpoints
 `GET /api/tool-activity/skill-usage` and `GET /api/tool-activity/subagent-usage`.
 
 ## Files
@@ -12,16 +12,16 @@ cards. Backend counterpart: `ToolActivityController` → `LogService`
 ```
 SkillsAgentsPage/
 ├── SkillsAgentsPage.tsx           container — reads useSectionContext(), runs two queries,
-│                                  derives share + model colours + breakdown rows
+│                                  derives share + model colours + coverage models + by-model blocks
 ├── SkillsAgentsPageView.tsx       view — StatCard strip + two DonutCards + two
-│                                  ModelBreakdownCards; no queries, no context
+│                                  ModelFirstBlocks cards; no queries, no context
 ├── skillsAgentsDerivations.ts     pure derivations (withShare, buildModelColorIndexes,
-│                                  buildModelLegendItems, toModelBreakdownRows)
+│                                  buildModelCoverageModels, buildModelFirstBlocks)
 ├── skillsAgentsDerivations.test.ts vitest coverage for the above
 ├── components/
-│   └── ModelBreakdownCard/        "Skills by model" / "Subagents by model" — one segmented
-│       ├── ModelBreakdownCard.tsx CSS bar per skill/subagent, inside a ChartCard
-│       └── index.ts
+│   └── ModelFirstBlocks/          "Skills by model" / "Subagents by model" — one block per
+│       ├── ModelFirstBlocks.tsx   model, each ranking the rows that model actually called,
+│       └── index.ts               inside a ChartCard
 └── index.ts                       re-exports container as default
 ```
 
@@ -35,12 +35,13 @@ SkillsAgentsPage/
 │ │ Skill invocations │ Top skill │ Subagent invocations │ Top subagent│   │
 │ └───────────────────────────────────────────────────────────────────┘   │
 │ ┌─ 2-column DonutCard grid ─────────────────────────────────────────┐   │
-│ │  Skill mix (donut + ranked legend)  │  Subagent mix (same)        │   │
+│ │  Skill mix (donut + ranked legend + coverage ticks + colour key)   │   │
+│ │  Subagent mix (same)                                               │   │
 │ └───────────────────────────────────────────────────────────────────┘   │
-│ ┌─ 2-column ModelBreakdownCard grid ────────────────────────────────┐   │
-│ │  Skills by model                    │  Subagents by model         │   │
-│ │  legend: one swatch per model       │  (same)                     │   │
-│ │  row: name + total, segmented bar   │                             │   │
+│ ┌─ 2-column ModelFirstBlocks grid ──────────────────────────────────┐   │
+│ │  Skills by model: one block per model (Sonnet, Opus, Haiku),       │   │
+│ │  each block ranking the skills that model actually called          │   │
+│ │  Subagents by model (same)                                         │   │
 │ └───────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -56,8 +57,9 @@ Both fetchers live in `api/endpoints.ts` (the shared barrel, not a page-local mo
 
 Both return `IdentifierUsageRow[]` (imported from `../../api`). The `tool` field on each row
 carries the skill or subagent identifier; `calls` is the invocation count; `byModel` maps model
-id → calls and sums to `calls` (models with no calls are omitted, never sent as `0`). Both
-by-model cards are fed from these same two responses — there is no third query.
+id → calls and sums to `calls` (models with no calls are omitted, never sent as `0`). Both the
+mix donuts' coverage ticks and both "by model" cards are fed from these same two responses —
+there is no third query.
 
 ## Data flow and semantics
 
@@ -77,19 +79,37 @@ by-model cards are fed from these same two responses — there is no third query
 - **`withShare`** (in `skillsAgentsDerivations.ts`) maps `IdentifierUsageRow[]` to
   `IdentifierRowWithShare[]` and computes `total`. It runs in two `useMemo` calls — one for skills,
   one for subagents. `share` is `(100 * row.calls) / total`; total-zero guard sets `share = 0`.
-- **`buildModelColorIndexes`** takes *both* row sets and returns `model id → palette index`,
-  ordered by total calls across the page (ties broken on model id so the assignment is stable).
-  Both cards colour from that one map, so a model keeps one colour whether it appears under a
-  skill or a subagent. `toModelBreakdownRows` and `buildModelLegendItems` sort by that index, so
-  every bar stacks its segments in the same order as the legend.
-- **Bar scale.** `ModelBreakdownCard` scales every bar against the busiest row's total
-  (`largestRowCalls`), not against each row's own total — bar length reads as call volume and the
-  segments read as the model mix inside it. Rows are already sorted by calls descending by the
-  backend.
+- **`buildModelColorIndexes`** takes *both* row sets and returns `model id → palette index`. The
+  three known model families — Sonnet, Opus, Haiku — always land at indexes 0/1/2 (the app's
+  aurora violet/pink/cyan trio via `colorForIndex`), **regardless of call volume**; this is a
+  brand-consistency decision (see the design handoff), not a ranking. Any other model family gets
+  the next indexes, ordered by total calls (ties on model id), so a future 4th model still gets a
+  stable colour without colliding with the fixed trio.
+- **`buildModelCoverageModels`** turns that map into the single ordered `DonutCoverageModel[]`
+  list (`{ key, label, color }`) reused for *three* things: the `coverageTicks` prop on both
+  `DonutCard`s, the `legendCaption` prop on both `DonutCard`s, and (implicitly, via the same
+  `modelColorIndexes` map) the block order in both `ModelFirstBlocks` cards. It lists every known
+  model regardless of whether that particular row set (skills vs. subagents) has any calls from
+  it — a model absent from one card's data still gets a tick/caption/block slot, just an unlit
+  tick or an empty block.
+- **`buildModelFirstBlocks(rows, modelColorIndexes)`** produces one `ModelFirstBlock` per model in
+  `modelColorIndexes` order. Each block ranks only the rows that model actually called
+  (`byModel[model] > 0`), highest first; the bar scale inside a block is local to that block's own
+  max, not global across models. A model with zero calls anywhere in the row set still gets a
+  block (`rows: []`) so `ModelFirstBlocks` can render "No calls in this window" instead of
+  omitting the model — don't filter those blocks out upstream.
 - **`toSlices` helper** (module-private in the view) converts `IdentifierRowWithShare[]` into the
-  `DonutCard` slice shape: `{ label: row.tool, value: row.calls, color: colorForIndex(index) }`.
-  Rows whose `tool === 'unknown'` get `muted: true`.
-- Both `DonutCard`s use `ranked` mode, which renders a ranked legend beside the donut.
+  `DonutCard` slice shape: `{ label: row.tool, value: row.calls, color: colorForIndex(index),
+  muted, coverageByModel: row.byModel }`. `coverageByModel` is what `DonutCard` reads to light up
+  each row's coverage ticks. Rows whose `tool === 'unknown'` get `muted: true`.
+- Both `DonutCard`s use `ranked` mode (ranked legend) plus `coverageTicks` + `legendCaption` (the
+  per-model tick group between each row's name and its value, and the colour-key caption row below
+  the legend).
+- **Stat-card overflow guard.** "Top skill" / "Top subagent" pass `long={isLongStatValue(value)}`
+  (from `StatCard`) — a real identifier can run past the point where the default 30px value wraps
+  onto three lines, so `StatCard` shrinks to a 23px step (tighter letter-spacing, word-break) once
+  the value string exceeds `LONG_STAT_VALUE_THRESHOLD` (20 chars). This is length-driven, not a
+  hardcoded flag on these two cards specifically — any `StatCard` consumer can opt in the same way.
 - The `Accent` inline component (`color: primary.main`, `fontWeight: 600`) is a view-local
   convenience for the `sub` prop of `StatCard` — it is not exported.
 
@@ -100,11 +120,15 @@ by-model cards are fed from these same two responses — there is no third query
   come from `Agent` `tool_result` records, which carry **no** model attribute at all, so the
   backend attributes each call to the last main-loop `api_request` in the same session at or
   before it (the turn that emitted the tool_use). Calls whose dispatching turn is not in the data
-  land in an `unknown` model bucket. Hence the different card subtitles ("made the call" vs.
-  "dispatched the call") — don't collapse them into one string.
-- **Model colours are page-local, not global.** The palette index comes from this page's own
-  call-volume ranking, so the same model can have a different colour here than on the Token Usage
-  page (which ranks by token totals). Consistency is guaranteed *within* the page only.
+  land in an `unknown` model bucket. Both by-model cards now use the identical subtitle sentence
+  ("…split by the model that made the call, ranked within each model.") per the design handoff —
+  that's a UI-copy decision, not a claim that the two computations are equivalent; this note is
+  the place to look if the subagent split ever needs re-explaining.
+- **Model colours are fixed by family, not page-local ranking.** Unlike most other per-model
+  breakdowns in the app (e.g. Token Usage, which still ranks by that page's own volume), this page
+  hardcodes Sonnet → violet, Opus → pink, Haiku → cyan via `buildModelColorIndexes`. Don't
+  "simplify" this back to a volume-sorted `colorForIndex` — that was the pre-redesign behavior and
+  is exactly what the redesign replaced.
 - **`PageLayout` receives no `title` prop** — the section's `SectionLayout` already renders the
   page title and tab strip above the outlet. Adding a `title` here would produce a duplicate
   heading. Pass only `subtitle` and `error`.
@@ -115,6 +139,16 @@ by-model cards are fed from these same two responses — there is no third query
   show `"No subagent invocations in this window."` — both use the same "subagent" vocabulary as
   the rest of the page. (The subagent empty state previously read "No Task invocations" — "Task"
   was the old name for the subagent-dispatch tool, now named `Agent` in the backend's
-  `subagentToolName`; don't reintroduce it.) The by-model cards reuse the same two strings.
+  `subagentToolName`; don't reintroduce it.) The by-model cards reuse the same two strings for
+  their "no data at all" state — distinct from a single model's own "No calls in this window"
+  line, which `ModelFirstBlocks` renders per-block.
+- **No zero rows inside a block; ticks answer "which models touched this" instead.** A skill/
+  subagent that a given model never called is simply absent from that model's block — don't add
+  it back as a dimmed 0 row (rejected in the design handoff: it reintroduces the density problem
+  a skill×model matrix had). The mix-legend coverage ticks are the intentional answer to "does
+  every model touch every row" instead.
 - **`IdentifierRowWithShare`** is declared in `skillsAgentsDerivations.ts` and re-exported from
   `SkillsAgentsPageView.tsx` (not from `index.ts`), so the older import path still resolves.
+- **`DonutCard`'s `coverageTicks`/`legendCaption` are shared, generic props** (declared in
+  `components/DonutCard`, not page-local) — any other page's mix donut could opt into the same
+  per-model tick pattern by passing a `DonutCoverageModel[]` and each slice's `coverageByModel`.

@@ -2,7 +2,7 @@
 
 Dashboard tab showing aggregate tool invocation counts, call-mix breakdown, per-tool latency
 percentiles, and call-volume over time. It is the default child tab of the Tool activity section
-(`/tool-activity/calls`); the section wrapper is described in
+(`/tools/calls`); the section wrapper is described in
 [../ToolActivitySection/CLAUDE.md](../ToolActivitySection/CLAUDE.md).
 Backend counterpart: `ToolActivityController` → `GET /api/tool-activity/calls`,
 `/calls/timeseries`, `/calls/latency` (`backend/.../controller/ToolActivityController.java`).

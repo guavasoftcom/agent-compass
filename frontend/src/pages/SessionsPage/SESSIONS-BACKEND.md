@@ -98,7 +98,7 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
   the per-turn cards (see below). The tooltip also shows a **"Working" subtotal**
   (`input + output + cacheCreation`) above cache read — computed client-side, no field needed.
   Raw integers; any missing `type` is `0`, never null.
-- **`firstUserPrompt`** — the session's **first meaningful user prompt**, whitespace-collapsed
+- **`firstUserPrompt`** — the session's **literal chronologically-first user prompt**, whitespace-collapsed
   and truncated to **≤200 chars** server-side. **Null** when prompt capture is disabled
   (`OTEL_LOG_USER_PROMPTS`) or the session has no user-authored prompt — this can be null
   **even when `userPromptCount` > 0** (capture disabled but prompts still counted). The grid

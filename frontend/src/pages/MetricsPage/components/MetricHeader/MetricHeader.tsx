@@ -74,7 +74,7 @@ const MetricHeader = ({ metric }: MetricHeaderProps) => {
             bgcolor: 'action.hover',
           }}
         >
-          {metric.unit}
+          {metric.unit || '—'}
         </Box>
       </Box>
 
