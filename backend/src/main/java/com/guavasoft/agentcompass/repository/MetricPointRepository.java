@@ -1152,7 +1152,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       SELECT COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
       WHERE metric_name = :metricName
-        AND value_double IS NOT NULL
+        AND (value_long IS NOT NULL OR value_double IS NOT NULL)
         AND timestamp >= :start
         AND timestamp <= :end
       """, nativeQuery = true)
@@ -1168,7 +1168,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
       WHERE metric_name = :metricName
-        AND value_double IS NOT NULL
+        AND (value_long IS NOT NULL OR value_double IS NOT NULL)
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY bucket
@@ -1185,7 +1185,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       SELECT attributes ->> :splitAttribute AS label, COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
       WHERE metric_name = :metricName
-        AND value_double IS NOT NULL
+        AND (value_long IS NOT NULL OR value_double IS NOT NULL)
         AND timestamp >= :start
         AND timestamp <= :end
         AND attributes ->> :splitAttribute IS NOT NULL
