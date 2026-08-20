@@ -47,26 +47,6 @@ interface LongValueRequest {
 
 const LongValueModalContext = createContext<((request: LongValueRequest) => void) | null>(null);
 
-// Custom link component for markdown: disables relative links, opens external
-// links in a new window with noopener/noreferrer for security
-const MarkdownLink = ({
-  href,
-  children,
-}: {
-  href?: string;
-  children?: ReactNode;
-}) => {
-  const isRelative = href && (href.startsWith('/') || href.startsWith('../'));
-  if (isRelative) {
-    return <span>{children}</span>;
-  }
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
-      {children}
-    </a>
-  );
-};
-
 // Modal-body typography for rendered markdown — sized and spaced to match the
 // drawer's existing `mono`/13px body copy rather than react-markdown's
 // unstyled defaults.
@@ -177,7 +157,7 @@ export const LongValueModalProvider = ({ children }: { children: ReactNode }) =>
         <DialogContent dividers sx={{ p: 0 }}>
           {isMarkdown ? (
             <Box sx={markdownSx}>
-              <ReactMarkdown components={{ a: MarkdownLink }}>{displayText}</ReactMarkdown>
+              <ReactMarkdown>{displayText}</ReactMarkdown>
             </Box>
           ) : (
             <>

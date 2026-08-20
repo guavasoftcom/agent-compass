@@ -95,6 +95,10 @@
     { off: 7200, sev: 'DEBUG', scope: 'claude_code.permissions', event: 'permission.decision', body: 'Permission auto-allowed for Bash via settings.json allow rule', attrs: { 'decision': 'allow', 'rule': 'settings.json allow' } },
     { off: 8400, sev: 'ERROR', scope: 'claude_code.tools', event: 'tool_result', tool: 'Bash', body: 'Tool Bash failed: exit code 1 — command not found: pytest', attrs: { 'command': 'pytest tests/ -q', 'exit_code': 1, 'stderr': '/bin/sh: pytest: command not found' } },
     { off: 10160, sev: 'DEBUG', scope: 'claude_code.models', event: 'api_request', body: 'api_request → claude-sonnet-4-6 completed in 1.70 s', attrs: { 'event.name': 'api_request', 'model': 'claude-sonnet-4-6', 'cost_usd': 0.1538, 'duration_ms': 1700, 'input_tokens': 23880, 'output_tokens': 968 } },
+    // assistant_response bodies are prose markdown, not JSON — the drawer
+    // always offers "view formatted" for the response attr (no length gate)
+    // and renders it through the markdown library instead of the JSON modal.
+    { off: 9820, sev: 'INFO', scope: 'com.anthropic.claude_code.events', event: 'assistant_response', body: 'claude_code.assistant_response', attrs: { 'event.name': 'assistant_response', 'model': 'claude-sonnet-4-6', 'user.id': 'c1eef54a91ea2a2ad93f203e31c0ba53d1bfe442c1b17c48965ab7db27212bc6', 'response': 'Done. Added markdown rendering for `assistant_response` log bodies in the trace drawer.\n\n- The **response** attribute now always shows a `view formatted` button, even under the normal 240-character clamp that gates every other attribute.\n- Opening it renders through the markdown library instead of the plain/JSON modal — headings, lists, `inline code`, and bold all come through styled instead of as raw syntax.\n- Every other long value (`full_command`, `stderr`, tool result JSON) is untouched: only `response` on this one event gets markdown treatment.\n\nNothing else in the dock changed — the body preview line above still shows the plain event name, same as any other log row.' } },
     { off: 10180, sev: 'INFO', scope: 'claude_code.session', event: 'turn.end', body: 'Turn 7 completed — 5 tools, 1 error, 3 model calls', attrs: { 'tools': 5, 'errors': 1, 'model_calls': 3 } },
   ];
 
@@ -508,12 +512,15 @@
   const LONG_VAL_EV = 110;
   // Shared truncate-and-link: clamps `text` and registers the full string under a
   // fresh key so the "view formatted" button can open it in the JSON modal.
-  function longValHTML(k, text, cls, limit) {
+  function longValHTML(k, text, cls, limit, opts) {
     const cap = limit || LONG_VAL;
-    if (text.length <= cap) { return '<span class="v ' + cls + '">' + esc(text) + '</span>'; }
+    const force = !!(opts && opts.force);
+    const format = (opts && opts.format) || 'json';
+    if (text.length <= cap && !force) { return '<span class="v ' + cls + '">' + esc(text) + '</span>'; }
     const key = 'lk' + (logAttrKey++);
-    LOG_ATTR_STORE.set(key, { key: k, raw: text });
-    return '<span class="v ' + cls + '">' + esc(text.slice(0, cap).replace(/\s+$/, '')) + '\u2026 '
+    LOG_ATTR_STORE.set(key, { key: k, raw: text, format: format });
+    const preview = text.length > cap ? esc(text.slice(0, cap).replace(/\s+$/, '')) + '\u2026 ' : esc(text) + ' ';
+    return '<span class="v ' + cls + '">' + preview
       + '<button class="viewfmt" onclick="event.stopPropagation();openJsonModal(\'' + key + '\')">view formatted (' + text.length.toLocaleString() + ' chars)</button></span>';
   }
   const LOG_HEAD = new Set(['event.name', 'event', 'tool', 'session.id']);
@@ -532,7 +539,10 @@
       entries.forEach(([k, v]) => {
         const text = attrStr(v);
         const cls = typeof v === 'number' ? 'num' : typeof v === 'string' ? 'str' : '';
-        rows += '<div class="lgd-row"><span class="k">' + esc(k) + '</span>' + longValHTML(k, text, cls) + '</div>';
+        // response body on an assistant_response log is markdown prose: always
+        // offer "view formatted" and render it through the markdown library.
+        const md = l.event === 'assistant_response' && k === 'response';
+        rows += '<div class="lgd-row"><span class="k">' + esc(k) + '</span>' + longValHTML(k, text, cls, undefined, md ? { force: true, format: 'markdown' } : undefined) + '</div>';
       });
       detail = '<div class="lgd">' + rows + '</div>';
     }
@@ -544,11 +554,20 @@
   let jsonCurrent = '';
   window.openJsonModal = function (key) {
     const rec = LOG_ATTR_STORE.get(key); if (!rec) { return; }
-    let t = rec.raw;
-    try { t = JSON.stringify(JSON.parse(rec.raw), null, 2); } catch (e) { /* leave raw */ }
-    jsonCurrent = t;
     $('jmk').textContent = rec.key;
-    $('jmpre').textContent = t;
+    if (rec.format === 'markdown') {
+      jsonCurrent = rec.raw;
+      $('jmpre').style.display = 'none';
+      $('jmmd').style.display = 'block';
+      $('jmmd').innerHTML = (window.marked ? marked.parse(rec.raw) : esc(rec.raw));
+    } else {
+      let t = rec.raw;
+      try { t = JSON.stringify(JSON.parse(rec.raw), null, 2); } catch (e) { /* leave raw */ }
+      jsonCurrent = t;
+      $('jmmd').style.display = 'none';
+      $('jmpre').style.display = 'block';
+      $('jmpre').textContent = t;
+    }
     $('jscrim').classList.add('show'); $('jmodal').classList.add('show');
   };
   window.closeJsonModal = function () { $('jscrim').classList.remove('show'); $('jmodal').classList.remove('show'); };

@@ -198,10 +198,15 @@ public class ToolActivityController {
                     + "tool_result events ordered by timestamp, then per session takes the longest run for "
                     + "each (tool, scope). Those per-session longest-run values are rolled up into a median "
                     + "and a max per (tool, scope). Sessions whose longest run was just one call are dropped "
-                    + "— they are not repeats. Scope is file_path for Edit / Write / Read / MultiEdit, the "
-                    + "first whitespace-delimited token of command for Bash, and '(no scope)' otherwise. "
-                    + "Long Edit-Edit-Edit chains on the same file mean the agent is hunting; AGENTS.md can "
-                    + "encourage 'read the file once, plan all changes, then write in a single pass'.")
+                    + "— they are not repeats. Scope is file_path for Edit / Write / Read / MultiEdit; for "
+                    + "Bash it's the command with any leading 'cd <path> &&' chain stripped, then its first "
+                    + "two whitespace-delimited tokens, so 'cd x && git status' and 'cd y && git commit' "
+                    + "resolve to distinct scopes instead of both collapsing to 'cd'. Runs where scope "
+                    + "couldn't be determined (any other tool) are dropped rather than reported under a "
+                    + "shared '(no scope)' bucket, since that shared value isn't evidence the calls repeated "
+                    + "the same action. Long Edit-Edit-Edit chains on the same file mean the agent is "
+                    + "hunting; AGENTS.md can encourage 'read the file once, plan all changes, then write in "
+                    + "a single pass'.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "Up to 15 (tool, scope) rows sorted by max run length descending",
