@@ -193,6 +193,15 @@ public class TuningProperties {
   private String subagentTypeAttribute = "subagent_type";
 
   /**
+   * Identifier used for a {@link #subagentToolName} dispatch that carries no
+   * {@link #subagentTypeAttribute} anywhere. Claude Code omits the parameter when
+   * the caller did not name an agent type, and the dispatch then runs on the
+   * general-purpose agent — so these rows belong with it rather than in an
+   * 'unknown' bucket that reads like missing data.
+   */
+  private String defaultSubagentType = "general-purpose";
+
+  /**
    * Attribute key on an {@link #apiRequestEventName} log record carrying the
    * model that served the turn. Same values as the {@code model} attribute on
    * the token-usage metric streams, so the per-model breakdowns on

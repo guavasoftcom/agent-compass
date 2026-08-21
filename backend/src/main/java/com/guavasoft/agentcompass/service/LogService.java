@@ -776,6 +776,8 @@ public class LogService {
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
         tuningProperties.getModelAttribute(),
+        tuningProperties.getPromptIdAttribute(),
+        tuningProperties.getAgentNameAttribute(),
         start,
         end);
     return mapIdentifierUsageCounts(rows);
@@ -792,6 +794,7 @@ public class LogService {
         tuningProperties.getToolAttribute(),
         tuningProperties.getSubagentToolName(),
         tuningProperties.getSubagentTypeAttribute(),
+        tuningProperties.getDefaultSubagentType(),
         tuningProperties.getApiRequestEventName(),
         tuningProperties.getModelAttribute(),
         tuningProperties.getAgentNameAttribute(),

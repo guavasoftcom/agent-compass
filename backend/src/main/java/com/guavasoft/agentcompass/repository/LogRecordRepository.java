@@ -331,9 +331,10 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // arguments at the top level and some only inside tool_input depending on the
   // tool, and
   // skill/subagent dispatchers happen to land in the latter. Rows missing the
-  // identifier
-  // entirely bucket under 'unknown' so callers see them rather than silently
-  // dropping the count.
+  // identifier entirely bucket under :defaultIdentifier rather than being
+  // dropped — for the subagent dispatcher that is the agent type the run
+  // actually used when the caller named none, so the count lands on a real
+  // identifier instead of a bucket that reads like missing data.
   // The second dimension is the model that dispatched the call. tool_result rows
   // carry no model attribute at all — only api_request rows do — so the model is
   // resolved by walking back to the last main-loop api_request in the same
@@ -351,7 +352,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           COALESCE(
             NULLIF(attributes ->> :innerAttribute, ''),
             NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
-            'unknown')                                                 AS identifier,
+            :defaultIdentifier)                                        AS identifier,
           attributes ->> 'session.id'                                  AS session_id,
           timestamp                                                    AS dispatched_at
         FROM log_records
@@ -383,6 +384,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("toolName") String toolName,
       @Param("innerAttribute") String innerAttribute,
+      @Param("defaultIdentifier") String defaultIdentifier,
       @Param("apiRequestEventName") String apiRequestEventName,
       @Param("modelAttribute") String modelAttribute,
       @Param("agentNameAttribute") String agentNameAttribute,
@@ -390,27 +392,58 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("end") Instant end);
 
   // Counts skill invocations, grouped by the skill-name attribute and the model
-  // that served the turn. Skills are emitted as api_request events (not
+  // that ran the skill. Skills are emitted as api_request events (not
   // tool_result), so there is no tool_name filter here — only the event name and
   // the presence of the skill attribute. Those same rows carry the model
-  // attribute directly, so no correlation is needed on this side. Row ordering
-  // matches aggregateToolInvocationsByInnerAttributeAndModelInRange.
+  // attribute directly, so no correlation is needed on this side.
+  //
+  // One invocation is one prompt that entered the skill, NOT one api_request.
+  // Claude Code stamps :skillAttribute on every model call made while the skill
+  // runs, so counting rows reports how chatty a skill is rather than how often it
+  // ran — on real data that inflated totals by 1.7x to 46x and reordered the
+  // ranking, since a skill that fans out to subagents outscored one invoked
+  // nearly twice as often. Two steps collapse rows back to invocations: turns made
+  // inside subagents the skill spawned are dropped (they carry
+  // :agentNameAttribute and report the subagent's model, not the one running the
+  // skill), and the surviving main-loop turns are deduplicated by
+  // :promptIdAttribute.
+  //
+  // Counting the Skill dispatcher's own tool_result rows instead would undercount
+  // just as badly, because a skill invoked as a slash command never goes through
+  // that tool.
+  //
+  // DISTINCT ON keeps the earliest surviving turn per prompt, so an invocation
+  // lands in exactly one model bucket and the per-model counts still sum to the
+  // identifier total — a prompt whose main-loop turns span models is rare but
+  // real. Turns with no prompt id fall back to the row's primary key, which is
+  // unique, so they count individually instead of collapsing into one invocation.
+  // Row ordering matches aggregateToolInvocationsByInnerAttributeAndModelInRange.
   @Query(value = """
-      WITH skill_calls AS (
-        SELECT
-          COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown') AS identifier,
-          COALESCE(NULLIF(attributes ->> :modelAttribute, ''), 'unknown') AS model
-        FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
-          AND jsonb_exists(attributes, :skillAttribute)
-          AND timestamp >= :start
-          AND timestamp <= :end
+      WITH skill_invocations AS (
+        SELECT DISTINCT ON (identifier, prompt_id)
+          identifier,
+          model
+        FROM (
+          SELECT
+            COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown')   AS identifier,
+            COALESCE(NULLIF(attributes ->> :promptIdAttribute, ''), id::text) AS prompt_id,
+            COALESCE(NULLIF(attributes ->> :modelAttribute, ''), 'unknown')   AS model,
+            timestamp                                                         AS turn_at,
+            id                                                                AS record_id
+          FROM log_records
+          WHERE attributes ->> 'event.name' = :eventName
+            AND jsonb_exists(attributes, :skillAttribute)
+            AND NOT jsonb_exists(attributes, :agentNameAttribute)
+            AND timestamp >= :start
+            AND timestamp <= :end
+        ) skill_turns
+        ORDER BY identifier, prompt_id, turn_at, record_id
       )
       SELECT
         identifier                                                      AS identifier,
         model                                                           AS model,
         COUNT(*)                                                        AS calls
-      FROM skill_calls
+      FROM skill_invocations
       GROUP BY identifier, model
       ORDER BY SUM(COUNT(*)) OVER (PARTITION BY identifier) DESC, identifier, calls DESC
       """, nativeQuery = true)
@@ -418,6 +451,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("eventName") String eventName,
       @Param("skillAttribute") String skillAttribute,
       @Param("modelAttribute") String modelAttribute,
+      @Param("promptIdAttribute") String promptIdAttribute,
+      @Param("agentNameAttribute") String agentNameAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
