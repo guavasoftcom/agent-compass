@@ -9,9 +9,8 @@ import type {
 } from '../../../../api';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
-import { TokenBreakdownTooltip } from '../PromptTimelinePanel';
+import { CostValue, TokenBreakdownTooltip } from '../PromptTimelinePanel';
 import {
-  USD_FORMATTER,
   USD_PER_MINUTE_FORMATTER,
   formatDuration,
   formatRelativeTime,
@@ -340,6 +339,10 @@ interface SessionsTableProps {
   // as it is. The drawer itself is rendered by the view, not from in here.
   openSessionId: string | null;
   onToggleSessionDetail: (sessionId: string) => void;
+  // Live P95 cost/session figure (the KPI strip's own stat) — the Cost
+  // column's "hot" tier threshold, so the two can never disagree about what
+  // counts as an outlier.
+  hotCostThresholdUsd: number;
 }
 
 const SessionsTable = ({
@@ -350,6 +353,7 @@ const SessionsTable = ({
   showEmpty,
   openSessionId,
   onToggleSessionDetail,
+  hotCostThresholdUsd,
 }: SessionsTableProps) => {
   const handleSort = (field: string) => {
     if (field === sortModel.field) {
@@ -463,7 +467,7 @@ const SessionsTable = ({
                 />
               </Box>
               <Box component="td" className="num cost">
-                {USD_FORMATTER.format(row.costUsd)}
+                <CostValue costUsd={row.costUsd} hotThresholdUsd={hotCostThresholdUsd} />
               </Box>
               <Box component="td" className="num tokens">
                 {row.tokenBreakdown ? (

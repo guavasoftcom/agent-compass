@@ -10,9 +10,14 @@ import {
   type ValueDialogState,
 } from '../../../../components/AttributeList/AttributeValue';
 import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
-import { auroraColors, neutralColors } from '../../../../theme/colors';
+import { auroraColors, gradients, neutralColors } from '../../../../theme/colors';
 import { fontFamilies } from '../../../../theme/typography';
-import { USD_FORMATTER, formatTimestamp, formatTokens } from '../sessionsFormat';
+import {
+  USD_FORMATTER,
+  costTier,
+  formatTimestamp,
+  formatTokens,
+} from '../sessionsFormat';
 
 const NUM_FORMATTER = new Intl.NumberFormat('en-US');
 
@@ -27,29 +32,42 @@ const formatPromptTimestamp = (value: string): string =>
       })
     : '';
 
-// Model label + accent-dot hue. Opus (priciest tier) → primary violet, Sonnet →
-// cyan, Haiku (and anything unknown) → muted. Keyed on the leading token so
-// "claude-sonnet-4-5" and "sonnet" both resolve.
-const MODEL_META: Record<string, { label: string; dot: string }> = {
-  opus: { label: 'Opus', dot: 'primary.main' },
-  sonnet: { label: 'Sonnet', dot: auroraColors.cyanBright },
-  haiku: { label: 'Haiku', dot: 'text.disabled' },
-};
+// Model label + accent hue. Opus (priciest tier) → primary violet, Sonnet →
+// pink, both with a tinted pill background; Haiku (and anything unknown) stays
+// neutral, so the "plain/cheap" tier doesn't compete visually with the two
+// colored chips. Keyed on the leading token so "claude-sonnet-4-5" and
+// "sonnet" both resolve. Sonnet's pink is mode-aware like the theme's other
+// pink figures (deeper on the light surface, brighter on dark) rather than a
+// single flat hex.
+const MODEL_LABEL: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
 
-const modelMeta = (model: string | null | undefined) => {
+const modelKeyOf = (model: string | null | undefined): string | null => {
   if (!model) {
     return null;
   }
   const key = model.toLowerCase();
-  const hit = Object.keys(MODEL_META).find((modelKey) => key.includes(modelKey));
-  return hit ? { ...MODEL_META[hit], raw: model } : { label: model, dot: 'text.disabled', raw: model };
+  return (['opus', 'sonnet', 'haiku'] as const).find((modelKey) => key.includes(modelKey)) ?? null;
+};
+
+// Shared by the model chip (dot + tinted background) and the turn card's rail
+// dot, so a turn's accent color can never disagree between the two.
+const modelAccentColor = (modelKey: string | null, theme: Theme): string => {
+  if (modelKey === 'opus') {
+    return theme.palette.primary.main;
+  }
+  if (modelKey === 'sonnet') {
+    return theme.palette.mode === 'dark' ? auroraColors.pinkBright : auroraColors.pink;
+  }
+  return theme.palette.text.disabled;
 };
 
 const ModelChip = ({ model }: { model: string | null | undefined }) => {
-  const meta = modelMeta(model);
-  if (!meta) {
+  if (!model) {
     return null;
   }
+  const modelKey = modelKeyOf(model);
+  const label = modelKey ? MODEL_LABEL[modelKey] : model;
+  const tinted = modelKey === 'opus' || modelKey === 'sonnet';
   return (
     <Box
       component="span"
@@ -64,13 +82,23 @@ const ModelChip = ({ model }: { model: string | null | undefined }) => {
         fontSize: 10.5,
         fontWeight: 600,
         letterSpacing: 0.2,
-        color: 'text.secondary',
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === 'dark' ? 0.08 : 0.06),
         whiteSpace: 'nowrap',
+        color: tinted ? (t: Theme) => modelAccentColor(modelKey, t) : 'text.secondary',
+        bgcolor: tinted
+          ? (t: Theme) => alpha(modelAccentColor(modelKey, t), 0.16)
+          : (t: Theme) => alpha(t.palette.text.primary, t.palette.mode === 'dark' ? 0.08 : 0.06),
       }}
     >
-      <Box component="span" sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: meta.dot }} />
-      {meta.label}
+      <Box
+        component="span"
+        sx={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          bgcolor: (t: Theme) => modelAccentColor(modelKey, t),
+        }}
+      />
+      {label}
     </Box>
   );
 };
@@ -103,13 +131,17 @@ const ToolChips = ({ tools }: { tools: { name: string; count: number }[] | null 
             fontFamily: fontFamilies.body,
             fontSize: 11.5,
             fontWeight: 500,
-            color: 'text.primary',
-            bgcolor: (t) => alpha(t.palette.text.primary, 0.06),
+            // Same blue as the "Tools" span hue on the Trace Detail page
+            // (auroraColors.cyanBright) — every tool chip renders in one flat
+            // color rather than a per-category palette, matching that page's
+            // convention that a tool call is one visual category.
+            color: auroraColors.cyanBright,
+            bgcolor: alpha(auroraColors.cyanBright, 0.16),
           }}
         >
           {tool.name}
           {tool.count > 1 ? (
-            <Box component="b" sx={{ fontWeight: 700, fontSize: 10.5, color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
+            <Box component="b" sx={{ fontWeight: 700, fontSize: 10.5, color: auroraColors.cyanBright, fontVariantNumeric: 'tabular-nums' }}>
               {tool.count}
             </Box>
           ) : null}
@@ -132,6 +164,44 @@ const ToolChips = ({ tools }: { tools: { name: string; count: number }[] | null 
           {`+${overflow}`}
         </Box>
       ) : null}
+    </Box>
+  );
+};
+
+// Cost-outlier tiering shared by the grid's Cost column and the drawer
+// header's cost figure, so the two can never render a session's cost
+// differently: plain below $8, amber ("warm") from $8, and the same
+// violet→pink gradient text the "Median cost" stat card uses once the cost
+// reaches the live P95 threshold ("hot").
+export const CostValue = ({
+  costUsd,
+  hotThresholdUsd,
+}: {
+  costUsd: number;
+  hotThresholdUsd: number;
+}) => {
+  const tier = costTier(costUsd, hotThresholdUsd);
+  return (
+    <Box
+      component="b"
+      sx={{
+        fontFamily: fontFamilies.display,
+        fontWeight: 700,
+        fontSize: 14,
+        ...(tier === 'warm' && { color: auroraColors.gold }),
+        ...(tier === 'hot'
+          ? {
+              backgroundImage: gradients.auroraActionSoft,
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+            }
+          : tier === 'plain'
+            ? { color: 'text.primary' }
+            : {}),
+      }}
+    >
+      {USD_FORMATTER.format(costUsd)}
     </Box>
   );
 };
@@ -480,7 +550,10 @@ const PromptTimelinePanel = ({
                 width: 10,
                 height: 10,
                 borderRadius: '50%',
-                bgcolor: 'primary.main',
+                // Rail dot picks up the turn's model accent (opus/sonnet) instead
+                // of always being primary.main — the ring stays primary-tinted
+                // regardless, matching the design handoff.
+                bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
                 boxShadow: (t) => `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
               },
             }}

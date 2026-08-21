@@ -13,9 +13,8 @@ import { cacheEfficiencyBandColor } from '../../../TokensPage/components/cacheEf
 import { neutralColors } from '../../../../theme/colors';
 import { fontFamilies } from '../../../../theme/typography';
 import { backdropGradient, radii } from '../../../../theme/theme';
-import PromptTimelinePanel, { TokenBreakdownTooltip } from '../PromptTimelinePanel';
+import PromptTimelinePanel, { CostValue, TokenBreakdownTooltip } from '../PromptTimelinePanel';
 import {
-  USD_FORMATTER,
   formatRelativeTime,
   formatShortTimestamp,
   formatTimestamp,
@@ -40,6 +39,9 @@ interface SessionDetailDrawerProps {
   // session, not just the windowed slice).
   windowStartMs?: number;
   windowEndMs?: number;
+  // Live P95 cost/session figure — the header's cost figure uses the same
+  // "hot" tier threshold as the grid's Cost column (see CostValue).
+  hotCostThresholdUsd: number;
 }
 
 // One "·"-separated fact on the header's metadata line. The separator is drawn
@@ -71,9 +73,11 @@ const MetaItem = ({
 const SessionDetailHeader = ({
   session,
   onClose,
+  hotCostThresholdUsd,
 }: {
   session: SessionSummaryRow;
   onClose: () => void;
+  hotCostThresholdUsd: number;
 }) => {
   const theme = useTheme();
   const ratio = cacheEfficiencyRatio(session.tokenBreakdown);
@@ -124,7 +128,9 @@ const SessionDetailHeader = ({
           }}
         >
           <MetaItem>{formatShortTimestamp(session.startTimestamp)}</MetaItem>
-          <MetaItem>{USD_FORMATTER.format(session.costUsd)}</MetaItem>
+          <MetaItem>
+            <CostValue costUsd={session.costUsd} hotThresholdUsd={hotCostThresholdUsd} />
+          </MetaItem>
           <MetaItem title={formatTimestamp(session.endTimestamp)}>
             {`active ${formatRelativeTime(session.endTimestamp)}`}
           </MetaItem>
@@ -197,6 +203,7 @@ const SessionDetailDrawer = ({
   promptsError,
   windowStartMs,
   windowEndMs,
+  hotCostThresholdUsd,
 }: SessionDetailDrawerProps) => {
   const open = session != null;
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -277,7 +284,11 @@ const SessionDetailDrawer = ({
     >
       {rendered ? (
         <>
-          <SessionDetailHeader session={rendered} onClose={onClose} />
+          <SessionDetailHeader
+            session={rendered}
+            onClose={onClose}
+            hotCostThresholdUsd={hotCostThresholdUsd}
+          />
           <Box ref={bodyRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <PromptTimelinePanel
               prompts={prompts}

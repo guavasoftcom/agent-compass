@@ -65,7 +65,9 @@ SessionsPage/
         │                          divider; long prompt text truncates through the shared
         │                          AttributeValue/ExpandedValueDialog machinery. Exports
         │                          TokenBreakdownTitle / TokenBreakdownTooltip / TokenUsage,
-        │                          reused by SessionsTable's Tokens-column hover. Also renders
+        │                          reused by SessionsTable's Tokens-column hover, and CostValue
+        │                          (cost-outlier tiering), reused by SessionsTable's Cost column and
+        │                          SessionDetailDrawer's header. Also renders
         │                          TurnAttributionMarker — a muted "approx" marker on turns whose
         │                          figures were bucketed from cumulative counters; renders nothing
         │                          on exact (api_request-derived) turns.
@@ -370,15 +372,33 @@ trace link for those rows, not a disabled placeholder.
   and no scroll of its own** — `minHeight: '100%'` inside the drawer body, which is the scroll
   container (before the drawer it was capped at `maxHeight: 340` with `overflowY: 'auto'`; don't
   put that back or the panel gets a second, nested scrollbar). Each turn renders as its own bordered card with a
-  glowing rail dot, a model chip (`opus` → `primary.main`, `sonnet` → `auroraColors.cyanBright`,
-  `haiku`/unknown → `text.disabled`, keyed on the leading token so `"claude-sonnet-4-5"` matches),
-  per-turn cost, `TokenUsage` (one combined `input + output + cacheCreation + cacheRead` total
+  glowing rail dot, a model chip (`opus` → `primary.main`, `sonnet` → a mode-aware pink —
+  `auroraColors.pink` light / `auroraColors.pinkBright` dark, matching the theme's other pink
+  figures — `haiku`/unknown → `text.disabled`, keyed on the leading token so `"claude-sonnet-4-5"`
+  matches), per-turn cost, `TokenUsage` (one combined `input + output + cacheCreation + cacheRead` total
   since the Aurora sync — the old "· N cached" secondary is gone, and the four-way split is one
   hover away via `TokenBreakdownTooltip`, advertised by a dotted underline matching the grid's
   own hover-affordance cells rather than `cursor: help` alone), tool-call chips (`ToolChips`, first 5 + `+N`
   overflow), and an optional "View trace" pill-link. Turns outside the active window render at
   `opacity: 0.45` with a "selected window starts/ends" hairline divider at each boundary crossing
   (see the window-dimming bullet above for where `windowStartMs`/`windowEndMs` come from).
+- **Color pass (Aurora sessions-color handoff):** Opus and Sonnet model chips get a background
+  tinted to their own accent (`alpha(accent, 0.16)`) rather than a flat gray pill — Haiku/unknown
+  stay neutral so the "plain/cheap" tier doesn't visually compete with the two colored ones. The
+  turn card's rail dot (`::before`) picks up the same per-turn accent via `modelAccentColor(modelKey,
+  theme)` (exported logic lives inline in `PromptTimelinePanel.tsx`, shared by `ModelChip` and the
+  rail dot so they can never disagree) — the dot's outer ring stays primary-tinted regardless of
+  model. `ToolChips` renders every tool in one flat accent (`auroraColors.cyanBright`, same literal
+  hue as the "Tools" span color on the Trace Detail page — see `traceColors.ts`'s
+  `SERVICE_HUE['claude_code.tools']`) rather than a per-category palette; there is no `TOOL_CAT`
+  mapping in the React code — the design mockup keeps one for a possible future per-category split,
+  but the current UI has no behavior difference across categories, so building that mapping here
+  would be unused code. The grid's Cost column and the drawer header's cost figure both tier
+  through the exported `CostValue` component (`costTier`/`COST_WARM_THRESHOLD_USD` in
+  `sessionsFormat.ts`): plain below $8, `auroraColors.gold` from $8, and the same violet→pink
+  `gradients.auroraActionSoft` text the "Median cost" stat card uses once cost reaches the **live**
+  P95 cost/session figure (threaded down as `hotCostThresholdUsd` from `SessionsPageView`'s
+  `kpis.p95CostUsd` — never a hardcoded second copy of that number).
 - **Long per-turn prompt text truncates through the shared `AttributeList` "View more" dialog
   machinery**, the same one `LogTable` uses, rather than rendering full text pre-wrapped inline:
   each prompt renders through `AttributeValue` (`truncate`, `inlineExpand={false}`) so anything

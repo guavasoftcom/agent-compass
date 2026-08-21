@@ -154,6 +154,7 @@ const SessionsPageView = ({
             showEmpty={showEmpty}
             openSessionId={openSessionId}
             onToggleSessionDetail={onToggleSessionDetail}
+            hotCostThresholdUsd={kpis.p95CostUsd}
           />
         </div>
         <TablePager
@@ -180,6 +181,7 @@ const SessionsPageView = ({
         promptsError={promptTimelineError}
         windowStartMs={windowStartMs}
         windowEndMs={windowEndMs}
+        hotCostThresholdUsd={kpis.p95CostUsd}
       />
     </PageLayout>
   );
