@@ -23,7 +23,6 @@ installationDirectory="${AGENT_COMPASS_HOME:-$HOME/.agent-compass}"
 applicationPort="18080"
 settingsFile=""
 useProjectSettings="false"
-installConnectivityHook="false"
 startStack="true"
 assumeYes="false"
 
@@ -40,8 +39,6 @@ Options:
   --settings <path>   settings.json to update (default: ~/.claude/settings.json).
   --project           Update ./.claude/settings.json instead, scoping telemetry to
                       the current repository.
-  --with-hook         Also install the UserPromptSubmit hook that blocks a prompt
-                      when the telemetry backend is unreachable.
   --no-start          Configure everything but do not run docker compose.
   --skip-settings     Only download and start the stack; leave settings.json alone.
   --skip-checks       Do not fail when Claude Code or Docker is missing.
@@ -55,7 +52,6 @@ Environment:
 
 Examples:
   install.sh                          # install, configure globally, start
-  install.sh --port 19090 --with-hook
   install.sh --project --no-start     # configure this repo only
 USAGE
 }
@@ -80,7 +76,6 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || fail "--settings needs a path"
       settingsFile="$2"; shift 2 ;;
     --project) useProjectSettings="true"; shift ;;
-    --with-hook) installConnectivityHook="true"; shift ;;
     --no-start) startStack="false"; shift ;;
     --skip-settings) updateSettings="false"; shift ;;
     --skip-checks) skipPrerequisiteChecks="true"; shift ;;
@@ -191,7 +186,6 @@ logInfo "install directory : $installationDirectory"
 logInfo "port              : $applicationPort"
 if [ "$updateSettings" = "true" ]; then
   logInfo "settings file     : $settingsFile"
-  logInfo "connectivity hook : $installConnectivityHook"
 else
   logInfo "settings file     : (skipped)"
 fi
@@ -268,7 +262,6 @@ if [ "$updateSettings" = "true" ]; then
   # and the backup is just clutter.
   if ! AGENT_COMPASS_SETTINGS_FILE="$settingsFile" \
   AGENT_COMPASS_ENDPOINT="$otlpEndpoint" \
-  AGENT_COMPASS_WITH_HOOK="$installConnectivityHook" \
   "$pythonBinary" <<'PYTHON'
 import json
 import os
@@ -276,17 +269,6 @@ import sys
 
 settings_path = os.environ["AGENT_COMPASS_SETTINGS_FILE"]
 endpoint = os.environ["AGENT_COMPASS_ENDPOINT"]
-install_hook = os.environ["AGENT_COMPASS_WITH_HOOK"] == "true"
-
-# Marker so a re-run recognises its own hook instead of appending a second copy.
-HOOK_MARKER = "agent-compass-connectivity"
-HOOK_COMMAND = (
-    ": " + HOOK_MARKER + "; "
-    'endpoint="${OTEL_EXPORTER_OTLP_ENDPOINT:-' + endpoint + '}"; '
-    'curl -s -o /dev/null --max-time 2 "$endpoint/v1/logs" || '
-    '''echo '{"decision":"block","reason":"Telemetry backend is unreachable (OTLP ingest at '"$endpoint"') '''
-    '''- this session is not being captured. Start Agent Compass (docker compose up -d), then resubmit."}' '''
-).strip()
 
 telemetry_environment = {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
@@ -303,13 +285,19 @@ telemetry_environment = {
     "OTEL_LOG_TOOL_DETAILS": "1",
     "OTEL_LOG_TOOL_CONTENT": "1",
     "OTEL_LOG_RAW_API_BODIES": "1",
-    "OTEL_METRICS_INCLUDE_SESSION_ID": "1",
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
     "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
     "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
     "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "true",
+    # Metrics stay at the 60s default on purpose: the counters are cumulative, so a
+    # missed export self-heals on the next one, and ~99% of the points are unchanged
+    # re-exports of dead streams. Lowering this multiplies storage and buys nothing.
     "OTEL_METRIC_EXPORT_INTERVAL": "60000",
-    "OTEL_LOGS_EXPORT_INTERVAL": "60000",
-    "OTEL_TRACES_EXPORT_INTERVAL": "60000",
+    # Logs and traces stay at their own 5s default: api_request logs carry the exact
+    # per-call cost and token counts, and a batch still buffered when a session is
+    # killed is gone for good.
+    "OTEL_LOGS_EXPORT_INTERVAL": "5000",
+    "OTEL_TRACES_EXPORT_INTERVAL": "5000",
 }
 
 settings = {}
@@ -335,40 +323,6 @@ overwritten = sorted(
 )
 environment_block.update(telemetry_environment)
 
-hook_status = "not requested"
-if install_hook:
-    hooks = settings.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        sys.exit('"hooks" in %s is not an object - fix it, then re-run' % settings_path)
-    matchers = hooks.setdefault("UserPromptSubmit", [])
-    if not isinstance(matchers, list):
-        sys.exit('"hooks.UserPromptSubmit" in %s is not an array - fix it, then re-run' % settings_path)
-
-    existing = None
-    for matcher in matchers:
-        if not isinstance(matcher, dict):
-            continue
-        for hook in matcher.get("hooks", []) or []:
-            if isinstance(hook, dict) and HOOK_MARKER in str(hook.get("command", "")):
-                existing = hook
-                break
-        if existing:
-            break
-
-    if existing is not None:
-        existing["command"] = HOOK_COMMAND
-        hook_status = "updated (endpoint refreshed)"
-    else:
-        matchers.append({
-            "hooks": [{
-                "type": "command",
-                "command": HOOK_COMMAND,
-                "timeout": 5,
-                "statusMessage": "Checking telemetry backend connectivity",
-            }]
-        })
-        hook_status = "installed"
-
 with open(settings_path, "w", encoding="utf-8") as handle:
     json.dump(settings, handle, indent=2)
     handle.write("\n")
@@ -376,7 +330,6 @@ with open(settings_path, "w", encoding="utf-8") as handle:
 print("    telemetry env keys written: %d" % len(telemetry_environment))
 if overwritten:
     print("    changed existing values: %s" % ", ".join(overwritten))
-print("    connectivity hook: %s" % hook_status)
 PYTHON
   then
     if [ -n "$settingsBackupFile" ]; then

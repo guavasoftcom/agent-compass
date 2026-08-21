@@ -26,9 +26,9 @@ Once the repository is public, the same thing without the clone:
 curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/install.sh | bash
 ```
 
-It checks that Docker and Claude Code are installed before changing anything, downloads `docker-compose.yml` into `~/.agent-compass`, merges the env block from [_Point Claude Code at it_](#point-claude-code-at-it) into `~/.claude/settings.json` — backing the original up first and printing the command that restores it — then pulls and starts the stack and waits for the dashboard to answer. Re-running it is safe: it rewrites only the keys it owns and never duplicates the hook.
+It checks that Docker and Claude Code are installed before changing anything, downloads `docker-compose.yml` into `~/.agent-compass`, merges the env block from [_Point Claude Code at it_](#point-claude-code-at-it) into `~/.claude/settings.json` — backing the original up first and printing the command that restores it — then pulls and starts the stack and waits for the dashboard to answer. Re-running it is safe: it rewrites only the keys it owns.
 
-`./install.sh --help` lists the flags. The ones that matter most: `--port` to move off 18080, `--project` to scope the telemetry settings to the current repository instead of your user settings, `--with-hook` to add the connectivity guard described below, `--no-start` / `--skip-settings` to do only half the job.
+`./install.sh --help` lists the flags. The ones that matter most: `--port` to move off 18080, `--project` to scope the telemetry settings to the current repository instead of your user settings, `--no-start` / `--skip-settings` to do only half the job.
 
 Or drive compose yourself, from a checkout or any directory holding the compose file:
 
@@ -103,14 +103,14 @@ Put these in the `env` block of `~/.claude/settings.json` so every session picks
     "OTEL_LOG_TOOL_CONTENT": "1",
     "OTEL_LOG_RAW_API_BODIES": "1",
 
-    "OTEL_METRICS_INCLUDE_SESSION_ID": "1",
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
     "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
     "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
     "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "true",
 
     "OTEL_METRIC_EXPORT_INTERVAL": "60000",
-    "OTEL_LOGS_EXPORT_INTERVAL": "60000",
-    "OTEL_TRACES_EXPORT_INTERVAL": "60000"
+    "OTEL_LOGS_EXPORT_INTERVAL": "5000",
+    "OTEL_TRACES_EXPORT_INTERVAL": "5000"
   }
 }
 ```
@@ -123,7 +123,7 @@ For a single shell instead, `export` the same names and values.
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CLAUDE_CODE_ENABLE_TELEMETRY=1`                               | Master switch. Nothing is emitted without it, whatever else is set.                                                                                                                                                                                                     |
 | `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`                        | Opts into the richer event set beyond the stable baseline. Leave it on — the dashboard reads several of the extra events.                                                                                                                                               |
-| `CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH`                          | Maximum size (in bytes) of content payloads in telemetry. Set high to capture full tool inputs, responses, and API bodies without truncation.                                                                                                                            |
+| `CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH`                          | Truncation cap for content-bearing attributes, in **UTF-16 code units** — not bytes — defaulting to `61440` (60 KB). Raised here so tool inputs, assistant responses, and raw API bodies arrive whole. It has no bearing on token or cost accuracy: those are short numeric attributes that never truncate at any setting. It is, however, the main driver of database size — see _Content capture is what fills the disk_. |
 | `OTEL_METRICS_EXPORTER=otlp`                                   | Token, cost, session, and lines-of-code metrics → Tokens, Sessions, Insights.                                                                                                                                                                                           |
 | `OTEL_LOGS_EXPORTER=otlp`                                      | Tool calls, permission decisions, and hook executions → Tool Activity, Logs, and the tuning report.                                                                                                                                                                     |
 | `OTEL_TRACES_EXPORTER=otlp`                                    | Spans → Traces and the per-trace waterfall.                                                                                                                                                                                                                             |
@@ -134,51 +134,44 @@ For a single shell instead, `export` the same names and values.
 | `OTEL_LOG_USER_PROMPTS=1`                                      | Prompt text on `user_prompt` events. Without it, Sessions still counts turns but every prompt reads null, and the Traces explorer's prompt column is empty.                                                                                                             |
 | `OTEL_LOG_TOOL_DETAILS` / `OTEL_LOG_TOOL_CONTENT`              | The `tool_input` attribute on tool events. This is load-bearing for more than it sounds: bash anti-pattern detection, redundant-file-read and path near-miss analysis in the tuning report, and the Skills & Agents page all read identifiers out of `tool_input` JSON. |
 | `OTEL_LOG_RAW_API_BODIES=1`                                    | `api_request_body` / `api_response_body` events, surfaced as debug rows with expandable bodies in the Logs explorer.                                                                                                                                                    |
-| `OTEL_METRICS_INCLUDE_SESSION_ID=1`                            | The `session.id` metric attribute. Nearly every aggregation in this backend groups by it, so turning it off to save cardinality would flatten Sessions, per-session token rollups, and most of Tool Activity.                                                           |
+| `OTEL_METRICS_INCLUDE_SESSION_ID=true`                         | The `session.id` metric attribute. Nearly every aggregation in this backend groups by it, so turning it off to save cardinality would flatten Sessions, per-session token rollups, and most of Tool Activity. Accepted values are `true` / `false`; write `true`, not `1`, which only works by not being `false`.                                                           |
 | `OTEL_METRICS_INCLUDE_ACCOUNT_UUID`                            | Account UUID on metrics. Enables multi-account / multi-user filtering and analysis.                                                                                                                                                                                     |
-| `OTEL_METRICS_INCLUDE_ENTRYPOINT`                              | Entrypoint (CLI, extension, IDE, web) on metrics. Enables per-interface usage analysis.                                                                                                                                                                                |
+| `OTEL_METRICS_INCLUDE_ENTRYPOINT`                              | Entrypoint (CLI, extension, IDE, web) on metrics. Enables per-interface usage analysis.                                                                                                                                                                                 |
 | `OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES`                     | Resource-level attributes (hostname, process ID, runtime version) on metrics. Useful for debugging deployment and environment issues.                                                                                                                                   |
-| `OTEL_*_EXPORT_INTERVAL`                                       | Export batching, in ms. At 60000 a short session can end before its first export — drop these to `10000` while debugging ingest, then put them back.                                                                                                                    |
+| `OTEL_METRIC_EXPORT_INTERVAL`                                  | Metric batching, in ms. Leave it at the `60000` default — lowering it costs a lot of storage and buys no accuracy, for the reason below.                                                                                                                                |
+| `OTEL_LOGS_EXPORT_INTERVAL` / `OTEL_TRACES_EXPORT_INTERVAL`    | Log and span batching, in ms. Both default to `5000` and belong there: unlike the counters, a buffered log batch that never ships is gone. See below.                                                                                                                   |
 
-### Two settings that are load-bearing here
+### Settings that are load-bearing here
 
 **`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` must be `cumulative`.** Claude Code's `claude_code.*` counters are cumulative and re-emitted per stream, and this backend depends on that: [`MetricPointRepository`](../backend/src/main/java/com/guavasoft/agentcompass/repository/MetricPointRepository.java) precomputes a reset-aware per-row increment at ingest (`value_delta`, added in `V11`) as `current − previous` per stream, falling back to `current` when the counter resets. Every token, cost, and active-time rollup then reads `SUM(value_delta)`. Point a _delta_-temporality exporter at it and each point is already an increment, so that subtraction differences a series of increments and the numbers come out wrong — with no error to tell you.
 
 **`OTEL_LOG_TOOL_DETAILS` / `OTEL_LOG_TOOL_CONTENT` are not just cosmetic.** `tool_input` isn't only shown in the UI; it's parsed. Skill and subagent identifiers are read from `skill.name` / `subagent_type` **or** from fields inside the `tool_input` JSON, and the report's bash-command and file-path analysis reads `command` and `file_path` out of the same blob. With these off, the Skills & Agents page and several report sections have nothing to work from.
 
+**The metric and log export intervals pull in opposite directions.** They look like one knob with three names, and setting them to a common value is the natural mistake — but the two signals fail differently, so the defaults above are deliberate and asymmetric.
+
+Metrics are cumulative counters, so a missed export costs nothing: the next one carries the running total, and `value_delta` picks the increment back up. What a shorter interval does buy you is volume, because Claude Code's exporter never retires a stream — it re-emits every counter it has ever created, unchanged, once per interval for the life of the process. On one development database, 1,079,979 of 1,082,089 `cost.usage` / `token.usage` / `active_time.total` points in a week (99.8%) were such zero-delta re-exports, and `metric_points` was 5.7 GB of a 7.3 GB database. Dropping `OTEL_METRIC_EXPORT_INTERVAL` to `10000` multiplies that by six and makes no figure more accurate. Leave it at `60000`.
+
+Logs are the opposite: each one is emitted once, and a batch still sitting in the buffer when the process dies is lost for good. That matters for billing specifically, because the exact per-call spend figures — `cost_usd`, `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` — ride on `api_request` log records, and they are the only source for per-trace and per-span cost. Raising `OTEL_LOGS_EXPORT_INTERVAL` from its `5000` default to `60000` widens the window where closing a terminal or killing the process drops a minute of them. Keep logs and traces at `5000`.
+
+### Spend is measured two ways, and they don't reconcile
+
+The dashboard reports token and cost figures from two independent pipelines, and **they disagree — by tens of percent, in both directions.** This is expected. It is not a symptom of a setting being wrong, and no configuration change will bring them together:
+
+- **Counters** — the cumulative `claude_code.cost.usage` / `claude_code.token.usage` metrics, read as `SUM(value_delta)`. This is what per-session totals, the KPI tiles, and the Tokens page use.
+- **Per-request logs** — the `cost_usd` and `*_tokens` attributes on each `api_request` log record, exact for the call that emitted them. This is what trace cost, span cost, and the per-turn figures in the Sessions prompt timeline use.
+
+The gap is dominated by cache-read tokens, and the two pipelines even label `query_source` differently for the same work. So every figure in the UI names its source instead of blending them, and a session's token breakdown deliberately does not equal the sum of its turns'. Don't add, average, or diff a number from one against a number from the other. The reasoning is in [backend/CLAUDE.md](../backend/CLAUDE.md) under _Two token/cost pipelines that do NOT reconcile_.
+
+### Content capture is what fills the disk
+
+`OTEL_LOG_RAW_API_BODIES` plus a high `CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH` is by far the most expensive part of this configuration. On the same development database, `api_request_body` records averaged ~300 KB each (largest 2.6 MB) and accounted for 489 MB of a single week's logs — more than every other event type combined, by an order of magnitude.
+
+That is the intended trade for a local tuning tool, and the Logs explorer's expandable bodies are the payoff. But if you need the footprint down, lower `CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH` or drop `OTEL_LOG_RAW_API_BODIES` first: no token count, cost figure, or aggregation on any page reads those bodies, so nothing about billing accuracy changes. Turning off `OTEL_LOG_TOOL_DETAILS` to save space would be the wrong end to cut from — that one is parsed.
+
 ### Optional additions
 
-- `OTEL_METRICS_INCLUDE_VERSION=1` — stamps the Claude Code version on metrics, which makes it possible to line a behavior change up against an upgrade.
+- `OTEL_METRICS_INCLUDE_VERSION=true` — stamps `app.version` on metrics, which makes it possible to line a behavior change up against an upgrade. It defaults to `false`, and like the other `OTEL_METRICS_INCLUDE_*` switches it takes `true` / `false` — `1` will not turn it on.
 - `OTEL_RESOURCE_ATTRIBUTES=key=value,key2=value2` — your own dimensions (team, machine, experiment). They land in the jsonb payload and are filterable in the Logs and Traces explorers.
-
-### Optional: Require backend to be running
-
-To prevent accidentally running sessions that won't be captured (because the telemetry backend is down), add a hook to `~/.claude/settings.json` that checks backend connectivity before allowing a session to start.
-
-`./install.sh --with-hook` writes this hook for you (matching whatever `--port` you chose), so take the manual route below only if you didn't use the installer — adding both leaves you with two copies that each run on every prompt:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "endpoint=\"${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:18080}\"; curl -s -o /dev/null --max-time 2 \"$endpoint/v1/logs\" || echo '{\"decision\":\"block\",\"reason\":\"Telemetry backend is unreachable (OTLP ingest at '\"$endpoint\"') — this session is not being captured. Start Agent Compass (docker compose up -d or cd backend && ./mvnw spring-boot:run), then resubmit.\"}'",
-            "timeout": 5,
-            "statusMessage": "Checking telemetry backend connectivity"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-This hook runs before each prompt and checks if the backend's `/v1/logs` endpoint responds. It respects your `OTEL_EXPORTER_OTLP_ENDPOINT` setting, so you can use it with either the docker-compose stack (`:18080`) or the dev backend (`:8080`). If you move the container with `APP_PORT`, the hook will follow automatically.
-
-⚠️ **Note:** If Agent Compass is not running when the hook executes, Claude Code will silently block the prompt without displaying an error message. This is a limitation of the current hook implementation. If your prompts seem to hang or silently fail to execute, first verify that Agent Compass is running with `docker compose ps` or `curl http://localhost:18080` (or your configured `APP_PORT`). Then resubmit your prompt.
 
 ### Verify it's flowing
 
@@ -250,7 +243,7 @@ The image is published by [.github/workflows/release.yml](../.github/workflows/r
 **Telemetry enabled but nothing arrives** — work through these in order:
 
 1. **Check which backend you're feeding.** `OTEL_EXPORTER_OTLP_ENDPOINT` must match `APP_PORT` (18080 by default), with no `/v1/...` suffix — Claude Code appends the signal path itself. Pointing at `:8080` sends everything to the dev backend instead, where it lands in a different database and never appears here.
-2. **Wait one export interval.** At `OTEL_METRIC_EXPORT_INTERVAL=60000` a session that ends quickly may exit before its first export. Drop it to `10000` while testing.
+2. **Wait one export interval.** Logs and spans ship every 5s, so Tool Activity and Traces fill in quickly; metrics are on `OTEL_METRIC_EXPORT_INTERVAL=60000`, so give the Tokens and Sessions pages a full minute before concluding nothing arrived. Lowering it to `10000` is a fine way to shorten the debugging loop — just put it back afterwards, for the storage reason in _Settings that are load-bearing here_.
 3. **Restart Claude Code.** The variables are read at startup; a session already running when you set them keeps the old configuration.
 4. **Confirm the endpoint answers:** `curl -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/x-protobuf' --data-binary '' http://localhost:18080/v1/metrics` should return `400` (route exists, empty body rejected). A `404` means you're pointed at the wrong port or path; a connection refused means the stack isn't up.
 
@@ -258,6 +251,10 @@ The image is published by [.github/workflows/release.yml](../.github/workflows/r
 
 **Session prompt timeline shows turns but no prompt text** — `OTEL_LOG_USER_PROMPTS` is unset. Prompt content is opt-in; set it to `1` and start a new session.
 
-**Token or cost totals look implausible** — check `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` is `cumulative`. Delta temporality produces no error, just wrong arithmetic (see _Two settings that are load-bearing here_). Rows already ingested under the wrong setting stay wrong; their `value_delta` was computed at ingest time.
+**Token or cost totals look implausible** — check `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` is `cumulative`. Delta temporality produces no error, just wrong arithmetic (see _Settings that are load-bearing here_). Rows already ingested under the wrong setting stay wrong; their `value_delta` was computed at ingest time.
+
+**Two pages report different token or cost numbers for the same work** — that's the two pipelines, not a misconfiguration. Check which source each figure names before treating the gap as a bug; see _Spend is measured two ways, and they don't reconcile_.
+
+**Trace or span costs are missing, or a session's last few calls never showed up** — the per-call figures ride on `api_request` log records, so an interrupted session can lose whatever was still buffered. Confirm `OTEL_LOGS_EXPORT_INTERVAL` is at its `5000` default rather than raised to match the metric interval, and prefer letting sessions exit cleanly over killing the terminal.
 
 **`no such image` on `docker compose up`** — the released image hasn't been published yet, or you're on a private package. Build locally as shown above, or `docker login ghcr.io` first.
