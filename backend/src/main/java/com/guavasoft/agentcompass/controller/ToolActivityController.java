@@ -225,12 +225,16 @@ public class ToolActivityController {
     @GetMapping("/skill-usage")
     @Operation(
             summary = "Per-skill invocation counts over the window, split by model",
-            description = "Counts tool_result events for the configured skill-dispatch tool (default "
-                    + "'Skill'), grouped by the skill identifier attribute. The identifier is read from "
-                    + "the flat attribute first and falls back to the same key inside tool_input. "
+            description = "Counts skill invocations, grouped by the skill identifier attribute. One "
+                    + "invocation is one prompt that entered the skill, NOT one api_request: Claude "
+                    + "Code stamps the skill attribute on every model call made while the skill runs, "
+                    + "so the population is api_request events carrying that attribute, deduplicated by "
+                    + "prompt id, with turns made inside subagents the skill spawned excluded. Counting "
+                    + "those rows raw reports how chatty a skill is rather than how often it ran. "
                     + "Skills that never trigger have descriptions that don't match what the agent looks "
                     + "for. The 'tool' field carries the skill identifier; 'byModel' splits the count by "
-                    + "the model that served the turn, read straight off the same log records.")
+                    + "the model that ran the skill, read straight off the same log records and taken "
+                    + "from each invocation's earliest turn so the split sums to the row total.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per distinct skill observed in the window, sorted by calls desc",
@@ -257,7 +261,9 @@ public class ToolActivityController {
                     + "the call. Those tool_result rows carry no model attribute, so the model comes "
                     + "from the last main-loop api_request in the same session at or before the call — "
                     + "the turn that emitted the tool_use. Calls whose dispatching turn is not in the "
-                    + "data bucket under 'unknown'.")
+                    + "data bucket under an 'unknown' model. A dispatch that named no subagent type at "
+                    + "all is credited to the default agent type (the one such a dispatch actually runs "
+                    + "on), not to an 'unknown' identifier.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per distinct subagent observed in the window, sorted by calls desc",

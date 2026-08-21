@@ -116,7 +116,9 @@ there is no third query.
 ## Gotchas
 
 - **The two `byModel` splits are not derived the same way.** Skill rows come from `api_request`
-  log records, which carry the `model` attribute directly — that split is exact. Subagent rows
+  log records, which carry the `model` attribute directly, so no correlation is needed — but the
+  split is per *invocation*, not per turn (see the invocation-counting note below), and an
+  invocation is credited to the model of its earliest turn. Subagent rows
   come from `Agent` `tool_result` records, which carry **no** model attribute at all, so the
   backend attributes each call to the last main-loop `api_request` in the same session at or
   before it (the turn that emitted the tool_use). Calls whose dispatching turn is not in the data
@@ -132,6 +134,13 @@ there is no third query.
 - **`PageLayout` receives no `title` prop** — the section's `SectionLayout` already renders the
   page title and tab strip above the outlet. Adding a `title` here would produce a duplicate
   heading. Pass only `subtitle` and `error`.
+- **`calls` counts invocations, not model turns — don't compare it to anything on Tool Calls.**
+  Claude Code stamps `skill.name` on every `api_request` made while a skill runs, including inside
+  subagents the skill spawns, so the backend deduplicates by `prompt.id` and drops subagent turns.
+  A skill that shows 11 here can easily own 1467 log records; that is the intended gap, not a
+  dropped-rows bug. The same is true in reverse of the subagent card: `calls` there is one row per
+  `Agent` `tool_result`, so the two cards count comparable units but neither counts model calls.
+  Backend rationale lives on `LogRecordRepository.aggregateSkillInvocationsByModelInRange`.
 - **`IdentifierUsageRow.tool`** carries a different semantic on each endpoint: skill identifier on
   `/skill-usage`, subagent identifier on `/subagent-usage`. The field is reused for both
   because the backend notes "the 'tool' field carries the skill identifier".
