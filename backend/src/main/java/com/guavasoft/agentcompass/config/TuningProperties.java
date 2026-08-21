@@ -121,10 +121,10 @@ public class TuningProperties {
 
   /**
    * Value of {@code event.name} for the LLM request-payload log. It carries only
-   * {@link #promptIdAttribute} (turn-level, not request-level) and no request id,
-   * so trace-detail correlation recovers its request id from the
-   * {@link #apiRequestEventName} that immediately follows it in
-   * {@link #eventSequenceAttribute} order within the same prompt.
+   * {@link #promptIdAttribute} (turn-level, not request-level) and no request id, so
+   * trace-detail correlation recovers its request id by matching the instant it was
+   * logged against the issue instant of an {@link #apiRequestEventName} for the same
+   * prompt and model — see {@link #apiRequestDurationAttribute}.
    */
   private String apiRequestBodyEventName = "api_request_body";
 
@@ -136,11 +136,14 @@ public class TuningProperties {
   private String promptIdAttribute = "prompt.id";
 
   /**
-   * Attribute key carrying Claude Code's monotonic per-session event counter. Gives
-   * the authoritative ordering used to pair an {@link #apiRequestBodyEventName} log
-   * with the {@link #apiRequestEventName} that follows it.
+   * Attribute key carrying how long an {@link #apiRequestEventName} call took, in
+   * milliseconds. That log is written when the call completes, so subtracting this
+   * duration recovers the instant it was issued — which is when the matching
+   * {@link #apiRequestBodyEventName} was logged, and reproduces the
+   * {@link #llmRequestSpanName} span's start timestamp to the millisecond. It is the
+   * key that pairs the two logs when a turn dispatches several calls concurrently.
    */
-  private String eventSequenceAttribute = "event.sequence";
+  private String apiRequestDurationAttribute = "duration_ms";
 
   /**
    * OTLP metric name carrying per-turn token counts. Claude Code emits one data

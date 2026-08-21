@@ -652,6 +652,18 @@ class LogsQueryIntegrationTest {
     private static final String REQUEST_ID = "req_xyz";
     private static final String PROMPT_ID = "prompt_1";
     private static final String EVENT_API_REQUEST_BODY = "api_request_body";
+    private static final String MODEL = "claude-sonnet-5";
+    private static final long REQUEST_DURATION_MS = 3_000L;
+    private static final String SPAN_LLM_CONCURRENT = "c000000000000000";
+    private static final String REQUEST_ID_CONCURRENT = "req_concurrent";
+    // Distinguishes the two api_request_body logs, which are otherwise identical.
+    private static final int FIRST_BODY_LENGTH = 111;
+    private static final int SECOND_BODY_LENGTH = 222;
+    // The Task tool's execution span and the subagent spans nested beneath it.
+    private static final String SPAN_TASK_EXEC = "a000000000000000";
+    private static final String SPAN_INNER_TOOL_WRAPPER = "d000000000000000";
+    private static final String SPAN_INNER_TOOL_EXEC = "f000000000000000";
+    private static final String INNER_TOOL_USE_ID = "toolu_inner";
 
     @Test
     void logsForTraceRepointsCoarseLogsToTheirLeafSpans() {
@@ -669,13 +681,15 @@ class LogsQueryIntegrationTest {
         // (not the tool wrapper, which shares the same tool_use_id).
         saveTraceLog(SPAN_ROOT, EVENT_TOOL_RESULT, Map.of("tool_use_id", TOOL_USE_ID));
         // api_request stamped on the coarse root → expect re-point to the llm_request span.
-        // Carries prompt.id + event.sequence so it also anchors the api_request_body pairing.
-        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST,
-                Map.of("request_id", REQUEST_ID, "prompt.id", PROMPT_ID, "event.sequence", 20));
-        // api_request_body has no request_id; it precedes its api_request in sequence within
-        // the same prompt → expect re-point to the same llm_request span via the pairing.
-        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST_BODY,
-                Map.of("prompt.id", PROMPT_ID, "event.sequence", 19));
+        // Logged on completion, so its issue instant is windowStart; carries the prompt.id +
+        // model + duration_ms that anchor the api_request_body pairing.
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST, windowStart.plusMillis(REQUEST_DURATION_MS),
+                Map.of("request_id", REQUEST_ID, "prompt.id", PROMPT_ID, "model", MODEL,
+                        "duration_ms", REQUEST_DURATION_MS));
+        // api_request_body has no request_id; it was logged when that call was issued
+        // → expect re-point to the same llm_request span via the pairing.
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST_BODY, windowStart,
+                Map.of("prompt.id", PROMPT_ID, "model", MODEL));
         // tool_decision already on its blocked_on_user leaf → expect preserved, even
         // though it also carries a tool_use_id.
         saveTraceLog(SPAN_BLOCKED, EVENT_TOOL_DECISION, Map.of("tool_use_id", TOOL_USE_ID));
@@ -694,6 +708,100 @@ class LogsQueryIntegrationTest {
         assertThat(spanIdByEvent.get(EVENT_HOOK_EXECUTION_START)).isEqualTo(SPAN_ROOT);
     }
 
+    @Test
+    void logsForTraceRepointsSubagentLogsOffTheDispatchingTaskSpan() {
+        spanRepository.deleteAll();
+        // Work dispatched through the Task tool runs with that tool's execution span open, so
+        // Claude Code stamps the subagent's logs with it rather than the trace root. The
+        // subagent's own llm_request / tool.execution spans hang beneath it.
+        saveSpan(SPAN_ROOT, null, "claude_code.interaction", Map.of());
+        saveSpan(SPAN_TOOL_WRAPPER, SPAN_ROOT, "claude_code.tool", Map.of("tool_use_id", TOOL_USE_ID));
+        saveSpan(SPAN_TASK_EXEC, SPAN_TOOL_WRAPPER, "claude_code.tool.execution",
+                Map.of("tool_use_id", TOOL_USE_ID));
+        saveSpan(SPAN_LLM, SPAN_TASK_EXEC, "claude_code.llm_request", Map.of("request_id", REQUEST_ID));
+        saveSpan(SPAN_INNER_TOOL_WRAPPER, SPAN_TASK_EXEC, "claude_code.tool",
+                Map.of("tool_use_id", INNER_TOOL_USE_ID));
+        saveSpan(SPAN_INNER_TOOL_EXEC, SPAN_INNER_TOOL_WRAPPER, "claude_code.tool.execution",
+                Map.of("tool_use_id", INNER_TOOL_USE_ID));
+
+        // Both are stamped on the Task span, which merely happened to be open. Each names a
+        // span nested beneath it, so each belongs on that nested span.
+        saveTraceLog(SPAN_TASK_EXEC, EVENT_API_REQUEST, windowStart.plusMillis(REQUEST_DURATION_MS),
+                Map.of("request_id", REQUEST_ID, "prompt.id", PROMPT_ID, "model", MODEL,
+                        "duration_ms", REQUEST_DURATION_MS));
+        saveTraceLog(SPAN_TASK_EXEC, EVENT_TOOL_RESULT, Map.of("tool_use_id", INNER_TOOL_USE_ID));
+        // The subagent's own hooks carry no correlation key → stay on the Task span.
+        saveTraceLog(SPAN_TASK_EXEC, EVENT_HOOK_EXECUTION_START, Map.of());
+
+        Map<String, String> spanIdByEvent = service.logsForTrace(TRACE_ID).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        logRecord -> (String) logRecord.getAttributes().get(ATTR_EVENT_NAME),
+                        LogRecord::getSpanId));
+
+        assertThat(spanIdByEvent.get(EVENT_API_REQUEST)).isEqualTo(SPAN_LLM);
+        assertThat(spanIdByEvent.get(EVENT_TOOL_RESULT)).isEqualTo(SPAN_INNER_TOOL_EXEC);
+        assertThat(spanIdByEvent.get(EVENT_HOOK_EXECUTION_START)).isEqualTo(SPAN_TASK_EXEC);
+    }
+
+    @Test
+    void logsForTraceKeepsConcurrentRequestBodiesOnTheirOwnSpans() {
+        spanRepository.deleteAll();
+        saveSpan(SPAN_ROOT, null, "claude_code.interaction", Map.of());
+        saveSpan(SPAN_LLM, SPAN_ROOT, "claude_code.llm_request", Map.of("request_id", REQUEST_ID));
+        saveSpan(SPAN_LLM_CONCURRENT, SPAN_ROOT, "claude_code.llm_request",
+                Map.of("request_id", REQUEST_ID_CONCURRENT));
+
+        // A turn that dispatches two calls at once logs both request bodies up front, before
+        // either call completes — and here the second call finishes first, so completion order
+        // is the reverse of issue order. Pairing a body with "the next api_request in
+        // event.sequence order" collapsed both bodies onto one span; each belongs to its own.
+        Instant firstIssuedAt = windowStart;
+        Instant secondIssuedAt = windowStart.plusMillis(20);
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST_BODY, firstIssuedAt,
+                Map.of("prompt.id", PROMPT_ID, "model", MODEL, "body_length", FIRST_BODY_LENGTH));
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST_BODY, secondIssuedAt,
+                Map.of("prompt.id", PROMPT_ID, "model", MODEL, "body_length", SECOND_BODY_LENGTH));
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST, firstIssuedAt.plusMillis(5_000L),
+                Map.of("request_id", REQUEST_ID, "prompt.id", PROMPT_ID, "model", MODEL,
+                        "duration_ms", 5_000L));
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST, secondIssuedAt.plusMillis(1_000L),
+                Map.of("request_id", REQUEST_ID_CONCURRENT, "prompt.id", PROMPT_ID, "model", MODEL,
+                        "duration_ms", 1_000L));
+
+        Map<Object, String> spanIdByBodyLength = service.logsForTrace(TRACE_ID).stream()
+                .filter(logRecord -> EVENT_API_REQUEST_BODY.equals(logRecord.getAttributes().get(ATTR_EVENT_NAME)))
+                .collect(java.util.stream.Collectors.toMap(
+                        logRecord -> logRecord.getAttributes().get("body_length"),
+                        LogRecord::getSpanId));
+
+        assertThat(spanIdByBodyLength).hasSize(2);
+        assertThat(spanIdByBodyLength.get(FIRST_BODY_LENGTH)).isEqualTo(SPAN_LLM);
+        assertThat(spanIdByBodyLength.get(SECOND_BODY_LENGTH)).isEqualTo(SPAN_LLM_CONCURRENT);
+    }
+
+    @Test
+    void logsForTraceLeavesAnUnpairableRequestBodyOnItsOriginalSpan() {
+        spanRepository.deleteAll();
+        saveSpan(SPAN_ROOT, null, "claude_code.interaction", Map.of());
+        saveSpan(SPAN_LLM, SPAN_ROOT, "claude_code.llm_request", Map.of("request_id", REQUEST_ID));
+
+        // A body whose api_request never arrived has only a far-away call to pair with. It must
+        // stay on the span it came in on rather than claim an unrelated call's span.
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST_BODY, windowStart,
+                Map.of("prompt.id", PROMPT_ID, "model", MODEL, "body_length", FIRST_BODY_LENGTH));
+        saveTraceLog(SPAN_ROOT, EVENT_API_REQUEST, windowStart.plusSeconds(60).plusMillis(REQUEST_DURATION_MS),
+                Map.of("request_id", REQUEST_ID, "prompt.id", PROMPT_ID, "model", MODEL,
+                        "duration_ms", REQUEST_DURATION_MS));
+
+        Map<String, String> spanIdByEvent = service.logsForTrace(TRACE_ID).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        logRecord -> (String) logRecord.getAttributes().get(ATTR_EVENT_NAME),
+                        LogRecord::getSpanId));
+
+        assertThat(spanIdByEvent.get(EVENT_API_REQUEST_BODY)).isEqualTo(SPAN_ROOT);
+        assertThat(spanIdByEvent.get(EVENT_API_REQUEST)).isEqualTo(SPAN_LLM);
+    }
+
     private void saveSpan(String spanId, String parentSpanId, String name, Map<String, Object> attributes) {
         SpanEntity entity = new SpanEntity();
         entity.setTraceId(TRACE_ID);
@@ -708,8 +816,12 @@ class LogsQueryIntegrationTest {
     }
 
     private void saveTraceLog(String spanId, String eventName, Map<String, Object> extraAttributes) {
+        saveTraceLog(spanId, eventName, windowStart, extraAttributes);
+    }
+
+    private void saveTraceLog(String spanId, String eventName, Instant timestamp, Map<String, Object> extraAttributes) {
         LogRecordEntity entity = new LogRecordEntity();
-        entity.setTimestamp(windowStart);
+        entity.setTimestamp(timestamp);
         entity.setReceivedAt(Instant.now());
         entity.setTraceId(TRACE_ID);
         entity.setSpanId(spanId);
