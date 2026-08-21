@@ -49,12 +49,12 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -92,6 +92,19 @@ public class LogService {
   // name.
   private static final String MODEL_ATTRIBUTE = "model";
 
+  // How far apart an api_request_body log and an api_request's derived issue instant
+  // may sit and still be treated as the same LLM call. Measured over three days of
+  // live data the two sides are effectively simultaneous -- every body with a real
+  // counterpart landed within 100ms of it (p95 3ms) -- while a body whose api_request
+  // never arrived sat more than 5s from the nearest candidate. One second sits in
+  // that empty gap with an order of magnitude of headroom on both sides, so an
+  // orphaned body stays on its original span instead of stealing an unrelated call's.
+  private static final long BODY_PAIRING_TOLERANCE_MILLIS = 1_000L;
+
+  // Joins prompt id and model into one partition key. A NUL byte cannot occur in
+  // either value, so the two halves can never run together into a colliding key.
+  private static final String PARTITION_KEY_SEPARATOR = "\0";
+
   // Raw values of the token-type attribute (TuningProperties#getTokenTypeAttribute).
   // Mirrors MetricService's identically-named constants -- these are the actual
   // spellings Claude Code emits (camelCase, confirmed against MetricService's
@@ -122,18 +135,27 @@ public class LogService {
   }
 
   // Claude Code stamps most event logs with a coarse span id: tool_result and
-  // api_request* land on the interaction-root span rather than on the
-  // tool.execution / llm_request span that did the work (tool_decision is the
-  // exception — it correctly lands on its tool.blocked_on_user span). Both signals
-  // carry exact correlation keys, so we re-point each root-stranded log onto its
-  // true leaf span: tool logs via tool_use_id, LLM logs via request_id. Logs
-  // already on a non-root span (e.g. tool_decision) and logs with no matching key
-  // (hooks, user_prompt) keep their original span id.
+  // api_request* land on whichever span was merely *open* when they were emitted,
+  // rather than on the tool.execution / llm_request span that did the work
+  // (tool_decision is the exception — it correctly lands on its
+  // tool.blocked_on_user span). Both signals carry exact correlation keys, so we
+  // re-point each stranded log onto its true leaf span: tool logs via tool_use_id,
+  // LLM logs via request_id, api_request_body via the pairing below. Logs with no
+  // matching key (hooks, user_prompt) keep their original span id.
+  //
+  // A log is only moved when the span it arrived on CONTAINS the span its key
+  // points to. That containment test is what separates the two cases: the open
+  // span is always an ancestor of the leaf that did the work, whereas
+  // tool_decision's tool.blocked_on_user span is a sibling of the tool.execution
+  // its tool_use_id names, so it correctly stays put. Testing ancestry rather than
+  // "is this the trace root" also covers subagents: work dispatched through the
+  // Task tool runs with that tool's execution span open, so its logs are stamped
+  // with a span that has a parent, and a root-only test left every one of them
+  // piled on the Task span while the subagent's own spans showed none.
   private void resolveLeafSpans(List<LogRecord> logRecords, List<SpanEntity> traceSpans) {
-    Set<String> rootSpanIds = traceSpans.stream()
-        .filter(span -> span.getParentSpanId() == null)
-        .map(SpanEntity::getSpanId)
-        .collect(Collectors.toSet());
+    Map<String, String> parentSpanIdBySpanId = traceSpans.stream()
+        .filter(span -> span.getParentSpanId() != null)
+        .collect(Collectors.toMap(SpanEntity::getSpanId, SpanEntity::getParentSpanId, (first, second) -> first));
 
     String toolCallIdAttribute = tuningProperties.getToolCallIdAttribute();
     String requestIdAttribute = tuningProperties.getRequestIdAttribute();
@@ -141,12 +163,9 @@ public class LogService {
         traceSpans, tuningProperties.getToolExecutionSpanName(), toolCallIdAttribute);
     Map<String, String> spanIdByRequestId = indexSpanIdByAttribute(
         traceSpans, tuningProperties.getLlmRequestSpanName(), requestIdAttribute);
-    Map<String, TreeMap<Long, String>> requestIdBySequencePerPrompt = indexApiRequestsByPrompt(logRecords);
+    Map<LogRecord, String> requestIdByBodyLog = pairApiRequestBodiesToRequests(logRecords);
 
     for (LogRecord logRecord : logRecords) {
-      if (logRecord.getSpanId() != null && !rootSpanIds.contains(logRecord.getSpanId())) {
-        continue;
-      }
       Map<String, Object> attributes = logRecord.getAttributes();
       if (attributes == null) {
         continue;
@@ -156,67 +175,138 @@ public class LogService {
         resolvedSpanId = spanIdByRequestId.get(stringAttribute(attributes, requestIdAttribute));
       }
       if (resolvedSpanId == null) {
-        resolvedSpanId = spanIdByRequestId.get(
-            pairedRequestIdForBody(attributes, requestIdBySequencePerPrompt));
+        resolvedSpanId = spanIdByRequestId.get(requestIdByBodyLog.get(logRecord));
       }
-      if (resolvedSpanId != null) {
+      if (resolvedSpanId == null || resolvedSpanId.equals(logRecord.getSpanId())) {
+        continue;
+      }
+      if (logRecord.getSpanId() == null || containsSpan(logRecord.getSpanId(), resolvedSpanId, parentSpanIdBySpanId)) {
         logRecord.setSpanId(resolvedSpanId);
       }
     }
   }
 
-  // Indexes the request_id of every api_request log by prompt.id, keyed on its
-  // event.sequence. Drives the api_request_body pairing below: a body log carries no
-  // request_id of its own, so it borrows the request_id of the api_request that
-  // immediately follows it in sequence order within the same prompt.
-  private Map<String, TreeMap<Long, String>> indexApiRequestsByPrompt(List<LogRecord> logRecords) {
+  // Whether candidateAncestorSpanId is a strict ancestor of spanId, by walking the
+  // parent chain up from spanId. The visited set keeps a malformed trace whose
+  // parent links form a cycle from spinning here.
+  private static boolean containsSpan(
+      String candidateAncestorSpanId, String spanId, Map<String, String> parentSpanIdBySpanId) {
+    Set<String> visitedSpanIds = new HashSet<>();
+    String ancestorSpanId = parentSpanIdBySpanId.get(spanId);
+    while (ancestorSpanId != null && visitedSpanIds.add(ancestorSpanId)) {
+      if (ancestorSpanId.equals(candidateAncestorSpanId)) {
+        return true;
+      }
+      ancestorSpanId = parentSpanIdBySpanId.get(ancestorSpanId);
+    }
+    return false;
+  }
+
+  // An api_request_body log carries no request_id of its own, so it has to borrow one
+  // from the api_request describing the same call. Pairing the two by "the next
+  // api_request in event.sequence order" broke whenever a turn dispatched several
+  // calls at once: Claude Code logs all the bodies up front, so every one of them
+  // picked the same following request and their logs piled onto one llm_request span
+  // while its concurrent siblings showed none.
+  //
+  // Both sides do carry enough to pair exactly. A body is logged when its call is
+  // issued; an api_request is logged when that call completes and reports how long it
+  // took, so subtracting the duration recovers the same issue instant -- it
+  // reproduces the llm_request span's start timestamp to the millisecond. So we match
+  // the two instants within a prompt.id + model partition, closest pair first, and let
+  // each api_request be claimed only once, which keeps concurrent calls apart. Bodies
+  // left unclaimed (no api_request logged for them) resolve to nothing and stay on the
+  // span they arrived on, exactly like a log with no correlation key at all.
+  private Map<LogRecord, String> pairApiRequestBodiesToRequests(List<LogRecord> logRecords) {
     String eventNameAttribute = tuningProperties.getEventNameAttribute();
     String apiRequestEventName = tuningProperties.getApiRequestEventName();
+    String apiRequestBodyEventName = tuningProperties.getApiRequestBodyEventName();
     String promptIdAttribute = tuningProperties.getPromptIdAttribute();
     String requestIdAttribute = tuningProperties.getRequestIdAttribute();
-    String eventSequenceAttribute = tuningProperties.getEventSequenceAttribute();
+    String durationAttribute = tuningProperties.getApiRequestDurationAttribute();
 
-    Map<String, TreeMap<Long, String>> requestIdBySequencePerPrompt = new HashMap<>();
+    Map<String, List<LogRecord>> bodyLogsByPartition = new HashMap<>();
+    Map<String, List<IssuedApiRequest>> requestsByPartition = new HashMap<>();
     for (LogRecord logRecord : logRecords) {
       Map<String, Object> attributes = logRecord.getAttributes();
-      if (attributes == null || !apiRequestEventName.equals(attributes.get(eventNameAttribute))) {
+      if (attributes == null || logRecord.getTimestamp() == null) {
         continue;
       }
-      String promptId = stringAttribute(attributes, promptIdAttribute);
-      String requestId = stringAttribute(attributes, requestIdAttribute);
-      Long sequence = longAttribute(attributes, eventSequenceAttribute);
-      if (promptId == null || requestId == null || sequence == null) {
+      Object eventName = attributes.get(eventNameAttribute);
+      boolean isRequestBody = apiRequestBodyEventName.equals(eventName);
+      if (!isRequestBody && !apiRequestEventName.equals(eventName)) {
         continue;
       }
-      requestIdBySequencePerPrompt
-          .computeIfAbsent(promptId, key -> new TreeMap<>())
-          .putIfAbsent(sequence, requestId);
+      String partitionKey = bodyPairingPartitionKey(attributes, promptIdAttribute);
+      if (partitionKey == null) {
+        continue;
+      }
+      if (isRequestBody) {
+        bodyLogsByPartition.computeIfAbsent(partitionKey, key -> new ArrayList<>()).add(logRecord);
+      } else {
+        String requestId = stringAttribute(attributes, requestIdAttribute);
+        Long durationMillis = longAttribute(attributes, durationAttribute);
+        if (requestId != null && durationMillis != null) {
+          requestsByPartition.computeIfAbsent(partitionKey, key -> new ArrayList<>())
+              .add(new IssuedApiRequest(requestId, logRecord.getTimestamp().minusMillis(durationMillis)));
+        }
+      }
     }
-    return requestIdBySequencePerPrompt;
+
+    Map<LogRecord, String> requestIdByBodyLog = new IdentityHashMap<>();
+    for (Map.Entry<String, List<LogRecord>> partition : bodyLogsByPartition.entrySet()) {
+      List<IssuedApiRequest> requests = requestsByPartition.get(partition.getKey());
+      if (requests != null) {
+        claimNearestRequests(partition.getValue(), requests, requestIdByBodyLog);
+      }
+    }
+    return requestIdByBodyLog;
   }
 
-  // Recovers the request_id for an api_request_body log by finding the api_request
-  // that immediately follows it in event.sequence order within the same prompt
-  // (Claude Code emits each LLM call as an ordered triplet: body, request, response).
-  // Returns null for any other event, or when no following request exists.
-  private String pairedRequestIdForBody(
-      Map<String, Object> attributes, Map<String, TreeMap<Long, String>> requestIdBySequencePerPrompt) {
-    if (!tuningProperties.getApiRequestBodyEventName().equals(
-        attributes.get(tuningProperties.getEventNameAttribute()))) {
-      return null;
+  // Assigns each body log the api_request issued closest to it in time, one body per
+  // request. Working through the candidate pairs closest-first (rather than body by
+  // body) means the tightest, most certain pairings claim their request before a
+  // looser one can take it. Ties keep encounter order, so simultaneous calls fall back
+  // to the order Claude Code logged them in.
+  private static void claimNearestRequests(
+      List<LogRecord> bodyLogs, List<IssuedApiRequest> requests, Map<LogRecord, String> requestIdByBodyLog) {
+    List<BodyRequestPairing> candidates = new ArrayList<>();
+    for (LogRecord bodyLog : bodyLogs) {
+      for (IssuedApiRequest request : requests) {
+        long offsetMillis = Math.abs(Duration.between(request.issuedAt(), bodyLog.getTimestamp()).toMillis());
+        if (offsetMillis <= BODY_PAIRING_TOLERANCE_MILLIS) {
+          candidates.add(new BodyRequestPairing(bodyLog, request.requestId(), offsetMillis));
+        }
+      }
     }
-    String promptId = stringAttribute(attributes, tuningProperties.getPromptIdAttribute());
-    Long sequence = longAttribute(attributes, tuningProperties.getEventSequenceAttribute());
-    if (promptId == null || sequence == null) {
-      return null;
+    candidates.sort(Comparator.comparingLong(BodyRequestPairing::offsetMillis));
+
+    Set<String> claimedRequestIds = new HashSet<>();
+    for (BodyRequestPairing candidate : candidates) {
+      if (!requestIdByBodyLog.containsKey(candidate.bodyLog()) && claimedRequestIds.add(candidate.requestId())) {
+        requestIdByBodyLog.put(candidate.bodyLog(), candidate.requestId());
+      }
     }
-    TreeMap<Long, String> requestIdBySequence = requestIdBySequencePerPrompt.get(promptId);
-    if (requestIdBySequence == null) {
-      return null;
-    }
-    Map.Entry<Long, String> followingRequest = requestIdBySequence.higherEntry(sequence);
-    return followingRequest == null ? null : followingRequest.getValue();
   }
+
+  // Body-to-request pairing only ever compares calls from the same turn on the same
+  // model. prompt.id alone is too coarse -- one turn routinely fans out to several
+  // models at once -- and model is the one discriminator both sides always carry.
+  private static String bodyPairingPartitionKey(Map<String, Object> attributes, String promptIdAttribute) {
+    String promptId = stringAttribute(attributes, promptIdAttribute);
+    String model = stringAttribute(attributes, MODEL_ATTRIBUTE);
+    if (promptId == null || model == null) {
+      return null;
+    }
+    return promptId + PARTITION_KEY_SEPARATOR + model;
+  }
+
+  // One api_request reduced to what the pairing needs: the request id a body log will
+  // borrow, and the instant the call was issued (its completion time less its duration).
+  private record IssuedApiRequest(String requestId, Instant issuedAt) { }
+
+  // A candidate body-to-request pairing, ranked by how far apart the two instants sit.
+  private record BodyRequestPairing(LogRecord bodyLog, String requestId, long offsetMillis) { }
 
   private static Long longAttribute(Map<String, Object> attributes, String key) {
     Object value = attributes.get(key);

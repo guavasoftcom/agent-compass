@@ -59,6 +59,25 @@ export const formatTokens = (value: number): string => {
   return `${Math.round(value)}`;
 };
 
+// Cost-outlier tiers for the grid's Cost column and the drawer header's cost
+// figure. Thresholds mirror the page's own P95 stat card so the highlighting
+// is never arbitrary: 'warm' starts at a flat $8, 'hot' at the live P95
+// cost/session figure (passed in rather than hardcoded, so the two can never
+// drift apart).
+export const COST_WARM_THRESHOLD_USD = 8;
+
+export type CostTier = 'plain' | 'warm' | 'hot';
+
+export const costTier = (costUsd: number, hotThresholdUsd: number): CostTier => {
+  if (costUsd >= hotThresholdUsd) {
+    return 'hot';
+  }
+  if (costUsd >= COST_WARM_THRESHOLD_USD) {
+    return 'warm';
+  }
+  return 'plain';
+};
+
 // Compact "Aug 9, 10:36 AM" — for the session detail drawer's metadata line,
 // where the full locale string formatTimestamp returns is too long to sit next
 // to three other facts. Seconds are dropped deliberately: the line describes
