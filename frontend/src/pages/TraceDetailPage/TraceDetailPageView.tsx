@@ -7,6 +7,11 @@ import { formatDuration } from '../TracesPage/tracesApi';
 import { tokenBreakdownForSpan } from '../TracesPage/tokenBreakdown';
 import { costOfSelectedSpan, costOfSpan } from './spanCost';
 import { type SpanTree, type TraceWindow } from './spanTree';
+import {
+  loadChipsOff,
+  persistChipsOff,
+  type ChipFamily,
+} from './chipVisibility';
 import SpanInspectorDrawer, {
   type SpanInspectorSelection,
 } from './components/SpanInspectorDrawer';
@@ -63,6 +68,23 @@ const TraceDetailPageView = ({
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Row-density preference, not per-trace state: unlike collapsed/selected/view
+  // it deliberately survives the key={traceId} remount, because the initial
+  // value is re-read from localStorage rather than reset to empty.
+  const [chipsOff, setChipsOff] = useState<Set<ChipFamily>>(() => loadChipsOff());
+  const toggleChipFamily = useCallback((family: ChipFamily) => {
+    setChipsOff((previous) => {
+      const next = new Set(previous);
+      if (next.has(family)) {
+        next.delete(family);
+      } else {
+        next.add(family);
+      }
+      persistChipsOff(next);
+      return next;
+    });
+  }, []);
 
   const earliest = traceWindow?.earliestStartMs ?? 0;
   const totalMs = traceWindow?.totalMs ?? 1;
@@ -353,6 +375,8 @@ const TraceDetailPageView = ({
             errorCount={errorSpans.length}
             onToggleAll={toggleAll}
             onNextError={nextError}
+            chipsOff={chipsOff}
+            onToggleChipFamily={toggleChipFamily}
           />
 
           <TraceMinimap
@@ -431,6 +455,7 @@ const TraceDetailPageView = ({
                   descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
                   costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
                   isRollupCost={costOfSpan(s) > 0}
+                  chipsOff={chipsOff}
                   gridColumns={gridColumns}
                   left={left}
                   right={right}

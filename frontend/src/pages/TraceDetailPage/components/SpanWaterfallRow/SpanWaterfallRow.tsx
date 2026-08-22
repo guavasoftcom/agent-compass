@@ -15,6 +15,7 @@ import {
 } from '../../../TracesPage/tokenBreakdown';
 import { fontFamilies } from '../../../../theme/typography';
 import { shortModelName } from '../../../../lib/format';
+import type { ChipFamily } from '../../chipVisibility';
 
 interface Props {
   span: SpanRow;
@@ -30,6 +31,10 @@ interface Props {
   // True when costUsd is the stamped span_costs rollup (requests made under
   // this span) rather than the span's own call — drives the badge tooltip.
   isRollupCost: boolean;
+  // Badge families the toolbar legend has muted — gates every badge below
+  // except error/descendant-error, which name the row's status rather than an
+  // optional figure and are never hidden.
+  chipsOff: Set<ChipFamily>;
   gridColumns: string;
   // Horizontal bar geometry (percent of the visible zoom window).
   left: number;
@@ -377,6 +382,7 @@ const SpanWaterfallRow = ({
   descendantErrorCount,
   costUsd,
   isRollupCost,
+  chipsOff,
   gridColumns,
   left,
   right,
@@ -521,11 +527,15 @@ const SpanWaterfallRow = ({
         </Box>
         {/* Chip order is deliberate: the two token figures first (they are on
             every model row, so a stable position lets the eye scan the column),
-            then cost, then the identity pills. */}
-        <SpanFullRateBadge tokens={tokens} />
-        <SpanCacheReadBadge tokens={tokens} />
-        <SpanCostBadge costUsd={costUsd} isRollupCost={isRollupCost} />
-        {modelName ? (
+            then cost, then the identity pills. Each is gated on the toolbar
+            legend's per-family visibility toggle except error/descendant-error,
+            which are never hidden. */}
+        {!chipsOff.has('tok') ? <SpanFullRateBadge tokens={tokens} /> : null}
+        {!chipsOff.has('cr') ? <SpanCacheReadBadge tokens={tokens} /> : null}
+        {!chipsOff.has('cost') ? (
+          <SpanCostBadge costUsd={costUsd} isRollupCost={isRollupCost} />
+        ) : null}
+        {modelName && !chipsOff.has('mdl') ? (
           <Box
             component="span"
             title={effort ? `${modelName} · ${effort} effort` : modelName}
@@ -545,7 +555,7 @@ const SpanWaterfallRow = ({
             ) : null}
           </Box>
         ) : null}
-        <SpanToolBadge span={span} />
+        {!chipsOff.has('tool') ? <SpanToolBadge span={span} /> : null}
         {isError ? (
           <Box
             component="span"
