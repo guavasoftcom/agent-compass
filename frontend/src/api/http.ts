@@ -5,8 +5,8 @@
 
 import type { ListResult, WindowSelection } from './types';
 
-export const getJson = async <T>(path: string): Promise<T> => {
-  const res = await fetch(path);
+export const getJson = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
+  const res = await fetch(path, { signal });
   if (!res.ok) {
     throw new Error(`${path} → ${res.status} ${res.statusText}`);
   }

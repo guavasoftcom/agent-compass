@@ -665,7 +665,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -776,7 +776,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -889,7 +889,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1004,7 +1004,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1117,7 +1117,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1229,7 +1229,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1349,7 +1349,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1465,7 +1465,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1576,7 +1576,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1687,7 +1687,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1798,7 +1798,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -1909,7 +1909,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2021,7 +2021,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2132,7 +2132,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2250,7 +2250,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2369,7 +2369,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2487,7 +2487,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2606,7 +2606,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2724,7 +2724,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2845,7 +2845,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -2968,7 +2968,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3087,7 +3087,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3197,7 +3197,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3307,7 +3307,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3417,7 +3417,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3527,7 +3527,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3640,7 +3640,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3758,7 +3758,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3874,7 +3874,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -3985,7 +3985,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -4098,7 +4098,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -4216,7 +4216,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -4332,7 +4332,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
                 FROM log_records l
                 WHERE l.trace_id = a.trace_id
-                  AND l.attributes ->> 'event.name' = 'api_request'
+                  AND l.event_name = 'api_request'
                   AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
               ) tc ON TRUE
             )
@@ -4431,7 +4431,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               SELECT SUM((l.attributes ->> 'cost_usd')::numeric) AS total_cost_usd
               FROM log_records l
               WHERE l.trace_id = a.trace_id
-                AND l.attributes ->> 'event.name' = 'api_request'
+                AND l.event_name = 'api_request'
                 AND l.attributes ->> 'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
             ) tc ON TRUE
             """, nativeQuery = true)

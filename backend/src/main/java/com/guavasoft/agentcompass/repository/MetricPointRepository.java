@@ -232,9 +232,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp);
 
-  // Per-(bucket, type) token totals for the configured token-usage metric.
-  // date_bin aligns buckets to :start so the first bucket starts exactly at the
-  // window's lower bound.
+  // Per-(bucket, type) token totals, per-model token totals, and the window's
+  // grand token total for the configured token-usage metric — in ONE scan of
+  // metric_points instead of three. date_bin aligns buckets to :start so the
+  // first bucket starts exactly at the window's lower bound.
   //
   // claude_code.token.usage is a CUMULATIVE counter that Claude Code re-emits
   // every minute — so a plain SUM over the raw value columns would re-add each
@@ -249,36 +250,83 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // true previous emission, counting the new level on a reset (the same
   // attribute set reused by a fresh run that starts low again, e.g. a re-spawned
   // subagent) so a bucket can never go negative. This query is therefore a plain
-  // SUM(value_delta) binned by the timestamp of the row that produced it,
-  // servable by the existing (metric_name, timestamp) index — no per-query
-  // window function over the full jsonb attribute set. Because value_delta is
-  // computed against the row's TRUE predecessor (in or out of this window), a
-  // stream that started before :start is no longer overcounted at the boundary
-  // the way the old in-window-only LAG was (see V11 migration comment).
-  // Rows are sparse — a (bucket, type) pair only appears when a stream advanced
-  // there — and the service fills gaps with zero.
+  // SUM(value_delta), servable by the existing (metric_name, timestamp) index —
+  // no per-query window function over the full jsonb attribute set. Because
+  // value_delta is computed against the row's TRUE predecessor (in or out of
+  // this window), a stream that started before :start is no longer overcounted
+  // at the boundary the way the old in-window-only LAG was (see V11 migration
+  // comment).
+  //
+  // This merges the former aggregateTokenUsageTimeseriesInRange (GROUP BY
+  // bucket, token_type; WHERE token_type IS NOT NULL), aggregateTokensByModel
+  // (GROUP BY model; WHERE model IS NOT NULL), and aggregateTotalTokens (no
+  // GROUP BY, no filter) the same way aggregateCostBreakdown merged the
+  // analogous three cost.usage queries: GROUPING SETS computes all three from
+  // one pass, so Postgres reads and detoasts each row's attributes once instead
+  // of three times. GROUPING SETS can't apply a different WHERE per grouping
+  // combination, so the filtering those two NOT NULL clauses did in SQL is done
+  // in Java instead: the service drops a 'bucket' row with a null token_type and
+  // a 'model' row with a null model, exactly reproducing the old WHERE-clause
+  // exclusions, while the single 'total' row is kept unconditionally, matching
+  // aggregateTotalTokens' unfiltered semantics.
+  //
+  // row_type discriminates which grouping set produced a row via GROUPING(),
+  // same idiom as aggregateCostBreakdown. Bucket rows sort by (bucket,
+  // token_type) ascending (matching the old aggregateTokenUsageTimeseriesInRange
+  // order — buckets must arrive chronologically for the trend chart); model rows
+  // sort by tokens descending (matching the old aggregateTokensByModel, so the
+  // service's list-order-dependent colorIndex assignment is unaffected); the
+  // lone total row's position doesn't matter. Rows are sparse for the bucket/
+  // model groupings — a (bucket, type) pair or a model only appears when a
+  // stream advanced there — and the service fills gaps with zero; the total
+  // grouping set always returns exactly one row (COALESCE guards a NULL SUM
+  // when the window has no token data at all).
   @Query(value = """
       SELECT
-        date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
-        attributes ->> :tokenTypeAttribute AS token_type,
-        SUM(value_delta)::bigint AS total
-      FROM metric_points
-      WHERE metric_name = :metricName
-        AND attributes ->> :tokenTypeAttribute IS NOT NULL
-        AND timestamp >= :start
-        AND timestamp <= :end
-      GROUP BY bucket, token_type
-      ORDER BY bucket, token_type
+        CASE
+          WHEN GROUPING(model) = 0 THEN 'model'
+          WHEN GROUPING(bucket) = 0 THEN 'bucket'
+          ELSE 'total'
+        END AS row_type,
+        bucket,
+        token_type,
+        model,
+        COALESCE(SUM(value_delta), 0)::bigint AS total
+      FROM (
+        SELECT
+          date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+          attributes ->> :tokenTypeAttribute                                 AS token_type,
+          attributes ->> :modelAttribute                                     AS model,
+          value_delta
+        FROM metric_points
+        WHERE metric_name = :metricName
+          AND timestamp >= :start
+          AND timestamp <= :end
+      ) AS token_rows
+      GROUP BY GROUPING SETS ((bucket, token_type), (model), ())
+      ORDER BY
+        CASE WHEN GROUPING(model) = 0 THEN 2 WHEN GROUPING(bucket) = 0 THEN 1 ELSE 0 END,
+        CASE WHEN GROUPING(bucket) = 0 THEN bucket END ASC,
+        CASE WHEN GROUPING(bucket) = 0 THEN token_type END ASC,
+        CASE WHEN GROUPING(model) = 0 THEN SUM(value_delta) END DESC
       """, nativeQuery = true)
-  List<Object[]> aggregateTokenUsageTimeseriesInRange(
+  List<Object[]> aggregateTokenUsageBreakdown(
       @Param("metricName") String metricName,
       @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("modelAttribute") String modelAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds);
 
   // Per-session cost and active-time totals, backend-sorted and
   // backend-paginated.
+  //
+  // session_id below is the stored generated column added by V18 (attributes ->>
+  // 'session.id'), not a raw jsonb extraction -- see that migration for why: this
+  // query's window-scoped CTEs need session_id alongside a (metric_name, timestamp)
+  // filter, and only a real column lets idx_metric_points_name_ts's INCLUDE list
+  // (also added by V18) serve them as index-only scans instead of a heap visit per
+  // matched row.
   //
   // cost.usage and active_time.total are CUMULATIVE counters Claude Code re-emits
   // every minute. A "stream" is one counter, identified by its FULL attribute set
@@ -291,8 +339,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // go negative. Summing value_delta per stream recovers its final value
   // (monotonic case) and the sum of segment peaks (reset case); summing across a
   // session's streams gives its window total. This matches
-  // aggregateCostCurrentAndPriorTotals / aggregateTokensByModel exactly, so the
-  // page reconciles.
+  // aggregateCostCurrentAndPriorTotals / aggregateTokenUsageBreakdown exactly, so
+  // the page reconciles.
   //
   // Session start/end timestamps are the window of cost/active-time emissions
   // carrying this session id. Wall-clock duration is the difference in whole
@@ -344,10 +392,36 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // of silently dropping a session.
   //
   // The unbounded join is why the id set comes first: without it Postgres would
-  // aggregate every cost/active-time row ever ingested. Joining session_window
-  // drives a nested loop over idx_metric_points_session_id_name_ts (V13,
-  // (session.id, metric_name, timestamp)) -- at most one index range per listed
-  // session, and the page size is clamped by PageBounds.
+  // aggregate every cost/active-time row ever ingested. session_span, cost_per_session,
+  // and active_per_session used to be three separate CTEs that each rejoined
+  // session_window to metric_points for the same metric_name IN (:costMetric,
+  // :activeTimeMetric) row set, which meant scanning that ~800K-row set three times.
+  // Merging them into one FILTER-qualified pass measured 2x faster end to end
+  // (2.57s -> 1.24s on a 7-day window, 4.5M-row table) with identical output.
+  //
+  // That merged CTE is now a LATERAL, and so are the token and meta lookups, because
+  // the merge alone did not fix the shape of the plan. As a plain join, Postgres
+  // still would NOT choose a nested loop over idx_metric_points_session_id_name_ts
+  // (V13): session_window's row estimate is a flat ~199 regardless of window, so at
+  // this table's size the planner preferred a hash join against a sequential scan of
+  // the full cost+active-time history -- 843,918 rows and ~3.9 GB of heap read to
+  // serve the ~50 sessions the window actually selects. token_per_session had the
+  // same defect independently (a parallel seq scan aggregating EVERY session in the
+  // window when only the page's sessions are ever read), and session_meta sorted 84K
+  // rows to DISTINCT ON its way down to 68. LATERAL removes the planner's choice:
+  // each subquery is correlated on w.session_id, so all three become index-driven
+  // per-session lookups. Measured on the live database (7-day window, warm cache):
+  // 1450 ms -> 730 ms, no sequential scans, 500K+ buffers -> 122K on the totals join.
+  // As a side effect the plan's cost estimate drops below jit_inline_above_cost, so
+  // the query stops paying ~575 ms of JIT compilation that never earned it back.
+  //
+  // Row-for-row identical output, with one caveat: SUM(double precision) now
+  // accumulates in a different order, so cost_usd and active_time_seconds can differ
+  // in the last digits (5.7279469 vs 5.727946899999999). Same value to well beyond
+  // the cent and the minute the UI renders, but exact-equality assertions on those
+  // two columns will not hold across this change.
+  //
+  // The page size is clamped by PageBounds.
   //
   // The [startTimestamp, endTimestamp] bounds use the NULL-or-compare pattern, so
   // the ?minutes= form (start only) and the ?startTimestamp=&endTimestamp= form
@@ -360,7 +434,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // COUNT(*) OVER() carries the total session count alongside the page so a
   // second count round-trip is unnecessary.
   //
-  // token_per_session returns the four-way type breakdown directly (one
+  // The tokens lateral returns the four-way type breakdown directly (one
   // SUM(value_delta) FILTER per kind) rather than a single "tokens" total: the
   // service sums these four columns to derive SessionSummary.tokens, so the
   // "breakdown sums to tokens" invariant holds by construction instead of relying
@@ -374,44 +448,45 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   @Query(value = """
       WITH session_window AS (
         SELECT
-          attributes ->> 'session.id' AS session_id
+          session_id
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         GROUP BY 1
-      ),
-      session_span AS (
+      )
+      SELECT
+        w.session_id,
+        COALESCE(totals.cost_usd, 0)::double precision            AS cost_usd,
+        COALESCE(totals.active_time_seconds, 0)::double precision AS active_time_seconds,
+        totals.first_seen,
+        totals.last_seen,
+        EXTRACT(EPOCH FROM (totals.last_seen - totals.first_seen))::bigint AS wall_seconds,
+        COALESCE(tokens.input_tokens, 0)::bigint                  AS input_tokens,
+        COALESCE(tokens.output_tokens, 0)::bigint                 AS output_tokens,
+        COALESCE(tokens.cache_creation_tokens, 0)::bigint         AS cache_creation_tokens,
+        COALESCE(tokens.cache_read_tokens, 0)::bigint             AS cache_read_tokens,
+        meta.terminal_type,
+        meta.start_type,
+        COUNT(*) OVER()::bigint                                   AS total_count
+      FROM session_window w
+      CROSS JOIN LATERAL (
         SELECT
-          w.session_id,
           MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_seen,
-          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
-        FROM session_window w
-        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
-        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
-        GROUP BY 1
-      ),
-      cost_per_session AS (
-        SELECT w.session_id, SUM(p.value_delta) AS cost_usd
-        FROM session_window w
-        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
-        WHERE p.metric_name = :costMetric
-          AND p.value_double IS NOT NULL
-        GROUP BY 1
-      ),
-      active_per_session AS (
-        SELECT w.session_id, SUM(p.value_delta) AS active_time_seconds
-        FROM session_window w
-        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
-        WHERE p.metric_name = :activeTimeMetric
-          AND p.value_double IS NOT NULL
-        GROUP BY 1
-      ),
-      token_per_session AS (
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen,
+          SUM(p.value_delta)
+            FILTER (WHERE p.metric_name = :costMetric AND p.value_double IS NOT NULL) AS cost_usd,
+          SUM(p.value_delta)
+            FILTER (WHERE p.metric_name = :activeTimeMetric AND p.value_double IS NOT NULL)
+            AS active_time_seconds
+        FROM metric_points p
+        WHERE p.session_id = w.session_id
+          AND p.metric_name IN (:costMetric, :activeTimeMetric)
+      ) totals
+      LEFT JOIN LATERAL (
         SELECT
-          attributes ->> 'session.id' AS session_id,
           COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :inputTokenType), 0)::bigint
             AS input_tokens,
           COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :outputTokenType), 0)::bigint
@@ -421,83 +496,63 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             AS cache_creation_tokens,
           COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :cacheReadTokenType), 0)::bigint
             AS cache_read_tokens
-        FROM metric_points
-        WHERE metric_name = :tokenMetric
-          AND attributes ->> 'session.id' IS NOT NULL
-          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
-          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
-        GROUP BY 1
-      ),
-      session_meta AS (
-        SELECT DISTINCT ON (attributes ->> 'session.id')
-          attributes ->> 'session.id'    AS session_id,
-          attributes ->> 'start_type'    AS start_type,
-          attributes ->> 'terminal.type' AS terminal_type
-        FROM metric_points
-        WHERE metric_name = :sessionCountMetric
-          AND attributes ->> 'session.id' IS NOT NULL
-          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
-          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
-        ORDER BY attributes ->> 'session.id', COALESCE(start_timestamp, timestamp)
-      )
-      SELECT
-        w.session_id,
-        COALESCE(c.cost_usd, 0)::double precision            AS cost_usd,
-        COALESCE(a.active_time_seconds, 0)::double precision AS active_time_seconds,
-        w.first_seen,
-        w.last_seen,
-        EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))::bigint AS wall_seconds,
-        COALESCE(t.input_tokens, 0)::bigint                      AS input_tokens,
-        COALESCE(t.output_tokens, 0)::bigint                     AS output_tokens,
-        COALESCE(t.cache_creation_tokens, 0)::bigint             AS cache_creation_tokens,
-        COALESCE(t.cache_read_tokens, 0)::bigint                 AS cache_read_tokens,
-        m.terminal_type,
-        m.start_type,
-        COUNT(*) OVER()::bigint                                  AS total_count
-      FROM session_span w
-      LEFT JOIN cost_per_session c   ON c.session_id = w.session_id
-      LEFT JOIN active_per_session a ON a.session_id = w.session_id
-      LEFT JOIN token_per_session t  ON t.session_id = w.session_id
-      LEFT JOIN session_meta m       ON m.session_id = w.session_id
+        FROM metric_points tp
+        WHERE tp.session_id = w.session_id
+          AND tp.metric_name = :tokenMetric
+          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR tp.timestamp >= :startTimestamp)
+          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR tp.timestamp <= :endTimestamp)
+      ) tokens ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          mp.attributes ->> 'start_type'    AS start_type,
+          mp.attributes ->> 'terminal.type' AS terminal_type
+        FROM metric_points mp
+        WHERE mp.session_id = w.session_id
+          AND mp.metric_name = :sessionCountMetric
+          AND (CAST(:startTimestamp AS timestamptz) IS NULL OR mp.timestamp >= :startTimestamp)
+          AND (CAST(:endTimestamp AS timestamptz) IS NULL OR mp.timestamp <= :endTimestamp)
+        ORDER BY COALESCE(mp.start_timestamp, mp.timestamp)
+        LIMIT 1
+      ) meta ON true
       ORDER BY
         CASE WHEN :sortDirection = 'asc' THEN
           CASE :sortColumn
-            WHEN 'cost'   THEN COALESCE(c.cost_usd, 0)
-            WHEN 'active' THEN COALESCE(a.active_time_seconds, 0)
-            WHEN 'wall'   THEN EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))
-            WHEN 'tokens' THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)
-              + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)
+            WHEN 'cost'   THEN COALESCE(totals.cost_usd, 0)
+            WHEN 'active' THEN COALESCE(totals.active_time_seconds, 0)
+            WHEN 'wall'   THEN EXTRACT(EPOCH FROM (totals.last_seen - totals.first_seen))
+            WHEN 'tokens' THEN COALESCE(tokens.input_tokens, 0) + COALESCE(tokens.output_tokens, 0)
+              + COALESCE(tokens.cache_creation_tokens, 0) + COALESCE(tokens.cache_read_tokens, 0)
             WHEN 'cacheEfficiency' THEN CASE
-              WHEN COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
-                + COALESCE(t.cache_read_tokens, 0) > 0
-              THEN COALESCE(t.cache_read_tokens, 0)::double precision
-                / (COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
-                  + COALESCE(t.cache_read_tokens, 0)) END
-            WHEN 'costPerMinute' THEN CASE WHEN COALESCE(a.active_time_seconds, 0) > 0
-              THEN COALESCE(c.cost_usd, 0) / a.active_time_seconds * 60 END
+              WHEN COALESCE(tokens.input_tokens, 0) + COALESCE(tokens.cache_creation_tokens, 0)
+                + COALESCE(tokens.cache_read_tokens, 0) > 0
+              THEN COALESCE(tokens.cache_read_tokens, 0)::double precision
+                / (COALESCE(tokens.input_tokens, 0) + COALESCE(tokens.cache_creation_tokens, 0)
+                  + COALESCE(tokens.cache_read_tokens, 0)) END
+            WHEN 'costPerMinute' THEN CASE WHEN COALESCE(totals.active_time_seconds, 0) > 0
+              THEN COALESCE(totals.cost_usd, 0) / totals.active_time_seconds * 60 END
           END
         END ASC NULLS LAST,
         CASE WHEN :sortDirection = 'desc' THEN
           CASE :sortColumn
-            WHEN 'cost'   THEN COALESCE(c.cost_usd, 0)
-            WHEN 'active' THEN COALESCE(a.active_time_seconds, 0)
-            WHEN 'wall'   THEN EXTRACT(EPOCH FROM (w.last_seen - w.first_seen))
-            WHEN 'tokens' THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)
-              + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)
+            WHEN 'cost'   THEN COALESCE(totals.cost_usd, 0)
+            WHEN 'active' THEN COALESCE(totals.active_time_seconds, 0)
+            WHEN 'wall'   THEN EXTRACT(EPOCH FROM (totals.last_seen - totals.first_seen))
+            WHEN 'tokens' THEN COALESCE(tokens.input_tokens, 0) + COALESCE(tokens.output_tokens, 0)
+              + COALESCE(tokens.cache_creation_tokens, 0) + COALESCE(tokens.cache_read_tokens, 0)
             WHEN 'cacheEfficiency' THEN CASE
-              WHEN COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
-                + COALESCE(t.cache_read_tokens, 0) > 0
-              THEN COALESCE(t.cache_read_tokens, 0)::double precision
-                / (COALESCE(t.input_tokens, 0) + COALESCE(t.cache_creation_tokens, 0)
-                  + COALESCE(t.cache_read_tokens, 0)) END
-            WHEN 'costPerMinute' THEN CASE WHEN COALESCE(a.active_time_seconds, 0) > 0
-              THEN COALESCE(c.cost_usd, 0) / a.active_time_seconds * 60 END
+              WHEN COALESCE(tokens.input_tokens, 0) + COALESCE(tokens.cache_creation_tokens, 0)
+                + COALESCE(tokens.cache_read_tokens, 0) > 0
+              THEN COALESCE(tokens.cache_read_tokens, 0)::double precision
+                / (COALESCE(tokens.input_tokens, 0) + COALESCE(tokens.cache_creation_tokens, 0)
+                  + COALESCE(tokens.cache_read_tokens, 0)) END
+            WHEN 'costPerMinute' THEN CASE WHEN COALESCE(totals.active_time_seconds, 0) > 0
+              THEN COALESCE(totals.cost_usd, 0) / totals.active_time_seconds * 60 END
           END
         END DESC NULLS LAST,
-        CASE WHEN :sortColumn = 'started' AND :sortDirection = 'asc'  THEN w.first_seen END ASC NULLS LAST,
-        CASE WHEN :sortColumn = 'started' AND :sortDirection = 'desc' THEN w.first_seen END DESC NULLS LAST,
-        CASE WHEN :sortColumn = 'ended' AND :sortDirection = 'asc'  THEN w.last_seen END ASC NULLS LAST,
-        CASE WHEN :sortColumn = 'ended' AND :sortDirection = 'desc' THEN w.last_seen END DESC NULLS LAST,
+        CASE WHEN :sortColumn = 'started' AND :sortDirection = 'asc'  THEN totals.first_seen END ASC NULLS LAST,
+        CASE WHEN :sortColumn = 'started' AND :sortDirection = 'desc' THEN totals.first_seen END DESC NULLS LAST,
+        CASE WHEN :sortColumn = 'ended' AND :sortDirection = 'asc'  THEN totals.last_seen END ASC NULLS LAST,
+        CASE WHEN :sortColumn = 'ended' AND :sortDirection = 'desc' THEN totals.last_seen END DESC NULLS LAST,
         w.session_id ASC
       LIMIT :pageSize OFFSET :pageOffset
       """, nativeQuery = true)
@@ -562,37 +617,49 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // that genuinely moved tokens in the window without moving cost.
   //
   // last_seen (surfaced to the Tokens page's rank card as endTimestamp, for a
-  // human-readable "last activity" instead of a bare session id) reuses
-  // aggregateSessionSummaries' session_span shape: MAX(timestamp) FILTER (WHERE
-  // value_delta IS DISTINCT FROM 0). Unlike session_window's own membership test,
-  // this filter is NOT optional here -- Claude Code's exporter keeps re-emitting a
-  // finished session's cumulative cost/active-time counters once a minute forever
-  // at an unchanged value, so an unfiltered MAX(timestamp) would read every session
-  // as active in the current minute regardless of when it actually last did
-  // anything. Can be null when every one of a session's cost/active-time points in
-  // session_window is such a zero-delta re-export.
+  // human-readable "last activity" instead of a bare session id): MAX(timestamp)
+  // FILTER (WHERE value_delta IS DISTINCT FROM 0). Unlike session_window's own
+  // membership test, this filter is NOT optional here -- Claude Code's exporter
+  // keeps re-emitting a finished session's cumulative cost/active-time counters
+  // once a minute forever at an unchanged value, so an unfiltered MAX(timestamp)
+  // would read every session as active in the current minute regardless of when
+  // it actually last did anything. Can be null when every one of a session's
+  // cost/active-time points in session_window is such a zero-delta re-export.
+  //
+  // last_seen and cost_usd are computed together in one session_totals CTE rather
+  // than two (formerly session_span + cost_per_session), mirroring
+  // aggregateSessionSummaries' totals lateral above: each separately
+  // rejoined session_window to metric_points for an overlapping metric_name IN
+  // (:costMetric, :activeTimeMetric) row set, and Postgres does not turn that
+  // into a cheap per-session nested loop over idx_metric_points_session_id_name_ts
+  // -- it prefers a hash join against a sequential scan of the full cost+active-time
+  // metric history (~840K rows on the live database), so two CTEs meant scanning
+  // that set twice. Merging measured 1994ms -> 1417ms end to end on a 7-day
+  // window against the live 4.5M-row table (EXPLAIN ANALYZE), same output.
   @Query(value = """
       WITH session_window AS (
-        SELECT attributes ->> 'session.id' AS session_id
+        SELECT session_id
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         GROUP BY 1
       ),
-      session_span AS (
+      session_totals AS (
         SELECT
           w.session_id,
-          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen,
+          SUM(p.value_delta)
+            FILTER (WHERE p.metric_name = :costMetric AND p.value_double IS NOT NULL) AS cost_usd
         FROM session_window w
-        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
         GROUP BY 1
       ),
       token_per_session AS (
         SELECT
-          attributes ->> 'session.id' AS session_id,
+          session_id,
           COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :inputTokenType), 0)::bigint
             AS input_tokens,
           COALESCE(SUM(value_delta) FILTER (WHERE attributes ->> :tokenTypeAttribute = :outputTokenType), 0)::bigint
@@ -604,17 +671,9 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             AS cache_read_tokens
         FROM metric_points
         WHERE metric_name = :tokenMetric
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
-        GROUP BY 1
-      ),
-      cost_per_session AS (
-        SELECT w.session_id, SUM(p.value_delta) AS cost_usd
-        FROM session_window w
-        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
-        WHERE p.metric_name = :costMetric
-          AND p.value_double IS NOT NULL
         GROUP BY 1
       )
       SELECT
@@ -626,12 +685,11 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         t.input_tokens                                                       AS input_tokens,
         t.cache_creation_tokens                                              AS cache_creation_tokens,
         t.output_tokens                                                      AS output_tokens,
-        COALESCE(c.cost_usd, 0)::double precision                            AS cost_usd,
-        s.last_seen                                                          AS last_seen
+        COALESCE(st.cost_usd, 0)::double precision                           AS cost_usd,
+        st.last_seen                                                         AS last_seen
       FROM session_window w
-      JOIN token_per_session t     ON t.session_id = w.session_id
-      LEFT JOIN cost_per_session c ON c.session_id = w.session_id
-      LEFT JOIN session_span s     ON s.session_id = w.session_id
+      JOIN token_per_session t      ON t.session_id = w.session_id
+      LEFT JOIN session_totals st   ON st.session_id = w.session_id
       WHERE (t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens) >= :minimumInputSideTokens
       ORDER BY cache_efficiency ASC, input_side_tokens DESC, w.session_id ASC
       LIMIT :resultLimit
@@ -680,7 +738,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       SELECT timestamp, value_delta
       FROM metric_points
       WHERE metric_name = :metricName
-        AND attributes ->> 'session.id' = :sessionId
+        AND session_id = :sessionId
         AND value_double IS NOT NULL
         AND timestamp >= :firstTurnStart
         AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR timestamp < :turnsEndBoundary)
@@ -706,7 +764,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         value_delta
       FROM metric_points
       WHERE metric_name = :metricName
-        AND attributes ->> 'session.id' = :sessionId
+        AND session_id = :sessionId
         AND attributes ->> :modelAttribute IS NOT NULL
         AND timestamp >= :firstTurnStart
         AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR timestamp < :turnsEndBoundary)
@@ -795,7 +853,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AS prior_total
       FROM metric_points
       WHERE metric_name = :metricName
-        AND attributes ->> 'session.id' IS NOT NULL
+        AND session_id IS NOT NULL
         AND value_double IS NOT NULL
         AND timestamp >= :priorFrom
         AND timestamp <= :to
@@ -839,7 +897,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           value_delta
         FROM metric_points
         WHERE metric_name = :metricName
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND value_double IS NOT NULL
           AND timestamp >= :from
           AND timestamp <= :to
@@ -882,8 +940,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // session (model x type x query_source x agent.name) — so a plain SUM over the
   // raw value columns would re-add each running total. value_delta (V11) is
   // already each full-attribute stream's reset-aware per-row increment,
-  // precomputed at ingest (see aggregateTokensByModel / recomputeValueDeltas), so
-  // the innermost query only needs to SUM it per (session, model); the outer
+  // precomputed at ingest (see aggregateTokenUsageBreakdown / recomputeValueDeltas),
+  // so the innermost query only needs to SUM it per (session, model); the outer
   // query sums per session and derives the time-column index (0..23) from the
   // session's last emission. One exemplar per session keeps trace ids distinct.
   @Query(value = """
@@ -928,31 +986,6 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("modelAttribute") String modelAttribute,
       @Param("exemplarLimit") int exemplarLimit);
 
-  // Per-model token totals for the window. claude_code.token.usage is a
-  // cumulative counter re-emitted every minute and split into many concurrent
-  // streams identified by the FULL attribute set (model x type x query_source x
-  // agent.name within a session) — so a plain SUM over the raw value columns
-  // would re-add each running total. value_delta (V11) is already each
-  // full-attribute stream's reset-aware per-row increment, precomputed at ingest
-  // (recomputeValueDeltas counts a counter reset as the new low value, never
-  // negative), so this is a plain SUM per model. The increments telescope to each
-  // stream's final value, so this reconciles exactly with the headline total
-  // summed from the timeseries.
-  @Query(value = """
-      SELECT attributes ->> :modelAttribute AS model, SUM(value_delta)::bigint AS tokens
-      FROM metric_points
-      WHERE metric_name = :metricName
-        AND timestamp >= :start AND timestamp <= :end
-        AND attributes ->> :modelAttribute IS NOT NULL
-      GROUP BY model
-      ORDER BY tokens DESC
-      """, nativeQuery = true)
-  List<Object[]> aggregateTokensByModel(
-      @Param("metricName") String metricName,
-      @Param("modelAttribute") String modelAttribute,
-      @Param("start") Instant start,
-      @Param("end") Instant end);
-
   // Window-level session KPIs: total session count plus cost percentiles. Reuses the
   // same reset-aware, full-attribute per-session rollup as aggregateSessionSummaries
   // (see there for why MAX-per-(session,model,query_source) under-counts), then
@@ -975,20 +1008,20 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // padded out with $0.00 ghosts, dragging the median toward zero.
   @Query(value = """
       WITH cost_per_session AS (
-        SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta) AS cost_usd
+        SELECT session_id, SUM(value_delta) AS cost_usd
         FROM metric_points
         WHERE metric_name = :costMetric
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND value_double IS NOT NULL
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         GROUP BY 1
       ),
       active_per_session AS (
-        SELECT attributes ->> 'session.id' AS session_id, SUM(value_delta) AS active_time_seconds
+        SELECT session_id, SUM(value_delta) AS active_time_seconds
         FROM metric_points
         WHERE metric_name = :activeTimeMetric
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND value_double IS NOT NULL
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
@@ -996,10 +1029,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       ),
       session_window AS (
         SELECT
-          attributes ->> 'session.id' AS session_id
+          session_id
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
@@ -1056,10 +1089,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // change exists to remove. The window filter then applies to that true start.
   @Query(value = """
       WITH session_window AS (
-        SELECT attributes ->> 'session.id' AS session_id
+        SELECT session_id
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
-          AND attributes ->> 'session.id' IS NOT NULL
+          AND session_id IS NOT NULL
           AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :start
           AND timestamp <= :end
@@ -1070,7 +1103,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           w.session_id,
           MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_ts
         FROM session_window w
-        JOIN metric_points p ON p.attributes ->> 'session.id' = w.session_id
+        JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
         GROUP BY 1
       )
@@ -1097,15 +1130,40 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // ---------------------------------------------------------------------------
   //
   // Every claude_code.* metric is a CUMULATIVE counter re-emitted every minute,
-  // split into concurrent streams identified by the FULL attribute set. The three
+  // split into concurrent streams identified by the FULL attribute set. The
   // queries below are the metric-name-parameterised form of the reset-aware
-  // increment used for tokens/cost (see aggregateTokensByModel): value_delta
+  // increment used for tokens/cost (see aggregateTokenUsageBreakdown): value_delta
   // (V11) is already each full-attribute stream's per-row increment vs. its true
   // previous emission, precomputed at ingest — counting the new level on a reset
-  // so increments never go negative — so these are now plain SUM(value_delta)
+  // so increments never go negative — so these are plain SUM(value_delta)
   // aggregations. Telescoping recovers each stream's real contribution, so the
   // window total, the per-bucket trend, and the per-split breakdown all
   // reconcile. value_double carries every claude_code.* metric.
+  //
+  // aggregateMetricTotals and aggregateMetricTrend are batched across EVERY
+  // metric name in one query (GROUP BY metric_name) rather than run once per
+  // metric. metric_points is not physically clustered by metric_name — rows
+  // arrive interleaved in ingest/timestamp order — so a metric-scoped WHERE
+  // clause pays close to full-table scan cost once that metric's share of the
+  // table crosses roughly 5%: confirmed via EXPLAIN ANALYZE, where even a
+  // low-volume metric like session.count (5% of rows) already costs 200ms+ via
+  // a scattered bitmap heap scan, and any query whose planner cost crosses
+  // jit_above_cost pays a further ~200ms of one-shot JIT compilation that's
+  // never amortized (each query here runs exactly once per request). Before
+  // batching, MetricSeriesService called the single-metric predecessors of
+  // these two queries once per curated metric (current window + prior window
+  // + trend) — 24 sequential near-full-table scans for the 8 curated metrics
+  // alone — which measured 3.6-3.9s end to end on a 7-day window over this
+  // table's 4.5M rows. Grouping by metric_name collapses that to one
+  // combined-totals scan of [priorFrom, to] and one combined-trend scan of
+  // [from, to].
+  //
+  // GROUP BY means a metric with ZERO matching rows in the scanned range is
+  // simply ABSENT from the result set, unlike a per-metric query which always
+  // returns exactly one (possibly zero) row. Callers must default a missing
+  // metric name to zero/empty rather than treat a missing key as an error —
+  // MetricSeriesQueryIntegrationTest's unseeded-metric and
+  // outside-the-window-discovery tests both depend on this.
 
   // Every distinct metric name in the table, with its unit, so the Metrics page
   // can show a card for a counter nobody has curated yet (see
@@ -1121,9 +1179,9 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // window (parallel seq scan, 390k buffers) purely to learn seven strings. The
   // recursive form walks idx_metric_points_name_ts one key at a time -- one
   // index probe per distinct name, eight probes total -- and measures 0.245 ms,
-  // independent of table size. For scale: ONE aggregateMetricTotal call above
-  // costs 235 ms, and the page makes six of them, so this must not be the
-  // expensive part of the request.
+  // independent of table size. For scale: the batched totals/trend queries
+  // below cost orders of magnitude more than this either way, so this was
+  // never the expensive part of the request.
   //
   // Unit is read off whichever row each probe lands on rather than aggregated,
   // because a metric name carries exactly one unit (verified: seven names, seven
@@ -1147,54 +1205,102 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       """, nativeQuery = true)
   List<Object[]> findDistinctMetricNames();
 
-  // Window total for one metric.
-  @Query(value = """
-      SELECT COALESCE(SUM(value_delta), 0)::double precision AS total
-      FROM metric_points
-      WHERE metric_name = :metricName
-        AND (value_long IS NOT NULL OR value_double IS NOT NULL)
-        AND timestamp >= :start
-        AND timestamp <= :end
-      """, nativeQuery = true)
-  List<Object[]> aggregateMetricTotal(
-      @Param("metricName") String metricName,
-      @Param("start") Instant start,
-      @Param("end") Instant end);
-
-  // Per-bucket trend, each row's precomputed value_delta binned by its timestamp.
+  // Window total (current AND prior window, via FILTER) for every metric name
+  // in one scan of [priorFrom, to]. Row shape: (metric_name, current_total,
+  // prior_total).
+  //
+  // No value_long/value_double NOT-NULL filter here: every row in this table
+  // carries one or the other (verified: zero rows fail that predicate), so it
+  // was pure dead weight -- and not free dead weight, since neither column is
+  // in idx_metric_points_name_ts's INCLUDE list (V18), so evaluating it forced
+  // a heap visit per row and lost the index-only scan that INCLUDE list exists
+  // to serve. Same trap V18's comment calls out for session_id, one predicate
+  // short: dropping it turns the parallel seq scan into a parallel index-only
+  // scan (366ms -> 138ms measured on a 7-day window), and the cheaper plan
+  // then falls under jit_inline_above_cost too, so it stops paying ~250ms of
+  // JIT compilation on top.
   @Query(value = """
       SELECT
+        metric_name,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from), 0)::double precision AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp < :from), 0)::double precision  AS prior_total
+      FROM metric_points
+      WHERE metric_name IN (:metricNames)
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+      GROUP BY metric_name
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricTotals(
+      @Param("metricNames") List<String> metricNames,
+      @Param("priorFrom") Instant priorFrom,
+      @Param("from") Instant from,
+      @Param("to") Instant to);
+
+  // Per-bucket trend for every metric name in one scan of [start, end], each
+  // row's precomputed value_delta binned by its timestamp. Row shape:
+  // (metric_name, bucket, total).
+  //
+  // Same dead-predicate removal as aggregateMetricTotals above (508ms ->
+  // ~350ms measured). No ORDER BY: buildTrend places each row by its bucket's
+  // offset from the window start rather than relying on result order, and the
+  // planner's row-count misestimate for GROUP BY metric_name, date_bin(...)
+  // (millions estimated, 175 actual) was picking a sort-based GroupAggregate
+  // over a HashAggregate partly to serve that ordering for free.
+  @Query(value = """
+      SELECT
+        metric_name,
         date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
         COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
-      WHERE metric_name = :metricName
-        AND (value_long IS NOT NULL OR value_double IS NOT NULL)
+      WHERE metric_name IN (:metricNames)
         AND timestamp >= :start
         AND timestamp <= :end
-      GROUP BY bucket
-      ORDER BY bucket
+      GROUP BY metric_name, bucket
       """, nativeQuery = true)
   List<Object[]> aggregateMetricTrend(
-      @Param("metricName") String metricName,
+      @Param("metricNames") List<String> metricNames,
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds);
 
-  // Per-split-value total, grouped by one attribute key.
+  // Every attribute-split value for every split-bearing metric (token.usage,
+  // cost.usage, lines_of_code.count, code_edit_tool.decision), batched into
+  // ONE scan of [start, end] instead of one scan per (metric, attribute) pair.
+  // MetricSeriesService used to call the single-split predecessor of this query
+  // once per curated split (five calls: token/model, token/type, cost/model,
+  // loc/type, decision/decision), each rescanning that metric's window and
+  // detoasting attributes independently -- 1046ms measured on a 7-day window
+  // for five queries producing 16 rows total. Grouping by all three attribute
+  // columns at once (model, the configured token-type attribute, decision)
+  // collapses that to one scan (~320ms), the same batching
+  // aggregateMetricTotals/aggregateMetricTrend already apply across metric
+  // names.
+  //
+  // Every row carries all three attribute columns regardless of which one(s)
+  // that row's metric actually populates -- the unpopulated columns are simply
+  // null. Filtering by metric server-side would reintroduce the per-metric
+  // scan this exists to avoid, so the service groups by (metric, attribute)
+  // and drops null labels itself, reproducing each old per-split query's
+  // "attribute IS NOT NULL" filter and per-metric row set exactly (verified
+  // row-for-row identical to the old token/model query's output).
   @Query(value = """
-      SELECT attributes ->> :splitAttribute AS label, COALESCE(SUM(value_delta), 0)::double precision AS total
+      SELECT
+        metric_name,
+        attributes ->> :modelAttribute AS model,
+        attributes ->> :typeAttribute AS token_type,
+        attributes ->> :decisionAttribute AS decision,
+        COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
-      WHERE metric_name = :metricName
-        AND (value_long IS NOT NULL OR value_double IS NOT NULL)
+      WHERE metric_name IN (:metricNames)
         AND timestamp >= :start
         AND timestamp <= :end
-        AND attributes ->> :splitAttribute IS NOT NULL
-      GROUP BY label
-      ORDER BY total DESC
+      GROUP BY metric_name, model, token_type, decision
       """, nativeQuery = true)
-  List<Object[]> aggregateMetricBySplit(
-      @Param("metricName") String metricName,
-      @Param("splitAttribute") String splitAttribute,
+  List<Object[]> aggregateMetricSplits(
+      @Param("metricNames") List<String> metricNames,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("typeAttribute") String typeAttribute,
+      @Param("decisionAttribute") String decisionAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
 }

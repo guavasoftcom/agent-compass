@@ -65,6 +65,7 @@ export const fetchTraceFacets = (f: TracesFilters): Promise<TraceFacets> => {
 export const fetchTracesCursor = (
   f: TracesFilters,
   opts: { sort: TraceSortKey; cursor?: TraceCursor | null; after?: TraceCursor | null; limit?: number },
+  signal?: AbortSignal,
 ): Promise<TraceCursorPage> => {
   const limit = opts.limit ?? 60;
   if (USE_SAMPLE_DATA) {
@@ -82,7 +83,7 @@ export const fetchTracesCursor = (
   if (opts.after) {
     p.set('after', `${opts.after.ts},${opts.after.id}`);
   }
-  return getJson<TraceCursorPage>(`/api/traces?${p.toString()}`);
+  return getJson<TraceCursorPage>(`/api/traces?${p.toString()}`, signal);
 };
 
 export const fetchTracesPage = (

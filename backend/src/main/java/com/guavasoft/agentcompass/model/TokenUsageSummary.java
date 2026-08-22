@@ -24,7 +24,10 @@ public record TokenUsageSummary(
         @ArraySchema(schema = @Schema(implementation = ModelTokenShare.class),
                 arraySchema = @Schema(description = "Per-model token breakdown sorted by total tokens descending"))
         List<ModelTokenShare> byModel,
-        @Schema(description = "Cost summary for the window, including spend, burn rate, per-model breakdown, and trend")
+        @Schema(description = "Cost summary for the window. Only spend24h/deltaPct/burnRate/"
+                + "projected30d/costPer1k are populated here -- trend and byModel are always empty, "
+                + "since this endpoint's only caller (the Tokens page) doesn't render them; the full "
+                + "breakdown is served by GET /api/metrics/cost.")
         CostSummary cost) {
 
     @Schema(name = "TokenUsageSummary.Point", description = "Per-bucket token totals split by type")

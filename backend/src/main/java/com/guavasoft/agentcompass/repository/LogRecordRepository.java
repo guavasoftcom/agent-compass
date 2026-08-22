@@ -10,6 +10,44 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
+// Query on the event_name column, NEVER on attributes ->> 'event.name'.
+//
+// V16 materialized that expression into a stored generated column and, in the same
+// migration, REPLACED the expression index idx_log_records_event_name_ts with one on
+// the column. So the raw extraction is no longer merely slower -- it has no index at
+// all. A query still written that way falls back to idx_log_records_ts_id (timestamp
+// only) and then detoasts every row in the window just to evaluate the filter, which
+// on this table means pulling whole attribute payloads (142 MB of heap against
+// 1478 MB of TOAST) to discard most of them.
+//
+// That is not hypothetical: V16/V17 migrated only the Logs-page queries, and the
+// remaining 32 extractions in this file silently lost their index. Every one of the
+// tuning report's 12 statements landed on the fallback plan and converged on ~740 ms
+// apiece -- a 9-second report, essentially all of it this one mistake. Measured on
+// the live database (7-day window, warm cache) after the swap:
+//
+//   tool-call mix       828 ms -> 6 ms   (19,939 rows scanned and detoast-filtered
+//                                         down to 2,996; now an index scan)
+//   bash hotspots       808 ms -> 14 ms  (still parses tool_input jsonb, but only
+//                                         for rows the index already selected)
+//   failure rollup      778 ms -> 6 ms
+//
+// The swap is provably semantics-preserving -- event_name IS the same expression,
+// verified as 0 mismatches over all 132,254 rows including NULLs -- so there is no
+// reason to write the extraction by hand. The same applies to tool_name (V17), though
+// that key is a bind param (:toolAttribute) at most call sites and stays a jsonb read
+// there to keep tuning.tool-attribute overridable; see AGENTS.md.
+//
+// V19 finished the job: SpanRepository's 34 extractions, the span_costs / trace_costs
+// / span_efforts views, and the idx_log_records_request_id predicate all moved to the
+// column too. That index is the reason a migration was needed rather than just a
+// find-and-replace -- it is PARTIAL on the event name, and the planner's
+// predicate-implication prover compares expressions structurally, so it cannot tell
+// that event_name and the extraction it is generated from are the same value. Writing
+// the query against the column while the predicate still named the expression silently
+// dropped the index (Index Scan at cost 9.72 -> Bitmap Heap Scan at 2287). If you ever
+// add another partial index keyed on an event name, write its predicate against
+// event_name for the same reason.
 public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long> {
 
   // Logs correlated to a trace by OTLP trace context. Claude Code >= 2.1.152 stamps
@@ -114,7 +152,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
         COUNT(*)                                            AS calls
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :since
       GROUP BY tool
       ORDER BY calls DESC
@@ -129,7 +167,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
         COUNT(*)                                            AS calls
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY tool
@@ -167,7 +205,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
         ROUND(AVG((attributes ->> 'tool_result_size_bytes')::numeric))                     AS avg_out
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY tool
@@ -208,7 +246,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
           ORDER BY (attributes ->> 'tool_result_size_bytes')::numeric))::bigint AS p95_bytes
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
@@ -241,7 +279,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
           ORDER BY (attributes ->> 'tool_result_size_bytes')::numeric))::bigint AS p95_bytes
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
         AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
         AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
@@ -293,7 +331,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
             '')                                              AS scope
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND attributes ->> 'success' = 'false'
           AND timestamp >= :start
           AND timestamp <= :end
@@ -356,7 +394,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           attributes ->> 'session.id'                                  AS session_id,
           timestamp                                                    AS dispatched_at
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND attributes ->> :toolAttribute = :toolName
           AND timestamp >= :start
           AND timestamp <= :end
@@ -369,7 +407,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       LEFT JOIN LATERAL (
         SELECT NULLIF(main_loop_turn.attributes ->> :modelAttribute, '') AS model
         FROM log_records main_loop_turn
-        WHERE main_loop_turn.attributes ->> 'event.name' = :apiRequestEventName
+        WHERE main_loop_turn.event_name = :apiRequestEventName
           AND main_loop_turn.attributes ->> 'session.id' = subagent_calls.session_id
           AND NOT jsonb_exists(main_loop_turn.attributes, :agentNameAttribute)
           AND main_loop_turn.timestamp <= subagent_calls.dispatched_at
@@ -431,7 +469,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             timestamp                                                         AS turn_at,
             id                                                                AS record_id
           FROM log_records
-          WHERE attributes ->> 'event.name' = :eventName
+          WHERE event_name = :eventName
             AND jsonb_exists(attributes, :skillAttribute)
             AND NOT jsonb_exists(attributes, :agentNameAttribute)
             AND timestamp >= :start
@@ -469,7 +507,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COUNT(*)                                                        AS calls,
         COUNT(*) FILTER (WHERE attributes ->> 'success' = 'false')      AS failures
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :since
       GROUP BY tool
       ORDER BY failures DESC, calls DESC
@@ -485,7 +523,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COUNT(*)                                                        AS calls,
         COUNT(*) FILTER (WHERE attributes ->> 'success' = 'false')      AS failures
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY tool
@@ -503,7 +541,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> 'source', 'unknown')    AS source,
         COUNT(*)                                         AS count
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> 'decision' = 'reject'
         AND timestamp >= :since
       GROUP BY tool, source
@@ -519,7 +557,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> 'source', 'unknown')    AS source,
         COUNT(*)                                         AS count
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> 'decision' = 'reject'
         AND timestamp >= :start
         AND timestamp <= :end
@@ -541,7 +579,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         SUM(COALESCE((attributes ->> 'num_non_blocking_error')::int, 0)) AS nonBlockingErrors,
         SUM(COALESCE((attributes ->> 'num_cancelled')::int, 0))          AS cancelled
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :since
       GROUP BY hookEvent, hookName
       ORDER BY blockingErrors DESC, total DESC
@@ -560,7 +598,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         SUM(COALESCE((attributes ->> 'num_non_blocking_error')::int, 0)) AS nonBlockingErrors,
         SUM(COALESCE((attributes ->> 'num_cancelled')::int, 0))          AS cancelled
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY hookEvent, hookName
@@ -577,7 +615,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> :toolAttribute, 'unknown')                 AS tool,
         COUNT(*)                                                           AS calls
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :since
       GROUP BY bucket, tool
       ORDER BY bucket, tool
@@ -594,7 +632,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> :toolAttribute, 'unknown')                 AS tool,
         COUNT(*)                                                           AS calls
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
       GROUP BY bucket, tool
@@ -636,7 +674,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           (attributes ->> 'duration_ms')::numeric            AS duration_ms,
           (attributes ->> 'tool_result_size_bytes')::numeric AS result_bytes
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND attributes ->> :toolAttribute = 'Bash'
           AND timestamp >= :start
           AND timestamp <= :end
@@ -695,7 +733,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
                    '')                                            AS scope,
           ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
           AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
           AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
@@ -742,7 +780,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             ORDER BY timestamp
           )                                                                AS prev_timestamp
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND attributes ->> :toolAttribute = 'Read'
           AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
           AND timestamp >= :start
@@ -776,7 +814,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'           AS file_path,
         COUNT(*)                                                                   AS failures
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Edit'
         AND attributes ->> 'success' = 'false'
         AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
@@ -833,7 +871,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         ((attributes ->> 'duration_ms')::numeric)::bigint            AS duration_ms,
         ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> 'duration_ms' IS NOT NULL
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
         AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
@@ -874,7 +912,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COUNT(*)                                                                                          AS total,
         COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' ~ '^\\s*cd\\s') AS cd_prefixed
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Bash'
         AND timestamp >= :start
         AND timestamp <= :end
@@ -900,7 +938,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
         COUNT(*)                                                          AS failures
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Read'
         AND attributes ->> 'success' = 'false'
         AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
@@ -927,7 +965,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(attributes ->> 'session.id', 'unknown')                 AS session_id,
         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path
       FROM log_records
-      WHERE attributes ->> 'event.name' = :eventName
+      WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Read'
         AND attributes ->> 'success' = 'true'
         AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
@@ -993,7 +1031,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           END                                                            AS scope,
           timestamp
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND timestamp >= :since
       ),
       numbered AS (
@@ -1066,7 +1104,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           END                                                            AS scope,
           timestamp
         FROM log_records
-        WHERE attributes ->> 'event.name' = :eventName
+        WHERE event_name = :eventName
           AND timestamp >= :start
           AND timestamp <= :end
       ),
@@ -1128,17 +1166,34 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // ARRAY_AGG, leaving firstUserPrompt null. Sessions with no matching log
   // records at all are omitted; the service defaults missing entries to 0 /
   // null.
+  //
+  // The three event-name tests read the V16 generated column, NOT
+  // attributes ->> 'event.name'. Same detoast reasoning V16 documents for the
+  // Logs page, and it bites harder here because this query is one of the two
+  // halves of every Sessions-grid page load: log_records is 142 MB of heap
+  // against 1478 MB of TOAST, so each jsonb extraction pulls the whole
+  // attribute payload (prompt bodies included) back through the toast fetcher.
+  // Measured on the live database (25 session ids, 9,769 matched rows, warm
+  // cache): 1911 ms -> 393 ms, 366K buffers -> 75K, byte-identical output. The
+  // cost was almost entirely in the aggregate node rather than the scan -- the
+  // heap scan is only ~475 ms of it -- because each of the three extractions
+  // detoasts independently, per row.
+  //
+  // The 'decision' extraction below stays a jsonb read on purpose: it is ANDed
+  // after the event_name test, so it only evaluates for tool_decision rows.
+  // The :promptAttribute reads likewise stay jsonb -- the key is a bind param
+  // (TuningProperties.promptAttribute), so no generated column can cover them.
   @Query(value = """
       SELECT
           lr.attributes ->> 'session.id'                                           AS session_id,
-          COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :toolEventName)  AS tool_call_count,
-          COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :toolDecisionEventName
+          COUNT(*) FILTER (WHERE lr.event_name = :toolEventName)                   AS tool_call_count,
+          COUNT(*) FILTER (WHERE lr.event_name = :toolDecisionEventName
                              AND lr.attributes ->> 'decision' = 'reject')           AS denial_count,
-          COUNT(*) FILTER (WHERE lr.attributes ->> 'event.name' = :userPromptEventName) AS user_prompt_count,
+          COUNT(*) FILTER (WHERE lr.event_name = :userPromptEventName)             AS user_prompt_count,
           (ARRAY_AGG(
               left(regexp_replace(NULLIF(lr.attributes ->> :promptAttribute, ''), '\\s+', ' ', 'g'), 200)
               ORDER BY lr.timestamp ASC
-            ) FILTER (WHERE lr.attributes ->> 'event.name' = :userPromptEventName
+            ) FILTER (WHERE lr.event_name = :userPromptEventName
                         AND NULLIF(lr.attributes ->> :promptAttribute, '') IS NOT NULL)
           )[1]                                                                      AS first_user_prompt
       FROM log_records lr
@@ -1179,7 +1234,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         NULLIF(NULLIF(lr.trace_id, ''), repeat('0', 32))                  AS trace_id,
         lr.attributes ->> :promptIdAttribute                              AS prompt_id
       FROM log_records lr
-      WHERE lr.attributes ->> 'event.name' = :eventName
+      WHERE lr.event_name = :eventName
         AND lr.attributes ->> 'session.id' = :sessionId
       ORDER BY lr.timestamp ASC, lr.id ASC
       LIMIT :promptLimit
@@ -1231,7 +1286,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         COALESCE(SUM((attributes ->> 'duration_ms')::numeric), 0)::bigint     AS duration_ms,
         mode() WITHIN GROUP (ORDER BY attributes ->> :modelAttribute)         AS model
       FROM log_records
-      WHERE attributes ->> 'event.name' = :apiRequestEventName
+      WHERE event_name = :apiRequestEventName
         AND attributes ->> 'session.id' = :sessionId
         AND attributes ->> :promptIdAttribute IS NOT NULL
       GROUP BY 1
@@ -1262,7 +1317,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         attributes ->> 'speed'                                         AS speed,
         NULLIF(NULLIF(trace_id, ''), repeat('0', 32))                  AS trace_id
       FROM log_records
-      WHERE attributes ->> 'event.name' = :apiRequestEventName
+      WHERE event_name = :apiRequestEventName
         AND attributes ->> 'session.id' = :sessionId
       ORDER BY timestamp ASC, id ASC
       LIMIT :requestLimit
@@ -1303,7 +1358,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
              :previewLength)                                                          AS first_user_prompt
       FROM log_records lr
       WHERE lr.trace_id IN :traceIds
-        AND lr.attributes ->> 'event.name' = :userPromptEventName
+        AND lr.event_name = :userPromptEventName
         AND NULLIF(lr.attributes ->> :promptAttribute, '') IS NOT NULL
       ORDER BY lr.trace_id, lr.timestamp ASC, lr.id ASC
       """, nativeQuery = true)
@@ -1348,7 +1403,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         lr.timestamp                     AS event_timestamp,
         lr.attributes ->> :toolAttribute  AS tool_name
       FROM log_records lr
-      WHERE lr.attributes ->> 'event.name' = :toolEventName
+      WHERE lr.event_name = :toolEventName
         AND lr.attributes ->> 'session.id' = :sessionId
         AND lr.attributes ->> :toolAttribute IS NOT NULL
         AND lr.timestamp >= :firstTurnStart
@@ -1375,12 +1430,28 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // avoids detoasting the attributes jsonb on every call; the histogram went from
   // ~4.0 s (per-row function evaluation) to ~14 ms after the column was added.
   //
+  // event.name is likewise read from the stored generated column event_name (added
+  // in V16__log_records_event_name_column.sql), same fix for the same reason:
+  // facetEvent's GROUP BY attributes ->> 'event.name' measured ~2.08 s on a 7-day
+  // window (16,867 rows), warm cache — pure detoast cost, since attributes averages
+  // ~11 KB and is TOASTed for nearly the whole table. event.name is a literal in
+  // every query here (never a bind param — unlike the tool dimension below), so it
+  // can be a plain generated column with no configurability tradeoff.
+  //
   // The scope (scope_name) dimension has been dropped from all filter params:
   // Claude Code emits exactly one scope name for all rows so the facet is
   // uninformative.
   //
-  // Tool dimension uses :toolAttribute (defaults to "tool_name") bound from
-  // TuningProperties so the key is not hardcoded.
+  // Tool dimension is read from the stored generated column tool_name (added
+  // in V17__log_records_tool_name_column.sql), generated from the literal
+  // "tool_name" — TuningProperties.toolAttribute's default and what Claude
+  // Code actually emits. Unlike event_name, :toolAttribute WAS a genuine bind
+  // param before this column existed (there was no expression-index escape
+  // hatch for it either — see the dropped V7 comment this replaces), so this
+  // trades that runtime configurability for the same detoast fix: overriding
+  // tuning.tool-attribute away from "tool_name" now requires a follow-up
+  // migration rebuilding this column, the same tradeoff AGENTS.md documents
+  // for api-request-cost-attribute and friends.
   // =========================================================================
 
   // Histogram — conditional-aggregate over a date_bin series.
@@ -1398,11 +1469,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp <= :windowEnd
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1427,7 +1498,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery);
 
   // Facet: severity counts (all other filters applied, severity excluded).
@@ -1440,11 +1510,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1467,15 +1537,14 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery);
 
   // Facet: event-name counts (all other filters applied, event excluded).
   @Query(value = """
-      SELECT attributes ->> 'event.name' AS facet_value, COUNT(*) AS row_count
+      SELECT event_name AS facet_value, COUNT(*) AS row_count
       FROM log_records
-      WHERE attributes ->> 'event.name' IS NOT NULL
-        AND attributes ->> 'event.name' <> ''
+      WHERE event_name IS NOT NULL
+        AND event_name <> ''
         AND (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
         AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
         AND (
@@ -1484,7 +1553,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1509,19 +1578,17 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("severities") String[] severities,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("facetLimit") int facetLimit);
 
   // Facet: tool counts (all other filters applied, tool excluded).
-  // Tool attribute key is bound via :toolAttribute (defaults to "tool_name").
   @Query(value = """
       SELECT
-        attributes ->> :toolAttribute AS facet_value,
+        tool_name AS facet_value,
         COUNT(*) AS row_count
       FROM log_records
-      WHERE attributes ->> :toolAttribute IS NOT NULL
-        AND attributes ->> :toolAttribute <> ''
+      WHERE tool_name IS NOT NULL
+        AND tool_name <> ''
         AND (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
         AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
         AND (
@@ -1530,7 +1597,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1555,7 +1622,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("severities") String[] severities,
       @Param("events") String[] events,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("facetLimit") int facetLimit);
 
@@ -1571,11 +1637,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1598,7 +1664,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("severities") String[] severities,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery);
 
   // Cursor paging — rows strictly OLDER than (cursorTs, cursorId), newest first.
@@ -1617,11 +1682,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1648,7 +1713,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("severities") String[] severities,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageLimit") int pageLimit);
 
@@ -1666,11 +1730,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1697,7 +1761,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("severities") String[] severities,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageLimit") int pageLimit);
 
@@ -1713,11 +1776,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1742,7 +1805,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("severities") String[] severities,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageLimit") int pageLimit);
 
@@ -1758,11 +1820,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         )
         AND (
           cardinality(CAST(:events AS text[])) = 0
-          OR attributes ->> 'event.name' = ANY(CAST(:events AS text[]))
+          OR event_name = ANY(CAST(:events AS text[]))
         )
         AND (
           cardinality(CAST(:tools AS text[])) = 0
-          OR attributes ->> :toolAttribute = ANY(CAST(:tools AS text[]))
+          OR tool_name = ANY(CAST(:tools AS text[]))
         )
         AND (
           :fullTextQuery = ''
@@ -1787,7 +1849,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("severities") String[] severities,
       @Param("events") String[] events,
       @Param("tools") String[] tools,
-      @Param("toolAttribute") String toolAttribute,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset);
