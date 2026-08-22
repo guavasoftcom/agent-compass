@@ -28,7 +28,8 @@ The view renders four sub-components inline (no further drilling):
 
 ```
 TraceDetailHeader  ──  breadcrumb + SummaryStrip KPIs (container/view split)
-WaterfallToolbar   ──  "Span waterfall" label + legend + Expand/Collapse all + Next error
+WaterfallToolbar   ──  "Span waterfall" label + legend + Expand/Collapse all (tool spans
+                       only — see Collapse and expand) + Next error
 TraceMinimap       ──  full-trace overview with drag-to-zoom brush
 SpanWaterfallRow   ──  one row per visible span (single-file component, no view split)
 SpanInspectorDrawer ── right-side width-resizable drawer for the selected span
@@ -44,7 +45,8 @@ SpanInspectorDrawer ── right-side width-resizable drawer for the selected sp
   `fullRateTokens`, `cacheHitRateLabel`, and `tokenShareLabel` are what the header card and the
   waterfall chips scale and label with.
 - `isToolCallSpan` from `../TracesPage/traceDerivations` — the header's Tool calls tile counts
-  spans through the same rule the Traces page uses, so the two never disagree.
+  spans through the same rule the Traces page uses, so the two never disagree; the container
+  reuses it to pick which spans "Collapse all" folds.
 - `spanColor` from `../TracesPage/components/traceColors` — maps span name to a service hue
   (used by the minimap); see [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md) for the
   hue-to-service mapping.
@@ -105,7 +107,9 @@ TraceDetailPage/
     │   └── index.ts
     ├── WaterfallToolbar/
     │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens/cost legend
-    │   │                             + GhostButton "Expand all / Collapse all" + "Next error" (when errors > 0)
+    │   │                             + GhostButton "Expand all / Collapse all" (hidden when there
+    │   │                             is nothing to fold — see Collapse and expand)
+    │   │                             + "Next error" (when errors > 0)
     │   └── index.ts
     ├── TraceMinimap/
     │   ├── TraceMinimap.tsx           full-trace overview bar-per-span (height staggered by depth ≤ 4)
@@ -453,28 +457,44 @@ within the track:
 ### Collapse and expand
 
 `collapsed` is a `Set<string>` of span IDs in `useState`. `toggleCollapse(spanId)` flips
-membership; `toggleAll` switches between empty set (all expanded) and `new Set(parentSpanIds)`
-(all collapsed), driven by `anyCollapsed = parentSpanIds.some(id => collapsed.has(id))`.
-The `WaterfallToolbar` button label tracks `anyCollapsed` live.
+membership; `toggleAll` switches between the empty set (everything expanded) and
+`new Set(collapsibleToolSpanIds)`, driven by `anyCollapsed = collapsed.size > 0`. The
+`WaterfallToolbar` button label tracks `anyCollapsed` live, so "Expand all" also clears rows the
+user collapsed one chevron at a time.
+
+**"Collapse all" only folds tool-call spans**, not every parent. `collapsibleToolSpanIds` is a
+container `useMemo` over the spans that pass `isToolCallSpan(span.name)` *and* have children — so
+a `claude_code.tool` row folds away its SDK sub-spans (`tool.execution`, `tool.blocked_on_user`,
+and anything nested under them) while the `claude_code.interaction` root and the `llm_request`
+rows stay expanded. Collapsing every parent left a one- or two-row waterfall that hid the very
+structure the page is read for. Using `isToolCallSpan` — the same rule the header's Tool calls
+tile and the Traces list count with — means the sample store's bare names (`tool.Read`,
+`mcp.connect`) collapse too, while the sub-spans that helper excludes are never themselves
+collapse targets.
+
+When that list is empty and nothing is collapsed the button would be a no-op, so `canToggleAll`
+hides it: a trace with no tool calls shows the legend and "Next error" alone.
 
 ### Error navigation
 
-`errorSpans` is a filtered `useMemo` of spans with `statusCode === 'error'`. On first render
-after data loads, a one-shot `useEffect` (guarded by `initRef`) selects the first error span and
-`scrollToSpan`s to it. `nextError` cycles through `errorSpans` by index using `errorIndexRef`
-(a `useRef` so it doesn't trigger re-renders).
+`errorSpans` is a filtered `useMemo` of spans with `statusCode === 'error'`. `nextError` cycles
+through it by index using `errorIndexRef` (a `useRef` so it doesn't trigger re-renders), which
+starts at -1 — so the first press of "Next error" lands on error 1 of N.
+
+**Nothing is auto-selected on arrival** (see the drawer gotcha below); the toolbar button is the
+only way into the error walk.
 
 `scrollToSpan` reads the waterfall container ref, queries `[data-span="${spanId}"]` for the row,
 and scrolls **the minimum distance** that brings the row inside the container's visible band,
 keeping `min(2 rows, a quarter of the container)` of margin at whichever edge the row entered
 from. A row already comfortably in view doesn't move the list at all — so stepping through spans
-slides the highlight instead of yanking the waterfall on every press. It's shared by span nav,
-`nextError`, and the initial error auto-select.
+slides the highlight instead of yanking the waterfall on every press. It's shared by span nav
+and `nextError`.
 
 ### Span selection and the inspector drawer
 
-`selected` is a `string | null` span ID. `selectSpan` toggles: clicking the already-selected
-span deselects it (closes the drawer). The view resolves `selected` into a
+`selected` is a `string | null` span ID and starts `null`, so the drawer is closed on arrival.
+`selectSpan` toggles: clicking the already-selected span deselects it (closes the drawer). The view resolves `selected` into a
 `SpanInspectorSelection` (the full `SpanRow` plus pre-computed `selfTimeNanos`, `tokens` from
 `tokenBreakdownForSpan`, the `logs` bucket, `costUsd` via `costOfSelectedSpan`, and the span's
 `waterfallIndex`/`waterfallCount`) and passes it — or null — to `SpanInspectorDrawer`, which always
@@ -491,7 +511,7 @@ through it.
 that, all fixed by navigating the rendered row list instead:
 
 - A single-root trace's root span has no siblings, so the count was 1 and the nav hid itself —
-  on the span the page auto-selects first, which is where a user reaches for it.
+  on the first span most readers click, which is where they reach for it.
 - A span whose `parentSpanId` names a span outside the response is a *root* per `buildSpanTree`,
   but `siblingsOf` looked that id up in `childrenByParentId`, missed, and fell back to a
   one-element list — so orphan-rooted spans never got nav either.
@@ -527,6 +547,14 @@ so the edge tracks the cursor 1:1.
   "—" placeholder), which is the normal state for traces
   rooted in a tool/model/mcp/compaction span and for traces recorded with prompt-body capture
   off (see the same gotcha in [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md)).
+- **The drawer starts closed on every trace, and nothing is auto-selected.** `selected` is
+  `useState<string | null>(null)` and no effect writes to it on mount, so arriving at
+  `/traces/:traceId` shows the waterfall at full width, scrolled to the top. An earlier revision
+  ran an "error-first" one-shot effect that selected `errorSpans[0]` and scrolled to it, which
+  opened the drawer and jumped past the top of the trace before the reader had looked at it — on
+  a trace whose errors are expected, that is a panel to close on every navigation. Errors are
+  still one click away through the toolbar's "Next error" (`errorIndexRef` starts at -1, so the
+  first press selects the first error). Don't re-add the auto-select.
 - **The Overview panel always starts expanded.** `SummaryStrip` owns `collapsed` as plain
   `useState(false)` — no `localStorage` persistence. Navigating to a trace (including
   `key={traceId}` remounting the view for a different trace) always shows the panel expanded;

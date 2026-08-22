@@ -2,7 +2,11 @@ import { Box, Tooltip, alpha, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { neutralColors, tokenFigureColor } from '../../../../theme/colors';
 import type { SpanRow } from '../../../../api';
-import { formatDuration, formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
+import {
+  formatDuration,
+  formatTokens,
+  formatUsd,
+} from '../../../TracesPage/tracesApi';
 import {
   cacheHitRatePercent,
   fullRateTokens,
@@ -258,7 +262,8 @@ const attrToText = (value: unknown): string =>
 const SpanToolBadge = ({ span }: { span: SpanRow }) => {
   const attributes = span.attributes;
   const toolNameAttribute = attributes?.['tool_name'];
-  const toolName = typeof toolNameAttribute === 'string' ? toolNameAttribute : '';
+  const toolName =
+    typeof toolNameAttribute === 'string' ? toolNameAttribute : '';
   if (!toolName) {
     return null;
   }
@@ -279,7 +284,9 @@ const SpanToolBadge = ({ span }: { span: SpanRow }) => {
       : attributes
         ? TOOL_ARG_KEYS.find((key) => {
             const value = attributes[key];
-            return value !== undefined && value !== null && String(value) !== '';
+            return (
+              value !== undefined && value !== null && String(value) !== ''
+            );
           })
         : undefined;
   const argText = argKey && attributes ? attrToText(attributes[argKey]) : '';
@@ -294,7 +301,10 @@ const SpanToolBadge = ({ span }: { span: SpanRow }) => {
           <Box sx={{ fontSize: 11.5, fontWeight: 700, mb: 0.3 }}>
             {toolName}
             {toolStatus ? (
-              <Box component="span" sx={{ ml: 0.75, fontSize: 10, opacity: 0.7 }}>
+              <Box
+                component="span"
+                sx={{ ml: 0.75, fontSize: 10, opacity: 0.7 }}
+              >
                 {toolStatus}
               </Box>
             ) : null}
@@ -331,7 +341,11 @@ const SpanToolBadge = ({ span }: { span: SpanRow }) => {
             </>
           ) : (
             <Box
-              sx={{ fontFamily: fontFamilies.body, fontSize: 10.5, opacity: 0.75 }}
+              sx={{
+                fontFamily: fontFamilies.body,
+                fontSize: 10.5,
+                opacity: 0.75,
+              }}
             >
               no command recorded on this span
             </Box>
@@ -378,7 +392,8 @@ const SpanWaterfallRow = ({
   // both present on every real llm_request span and always agree; the fallback is
   // for the OTel-canonical key outliving the vendor one. Non-model spans (tool,
   // session, interaction) carry neither and render no badge.
-  const modelAttribute = span.attributes?.['model'] ?? span.attributes?.['gen_ai.request.model'];
+  const modelAttribute =
+    span.attributes?.['model'] ?? span.attributes?.['gen_ai.request.model'];
   const modelName = typeof modelAttribute === 'string' ? modelAttribute : '';
   // Effort rides in the same pill rather than its own, so an llm_request row
   // gains one badge here, not two — the row is already carrying tokens and cost.

@@ -5,6 +5,7 @@ import { fetchTraceLogs } from '../../api';
 import type { LogRow } from '../../api';
 import { fetchSpansForTrace, fetchTraceSummaryOrNull } from '../TracesPage/tracesApi';
 import { NANOS_PER_MILLI } from '../TracesPage/tracesApi';
+import { isToolCallSpan } from '../TracesPage/traceDerivations';
 import {
   buildSpanDepths,
   buildSpanIndices,
@@ -71,9 +72,24 @@ export default function TraceDetailPage() {
     return computeTraceWindow(spans);
   }, [spans]);
 
-  const parentSpanIds = useMemo(
-    () => [...tree.childrenByParentId.keys()],
-    [tree],
+  // What "Collapse all" targets: tool-call spans that actually have children.
+  // Collapsing *every* parent folded away the interaction/llm_request structure
+  // the waterfall is read for; the noise it was aimed at is the SDK's per-call
+  // sub-spans (`claude_code.tool.execution`, `claude_code.tool.blocked_on_user`)
+  // hanging under each `claude_code.tool`. `isToolCallSpan` is the same rule the
+  // traces list counts tool calls with, so sample-store span names
+  // (`tool.Read`, `mcp.connect`) collapse too, and the sub-spans themselves —
+  // which that helper excludes — stay expanded.
+  const collapsibleToolSpanIds = useMemo(
+    () =>
+      (spans ?? [])
+        .filter(
+          (span) =>
+            isToolCallSpan(span.name) &&
+            (tree.childrenByParentId.get(span.spanId)?.length ?? 0) > 0,
+        )
+        .map((span) => span.spanId),
+    [spans, tree],
   );
 
   const descendantErrorCounts = useMemo<Map<string, number>>(() => {
@@ -170,7 +186,7 @@ export default function TraceDetailPage() {
       spanIndices={spanIndices}
       depthBySpanId={depthBySpanId}
       traceWindow={traceWindow}
-      parentSpanIds={parentSpanIds}
+      collapsibleToolSpanIds={collapsibleToolSpanIds}
       descendantErrorCounts={descendantErrorCounts}
       selfTimeNanosBySpanId={selfTimeNanosBySpanId}
       logsBySpanId={logsBySpanId}
