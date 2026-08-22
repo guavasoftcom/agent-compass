@@ -74,6 +74,10 @@ TraceDetailPage/
 │                               logs, and costOfSelectedSpan(span, logs) prefers the stamped figure
 │                               and falls back to the logs — 0 on a claude_code.interaction span,
 │                               whose rollup is the trace total (the row/drawer number — see Cost)
+├── chipVisibility.ts           ChipFamily ('tok'|'cr'|'cost'|'mdl'|'tool') + loadChipsOff/
+│                               persistChipsOff — reads/writes the muted-badge-family set to
+│                               localStorage['ac-wf-chips-off']; pure, no React (see Badge
+│                               visibility below)
 ├── index.ts                    re-exports TraceDetailPage as default
 └── components/
     ├── TraceDetailHeader/
@@ -106,10 +110,14 @@ TraceDetailPage/
     │   │                             on navigation (collapse is per-view only)
     │   └── index.ts
     ├── WaterfallToolbar/
-    │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + ok/error/tokens/cost legend
-    │   │                             + GhostButton "Expand all / Collapse all" (hidden when there
-    │   │                             is nothing to fold — see Collapse and expand)
-    │   │                             + "Next error" (when errors > 0)
+    │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + a six-key legend
+    │   │                             (error/tokens/cache/cost/model/tool — one key per badge
+    │   │                             family, `ok` dropped as uninformative) where five of the
+    │   │                             six keys double as SpanWaterfallRow badge-visibility
+    │   │                             toggles (chipsOff — see Badge visibility below; `error`
+    │   │                             is not a toggle) + GhostButton "Expand all / Collapse all"
+    │   │                             (hidden when there is nothing to fold — see Collapse and
+    │   │                             expand) + "Next error" (when errors > 0)
     │   └── index.ts
     ├── TraceMinimap/
     │   ├── TraceMinimap.tsx           full-trace overview bar-per-span (height staggered by depth ≤ 4)
@@ -127,7 +135,9 @@ TraceDetailPage/
     │   │                             tooltip shows the tool's status and the command it ran, clamped
     │   │                             at 300 chars) + error/descendant-error pills + timeline bar +
     │   │                             duration label. All badges share spanChipSx, so only palette and
-    │   │                             weight differ; pure component (no view split)
+    │   │                             weight differ; pure component (no view split). Every badge except
+    │   │                             error/descendant-error is gated on the chipsOff prop (see Badge
+    │   │                             visibility) — the toolbar legend's per-family mute toggle
     │   └── index.ts
     └── SpanInspectorDrawer/
         ├── SpanInspectorDrawer.tsx    right-side drawer, a flex sibling of the waterfall card (no
@@ -236,8 +246,8 @@ scrim/backdrop, so opening or resizing the drawer just narrows the waterfall
 while every row stays visible at full height.
 
 ┌─ Waterfall card (flex: 1, min-width: 0) ────────────────┐ ┌─ SpanInspectorDrawer ────────┐
-│ WaterfallToolbar: ≡ Span waterfall  [ok ■] [error ■]   │▐│ claude_code.llm_request  [✕] │
-│         [tokens ■] [cost ■] [Expand all] [▲ Next error] │▐├──────────────────────────────┤
+│ WaterfallToolbar: ≡ Span waterfall  [err][tok][cache]  │▐│ claude_code.llm_request  [✕] │
+│    [cost][model][tool] [Expand all] [▲ Next error]      │▐├──────────────────────────────┤
 ├─ TraceMinimap ──────────────────────────────────────────┤▐│ span id   <hex>              │
 │  drag to zoom · dbl-click resets                        │▐│ kind      CLIENT             │
 │  ░░░░░░░░▓▓▓▓▓▓▓▓░░░░░  ← span bars staggered by depth │▐│ scope     …                  │
@@ -593,9 +603,25 @@ so the edge tracks the cursor 1:1.
 - **Token chips are pink; amber means cost.** The row's token badges and the toolbar legend's
   "tokens" key resolve through `tokenFigureColor(mode)` in `theme/colors.ts` (deeper pink on light,
   the bright pink on dark). Amber is reserved for cost and the "+N below" warning, so one row never
-  shows two amber numbers meaning different things — which is why the toolbar legend has four keys,
-  not three. The drawer's Tokens *section* keeps its amber treatment: it reads as a panel, not as a
-  figure.
+  shows two amber numbers meaning different things. This is one instance of the legend's broader
+  rule — one key per badge family, see Badge visibility below — not a special case. The drawer's
+  Tokens *section* keeps its amber treatment: it reads as a panel, not as a figure.
+- **Badge visibility is a display preference, and the legend keys double as its controls.** The
+  toolbar legend is six keys (`error`/`tokens`/`cache`/`cost`/`model`/`tool`), one per badge family
+  a row can show; `ok`, which just named every bar's default color, was dropped as carrying no
+  information. Five of the six — every key but `error` — are also toggles: clicking (or
+  Enter/Space on) a key hides that badge family on every `SpanWaterfallRow`, rendering the key
+  itself as a hollow swatch at `opacity: .45`. `error` is deliberately not a toggle: it names the
+  row's status (the red bar), not an optional figure, and is the one thing never worth muting.
+  State lives in `chipVisibility.ts` (`ChipFamily = 'tok' | 'cr' | 'cost' | 'mdl' | 'tool'`,
+  `loadChipsOff`/`persistChipsOff`) and is owned by `TraceDetailPageView`'s `chipsOff` state,
+  threaded to `WaterfallToolbar` (renders + toggles it) and every `SpanWaterfallRow` (gates its
+  badges on it). **Unlike `collapsed`/`selected`/`view`, this state is deliberately outside the
+  `key={traceId}` reset** — it's persisted to `localStorage['ac-wf-chips-off']` and read back on
+  every mount, so muting a family stays muted while paging between traces rather than resetting per
+  trace like the rest of the view's interaction state. A side effect worth knowing: muting badges
+  frees up the name column, which is the cheap fix if the span name or model pill is clipping on a
+  crowded row — don't chase that by widening `gridColumns` first.
 - **The trace/session ids are copy-to-clipboard chips in the header, not footer text.**
   `TraceDetailHeaderView` renders `IdChip` (`TraceDetailHeader/IdChip.tsx` +
   `useCopyToClipboard.ts`) inline in the breadcrumb row, right after the "Trace detail" h1 — always

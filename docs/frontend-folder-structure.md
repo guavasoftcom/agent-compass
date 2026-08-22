@@ -263,6 +263,7 @@ frontend/src/
       TraceDetailPage.tsx
       TraceDetailPageView.tsx
       attrFormat.ts               // page-internal helpers; no barrel needed
+      chipVisibility.ts           // ChipFamily + loadChipsOff/persistChipsOff — muted badge-family set
       logBuckets.ts
       severity.ts
       spanCost.ts                 // costOfSpan / costOfSpanRequests / costOfSelectedSpan — the api_request cost shown for a span
