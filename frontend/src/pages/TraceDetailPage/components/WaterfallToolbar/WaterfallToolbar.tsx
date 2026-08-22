@@ -5,6 +5,9 @@ import { tokenFigureColor } from '../../../../theme/colors';
 
 interface Props {
   anyCollapsed: boolean;
+  // False when nothing is collapsed and the trace has no tool-call span to
+  // collapse — "Collapse all" would be a no-op, so it isn't rendered at all.
+  canToggleAll: boolean;
   errorCount: number;
   onToggleAll: () => void;
   onNextError: () => void;
@@ -12,6 +15,7 @@ interface Props {
 
 const WaterfallToolbar = ({
   anyCollapsed,
+  canToggleAll,
   errorCount,
   onToggleAll,
   onNextError,
@@ -85,9 +89,11 @@ const WaterfallToolbar = ({
           </Box>
         ))}
       </Box>
-      <GhostButton onClick={onToggleAll}>
-        {anyCollapsed ? 'Expand all' : 'Collapse all'}
-      </GhostButton>
+      {canToggleAll ? (
+        <GhostButton onClick={onToggleAll}>
+          {anyCollapsed ? 'Expand all' : 'Collapse all'}
+        </GhostButton>
+      ) : null}
       {errorCount ? (
         <GhostButton tone="danger" onClick={onNextError} sx={{ px: 1.5 }}>
           <ErrorOutlineIcon /> Next error

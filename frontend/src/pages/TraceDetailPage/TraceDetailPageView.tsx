@@ -25,7 +25,9 @@ export interface TraceDetailPageViewProps {
   spanIndices: Map<string, number>;
   depthBySpanId: Map<string, number>;
   traceWindow: TraceWindow | null;
-  parentSpanIds: string[];
+  // Spans "Collapse all" folds: tool-call spans with children (see the
+  // container). Empty for a trace with no tool calls, which hides the button.
+  collapsibleToolSpanIds: string[];
   descendantErrorCounts: Map<string, number>;
   selfTimeNanosBySpanId: Map<string, number>;
   logsBySpanId: Map<string, LogRow[]>;
@@ -49,7 +51,7 @@ const TraceDetailPageView = ({
   spanIndices,
   depthBySpanId,
   traceWindow,
-  parentSpanIds,
+  collapsibleToolSpanIds,
   descendantErrorCounts,
   selfTimeNanosBySpanId,
   logsBySpanId,
@@ -135,21 +137,11 @@ const TraceDetailPageView = ({
     }
   }, []);
 
-  // error-first: select first error span on load
-  const initRef = useRef(false);
-  useEffect(() => {
-    if (initRef.current || !spans || spans.length === 0) {
-      return;
-    }
-    initRef.current = true;
-    if (errorSpans.length) {
-      errorIndexRef.current = 0;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSelected(errorSpans[0].spanId);
-      setTimeout(() => scrollToSpan(errorSpans[0].spanId), 40);
-    }
-  }, [spans, errorSpans, scrollToSpan]);
-
+  // Nothing is selected on arrival, so the inspector drawer starts closed and the
+  // waterfall gets the full width. An earlier revision auto-selected the first
+  // error span here, which opened the drawer and scrolled away from the top of
+  // the trace before the reader had looked at it; "Next error" is the way in
+  // now — errorIndexRef starts at -1, so the first press lands on error 1 of N.
   const nextError = () => {
     if (!errorSpans.length) {
       return;
@@ -170,9 +162,12 @@ const TraceDetailPageView = ({
       }
       return next;
     });
-  const anyCollapsed = parentSpanIds.some((id) => collapsed.has(id));
+  // "Expand all" clears everything that's collapsed — including rows collapsed
+  // one chevron at a time — while "Collapse all" only folds the tool-call spans.
+  const anyCollapsed = collapsed.size > 0;
+  const canToggleAll = anyCollapsed || collapsibleToolSpanIds.length > 0;
   const toggleAll = () =>
-    setCollapsed(anyCollapsed ? new Set() : new Set(parentSpanIds));
+    setCollapsed(anyCollapsed ? new Set() : new Set(collapsibleToolSpanIds));
 
   const selectSpan = (spanId: string) =>
     setSelected((cur) => (cur === spanId ? null : spanId));
@@ -354,6 +349,7 @@ const TraceDetailPageView = ({
         >
           <WaterfallToolbar
             anyCollapsed={anyCollapsed}
+            canToggleAll={canToggleAll}
             errorCount={errorSpans.length}
             onToggleAll={toggleAll}
             onNextError={nextError}

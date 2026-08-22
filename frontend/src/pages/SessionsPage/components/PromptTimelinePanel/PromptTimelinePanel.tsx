@@ -1,6 +1,12 @@
 import { Fragment, useState, type ReactElement } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { Box, CircularProgress, Tooltip, Typography, alpha } from '@mui/material';
+import {
+  Box,
+  CircularProgress,
+  Tooltip,
+  Typography,
+  alpha,
+} from '@mui/material';
 import type { Theme } from '@mui/material/styles';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import type { SessionPromptRow, SessionTokenBreakdown } from '../../../../api';
@@ -10,7 +16,11 @@ import {
   type ValueDialogState,
 } from '../../../../components/AttributeList/AttributeValue';
 import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
-import { auroraColors, gradients, neutralColors } from '../../../../theme/colors';
+import {
+  auroraColors,
+  gradients,
+  neutralColors,
+} from '../../../../theme/colors';
 import { fontFamilies } from '../../../../theme/typography';
 import {
   USD_FORMATTER,
@@ -39,14 +49,22 @@ const formatPromptTimestamp = (value: string): string =>
 // "sonnet" both resolve. Sonnet's pink is mode-aware like the theme's other
 // pink figures (deeper on the light surface, brighter on dark) rather than a
 // single flat hex.
-const MODEL_LABEL: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
+const MODEL_LABEL: Record<string, string> = {
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+  haiku: 'Haiku',
+};
 
 const modelKeyOf = (model: string | null | undefined): string | null => {
   if (!model) {
     return null;
   }
   const key = model.toLowerCase();
-  return (['opus', 'sonnet', 'haiku'] as const).find((modelKey) => key.includes(modelKey)) ?? null;
+  return (
+    (['opus', 'sonnet', 'haiku'] as const).find((modelKey) =>
+      key.includes(modelKey),
+    ) ?? null
+  );
 };
 
 // Shared by the model chip (dot + tinted background) and the turn card's rail
@@ -56,7 +74,9 @@ const modelAccentColor = (modelKey: string | null, theme: Theme): string => {
     return theme.palette.primary.main;
   }
   if (modelKey === 'sonnet') {
-    return theme.palette.mode === 'dark' ? auroraColors.pinkBright : auroraColors.pink;
+    return theme.palette.mode === 'dark'
+      ? auroraColors.pinkBright
+      : auroraColors.pink;
   }
   return theme.palette.text.disabled;
 };
@@ -83,10 +103,16 @@ const ModelChip = ({ model }: { model: string | null | undefined }) => {
         fontWeight: 600,
         letterSpacing: 0.2,
         whiteSpace: 'nowrap',
-        color: tinted ? (t: Theme) => modelAccentColor(modelKey, t) : 'text.secondary',
+        color: tinted
+          ? (t: Theme) => modelAccentColor(modelKey, t)
+          : 'text.secondary',
         bgcolor: tinted
           ? (t: Theme) => alpha(modelAccentColor(modelKey, t), 0.16)
-          : (t: Theme) => alpha(t.palette.text.primary, t.palette.mode === 'dark' ? 0.08 : 0.06),
+          : (t: Theme) =>
+              alpha(
+                t.palette.text.primary,
+                t.palette.mode === 'dark' ? 0.08 : 0.06,
+              ),
       }}
     >
       <Box
@@ -103,11 +129,18 @@ const ModelChip = ({ model }: { model: string | null | undefined }) => {
   );
 };
 
-const ToolChips = ({ tools }: { tools: { name: string; count: number }[] | null | undefined }) => {
+const ToolChips = ({
+  tools,
+}: {
+  tools: { name: string; count: number }[] | null | undefined;
+}) => {
   if (!tools || tools.length === 0) {
     return (
       <Box sx={{ display: 'flex', mt: 0.25 }}>
-        <Box component="span" sx={{ fontSize: 11.5, fontStyle: 'italic', color: 'text.disabled' }}>
+        <Box
+          component="span"
+          sx={{ fontSize: 11.5, fontStyle: 'italic', color: 'text.disabled' }}
+        >
           No tool calls
         </Box>
       </Box>
@@ -135,13 +168,21 @@ const ToolChips = ({ tools }: { tools: { name: string; count: number }[] | null 
             // (auroraColors.cyanBright) — every tool chip renders in one flat
             // color rather than a per-category palette, matching that page's
             // convention that a tool call is one visual category.
-            color: auroraColors.cyanBright,
-            bgcolor: alpha(auroraColors.cyanBright, 0.16),
+            color: auroraColors.mutedSlate,
+            bgcolor: alpha(auroraColors.mutedSlate, 0.16),
           }}
         >
           {tool.name}
           {tool.count > 1 ? (
-            <Box component="b" sx={{ fontWeight: 700, fontSize: 10.5, color: auroraColors.cyanBright, fontVariantNumeric: 'tabular-nums' }}>
+            <Box
+              component="b"
+              sx={{
+                fontWeight: 700,
+                fontSize: 10.5,
+                color: 'white',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
               {tool.count}
             </Box>
           ) : null}
@@ -220,7 +261,11 @@ interface PromptTimelinePanelProps {
 // Rich title for the token-usage tooltip: the four-way split, a "Working" subtotal
 // (input + output + cache creation — the fresh/billed-high tokens), then Total.
 // Exported so the SessionsPage grid can reuse it on the Tokens cell.
-export const TokenBreakdownTitle = ({ tokens }: { tokens: SessionTokenBreakdown }) => {
+export const TokenBreakdownTitle = ({
+  tokens,
+}: {
+  tokens: SessionTokenBreakdown;
+}) => {
   const working = tokens.input + tokens.output + tokens.cacheCreation;
   const total = working + tokens.cacheRead;
   const rows: [string, number][] = [
@@ -230,34 +275,123 @@ export const TokenBreakdownTitle = ({ tokens }: { tokens: SessionTokenBreakdown 
   ];
   return (
     <Box sx={{ minWidth: 168 }}>
-      <Box sx={{ fontFamily: fontFamilies.display, fontSize: 9.5, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', color: 'text.disabled', mb: 0.875 }}>
+      <Box
+        sx={{
+          fontFamily: fontFamilies.display,
+          fontSize: 9.5,
+          fontWeight: 700,
+          letterSpacing: '1px',
+          textTransform: 'uppercase',
+          color: 'text.disabled',
+          mb: 0.875,
+        }}
+      >
         Token usage
       </Box>
       {rows.map(([label, value]) => (
-        <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.75, fontSize: 11.5, lineHeight: 1.85 }}>
-          <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500 }}>{label}</Box>
-          <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'text.primary' }}>
+        <Box
+          key={label}
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 1.75,
+            fontSize: 11.5,
+            lineHeight: 1.85,
+          }}
+        >
+          <Box
+            component="span"
+            sx={{ color: 'text.secondary', fontWeight: 500 }}
+          >
+            {label}
+          </Box>
+          <Box
+            component="span"
+            sx={{
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: 600,
+              color: 'text.primary',
+            }}
+          >
             {NUM_FORMATTER.format(value)}
           </Box>
         </Box>
       ))}
       {/* Working subtotal — input + output + cache creation (the fresh/billed-high tokens) */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.75, mt: 0.625, pt: 0.75, borderTop: '1px dashed', borderColor: 'divider', fontSize: 11.5, lineHeight: 1.85 }}>
-        <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>Working</Box>
-        <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: 'text.primary' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 1.75,
+          mt: 0.625,
+          pt: 0.75,
+          borderTop: '1px dashed',
+          borderColor: 'divider',
+          fontSize: 11.5,
+          lineHeight: 1.85,
+        }}
+      >
+        <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
+          Working
+        </Box>
+        <Box
+          component="span"
+          sx={{
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: 700,
+            color: 'text.primary',
+          }}
+        >
           {NUM_FORMATTER.format(working)}
         </Box>
       </Box>
       {/* Cache read — muted; typically dwarfs the working tokens */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.75, fontSize: 11.5, lineHeight: 1.85 }}>
-        <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500 }}>Cache read</Box>
-        <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'text.secondary' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 1.75,
+          fontSize: 11.5,
+          lineHeight: 1.85,
+        }}
+      >
+        <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+          Cache read
+        </Box>
+        <Box
+          component="span"
+          sx={{
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: 600,
+            color: 'text.secondary',
+          }}
+        >
           {NUM_FORMATTER.format(tokens.cacheRead)}
         </Box>
       </Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.75, mt: 0.75, pt: 0.875, borderTop: 1, borderColor: 'divider', fontSize: 11.5 }}>
-        <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>Total</Box>
-        <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: 'text.primary' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 1.75,
+          mt: 0.75,
+          pt: 0.875,
+          borderTop: 1,
+          borderColor: 'divider',
+          fontSize: 11.5,
+        }}
+      >
+        <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
+          Total
+        </Box>
+        <Box
+          component="span"
+          sx={{
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: 700,
+            color: 'text.primary',
+          }}
+        >
           {NUM_FORMATTER.format(total)}
         </Box>
       </Box>
@@ -268,7 +402,13 @@ export const TokenBreakdownTitle = ({ tokens }: { tokens: SessionTokenBreakdown 
 // Styled tooltip wrapper: solid surface panel with border + soft shadow, matching
 // the mockup (MUI's default tooltip is a translucent dark chip — wrong here).
 // Shared by the per-turn TokenUsage and the grid's Tokens cell.
-export const TokenBreakdownTooltip = ({ tokens, children }: { tokens: SessionTokenBreakdown; children: ReactElement }) => (
+export const TokenBreakdownTooltip = ({
+  tokens,
+  children,
+}: {
+  tokens: SessionTokenBreakdown;
+  children: ReactElement;
+}) => (
   <Tooltip
     title={<TokenBreakdownTitle tokens={tokens} />}
     placement="top"
@@ -306,11 +446,16 @@ export const TokenBreakdownTooltip = ({ tokens, children }: { tokens: SessionTok
 // Tokens cell. The dotted underline matches the grid's own hover-affordance
 // convention (SessionsTable's Cost / Cache-eff. cells) so the hover is visible
 // before the pointer arrives, not only via `cursor: help`.
-export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | undefined }) => {
+export const TokenUsage = ({
+  tokens,
+}: {
+  tokens: SessionTokenBreakdown | null | undefined;
+}) => {
   if (!tokens) {
     return null;
   }
-  const total = tokens.input + tokens.output + tokens.cacheCreation + tokens.cacheRead;
+  const total =
+    tokens.input + tokens.output + tokens.cacheCreation + tokens.cacheRead;
   return (
     <TokenBreakdownTooltip tokens={tokens}>
       <Box
@@ -329,10 +474,18 @@ export const TokenUsage = ({ tokens }: { tokens: SessionTokenBreakdown | null | 
           borderBottom: '1px dotted',
           borderColor: 'text.disabled',
           pb: '1px',
-          '&::before': { content: '""', width: 3, height: 3, borderRadius: '50%', bgcolor: 'text.disabled' },
+          '&::before': {
+            content: '""',
+            width: 3,
+            height: 3,
+            borderRadius: '50%',
+            bgcolor: 'text.disabled',
+          },
         }}
       >
-        <Box component="b" sx={{ fontWeight: 700, color: 'text.primary' }}>{formatTokens(total)}</Box>
+        <Box component="b" sx={{ fontWeight: 700, color: 'text.primary' }}>
+          {formatTokens(total)}
+        </Box>
         &nbsp;tokens
       </Box>
     </TokenBreakdownTooltip>
@@ -364,9 +517,9 @@ const TurnAttributionMarker = ({
   return (
     <Tooltip
       title={
-        'Approximate. This turn has no per-request logs, so its model, cost and tokens were '
-        + 'bucketed from cumulative counters by timestamp. Counter totals run lower than '
-        + 'per-request sums on cache-heavy turns — don\'t compare the two directly.'
+        'Approximate. This turn has no per-request logs, so its model, cost and tokens were ' +
+        'bucketed from cumulative counters by timestamp. Counter totals run lower than ' +
+        "per-request sums on cache-heavy turns — don't compare the two directly."
       }
       placement="top"
       arrow
@@ -405,7 +558,9 @@ const PromptTimelinePanel = ({
   windowStartMs,
   windowEndMs,
 }: PromptTimelinePanelProps) => {
-  const [expandedValue, setExpandedValue] = useState<ValueDialogState | null>(null);
+  const [expandedValue, setExpandedValue] = useState<ValueDialogState | null>(
+    null,
+  );
 
   // No height cap and no scroll of its own: the panel fills its container (the
   // detail drawer's body), which owns the scrolling. Session identity lives in
@@ -428,7 +583,14 @@ const PromptTimelinePanel = ({
   if (loading) {
     return (
       <Box sx={panelSx}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            color: 'text.secondary',
+          }}
+        >
           <CircularProgress size={14} thickness={5} />
           <Typography sx={{ fontSize: 12.5 }}>Loading prompts…</Typography>
         </Box>
@@ -470,12 +632,26 @@ const PromptTimelinePanel = ({
           color: 'text.secondary',
         }}
       >
-        <Box component="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} sx={{ width: 14, height: 14, color: 'primary.main' }}>
+        <Box
+          component="svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          sx={{ width: 14, height: 14, color: 'primary.main' }}
+        >
           <path d="M12 8v4l3 2" />
           <circle cx="12" cy="12" r="9" />
         </Box>
         Prompt timeline
-        <Box component="span" sx={{ color: 'text.disabled', fontWeight: 600, letterSpacing: '0.5px' }}>
+        <Box
+          component="span"
+          sx={{
+            color: 'text.disabled',
+            fontWeight: 600,
+            letterSpacing: '0.5px',
+          }}
+        >
           {`${prompts.length} prompt${prompts.length === 1 ? '' : 's'}`}
         </Box>
       </Box>
@@ -495,22 +671,30 @@ const PromptTimelinePanel = ({
             bottom: '6px',
             width: '2px',
             borderRadius: '2px',
-            background: (t) => `linear-gradient(180deg, ${alpha(t.palette.primary.main, 0.4)}, transparent)`,
+            background: (t) =>
+              `linear-gradient(180deg, ${alpha(t.palette.primary.main, 0.4)}, transparent)`,
           },
         }}
       >
         {prompts.map((turn, index) => {
-          const turnMs = turn.timestamp ? new Date(turn.timestamp).getTime() : NaN;
+          const turnMs = turn.timestamp
+            ? new Date(turn.timestamp).getTime()
+            : NaN;
           const inWindow =
             windowStartMs == null || windowEndMs == null || Number.isNaN(turnMs)
               ? true
               : turnMs >= windowStartMs && turnMs <= windowEndMs;
           const previousTurn = prompts[index - 1];
-          const previousTurnMs = previousTurn?.timestamp ? new Date(previousTurn.timestamp).getTime() : NaN;
+          const previousTurnMs = previousTurn?.timestamp
+            ? new Date(previousTurn.timestamp).getTime()
+            : NaN;
           const previousTurnInWindow =
-            windowStartMs == null || windowEndMs == null || Number.isNaN(previousTurnMs)
+            windowStartMs == null ||
+            windowEndMs == null ||
+            Number.isNaN(previousTurnMs)
               ? true
-              : previousTurnMs >= windowStartMs && previousTurnMs <= windowEndMs;
+              : previousTurnMs >= windowStartMs &&
+                previousTurnMs <= windowEndMs;
           let boundary: string | null = null;
           if (index > 0 && !previousTurnInWindow && inWindow) {
             boundary = 'selected window starts';
@@ -518,119 +702,187 @@ const PromptTimelinePanel = ({
             boundary = 'selected window ends';
           }
           return (
-          <Fragment key={`${turn.timestamp}-${index}`}>
-            {boundary ? (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, my: 0.25, '&::before, &::after': { content: '""', flex: 1, height: '1px', bgcolor: 'divider' } }}>
-                <Box component="span" sx={{ fontFamily: fontFamilies.display, fontSize: 9.5, fontWeight: 700, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'text.disabled', whiteSpace: 'nowrap' }}>
-                  {boundary}
+            <Fragment key={`${turn.timestamp}-${index}`}>
+              {boundary ? (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1.25,
+                    my: 0.25,
+                    '&::before, &::after': {
+                      content: '""',
+                      flex: 1,
+                      height: '1px',
+                      bgcolor: 'divider',
+                    },
+                  }}
+                >
+                  <Box
+                    component="span"
+                    sx={{
+                      fontFamily: fontFamilies.display,
+                      fontSize: 9.5,
+                      fontWeight: 700,
+                      letterSpacing: '1.2px',
+                      textTransform: 'uppercase',
+                      color: 'text.disabled',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {boundary}
+                  </Box>
                 </Box>
-              </Box>
-            ) : null}
-          <Box
-            sx={{
-              position: 'relative',
-              border: 1,
-              borderColor: 'divider',
-              borderRadius: 1.6,
-              bgcolor: 'background.paper',
-              boxShadow: 1,
-              px: 1.75,
-              py: 1.25,
-              opacity: inWindow ? 1 : 0.45,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 0.75,
-              transition: 'border-color .14s',
-              '&:hover': { borderColor: (t) => alpha(t.palette.primary.main, 0.32) },
-              '&::before': {
-                content: '""',
-                position: 'absolute',
-                left: '-21px',
-                top: '16px',
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                // Rail dot picks up the turn's model accent (opus/sonnet) instead
-                // of always being primary.main — the ring stays primary-tinted
-                // regardless, matching the design handoff.
-                bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
-                boxShadow: (t) => `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
-              },
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5 }}>
-              {/* Wraps rather than overflows: in the detail drawer the card is
+              ) : null}
+              <Box
+                sx={{
+                  position: 'relative',
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1.6,
+                  bgcolor: 'background.paper',
+                  boxShadow: 1,
+                  px: 1.75,
+                  py: 1.25,
+                  opacity: inWindow ? 1 : 0.45,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 0.75,
+                  transition: 'border-color .14s',
+                  '&:hover': {
+                    borderColor: (t) => alpha(t.palette.primary.main, 0.32),
+                  },
+                  '&::before': {
+                    content: '""',
+                    position: 'absolute',
+                    left: '-21px',
+                    top: '16px',
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    // Rail dot picks up the turn's model accent (opus/sonnet) instead
+                    // of always being primary.main — the ring stays primary-tinted
+                    // regardless, matching the design handoff.
+                    bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
+                    boxShadow: (t) =>
+                      `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
+                  },
+                }}
+              >
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 1.5,
+                  }}
+                >
+                  {/* Wraps rather than overflows: in the detail drawer the card is
                   560px wide, so a long model name plus cost, tokens and the
                   "approx" marker no longer fit on one line — unwrapped, the
                   marker ran under the View-trace pill. */}
-              <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 1.125, rowGap: 0.5, minWidth: 0 }}>
-                <Box
-                  component="span"
-                  sx={{ fontFamily: fontFamilies.mono, fontSize: 11, fontWeight: 500, color: 'text.disabled', whiteSpace: 'nowrap', letterSpacing: '-0.2px' }}
-                >
-                  {formatPromptTimestamp(turn.timestamp)}
-                </Box>
-                <ModelChip model={turn.model} />
-                {turn.costUsd != null ? (
                   <Box
-                    component="span"
-                    sx={{ fontFamily: fontFamilies.display, fontWeight: 700, fontSize: 12.5, color: 'text.primary', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.2px' }}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      columnGap: 1.125,
+                      rowGap: 0.5,
+                      minWidth: 0,
+                    }}
                   >
-                    {USD_FORMATTER.format(turn.costUsd)}
+                    <Box
+                      component="span"
+                      sx={{
+                        fontFamily: fontFamilies.mono,
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: 'text.disabled',
+                        whiteSpace: 'nowrap',
+                        letterSpacing: '-0.2px',
+                      }}
+                    >
+                      {formatPromptTimestamp(turn.timestamp)}
+                    </Box>
+                    <ModelChip model={turn.model} />
+                    {turn.costUsd != null ? (
+                      <Box
+                        component="span"
+                        sx={{
+                          fontFamily: fontFamilies.display,
+                          fontWeight: 700,
+                          fontSize: 12.5,
+                          color: 'text.primary',
+                          fontVariantNumeric: 'tabular-nums',
+                          letterSpacing: '-0.2px',
+                        }}
+                      >
+                        {USD_FORMATTER.format(turn.costUsd)}
+                      </Box>
+                    ) : null}
+                    <TokenUsage tokens={turn.tokens} />
+                    <TurnAttributionMarker
+                      attribution={turn.attribution}
+                      requestCount={turn.requestCount ?? 0}
+                    />
                   </Box>
-                ) : null}
-                <TokenUsage tokens={turn.tokens} />
-                <TurnAttributionMarker
-                  attribution={turn.attribution}
-                  requestCount={turn.requestCount ?? 0}
-                />
-              </Box>
-              {turn.traceId ? (
+                  {turn.traceId ? (
+                    <Box
+                      component={RouterLink}
+                      to={`/traces/${turn.traceId}`}
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                        height: 20,
+                        px: '10px',
+                        flexShrink: 0,
+                        borderRadius: 999,
+                        fontFamily: fontFamilies.display,
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        letterSpacing: 0.2,
+                        color: 'primary.main',
+                        textDecoration: 'none',
+                        bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+                        boxShadow: (t) =>
+                          `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}`,
+                        '&:hover': {
+                          bgcolor: (t) => alpha(t.palette.primary.main, 0.22),
+                        },
+                      }}
+                    >
+                      View trace
+                      <ArrowForwardIcon sx={{ fontSize: 12 }} />
+                    </Box>
+                  ) : null}
+                </Box>
+
                 <Box
-                  component={RouterLink}
-                  to={`/traces/${turn.traceId}`}
                   sx={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                    height: 20,
-                    px: '10px',
-                    flexShrink: 0,
-                    borderRadius: 999,
-                    fontFamily: fontFamilies.display,
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    letterSpacing: 0.2,
-                    color: 'primary.main',
-                    textDecoration: 'none',
-                    bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
-                    boxShadow: (t) => `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}`,
-                    '&:hover': { bgcolor: (t) => alpha(t.palette.primary.main, 0.22) },
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    color:
+                      turn.prompt == null ? 'text.disabled' : 'text.primary',
+                    fontStyle: turn.prompt == null ? 'italic' : 'normal',
                   }}
                 >
-                  View trace
-                  <ArrowForwardIcon sx={{ fontSize: 12 }} />
+                  {turn.prompt == null ? (
+                    '(prompt text not captured)'
+                  ) : (
+                    <AttributeValue
+                      attrKey={formatTimestamp(turn.timestamp)}
+                      value={turn.prompt}
+                      truncate
+                      inlineExpand={false}
+                      onExpand={setExpandedValue}
+                    />
+                  )}
                 </Box>
-              ) : null}
-            </Box>
 
-            <Box sx={{ fontSize: 13, lineHeight: 1.55, color: turn.prompt == null ? 'text.disabled' : 'text.primary', fontStyle: turn.prompt == null ? 'italic' : 'normal' }}>
-              {turn.prompt == null ? (
-                '(prompt text not captured)'
-              ) : (
-                <AttributeValue
-                  attrKey={formatTimestamp(turn.timestamp)}
-                  value={turn.prompt}
-                  truncate
-                  inlineExpand={false}
-                  onExpand={setExpandedValue}
-                />
-              )}
-            </Box>
-
-            <ToolChips tools={turn.tools} />
-          </Box>
-          </Fragment>
+                <ToolChips tools={turn.tools} />
+              </Box>
+            </Fragment>
           );
         })}
       </Box>
