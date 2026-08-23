@@ -294,7 +294,6 @@ const TraceMinimap = ({
             bottom: 0,
             left: 0,
             width: `${(view.s / totalMs) * 100}%`,
-            bgcolor: (t) => alpha(t.palette.action.disabledBackground, 0.1),
             zIndex: 1,
             pointerEvents: 'none',
           }}
@@ -306,7 +305,6 @@ const TraceMinimap = ({
             bottom: 0,
             right: 0,
             width: `${((totalMs - view.e) / totalMs) * 100}%`,
-            bgcolor: (t) => alpha(t.palette.action.disabledBackground, 0.1),
             zIndex: 1,
             pointerEvents: 'none',
           }}
