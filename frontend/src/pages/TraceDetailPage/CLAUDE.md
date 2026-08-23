@@ -723,3 +723,20 @@ so the edge tracks the cursor 1:1.
   one scope. See `../TracesPage/components/traceColors.ts` for the name-to-hue mapping.
 - **Minimap minimum zoom.** `minimumZoomMs = Math.max(1, totalMs * 0.02)` — the brush cannot
   be narrowed below 2% of the total trace duration, preventing a degenerate zero-width view.
+- **Minimap interactions.** Four click-and-drag behaviors are supported:
+  1. **Drag-to-select on bare track:** Press on empty track (not the brush or handles) and drag to
+     create a new zoom range anchored at the press point. This is a `'create'` mode that lets you
+     zoom into an arbitrary sub-range in one gesture instead of two aimed handle drags.
+  2. **Zoomed-range indicator:** When the view is a sub-range (`viewStart > 0 || viewEnd < total`),
+     a small monospace pill appears next to the legend showing `2.10s–6.40s` (bold time range) +
+     `of 12.30s` (muted total), paired with `dbl-click resets` text. Full-view mode shows the
+     plain affordance text instead.
+  3. **Dim-outside instead of tint-inside:** The brush interior is transparent (bordered only),
+     and two `.mmdim` overlays cover the excluded left/right regions with a `0.6` opacity
+     disabledBackground color. Ticks inside the selection render at full contrast — the standard
+     range-brush idiom. Do not switch this back to a filled brush interior; the dimmed exterior
+     is more readable.
+  4. **Error ticks can't be hidden by z-order:** Error ticks are sorted to the end of the render
+     list (so they paint last) and get a red `box-shadow: 0 0 0 1.5px` ring in addition to their
+     fill, making them identifiable even at 3px height when an ok/model/tool tick might otherwise
+     cover them at the same x-position. Do not remove the sort or the ring.

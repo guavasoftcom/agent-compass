@@ -120,6 +120,18 @@ public class MetricService {
   private static final int COST_TOTALS_CURRENT_INDEX = 0;
   private static final int COST_TOTALS_PRIOR_INDEX = 1;
 
+  // Discriminator values produced by MetricPointRepository#aggregateTokenUsageBreakdown's
+  // GROUPING SETS ((bucket, token_type), (model), ()) query, and the column
+  // indices of its rows.
+  private static final String TOKEN_BREAKDOWN_ROW_TYPE_BUCKET = "bucket";
+  private static final String TOKEN_BREAKDOWN_ROW_TYPE_MODEL = "model";
+  private static final String TOKEN_BREAKDOWN_ROW_TYPE_TOTAL = "total";
+  private static final int TOKEN_BREAKDOWN_ROW_TYPE_INDEX = 0;
+  private static final int TOKEN_BREAKDOWN_BUCKET_INDEX = 1;
+  private static final int TOKEN_BREAKDOWN_TOKEN_TYPE_INDEX = 2;
+  private static final int TOKEN_BREAKDOWN_MODEL_INDEX = 3;
+  private static final int TOKEN_BREAKDOWN_AMOUNT_INDEX = 4;
+
   // Distribution
   private static final int DISTRIBUTION_COLUMNS = 24;
   private static final int DISTRIBUTION_EXEMPLAR_LIMIT = 8;
@@ -199,68 +211,99 @@ public class MetricService {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
-    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseriesInRange(
-        tuningProperties.getTokenUsageMetric(),
-        tuningProperties.getTokenTypeAttribute(),
-        start,
-        end,
-        bucketSeconds);
-    List<ModelTokenShare> byModel = buildTokensByModel(start, end);
-    CostSummary cost = aggregateCostSummary(start, end);
-    return buildTokenUsageSummary(rawRows, bucketSeconds, byModel, cost);
+    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds);
   }
 
   public TokenUsageSummary aggregateTokenUsageInRange(Instant start, Instant end) {
     long windowSeconds = Math.max(1L, Duration.between(start, end).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / TARGET_BUCKETS_PER_WINDOW);
-    List<Object[]> rawRows = metricPointRepository.aggregateTokenUsageTimeseriesInRange(
+    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds);
+  }
+
+  // Perf: aggregateTokenUsageBreakdown replaces what used to be three separate
+  // near-full-table scans of the token.usage metric (bucket-by-type timeseries,
+  // per-model totals, grand total) with one GROUPING SETS query -- see that
+  // query's Javadoc. The grand total it already returns is also what
+  // aggregateCostTotalsOnly needs for costPer1k, so the Tokens page's cost
+  // figure no longer pays for its own separate aggregateTotalTokens scan either.
+  //
+  // This endpoint's cost figure deliberately uses aggregateCostTotalsOnly rather
+  // than the full aggregateCostSummary: the Tokens page (this method's only
+  // caller) reads just CostSummary.spend24h and .deltaPct off the embedded
+  // object (see TokensPageView.tsx) -- not trend, byModel, burnRate,
+  // projected30d, or costPer1k's own inputs beyond what's already at hand -- so
+  // running aggregateCostBreakdown's GROUPING SETS scan (bucket + model + total
+  // over ALL cost.usage rows in the window) here would compute a 14-bucket trend
+  // and a per-model breakdown solely to discard them. aggregateCostSummary
+  // itself is unchanged and still backs GET /api/metrics/cost, which is the
+  // endpoint that actually needs the full breakdown.
+  private TokenUsageSummary buildTokenUsageSummaryForWindow(Instant start, Instant end, long bucketSeconds) {
+    List<Object[]> breakdownRows = metricPointRepository.aggregateTokenUsageBreakdown(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
+        MODEL_ATTRIBUTE,
         start,
         end,
         bucketSeconds);
-    List<ModelTokenShare> byModel = buildTokensByModel(start, end);
-    CostSummary cost = aggregateCostSummary(start, end);
-    return buildTokenUsageSummary(rawRows, bucketSeconds, byModel, cost);
+    List<ModelTokenShare> byModel = buildTokensByModel(breakdownRows);
+    long totalTokens = extractTokenGrandTotal(breakdownRows);
+    CostSummary cost = aggregateCostTotalsOnly(start, end, totalTokens);
+    return buildTokenUsageSummary(breakdownRows, bucketSeconds, byModel, cost);
   }
 
-  private List<ModelTokenShare> buildTokensByModel(Instant start, Instant end) {
-    List<Object[]> modelRows = metricPointRepository.aggregateTokensByModel(
-        tuningProperties.getTokenUsageMetric(),
-        MODEL_ATTRIBUTE,
-        start,
-        end);
+  private static List<ModelTokenShare> buildTokensByModel(List<Object[]> breakdownRows) {
+    List<Object[]> modelRows = breakdownRows.stream()
+        .filter(row -> TOKEN_BREAKDOWN_ROW_TYPE_MODEL.equals(row[TOKEN_BREAKDOWN_ROW_TYPE_INDEX])
+            && row[TOKEN_BREAKDOWN_MODEL_INDEX] != null)
+        .toList();
     long grandTotal = 0L;
     for (Object[] modelRow : modelRows) {
-      grandTotal += modelRow[1] == null ? 0L : ((Number) modelRow[1]).longValue();
+      grandTotal += modelRow[TOKEN_BREAKDOWN_AMOUNT_INDEX] == null
+          ? 0L : ((Number) modelRow[TOKEN_BREAKDOWN_AMOUNT_INDEX]).longValue();
     }
     List<ModelTokenShare> shares = new ArrayList<>(modelRows.size());
     for (int colorIndex = 0; colorIndex < modelRows.size(); colorIndex++) {
       Object[] modelRow = modelRows.get(colorIndex);
-      String modelName = modelRow[0] == null ? "unknown" : (String) modelRow[0];
-      long modelTokens = modelRow[1] == null ? 0L : ((Number) modelRow[1]).longValue();
+      String modelName = (String) modelRow[TOKEN_BREAKDOWN_MODEL_INDEX];
+      long modelTokens = modelRow[TOKEN_BREAKDOWN_AMOUNT_INDEX] == null
+          ? 0L : ((Number) modelRow[TOKEN_BREAKDOWN_AMOUNT_INDEX]).longValue();
       int sharePercent = grandTotal == 0L ? 0 : (int) Math.round((double) modelTokens / grandTotal * HUNDRED_PERCENT);
       shares.add(new ModelTokenShare(modelName, formatTokenCount(modelTokens), sharePercent, colorIndex));
     }
     return shares;
   }
 
+  private static long extractTokenGrandTotal(List<Object[]> breakdownRows) {
+    for (Object[] row : breakdownRows) {
+      if (TOKEN_BREAKDOWN_ROW_TYPE_TOTAL.equals(row[TOKEN_BREAKDOWN_ROW_TYPE_INDEX])) {
+        return row[TOKEN_BREAKDOWN_AMOUNT_INDEX] == null ? 0L : ((Number) row[TOKEN_BREAKDOWN_AMOUNT_INDEX]).longValue();
+      }
+    }
+    return 0L;
+  }
+
   private static TokenUsageSummary buildTokenUsageSummary(
-      List<Object[]> rawRows, long bucketSeconds,
+      List<Object[]> breakdownRows, long bucketSeconds,
       List<ModelTokenShare> byModel, CostSummary cost) {
     // (bucket -> [input, output, cacheCreation, cacheRead]). LinkedHashMap
-    // preserves the
-    // ascending bucket order the query already produced.
+    // preserves the ascending bucket order aggregateTokenUsageBreakdown's ORDER
+    // BY already produced.
     LinkedHashMap<Instant, long[]> bucketTotals = new LinkedHashMap<>();
     long inputTotal = 0L;
     long outputTotal = 0L;
     long cacheCreationTotal = 0L;
     long cacheReadTotal = 0L;
 
-    for (Object[] row : rawRows) {
-      Instant bucket = (Instant) row[0];
-      String tokenType = (String) row[1];
-      long total = ((Number) row[2]).longValue();
+    for (Object[] row : breakdownRows) {
+      if (!TOKEN_BREAKDOWN_ROW_TYPE_BUCKET.equals(row[TOKEN_BREAKDOWN_ROW_TYPE_INDEX])) {
+        continue;
+      }
+      String tokenType = (String) row[TOKEN_BREAKDOWN_TOKEN_TYPE_INDEX];
+      if (tokenType == null) {
+        continue;
+      }
+      Instant bucket = (Instant) row[TOKEN_BREAKDOWN_BUCKET_INDEX];
+      long total = ((Number) row[TOKEN_BREAKDOWN_AMOUNT_INDEX]).longValue();
       long[] counts = bucketTotals.computeIfAbsent(bucket, ignored -> new long[4]);
       switch (tokenType) {
         case INPUT_TYPE -> {
@@ -666,6 +709,42 @@ public class MetricService {
         formatCostPer1k(costPer1k),
         trend,
         byModel,
+        "");
+  }
+
+  // Lean sibling of aggregateCostSummary for callers that only need the scalar
+  // figures (spend, delta, burn rate, projection, cost/1k) -- currently just the
+  // Tokens page via buildTokenUsageSummaryForWindow, see its Javadoc. Skips
+  // aggregateCostBreakdown's GROUPING SETS scan entirely (no trend, no
+  // per-model breakdown are computed) and takes totalTokens as a parameter
+  // rather than running its own aggregateTotalTokens scan, since the caller
+  // already has it from aggregateTokenUsageBreakdown's grand-total row. trend
+  // and byModel come back empty -- not wrong, just not computed -- so this must
+  // never back an endpoint whose caller reads either field.
+  private CostSummary aggregateCostTotalsOnly(Instant from, Instant to, long totalTokens) {
+    double windowSeconds = Math.max(1.0, Duration.between(from, to).getSeconds());
+    double windowHours = windowSeconds / SECONDS_PER_HOUR;
+    Duration windowDuration = Duration.ofSeconds((long) windowSeconds);
+    Instant priorWindowStart = from.minus(windowDuration);
+    String costMetricName = tuningProperties.getCostUsageMetric();
+
+    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart);
+    double currentSpend = costTotals.currentTotal();
+    double priorSpend = costTotals.priorTotal();
+    double deltaPct = priorSpend == 0.0 ? 0.0 : (currentSpend - priorSpend) / priorSpend * 100.0;
+
+    double burnRate = currentSpend / windowHours;
+    double projected30d = burnRate * HOURS_PER_MONTH;
+    double costPer1k = totalTokens == 0L ? 0.0 : currentSpend / (totalTokens / TOKENS_PER_COST_UNIT);
+
+    return new CostSummary(
+        formatUsd(currentSpend),
+        formatDeltaPct(deltaPct),
+        formatBurnRate(burnRate),
+        formatProjected(projected30d),
+        formatCostPer1k(costPer1k),
+        List.of(),
+        List.of(),
         "");
   }
 

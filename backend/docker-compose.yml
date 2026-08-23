@@ -8,7 +8,14 @@ services:
     # tiny shared hosts. The dashboard's histogram/facet/autocomplete queries
     # rescan the recent log_records window + GIN indexes and sort/aggregate
     # heavily, so keep that working set resident and let sorts finish in memory.
-    # work_mem is per-sort: 16MB is safe here because this DB has one client.
+    # work_mem is per-sort: 64MB is safe here because this DB has one client.
+    # Raised from 16MB after the Metrics-page trend query (GROUP BY metric_name,
+    # date_bin(...)) measured spilling 28MB+ to disk on a 7-day window -- the
+    # planner drastically overestimates that GROUP BY's cardinality (millions
+    # of groups estimated, ~175 actual) and picks a sort-based GroupAggregate
+    # over a HashAggregate to compensate; 64MB gives the planner enough
+    # headroom to choose the in-memory HashAggregate instead (measured 350ms ->
+    # 252ms, zero temp files).
     # Parallel-query hash tables live in /dev/shm; Docker's 64MB default is too
     # small for parallel joins over log_records ("could not resize shared memory
     # segment"). This is a tmpfs cap, not a reservation.
@@ -18,7 +25,7 @@ services:
       - -c
       - shared_buffers=512MB
       - -c
-      - work_mem=16MB
+      - work_mem=64MB
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}

@@ -1300,7 +1300,6 @@ public class LogService {
         criteria.filters(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery());
 
     Map<Instant, Object[]> rowByBucket = new LinkedHashMap<>();
@@ -1349,7 +1348,6 @@ public class LogService {
         criteria.filters(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery());
 
     Map<String, Long> countsBySeverity = new HashMap<>();
@@ -1374,7 +1372,6 @@ public class LogService {
         criteria.filters(),
         criteria.severities(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
         FACET_VALUE_CAP);
     return toFacetValues(rows);
@@ -1387,7 +1384,6 @@ public class LogService {
         criteria.filters(),
         criteria.severities(),
         criteria.events(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
         FACET_VALUE_CAP);
     return toFacetValues(rows);
@@ -1433,7 +1429,6 @@ public class LogService {
         criteria.severities(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery());
 
     List<LogRecord> probeItems = logRecordMapper.toLogRecords(logRecordRepository.cursorFirst(
@@ -1443,7 +1438,6 @@ public class LogService {
         criteria.severities(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
         resolvedLimit + 1));
 
@@ -1470,7 +1464,6 @@ public class LogService {
         criteria.severities(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
         resolvedLimit + 1));
 
@@ -1498,7 +1491,6 @@ public class LogService {
         criteria.severities(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
         resolvedLimit + 1));
 
@@ -1549,7 +1541,6 @@ public class LogService {
         criteria.severities(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery());
 
     int resolvedSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
@@ -1562,7 +1553,6 @@ public class LogService {
         criteria.severities(),
         criteria.events(),
         criteria.tools(),
-        tuningProperties.getToolAttribute(),
         criteria.fullTextQuery(),
         resolvedSize,
         pageOffset));

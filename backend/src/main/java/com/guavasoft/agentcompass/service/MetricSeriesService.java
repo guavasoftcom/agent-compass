@@ -12,6 +12,7 @@ import com.guavasoft.agentcompass.repository.MetricPointRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,7 +63,6 @@ public class MetricSeriesService {
   private static final String SECONDS_UNIT = "s";
   private static final String DIR_UP = "up";
   private static final String DIR_DOWN = "down";
-  private static final String UNKNOWN_LABEL = "unknown";
 
   private enum ValueFormat { NUMBER, USD, DURATION }
 
@@ -77,6 +77,13 @@ public class MetricSeriesService {
       Map<String, String> splits) {
   }
 
+  // One metric's current + prior window total, read off the batched totals
+  // query. A metric name absent from that query's result (zero matching rows
+  // in the scanned range) defaults to ZERO rather than being treated as missing.
+  private record MetricWindowTotals(double current, double prior) {
+    private static final MetricWindowTotals ZERO = new MetricWindowTotals(0.0, 0.0);
+  }
+
   private final TuningProperties tuningProperties;
   private final MetricPointRepository repository;
 
@@ -87,11 +94,77 @@ public class MetricSeriesService {
     String windowLabel = shortWindowLabel(windowSeconds);
 
     List<MetricSpec> specs = metricSpecs();
+    List<String> metricNames = specs.stream().map(MetricSpec::name).toList();
+
+    // Batched across every metric name (see MetricPointRepository's comment on
+    // aggregateMetricTotals/aggregateMetricTrend): one scan for every metric's
+    // total instead of one scan per metric, one scan for every metric's trend
+    // instead of one scan per metric.
+    Map<String, MetricWindowTotals> totalsByMetricName = repository
+        .aggregateMetricTotals(metricNames, priorFrom, from, to).stream()
+        .collect(Collectors.toMap(
+            row -> (String) row[0],
+            row -> new MetricWindowTotals(
+                ((Number) row[1]).doubleValue(), ((Number) row[2]).doubleValue())));
+    Map<String, List<Object[]>> trendRowsByMetricName = repository
+        .aggregateMetricTrend(metricNames, from, to, bucketSeconds).stream()
+        .collect(Collectors.groupingBy(row -> (String) row[0]));
+    Map<String, Map<String, Map<String, Double>>> splitTotalsByMetricThenAttribute =
+        aggregateSplitTotals(specs, from, to);
+
     List<MetricSeries> series = new ArrayList<>(specs.size());
     for (MetricSpec spec : specs) {
-      series.add(buildSeries(spec, from, to, priorFrom, windowSeconds, bucketSeconds, windowLabel));
+      MetricWindowTotals totals = totalsByMetricName.getOrDefault(spec.name(), MetricWindowTotals.ZERO);
+      List<Object[]> trendRows = trendRowsByMetricName.getOrDefault(spec.name(), List.of());
+      Map<String, Map<String, Double>> splitTotalsByAttribute =
+          splitTotalsByMetricThenAttribute.getOrDefault(spec.name(), Map.of());
+      series.add(buildSeries(
+          spec, totals.current(), totals.prior(), trendRows, splitTotalsByAttribute,
+          from, windowSeconds, bucketSeconds, windowLabel));
     }
     return series;
+  }
+
+  // Every split-bearing curated metric shares just three physical attribute
+  // keys (model, the configured token-type attribute, decision), so one call to
+  // the batched aggregateMetricSplits query replaces what used to be one
+  // repository call per (metric, split) pair -- five scans collapsed into one.
+  // Row shape is (metric_name, model, token_type, decision, total); a row
+  // contributes to whichever of the three attribute buckets it has a non-null
+  // label for, reproducing the "attribute IS NOT NULL" filter the old
+  // per-split query applied in SQL.
+  private Map<String, Map<String, Map<String, Double>>> aggregateSplitTotals(
+      List<MetricSpec> specs, Instant from, Instant to) {
+    List<String> splitMetricNames = specs.stream()
+        .filter(spec -> !spec.splits().isEmpty())
+        .map(MetricSpec::name)
+        .toList();
+    if (splitMetricNames.isEmpty()) {
+      return Map.of();
+    }
+    String typeAttribute = tuningProperties.getTokenTypeAttribute();
+    Map<String, Map<String, Map<String, Double>>> totalsByMetricThenAttribute = new HashMap<>();
+    for (Object[] row : repository.aggregateMetricSplits(
+        splitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to)) {
+      String metricName = (String) row[0];
+      double rowTotal = ((Number) row[4]).doubleValue();
+      addSplitContribution(totalsByMetricThenAttribute, metricName, MODEL_ATTRIBUTE, (String) row[1], rowTotal);
+      addSplitContribution(totalsByMetricThenAttribute, metricName, typeAttribute, (String) row[2], rowTotal);
+      addSplitContribution(totalsByMetricThenAttribute, metricName, DECISION_ATTRIBUTE, (String) row[3], rowTotal);
+    }
+    return totalsByMetricThenAttribute;
+  }
+
+  private static void addSplitContribution(
+      Map<String, Map<String, Map<String, Double>>> totalsByMetricThenAttribute,
+      String metricName, String attribute, String label, double value) {
+    if (label == null) {
+      return;
+    }
+    totalsByMetricThenAttribute
+        .computeIfAbsent(metricName, key -> new HashMap<>())
+        .computeIfAbsent(attribute, key -> new LinkedHashMap<>())
+        .merge(label, value, Double::sum);
   }
 
   // Curated specs first, in their declared order, then anything else the database
@@ -155,7 +228,8 @@ public class MetricSeriesService {
         new MetricSpec(
             "token", tuningProperties.getTokenUsageMetric(), "tokens", "Sum",
             "Tokens consumed across Claude Code sessions, summed over the window. The biggest cost "
-                + "driver — split by model or token type to see where they go.",
+                + "driver — split by model to see where they go. The input/output/cache breakdown "
+                + "lives on the Token Usage page.",
             ValueFormat.NUMBER, orderedSplits("Model", MODEL_ATTRIBUTE, "Type", typeAttribute)),
         new MetricSpec(
             "cost", tuningProperties.getCostUsageMetric(), "USD", "Spend",
@@ -205,18 +279,18 @@ public class MetricSeriesService {
   }
 
   private MetricSeries buildSeries(
-      MetricSpec spec, Instant from, Instant to, Instant priorFrom,
-      long windowSeconds, long bucketSeconds, String windowLabel) {
-    double total = scalar(repository.aggregateMetricTotal(spec.name(), from, to));
-    double priorTotal = scalar(repository.aggregateMetricTotal(spec.name(), priorFrom, from));
-    List<Double> trend = buildTrend(spec.name(), from, to, bucketSeconds);
+      MetricSpec spec, double total, double priorTotal, List<Object[]> trendRows,
+      Map<String, Map<String, Double>> splitTotalsByAttribute,
+      Instant from, long windowSeconds, long bucketSeconds, String windowLabel) {
+    List<Double> trend = buildTrend(trendRows, from, bucketSeconds);
     double peak = trend.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
     double rate = total / (windowSeconds / SECONDS_PER_HOUR);
     double deltaPct = priorTotal == 0.0 ? 0.0 : (total - priorTotal) / priorTotal * HUNDRED_PERCENT;
 
     Map<String, List<MetricSplitRow>> splits = new LinkedHashMap<>();
     for (Map.Entry<String, String> split : spec.splits().entrySet()) {
-      splits.put(split.getKey(), buildSplit(spec, split.getValue(), from, to, total));
+      Map<String, Double> totalsByLabel = splitTotalsByAttribute.getOrDefault(split.getValue(), Map.of());
+      splits.put(split.getKey(), buildSplitRows(totalsByLabel, spec.format(), total));
     }
 
     return new MetricSeries(
@@ -238,12 +312,13 @@ public class MetricSeriesService {
 
   // Exactly TREND_BUCKETS evenly-spaced values across the window; sparse query rows
   // are placed by their bucket offset from the window start and gaps stay zero.
-  private List<Double> buildTrend(String metricName, Instant from, Instant to, long bucketSeconds) {
-    List<Object[]> rows = repository.aggregateMetricTrend(metricName, from, to, bucketSeconds);
+  // rows come from the batched aggregateMetricTrend query, already narrowed to
+  // this metric's rows by metricSeries -- row shape is (metric_name, bucket, total).
+  private List<Double> buildTrend(List<Object[]> rows, Instant from, long bucketSeconds) {
     double[] buckets = new double[TREND_BUCKETS];
     for (Object[] row : rows) {
-      Instant bucket = (Instant) row[0];
-      double value = row[1] == null ? 0.0 : ((Number) row[1]).doubleValue();
+      Instant bucket = (Instant) row[1];
+      double value = row[2] == null ? 0.0 : ((Number) row[2]).doubleValue();
       long index = Duration.between(from, bucket).getSeconds() / bucketSeconds;
       if (index < 0L) {
         index = 0L;
@@ -260,29 +335,22 @@ public class MetricSeriesService {
     return trend;
   }
 
-  private List<MetricSplitRow> buildSplit(
-      MetricSpec spec, String attribute, Instant from, Instant to, double total) {
-    List<Object[]> rows = repository.aggregateMetricBySplit(spec.name(), attribute, from, to);
-    List<MetricSplitRow> splitRows = new ArrayList<>(rows.size());
-    for (int colorIndex = 0; colorIndex < rows.size(); colorIndex++) {
-      Object[] row = rows.get(colorIndex);
-      String label = row[0] == null ? UNKNOWN_LABEL : (String) row[0];
-      double value = row[1] == null ? 0.0 : ((Number) row[1]).doubleValue();
-      int pct = total == 0.0 ? 0 : (int) Math.round(value / total * HUNDRED_PERCENT);
-      splitRows.add(new MetricSplitRow(label, formatValue(value, spec.format()), pct, colorIndex));
+  // Labels come pre-summed from aggregateSplitTotals (null labels already
+  // dropped there); this just orders them into the descending, color-indexed
+  // shape the old per-split query's ORDER BY total DESC used to produce.
+  private static List<MetricSplitRow> buildSplitRows(
+      Map<String, Double> totalByLabel, ValueFormat format, double metricTotal) {
+    List<Map.Entry<String, Double>> sortedEntries = totalByLabel.entrySet().stream()
+        .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+        .toList();
+    List<MetricSplitRow> splitRows = new ArrayList<>(sortedEntries.size());
+    for (int colorIndex = 0; colorIndex < sortedEntries.size(); colorIndex++) {
+      Map.Entry<String, Double> entry = sortedEntries.get(colorIndex);
+      double value = entry.getValue();
+      int pct = metricTotal == 0.0 ? 0 : (int) Math.round(value / metricTotal * HUNDRED_PERCENT);
+      splitRows.add(new MetricSplitRow(entry.getKey(), formatValue(value, format), pct, colorIndex));
     }
     return splitRows;
-  }
-
-  private static double scalar(List<Object[]> rows) {
-    if (rows.isEmpty()) {
-      return 0.0;
-    }
-    Object[] firstRow = rows.get(0);
-    if (firstRow == null || firstRow.length == 0 || firstRow[0] == null) {
-      return 0.0;
-    }
-    return ((Number) firstRow[0]).doubleValue();
   }
 
   // --- Formatting (pre-formatted display strings, matching the handoff style) ---

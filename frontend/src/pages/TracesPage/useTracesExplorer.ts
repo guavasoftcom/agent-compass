@@ -140,14 +140,25 @@ const useTracesExplorer = ({
     refetchHistogramRef.current = histogramQuery.refetch;
   });
 
-  const resetStream = useCallback(async () => {
+  const resetStream = useCallback(async (signal?: AbortSignal) => {
     const requestId = (requestSequence.current += 1);
     setStreamLoading(true);
     setStreamRows([]);
     setStreamCursor(null);
     setStreamHasMore(true);
-    const result = await fetchTracesCursor(filtersRef.current, { sort: sortRef.current, cursor: null, limit: STREAM_PAGE });
-    if (requestId !== requestSequence.current) {
+    const result = await fetchTracesCursor(
+      filtersRef.current,
+      { sort: sortRef.current, cursor: null, limit: STREAM_PAGE },
+      signal,
+    ).catch((error) => {
+      // StrictMode double-invokes this effect on mount; the cleanup below aborts
+      // the superseded request so only one real fetch reaches the backend.
+      if (signal?.aborted) {
+        return null;
+      }
+      throw error;
+    });
+    if (result === null || requestId !== requestSequence.current) {
       return;
     }
     setStreamRows(result.items);
@@ -180,9 +191,15 @@ const useTracesExplorer = ({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpanded(new Set());
     setPage(0);
-    if (view === 'stream') {
-      void resetStream();
+    if (view !== 'stream') {
+      return undefined;
     }
+    // The AbortController lets cleanup cancel a superseded request instead of just
+    // discarding its result — otherwise React StrictMode's mount→cleanup→mount on
+    // initial load fires this fetch twice for real.
+    const controller = new AbortController();
+    void resetStream(controller.signal);
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersKey, view, sort]);
 

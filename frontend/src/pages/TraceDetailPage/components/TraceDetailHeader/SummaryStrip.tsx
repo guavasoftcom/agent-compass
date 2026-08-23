@@ -85,7 +85,11 @@ const TokenRow = ({
         }}
       />
       <Typography
-        sx={{ typography: 'eyebrowSm', color: 'text.disabled', whiteSpace: 'nowrap' }}
+        sx={{
+          typography: 'eyebrowSm',
+          color: 'text.disabled',
+          whiteSpace: 'nowrap',
+        }}
       >
         {label}
         {rateNote ? (
@@ -287,7 +291,10 @@ const TokenCompositionCard = ({
       <Box sx={{ display: 'grid', gap: 0.875, mb: 1.25 }}>
         {rows.map(({ key, label, color }) => {
           const value = tokenBreakdown[key];
-          const widthPercent = Math.max(4, (Math.log10(value + 1) / logMax) * 100);
+          const widthPercent = Math.max(
+            4,
+            (Math.log10(value + 1) / logMax) * 100,
+          );
           return (
             <TokenRow
               key={key}
@@ -495,6 +502,7 @@ const SummaryStrip = ({
             gap: 1.125,
             typography: 'eyebrowSm',
             color: 'text.secondary',
+            fontSize: 12,
           }}
         >
           <ExpandMoreIcon

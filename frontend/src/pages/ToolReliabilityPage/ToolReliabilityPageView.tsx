@@ -39,19 +39,29 @@ const FailureRanking = ({
   const failing = rows
     .filter((row) => row.failures > 0)
     .sort((a, b) =>
-      b.failureRate !== a.failureRate ? b.failureRate - a.failureRate : b.failures - a.failures,
+      b.failureRate !== a.failureRate
+        ? b.failureRate - a.failureRate
+        : b.failures - a.failures,
     );
   const zeroFailure = rows
     .filter((row) => row.failures === 0)
     .sort((a, b) => b.calls - a.calls);
   const zeroFailureCalls = zeroFailure.reduce((sum, row) => sum + row.calls, 0);
-  const maxRate = failing.reduce((max, row) => Math.max(max, row.failureRate), 0);
+  const maxRate = failing.reduce(
+    (max, row) => Math.max(max, row.failureRate),
+    0,
+  );
 
   return (
     <Paper variant="outlined" sx={{ p: 2.5, height: '100%' }}>
       <Stack
         direction="row"
-        sx={{ alignItems: 'baseline', justifyContent: 'space-between', gap: 1.5, mb: 1 }}
+        sx={{
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 1.5,
+          mb: 1,
+        }}
       >
         <Typography variant="subtitle1">Tools by failure rate</Typography>
         {hasData && (
@@ -73,10 +83,16 @@ const FailureRanking = ({
             <Box sx={{ mt: 1.5 }}>
               {failing.map((row) => {
                 const high = row.failureRate >= HIGH_FAILURE;
-                const color = high ? theme.palette.error.main : theme.palette.warning.main;
-                const width = maxRate > 0 ? (row.failureRate / maxRate) * 100 : 0;
+                const color = high
+                  ? theme.palette.error.main
+                  : theme.palette.warning.main;
+                const width =
+                  maxRate > 0 ? (row.failureRate / maxRate) * 100 : 0;
                 return (
-                  <Box key={row.tool} sx={{ mb: 2, '&:last-of-type': { mb: 0 } }}>
+                  <Box
+                    key={row.tool}
+                    sx={{ mb: 2, '&:last-of-type': { mb: 0 } }}
+                  >
                     <Box
                       sx={{
                         display: 'flex',
@@ -106,7 +122,8 @@ const FailureRanking = ({
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {row.failures.toLocaleString()} / {row.calls.toLocaleString()}
+                        {row.failures.toLocaleString()} /{' '}
+                        {row.calls.toLocaleString()}
                       </Typography>
                       <Typography
                         sx={{
@@ -126,7 +143,8 @@ const FailureRanking = ({
                       sx={(t) => ({
                         height: 9,
                         borderRadius: '6px',
-                        bgcolor: t.custom?.progressTrack ?? t.palette.action.hover,
+                        bgcolor:
+                          t.custom?.progressTrack ?? t.palette.action.hover,
                         overflow: 'hidden',
                       })}
                     >
@@ -176,14 +194,15 @@ const FailureRanking = ({
                   className="disclosure-arrow"
                   sx={{
                     display: 'inline-block',
-                    fontSize: 10,
+                    fontSize: 20,
                     color: 'text.disabled',
                     transition: 'transform 120ms',
                   }}
                 >
                   ▸
                 </Box>
-                {zeroFailure.length} tools with no failures · {zeroFailureCalls.toLocaleString()} calls
+                {zeroFailure.length} tools with no failures ·{' '}
+                {zeroFailureCalls.toLocaleString()} calls
               </Box>
               <Box
                 sx={{
@@ -212,7 +231,11 @@ const FailureRanking = ({
                     </Box>
                     <Box
                       component="span"
-                      sx={{ color: 'text.disabled', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+                      sx={{
+                        color: 'text.disabled',
+                        fontVariantNumeric: 'tabular-nums',
+                        whiteSpace: 'nowrap',
+                      }}
                     >
                       {row.calls.toLocaleString()} calls
                     </Box>
@@ -258,7 +281,10 @@ const ReliabilityMixCard = ({
         <Typography color="text.secondary">No data in this window.</Typography>
       ) : (
         <>
-          <Stack direction="row" sx={{ alignItems: 'baseline', gap: 1, mt: 1.5 }}>
+          <Stack
+            direction="row"
+            sx={{ alignItems: 'baseline', gap: 1, mt: 1.5 }}
+          >
             <Typography
               sx={{
                 fontFamily: fontFamilies.display,
@@ -308,30 +334,53 @@ const ReliabilityMixCard = ({
                 sx={{
                   alignItems: 'center',
                   py: 1.1,
-                  borderBottom: index < legend.length - 1 ? '1px solid' : 'none',
+                  borderBottom:
+                    index < legend.length - 1 ? '1px solid' : 'none',
                   borderColor: 'divider',
                 }}
               >
                 <Typography
                   variant="body2"
                   color="text.disabled"
-                  sx={{ width: 16, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}
+                  sx={{
+                    width: 16,
+                    flexShrink: 0,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
                 >
                   {index + 1}
                 </Typography>
-                <Box sx={{ width: 10, height: 10, borderRadius: '3px', flexShrink: 0, bgcolor: row.color }} />
+                <Box
+                  sx={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '3px',
+                    flexShrink: 0,
+                    bgcolor: row.color,
+                  }}
+                />
                 <Typography variant="body2" sx={{ flex: 1, fontWeight: 600 }}>
                   {row.label}
                 </Typography>
                 <Typography
                   variant="body2"
                   color="text.secondary"
-                  sx={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+                  sx={{
+                    whiteSpace: 'nowrap',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
                 >
-                  <Box component="span" sx={{ color: 'text.primary', fontWeight: 700 }}>
+                  <Box
+                    component="span"
+                    sx={{ color: 'text.primary', fontWeight: 700 }}
+                  >
                     {row.value.toLocaleString()}
                   </Box>{' '}
-                  · {totalCalls > 0 ? ((row.value / totalCalls) * 100).toFixed(1) : '0.0'}%
+                  ·{' '}
+                  {totalCalls > 0
+                    ? ((row.value / totalCalls) * 100).toFixed(1)
+                    : '0.0'}
+                  %
                 </Typography>
               </Stack>
             ))}
@@ -357,8 +406,8 @@ const ToolReliabilityPageView = ({
   return (
     <PageLayout
       subtitle={
-        'Tool execution failure rate over the selected window. Counts only tool_result '
-        + 'events that actually fired — denied-at-hook invocations are not included.'
+        'Tool execution failure rate over the selected window. Counts only tool_result ' +
+        'events that actually fired — denied-at-hook invocations are not included.'
       }
       error={error}
     >
@@ -366,7 +415,11 @@ const ToolReliabilityPageView = ({
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(4, 1fr)' },
+          gridTemplateColumns: {
+            xs: '1fr',
+            sm: '1fr 1fr',
+            md: 'repeat(4, 1fr)',
+          },
           gap: 2,
         }}
       >
@@ -377,7 +430,10 @@ const ToolReliabilityPageView = ({
           sub={
             totalFailures > 0 ? (
               <>
-                <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                <Box
+                  component="span"
+                  sx={{ color: 'primary.main', fontWeight: 600 }}
+                >
                   {totalFailures.toLocaleString()}
                 </Box>{' '}
                 failures across all tools
@@ -401,7 +457,10 @@ const ToolReliabilityPageView = ({
           sub={
             worstTool ? (
               <>
-                <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                <Box
+                  component="span"
+                  sx={{ color: 'primary.main', fontWeight: 600 }}
+                >
                   {formatPercent(worstTool.failureRate)}
                 </Box>{' '}
                 failure rate

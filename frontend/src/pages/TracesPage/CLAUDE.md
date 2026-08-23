@@ -175,7 +175,12 @@ substituted for the window range when a zoom is active.
 - **The stream is hook-local, not TanStack-cached**: `streamRows`/`streamCursor`/`streamHasMore`
   live in `useState`. `resetStream` re-pulls from the top whenever `[filtersKey, view, sort]`
   changes; `loadMore` appends on scroll. Stale-guarded by a `requestSequence` ref so a slow
-  in-flight page can't clobber a newer reset. **Manual reload does NOT refresh the stream** — it
+  in-flight page can't clobber a newer reset, and — because this fetch bypasses TanStack Query's
+  own request coalescing — the triggering effect also opens an `AbortController` and aborts it in
+  cleanup, so React StrictMode's mount→cleanup→mount on initial load cancels the superseded
+  request instead of firing `GET /api/traces` twice for real (`getJson` takes an optional
+  `signal` for this). `loadMore` and the live-tail poll don't carry a signal — they're not
+  effect-mount-triggered, so they don't double-fire the same way. **Manual reload does NOT refresh the stream** — it
   invalidates `trace-histogram`/`trace-facets`/`trace-table` only; the live tail keeps the stream
   current.
 - **Live tail** = `autoRefresh && view === 'stream' && zoom == null && sort === 'new'`. When

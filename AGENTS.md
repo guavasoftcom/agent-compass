@@ -83,9 +83,28 @@ views' filter against `log_records` for pushdown, the `derive_log_severity()` fu
 `span_efforts` view plus its partial index (`V15`). Overriding `api-request-cost-attribute`,
 `api-request-event-name`, `api-request-effort-attribute`, `request-id-attribute`, `llm-request-span-name`,
 or the severity lists therefore means a new migration redefining the views/function *and* updating the
-lateral predicates, or the pages read from the wrong rows. Token/cost/active-time counters are
-cumulative per stream and ingest precomputes reset-aware increments into `metric_points.value_delta`,
-so every rollup is a plain `SUM(value_delta)` — details in
+lateral predicates, or the pages read from the wrong rows. The Logs-page facet/histogram/cursor/offset
+queries add two more: `log_records.event_name` (`V16`, generated from the `event.name` literal every
+one of those queries already hardcoded) and `log_records.tool_name` (`V17`, generated from
+`tool-attribute`'s default of `"tool_name"`) are `STORED` generated columns added purely to avoid
+detoasting `attributes` per row — same fix V8 already applied to `derived_severity`, same reasoning
+in the section comment atop `LogRecordRepository`'s Logs-page query block. **Always filter on
+`event_name`, never on `attributes ->> 'event.name'`:** V16 also *dropped* the old expression index
+and rebuilt `idx_log_records_event_name_ts` on the column, so the raw extraction now has no index at
+all and falls back to a timestamp-only scan that detoasts every row in the window to evaluate the
+filter. V16/V17 migrated only the Logs-page queries and left that trap behind everything else — it
+cost the tuning report ~740 ms on each of its 12 statements (a 9-second report). `V19` finishes the
+job across `LogRecordRepository`, `SpanRepository`, the `span_costs` / `trace_costs` / `span_efforts`
+views, and the `idx_log_records_request_id` predicate. That last one is why a *migration* was needed
+and not just a find-and-replace: the index is **partial** on the event name, and Postgres's
+predicate-implication prover matches expressions structurally, so it cannot tell that `event_name`
+and the expression it is generated from are the same value — rewriting a query to the column while
+the predicate still named the expression silently dropped the index. **Any new partial index keyed on
+an event name must write its predicate against `event_name`.** Overriding `tool-attribute`
+away from `"tool_name"` now means a migration that drops and re-adds `tool_name` against the new key,
+or the Logs page's tool facet/filter/histogram silently read the wrong attribute. Token/cost/active-time
+counters are cumulative per stream and ingest precomputes reset-aware increments into
+`metric_points.value_delta`, so every rollup is a plain `SUM(value_delta)` — details in
 [backend/CLAUDE.md](backend/CLAUDE.md).
 
 Context-window footprint is aggregated **twice, on purpose**: `LogRecordRepository`'s

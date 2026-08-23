@@ -14,7 +14,11 @@ services:
     # Same tuning as the dev stack: the dashboard's histogram/facet/autocomplete
     # queries rescan the recent log_records window + GIN indexes and sort heavily,
     # so keep that working set resident and let sorts finish in memory. work_mem
-    # is per-sort, and this DB has one client.
+    # is per-sort, and this DB has one client. Raised from 16MB to 64MB: the
+    # Metrics-page trend query (GROUP BY metric_name, date_bin(...)) drastically
+    # overestimates its group count (millions estimated, ~175 actual) and picks a
+    # disk-spilling sort-based plan to compensate; 64MB gives the planner enough
+    # headroom to pick an in-memory hash aggregate instead.
     # Parallel-query hash tables live in /dev/shm; Docker's 64MB default is too
     # small for parallel joins over log_records ("could not resize shared memory
     # segment"). This is a tmpfs cap, not a reservation.
@@ -24,7 +28,7 @@ services:
       - -c
       - shared_buffers=512MB
       - -c
-      - work_mem=16MB
+      - work_mem=64MB
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
