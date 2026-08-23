@@ -233,6 +233,21 @@ export const createAppTheme = (mode: ColorMode = 'light'): Theme => {
           },
         },
       },
+      // Dialog's Paper defaults to elevation={24}, which in dark mode paints a
+      // translucent white overlay gradient on top of `background.paper` — every
+      // modal in the app read as a washed-out gray-purple instead of the same
+      // solid dark surface used by cards/drawers. Cancel the overlay and pin the
+      // surface color explicitly so no Dialog call site needs its own PaperProps.
+      MuiDialog: {
+        styleOverrides: {
+          paper: {
+            backgroundImage: 'none',
+            backgroundColor: tokens.paperBg,
+            border: `1px solid ${tokens.border}`,
+            boxShadow: tokens.cardShadow,
+          },
+        },
+      },
       MuiButton: {
         defaultProps: { disableElevation: true },
         styleOverrides: {

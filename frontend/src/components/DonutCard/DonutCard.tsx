@@ -51,6 +51,13 @@ export interface DonutCardProps {
    * caption row.
    */
   legendCaption?: DonutCoverageModel[];
+  /**
+   * Renders each legend row's raw value. Defaults to a thousands-separated
+   * count, which is right for every caller whose slices are counts. Pass a
+   * formatter when they are not — the Settings page's storage donut passes
+   * `formatBytes`, since "4,491,976,704" is not a size anyone reads.
+   */
+  formatSliceValue?: (value: number) => string;
 }
 
 const SIZE = 200;
@@ -77,6 +84,7 @@ const DonutCard = ({
   emptyLabel = 'No data in this window.',
   coverageTicks,
   legendCaption,
+  formatSliceValue = (value: number) => value.toLocaleString(),
 }: DonutCardProps) => {
   const theme = useTheme();
   const sum = slices.reduce((acc, slice) => acc + slice.value, 0);
@@ -252,7 +260,7 @@ const DonutCard = ({
                     sx={{ flexShrink: 0, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
                   >
                     <Box component="span" sx={{ color: 'text.primary', fontWeight: 700 }}>
-                      {slice.value.toLocaleString()}
+                      {formatSliceValue(slice.value)}
                     </Box>{' '}
                     · {pct.toFixed(1)}%
                   </Typography>

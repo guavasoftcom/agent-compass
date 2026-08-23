@@ -7,6 +7,7 @@ import {
   LogsIcon,
   MetricsIcon,
   ReportIcon,
+  SettingsIcon,
 } from './NavIcons';
 
 export interface NavLeaf {
@@ -43,6 +44,12 @@ const navGroups: NavGroup[] = [
     heading: 'Reports',
     items: [
       { to: '/report', label: 'Tuning Report', icon: <ReportIcon /> },
+    ],
+  },
+  {
+    heading: 'System',
+    items: [
+      { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
     ],
   },
 ];

@@ -1,10 +1,9 @@
 import { useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { alpha, ButtonBase, Stack } from '@mui/material';
-import { neutralColors } from '../../theme/colors';
+import { ButtonBase, Stack } from '@mui/material';
+import { gradients } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
-import { radii } from '../../theme/theme';
 
 export interface PillTabItem<TValue> {
   value: TValue;
@@ -26,8 +25,9 @@ export interface PillTabsProps<TValue> {
 }
 
 /**
- * The Aurora pill tab strip: a wrapping row of rounded tabs, the active one
- * lifted onto a paper-tinted surface with a hairline border. Shared by the
+ * The Aurora underline tab strip: an unfilled track with a thin (2px)
+ * violet/pink gradient underline beneath the active label only, muted
+ * inactive labels that darken to full contrast on hover. Shared by the
  * routed section tabs and the in-page tab strips so a tab reads identically
  * whether or not it changes the URL.
  *
@@ -61,12 +61,12 @@ const PillTabs = <TValue,>({ tabs, activeValue, onChange, ariaLabel }: PillTabsP
     <Stack
       ref={listRef}
       direction="row"
-      spacing={1}
+      spacing={3}
       useFlexGap
       role="tablist"
       aria-label={ariaLabel}
       onKeyDown={handleKeyDown}
-      sx={{ flexWrap: 'wrap' }}
+      sx={{ flexWrap: 'wrap', borderBottom: 1, borderColor: 'divider', mb: 2 }}
     >
       {tabs.map((tab) => {
         const selected = tab.value === activeValue;
@@ -81,37 +81,28 @@ const PillTabs = <TValue,>({ tabs, activeValue, onChange, ariaLabel }: PillTabsP
             to={tab.to}
             onClick={tab.to === undefined ? () => onChange?.(tab.value) : undefined}
             sx={(theme) => ({
-              px: 2,
-              py: 1,
-              borderRadius: radii.pill,
+              position: 'relative',
+              py: 1.5,
+              px: 0,
               fontFamily: fontFamilies.display,
               fontSize: 14,
               fontWeight: 600,
               lineHeight: 1,
               letterSpacing: 0.1,
-              border: '1px solid',
-              borderColor: selected ? 'divider' : 'transparent',
-              color: selected ? 'text.primary' : 'text.secondary',
-              backgroundColor: selected
-                ? theme.palette.mode === 'dark'
-                  ? alpha(neutralColors.white, 0.08)
-                  : alpha(neutralColors.white, 0.9)
-                : 'transparent',
-              boxShadow: selected
-                ? theme.palette.mode === 'dark'
-                  ? `inset 0 1px 0 ${alpha(neutralColors.white, 0.07)}`
-                  : `0 1px 2px ${alpha(neutralColors.inkLight, 0.06)}`
-                : 'none',
-              transition: theme.transitions.create([
-                'background-color',
-                'color',
-                'border-color',
-              ]),
+              color: selected ? 'primary.main' : 'text.secondary',
+              transition: theme.transitions.create('color'),
               '&:hover': {
-                color: 'text.primary',
-                backgroundColor: selected
-                  ? undefined
-                  : theme.palette.action.hover,
+                color: selected ? 'primary.main' : 'text.primary',
+              },
+              '&::after': {
+                content: '""',
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: -1,
+                height: 2,
+                borderRadius: 1,
+                backgroundImage: selected ? gradients.auroraAction : 'none',
               },
             })}
           >

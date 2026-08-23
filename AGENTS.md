@@ -77,6 +77,16 @@ Every dashboard aggregation is driven by event/attribute/metric names on `Tuning
 [TuningProperties.java](backend/src/main/java/com/guavasoft/agentcompass/config/TuningProperties.java)
 is the authoritative per-property reference.
 
+The authoritative, machine-readable list of which properties are mirrored is
+[TuningPropertyCatalog.java](backend/src/main/java/com/guavasoft/agentcompass/config/TuningPropertyCatalog.java),
+surfaced at runtime by `GET /api/system/configuration` and on the dashboard's Settings page. It
+classifies all 47 properties three ways and a reflection test fails the build if a newly added
+property is left unclassified. Prefer it over the prose below, which names the seven worst offenders
+but is not exhaustive: the real count is **17 across six migrations**, and it includes three
+(`tool-decision-event-name`, `api-request-body-event-name`, `hook-execution-event-name`) whose
+defaults `V6` hardcodes for its own reasons — overriding those does not invalidate the SQL, but the
+property and the function then describe different events.
+
 Several of those properties are **mirrored as literals in Flyway SQL** — the `span_costs` /
 `trace_costs` views (`V14`), the `LEFT JOIN LATERAL` predicates in `SpanRepository` that re-run those
 views' filter against `log_records` for pushdown, the `derive_log_severity()` function (`V6`), and the

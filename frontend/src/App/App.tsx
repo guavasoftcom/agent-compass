@@ -18,6 +18,7 @@ const LogsPage = lazy(() => import('../pages/LogsPage'));
 const TracesPage = lazy(() => import('../pages/TracesPage'));
 const TraceDetailPage = lazy(() => import('../pages/TraceDetailPage'));
 const ReportPage = lazy(() => import('../pages/ReportPage'));
+const SettingsPage = lazy(() => import('../pages/SettingsPage'));
 
 const App = () => {
   return (
@@ -40,6 +41,7 @@ const App = () => {
         <Route path="/traces" element={<TracesPage />} />
         <Route path="/traces/:traceId" element={<TraceDetailPage />} />
         <Route path="/report" element={<ReportPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
 
         {/* Legacy paths from before the Tool activity section existed. */}
         <Route path="/tool-calls" element={<Navigate to="/tools/calls" replace />} />

@@ -49,3 +49,6 @@
 
 # Personal MCP server config (machine-specific absolute paths)
 mcp.json
+
+# Local pg_dump backups (never committed)
+backend/backups/

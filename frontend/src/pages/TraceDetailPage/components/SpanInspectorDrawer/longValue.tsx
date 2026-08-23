@@ -47,8 +47,23 @@ interface LongValueRequest {
 
 const LongValueModalContext = createContext<((request: LongValueRequest) => void) | null>(null);
 
-// Custom link component for markdown: disables relative links, opens external
-// links in a new window with noopener/noreferrer for security
+// Rendered markdown comes from an `assistant_response` log body — agent-controlled
+// text, not something this app authored — so the link renderer allowlists rather
+// than blocklists: only `http(s)://` is a real link. Everything else (relative
+// paths, protocol-relative `//`, and dangerous schemes like `javascript:`/`data:`
+// that a blocklist of relative-looking prefixes would have let through) renders as
+// plain text instead of a clickable anchor.
+const isAbsoluteHttpUrl = (href?: string): boolean => {
+  if (!href) {
+    return false;
+  }
+  try {
+    return ['http:', 'https:'].includes(new URL(href).protocol);
+  } catch {
+    return false;
+  }
+};
+
 const MarkdownLink = ({
   href,
   children,
@@ -56,8 +71,7 @@ const MarkdownLink = ({
   href?: string;
   children?: ReactNode;
 }) => {
-  const isRelative = href && (href.startsWith('/') || href.startsWith('../'));
-  if (isRelative) {
+  if (!isAbsoluteHttpUrl(href)) {
     return <span>{children}</span>;
   }
   return (
