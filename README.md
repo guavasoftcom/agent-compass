@@ -62,7 +62,8 @@ sensitive enough that shipping it to someone else's dashboard is the part worth 
 
 Nothing is ever deleted, either — there is no retention window, TTL, or cleanup job, so the database
 grows for as long as you keep feeding it, and with content capture on it grows quickly. Trimming it
-is manual; see [Run](#run).
+is manual; the **Settings** page measures what a given cutoff would reclaim and will either hand you
+the SQL or run the purge for you, behind a type-to-confirm dialog. See [Run](#run).
 
 End-to-end flow — note that it closes: the agent's own telemetry comes back to it as a report it can act on.
 
@@ -144,7 +145,24 @@ To run the released image instead of the dev servers — API and dashboard in on
 
 Flyway creates and migrates the schema on startup (`backend/src/main/resources/db/migration/`); Hibernate runs with `ddl-auto=validate` and fails fast if the entity model and DB drift.
 
-Reclaiming space is manual — nothing prunes old telemetry, so trimming means a `DELETE ... WHERE timestamp < ...` against `log_records`, `metric_points`, and `spans`.
+Reclaiming space is manual — nothing prunes old telemetry, so trimming means a `DELETE ... WHERE timestamp < ...` against `log_records`, `metric_points`, and `spans`. The **Settings** page does this for you. Pick a retention window and it reports the exact rows and estimated bytes each table would give up; from there, either copy the script into `psql` or press **Purge now** and confirm. The purge is the only endpoint in the application that deletes anything (`DELETE /api/system/telemetry`), it requires an explicit confirmation phrase, and it cannot be undone.
+
+The purge deletes **whole sessions, not rows**. `session.id` sits in the attribute payload of all
+three tables, so the purge computes every session whose last activity anywhere — logs, tokens, or
+traces — is older than the cutoff, and only ever deletes a session that qualifies. A session with any
+recent activity is left completely alone, including its oldest rows: a plain `timestamp < cutoff`
+delete would otherwise split a session straddling the cutoff, silently understating its lifetime cost
+and truncating its prompt timeline. Measured on the live database, 0 sessions straddle the default
+30-day window but 21 straddle a 7-day one, accounting for 604k rows that a row-level delete would
+have partially removed.
+
+Five things worth knowing before you run it:
+
+- **Run it while no agent is exporting.** The delete holds locks on all three tables for as long as it takes — minutes, on a large database — and telemetry arriving meanwhile queues behind it. An exporter that gives up drops those events permanently.
+- **Space is made reusable, not returned.** Postgres will refill the freed pages, but the files stay their current size on disk until a `VACUUM FULL`, which needs an exclusive lock and room for a full rewrite. The purge response hands you that statement rather than running it.
+- **A qualifying session is cut from all three tables in one transaction**, at the same instant, computed from a single shared set of dormant session ids.
+- **Inside a session that does get purged, the newest row of every metric stream still survives, whatever its age.** `value_delta` is computed at ingest against a row's predecessor, and Claude Code re-emits every counter for the life of the process — so a stream left without one would book its entire cumulative total as a single increment on its next emission, spiking every token and cost figure on the dashboard. Session dormancy alone is strong evidence that won't happen (a live process can't stay silent that long) but not a proof of it — no confirmed mechanism reactivates a purged session id (it is specifically *not* known to be `claude --resume`, which mints a disjoint, never-before-seen id for what it emits, rather than reactivating an old one), but none has been ruled out either, so the marker stays regardless of session state as a defensive measure rather than a response to a known trigger. The preview reports the count, and the copyable SQL carries the same clause.
+- **This retention window is independent of Claude Code's own `cleanupPeriodDays`** (the local setting controlling how long a session stays resumable on your machine, default 30 days) — this application has no way to see that setting, since it's never sent as telemetry. If you purge more aggressively than `cleanupPeriodDays`, a session can still be resumable in Claude Code after its telemetry — prompt timeline, tool calls, cost breakdown — is already gone from the dashboard: the conversation continues normally, but Sessions/Logs/Traces show that session's history starting only at the resume point. Set the retention window at least as long as `cleanupPeriodDays` if you want dashboard history to survive as long as your sessions stay resumable.
 
 If you'd rather use an existing Postgres (no Docker), set `SPRING_DATASOURCE_URL` / `SPRING_DATASOURCE_USERNAME` / `SPRING_DATASOURCE_PASSWORD` env vars before starting the backend — see [backend/.env.example](backend/.env.example). The compose support backs off when explicit datasource properties are present.
 
@@ -183,6 +201,7 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `context-footprint`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`. `skill-usage` and `subagent-usage` rows carry a `byModel` split of their call count. `context-footprint` ranks tools by the total bytes their results pushed into the context window; its `estimatedTokens` is `bytes / 4`, an estimate for ranking only, never billed spend.
 - `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, `/api/traces/{traceId}/summary` (one trace's aggregate row, including the user prompt that initiated it), and `/api/traces/{traceId}/logs` cross-signal log linkage.
 - `GET /api/sessions` — session list, with `/summary`, `/token-usage`, and `/{sessionId}/prompts` (per-session prompt timeline with per-turn model / cost / token / tool rollups).
+- `GET /api/system/...` — operational diagnostics for the Settings page, the one group that takes no time window: `storage` (per-table heap / index / TOAST bytes, exact row counts, and a seven-day growth estimate), `ingest` (per-signal arrival freshness, volume, and cardinality), `build` (application / Java / Postgres versions plus the full Flyway history), `configuration` (every effective `tuning.*` value, flagged where overriding it also requires a migration), and `purge-preview?days=30` (a retention dry run — it measures and renders SQL, and never deletes). `DELETE /api/system/telemetry?days=30&confirmation=PURGE` is the one endpoint in the application that deletes data; the confirmation phrase is required and re-checked server-side.
 
 ### Report
 
@@ -204,6 +223,7 @@ Sections: failures by root cause, path near-misses, redundant file reads, edit f
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
 - **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body. Rows carry the trace's model spend and its initiating prompt, and are sortable by cost; they expand to an inline span summary, with a full per-trace span detail (waterfall, with cost attributed per span) and cross-signal logs.
 - **Tuning Report** — renders the report as monospace text with a one-click "Copy markdown" button.
+- **Settings** — the dashboard's view of itself: storage per table (with the heap / index / TOAST split, since `log_records` keeps most of its bytes out of line), whether telemetry is still arriving per signal, the running versions and migration history, every effective `tuning.*` property with a warning on the ones that are duplicated as literals in migration SQL, and retention management. Read-only apart from the purge, which is the only action in the dashboard that deletes anything: it deletes whole sessions, never a session's rows piecemeal, and sits behind a type-to-confirm dialog restating the exact cutoff and per-table row counts.
 
 ## Reading the numbers
 

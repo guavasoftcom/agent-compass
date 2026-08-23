@@ -25,4 +25,16 @@ class ApiExceptionHandler {
     ResponseEntity<String> handleConstraintViolation(ConstraintViolationException exception) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(exception.getMessage());
     }
+
+    /**
+     * Rejected arguments a service checked for itself, rather than a Bean Validation annotation —
+     * currently the purge endpoint's confirmation phrase, which cannot be expressed as a constraint
+     * because the required value lives on the service that owns the operation. Without this the
+     * refusal would surface as a 500, reading like the purge failed rather than like it was
+     * declined.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<String> handleIllegalArgument(IllegalArgumentException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(exception.getMessage());
+    }
 }

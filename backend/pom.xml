@@ -248,6 +248,19 @@
               <goal>repackage</goal>
             </goals>
           </execution>
+          <!-- Writes target/classes/META-INF/build-info.properties during
+               generate-resources. Spring Boot's ProjectInfoAutoConfiguration
+               (in spring-boot-autoconfigure, NOT actuator) turns that file into
+               a BuildProperties bean, which is how /api/system/build reports the
+               running version without putting actuator on the classpath. The
+               file is absent for IDE-launched runs, so SystemService injects it
+               as an Optional. -->
+          <execution>
+            <id>build-info</id>
+            <goals>
+              <goal>build-info</goal>
+            </goals>
+          </execution>
         </executions>
       </plugin>
     </plugins>

@@ -15,6 +15,10 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `SectionLayout` — `PageLayout` + tab strip + shared `selection` / `autoRefresh` context (`useSectionContext`) for grouped pages like Tool activity.
   - `PillTabs` — the Aurora pill tab strip (wrapping row, active tab lifted onto a paper-tinted surface). Two forms from one component: pass `to` on each tab for routed section tabs (`SectionLayout`), or omit it and handle `onChange` for in-page tabs (`TokensPage`). Use it rather than restyling a `ButtonBase` row, so a tab looks the same whether or not it changes the URL.
   - `StatCard`, `AttributeList`, `Sparkline`, `DonutCard`, etc. — leaf presentational primitives.
+    `DonutCard` legend values default to a thousands-separated count, which suits every caller whose
+    slices are counts; pass `formatSliceValue` when they are not (the Settings page's storage donut
+    passes `formatBytes`). Format at the legend rather than pre-scaling the slice values, which would
+    distort the ring's own proportions.
   - `TablePager` — shared offset-pager footer (rows-per-page `SegmentedToggle` + range label + prev/next); used by Sessions, Logs, and Traces tables.
   - `StreamTableToggle` — shared Stream|Table view-mode `SegmentedToggle`; used by Logs and (via `TraceViewToggle`) Traces.
   - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.
@@ -59,6 +63,14 @@ Don't merge a container with its view, even for one-card pages — the split kee
 **Every `pages/<Name>Page/` folder has its own `CLAUDE.md`** documenting that page's files, visual layout, which queries hit which endpoints, data-flow semantics, and gotchas. Read the relevant page's `CLAUDE.md` before touching it, and update it when you change the page. (`ToolActivitySection/` — the tab-grouping `SectionLayout` wrapper — has one too.)
 
 Documented deviation: `LogsPage` keeps its two page-level `useQuery` calls in the view because they depend on view-owned filter state — read [src/pages/LogsPage/CLAUDE.md](src/pages/LogsPage/CLAUDE.md) before touching that page.
+
+Documented deviation: `SettingsPage` is the only page whose data is not window-scoped — its figures
+describe the database as it stands, not a slice of it. So its query keys carry **no window key**, it
+sets no `refetchInterval`, it never reads `useWindowContext()`, and it passes a bare `GhostButton`
+into `PageLayout`'s `actions` slot instead of `PageActions` (two thirds of which — the
+`WindowSelector` it requires, and auto-refresh — would be dead there). Prefer that over adding a
+`hideWindowSelector` flag to the shared component. Read
+[src/pages/SettingsPage/CLAUDE.md](src/pages/SettingsPage/CLAUDE.md) before touching that page.
 
 Documented deviation: `TracesPage` is data-dense enough that prop-drilling produced a ~47-prop view, so it uses a page-scoped context instead — all behavior lives in `useTracesExplorer`, the `TracesExplorerContext` provider wires it to the global window context, and `TracesPageView` reads context and takes zero props. Read [src/pages/TracesPage/CLAUDE.md](src/pages/TracesPage/CLAUDE.md) before touching that page.
 

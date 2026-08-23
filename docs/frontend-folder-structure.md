@@ -185,6 +185,20 @@ frontend/src/
       ReportPage.tsx
       ReportPageView.tsx
       index.ts
+    SettingsPage/
+      CLAUDE.md
+      SettingsPage.tsx
+      SettingsPageView.tsx
+      settingsApi.ts              // page-local fetchers (these endpoints serve only this page)
+      settingsTypes.ts
+      settingsDerivations.ts      // + settingsDerivations.test.ts
+      index.ts
+      components/                 // flat leaf cards, no barrels
+        StorageBreakdownCard.tsx
+        IngestHealthCard.tsx
+        SchemaBuildCard.tsx
+        EffectiveConfigurationCard.tsx
+        PurgeDryRunCard.tsx
     SessionsPage/
       CLAUDE.md
       SESSIONS-BACKEND.md         // response-shape contract for the sessions endpoints
