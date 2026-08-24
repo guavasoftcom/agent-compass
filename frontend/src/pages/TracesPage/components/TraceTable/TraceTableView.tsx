@@ -17,6 +17,7 @@ import TraceSummaryInline from '../TraceSummaryInline';
 import TablePager from '../../../../components/TablePager';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
+import PromptSummaryText from '../../../../components/PromptSummaryText';
 
 const TableHeaderCell = ({
   children,
@@ -190,7 +191,7 @@ const TraceTableView = ({
                         textOverflow: 'ellipsis',
                       }}
                     >
-                      {prompt ?? '—'}
+                      {prompt ? <PromptSummaryText prompt={prompt} /> : '—'}
                     </Box>
                     <Box
                       component="td"

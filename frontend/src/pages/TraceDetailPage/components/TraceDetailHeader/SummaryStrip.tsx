@@ -11,6 +11,7 @@ import {
   tokenShareLabel,
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
+import PromptSummaryText from '../../../../components/PromptSummaryText';
 
 export interface SummaryItem {
   /** Uppercase label shown above the value. */
@@ -585,7 +586,7 @@ const SummaryStrip = ({
                   minWidth: 0,
                 }}
               >
-                {prompt}
+                <PromptSummaryText prompt={prompt} />
               </Box>
             </Box>
           ) : null}

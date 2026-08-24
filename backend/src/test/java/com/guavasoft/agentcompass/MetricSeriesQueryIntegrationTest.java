@@ -84,7 +84,7 @@ class MetricSeriesQueryIntegrationTest {
   }
 
   @Test
-  void tokenSeriesReconcilesTotalWithModelAndTypeSplits() {
+  void tokenSeriesReconcilesTotalWithModelSplit() {
     MetricSeries token = seriesById("token");
 
     assertThat(token.name()).isEqualTo(TOKEN_METRIC);
@@ -103,12 +103,8 @@ class MetricSeriesQueryIntegrationTest {
     assertThat(byModel.get(1).value()).isEqualTo("1.5K");
     assertThat(byModel.get(1).pct()).isEqualTo(30);
 
-    List<MetricSplitRow> byType = token.splits().get("Type");
-    assertThat(byType).extracting(MetricSplitRow::label).containsExactly("cacheRead", "input");
-    assertThat(byType.get(0).value()).isEqualTo("3K");
-    assertThat(byType.get(0).pct()).isEqualTo(60);
-    assertThat(byType.get(1).value()).isEqualTo("2K");
-    assertThat(byType.get(1).pct()).isEqualTo(40);
+    // Type split removed; only Model split remains
+    assertThat(token.splits()).hasSize(1).containsKey("Model");
   }
 
   @Test

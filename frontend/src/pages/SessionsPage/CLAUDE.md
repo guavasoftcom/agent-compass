@@ -62,8 +62,11 @@ SessionsPage/
         │                          w/ breakdown tooltip, tool-call chips, optional "View trace"
         │                          link); header shows the prompt count (session identity lives in
         │                          the drawer header); dims turns outside the active window with a boundary
-        │                          divider; long prompt text truncates through the shared
-        │                          AttributeValue/ExpandedValueDialog machinery. Exports
+        │                          divider; each prompt renders through the shared
+        │                          components/PromptSummaryText (a subagent-notification turn
+        │                          summarizes instead of showing raw XML), whose ordinary-prompt
+        │                          case falls through to the shared AttributeValue/
+        │                          ExpandedValueDialog truncate-and-expand machinery. Exports
         │                          TokenBreakdownTitle / TokenBreakdownTooltip / TokenUsage,
         │                          reused by SessionsTable's Tokens-column hover, and CostValue
         │                          (cost-outlier tiering), reused by SessionsTable's Cost column and
@@ -399,11 +402,25 @@ trace link for those rows, not a disabled placeholder.
   `gradients.auroraActionSoft` text the "Median cost" stat card uses once cost reaches the **live**
   P95 cost/session figure (threaded down as `hotCostThresholdUsd` from `SessionsPageView`'s
   `kpis.p95CostUsd` — never a hardcoded second copy of that number).
+- **A non-null turn prompt goes through `components/PromptSummaryText` first, before the
+  `AttributeList` machinery below ever sees it.** A prompt that's really a `<task-notification>`
+  envelope (the harness delivered it when a background subagent finished — see
+  `lib/promptSummary.ts`) renders as a muted, italic "SUBAGENT · summary" line instead; an
+  ordinary prompt falls through to `PromptSummaryText`'s `renderOrdinary` render-prop, which this
+  panel wires to the same `AttributeValue` it always used. The outer `Box`'s `color`/`fontStyle`
+  only toggle on `turn.prompt == null` (the "not captured" placeholder case, described above) —
+  the subagent-vs-ordinary distinction is handled entirely inside `PromptSummaryText`, not here.
+  This panel also passes `onViewFullPrompt`, so a subagent-notification turn always gets a "View
+  more" trigger next to its summary, opening the same `ExpandedValueDialog`
+  (`setExpandedValue({ key: formatTimestamp(turn.timestamp), value: prompt })`, `prompt` here
+  being the raw envelope text passed back through the callback) that an ordinary prompt's own
+  "View more" button opens — unlike `SwitchTraceModalRow` on the Trace Detail page, which
+  deliberately omits `onViewFullPrompt` (see that page's CLAUDE.md gotcha).
 - **Long per-turn prompt text truncates through the shared `AttributeList` "View more" dialog
   machinery**, the same one `LogTable` uses, rather than rendering full text pre-wrapped inline:
-  each prompt renders through `AttributeValue` (`truncate`, `inlineExpand={false}`) so anything
-  over the shared 200-char threshold collapses to a whitespace-collapsed preview + "View more"
-  button; `attrKey` is set to that turn's `formatTimestamp(turn.timestamp)` (the generic
+  each ordinary prompt renders through `AttributeValue` (`truncate`, `inlineExpand={false}`) so
+  anything over the shared 200-char threshold collapses to a whitespace-collapsed preview + "View
+  more" button; `attrKey` is set to that turn's `formatTimestamp(turn.timestamp)` (the generic
   `sessionsFormat` formatter, not the panel's own compact `formatPromptTimestamp` used in the
   card header) so the dialog title identifies which prompt is open. `PromptTimelinePanel` owns
   its own `expandedValue: ValueDialogState | null` state and renders a single

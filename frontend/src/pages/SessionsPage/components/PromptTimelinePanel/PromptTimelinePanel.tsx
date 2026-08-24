@@ -16,6 +16,7 @@ import {
   type ValueDialogState,
 } from '../../../../components/AttributeList/AttributeValue';
 import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
+import PromptSummaryText from '../../../../components/PromptSummaryText';
 import {
   auroraColors,
   gradients,
@@ -870,12 +871,23 @@ const PromptTimelinePanel = ({
                   {turn.prompt == null ? (
                     '(prompt text not captured)'
                   ) : (
-                    <AttributeValue
-                      attrKey={formatTimestamp(turn.timestamp)}
-                      value={turn.prompt}
-                      truncate
-                      inlineExpand={false}
-                      onExpand={setExpandedValue}
+                    <PromptSummaryText
+                      prompt={turn.prompt}
+                      onViewFullPrompt={(prompt) =>
+                        setExpandedValue({
+                          key: formatTimestamp(turn.timestamp),
+                          value: prompt,
+                        })
+                      }
+                      renderOrdinary={(prompt) => (
+                        <AttributeValue
+                          attrKey={formatTimestamp(turn.timestamp)}
+                          value={prompt}
+                          truncate
+                          inlineExpand={false}
+                          onExpand={setExpandedValue}
+                        />
+                      )}
                     />
                   )}
                 </Box>
