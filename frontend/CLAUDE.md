@@ -29,6 +29,21 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
     shares with another chart) and `showRank` (a 1-based position number, when the ordering is
     the point and the color means nothing) — pick one rather than adding a third variant.
   - `ChartCard` — shared titled chart-container card; used by the Tool-activity cards.
+  - `PromptSummaryText` — renders a prompt, substituting `lib/promptSummary.ts`'s
+    `promptSummaryRenderer` summary (a muted, italic "SUBAGENT · ..." line) whenever the prompt
+    isn't really human-authored text; an ordinary prompt falls through to the optional
+    `renderOrdinary` render-prop, so a caller keeps its own treatment for that case (a hover-only
+    tooltip, a clamp-and-"view formatted" widget, plain text) while the subagent-notification
+    detection and styling stay defined once. The summarized case is inert unless the caller also
+    passes `onViewFullPrompt` — when present, a "View more" trigger renders next to the summary
+    and calls it with the raw envelope text, letting the caller open its own full-text view (e.g.
+    `AttributeList`'s `ExpandedValueDialog`); omit it and the summary shows with no way to see the
+    raw prompt from that row. Used by `TraceDetailPage`'s `SummaryStrip` and `SwitchTraceModalRow`
+    (both omit `onViewFullPrompt` — see the switch-trace CLAUDE.md gotcha for why) and by
+    `SessionsPage`'s `PromptTimelinePanel` (passes both `renderOrdinary` and `onViewFullPrompt`,
+    wired to its existing `AttributeValue`/`ExpandedValueDialog` machinery). Also accepts
+    `labelSx`/`summarySx` to retint or resize the "SUBAGENT" label and the summary text for a
+    caller's own surrounding typography.
   - `ErrorBoundary` — the one class component in the app (React only exposes
     `componentDidCatch`/`getDerivedStateFromError` on classes); renders a MUI `Alert` + reload
     button in place of a crashed subtree. Wired around `<Outlet />` in `App/AppShell.tsx` so the
@@ -49,6 +64,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `lib/useDebouncedValue.ts` — debounce hook; the Logs and Traces free-text search inputs run through it before the value enters a query key, so typing doesn't fire a fetch per keystroke.
   - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, `isSparseCounter` (peak ≤ 5, every bucket a whole number) shared by `MetricTrendCard` and `LineSparkline` so a metric's card and detail chart never disagree about drawing bars vs. an area, `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents), and `USD_FORMATTER`/`formatTimestamp`/`formatRelativeTime` shared by the Sessions grid and the Tokens page's cache-efficiency rank card/dialog (`pages/SessionsPage/components/sessionsFormat.ts` re-exports them for that page's existing imports).
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
+  - `lib/promptSummary.ts` — `promptSummaryRenderer(prompt)`: null for an ordinary, human-authored prompt; for a prompt that is really a non-authored envelope, a short summary instead. Currently one case — a `<task-notification>` envelope the harness delivers when a background subagent finishes (not something a person typed) — detected by the prompt's exact opening tag (a real envelope always *starts* with it, so a human message that merely pastes one further in, e.g. as an example, isn't misclassified) and summarized from its own `<summary>` tag (or a generic fallback label when it has none). Named and structured generically on purpose: other non-authored prompt shapes needing the same "don't show this raw" treatment belong here as additional cases. Pure, no React — the display side (the "SUBAGENT · summary" styling) is `components/PromptSummaryText`, which wraps this function; reach for that component, not this function directly, wherever a raw prompt/message string is displayed to a reader.
 
 ## Page structure (container/presentational)
 

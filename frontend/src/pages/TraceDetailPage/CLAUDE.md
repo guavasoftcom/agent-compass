@@ -60,8 +60,16 @@ TraceDetailPage/
 ├── spanTree.ts                 SpanTree/TraceWindow types + buildSpanTree/buildSpanIndices/
 │                               buildSpanDepths/computeTraceWindow — pure functions, no React
 ├── logBuckets.ts               bucketLogsBySpan — attaches each LogRow to its OTLP spanId;
-│                               falls back to root span for logs with no usable span_id;
-│                               sorts by event.sequence then event.timestamp
+│                               falls back to root span for logs with no usable span_id; for
+│                               tool_decision/tool_result, only overrides that when the log's
+│                               own span_id lands outside the tool call's whole span family
+│                               (wrapper claude_code.tool span + its tool.execution/
+│                               blocked_on_user sub-spans) — re-pointing at the wrapper via
+│                               tool_use_id, never guessing a specific sub-span (see Log
+│                               bucketing below); sorts by event.sequence then event.timestamp
+├── logBuckets.test.ts           tool_use_id fallback correlation + the blocked_on_user/
+│                               execution "already correctly attributed, leave alone" cases +
+│                               span_id/root fallback coverage
 ├── severity.ts                 severityLabel(n) + severityColor(n) — OTLP severityNumber
 │                               thresholds → 'TRACE'/'DEBUG'/'INFO'/'WARN'/'ERROR'/'FATAL'
 │                               and MUI chip color; used by LogEntry and SpanInspectorDrawer
@@ -85,26 +93,72 @@ TraceDetailPage/
     │   │                             and model-call/tool-call counts in one pass over spans; max depth
     │   │                             comes from the page's depthBySpanId and cost from the trace-summary
     │   │                             query (traceCostUsd), both threaded down rather than recomputed here
-    │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb, with a copy-to-
-    │   │                             clipboard IdChip for the trace id (and, when present, the session
-    │   │                             id) right after the h1, + SummaryStrip, whose KPI tiles are
-    │   │                             Cost/Duration/Spans/Tool calls/Depth/Errors (Cost leads,
-    │   │                             gradient-emphasized)
-    │   ├── IdChip.tsx                 breadcrumb-row copy chip: eyebrow label + mono value (ellipsized
-    │   │                             past 150px, `title` carries the full value) + a small copy icon;
-    │   │                             click copies the untruncated value via useCopyToClipboard and
-    │   │                             flashes "copied!" for 1.2s. Hover brightens the border to
-    │   │                             primary.main, the same treatment SpanWaterfallRow uses for a
-    │   │                             selected row
-    │   ├── useCopyToClipboard.ts      copied/copy() hook backing IdChip — writes to navigator.clipboard,
-    │   │                             resets the flashed "copied!" state after resetAfterMs (1.2s default)
+    │   ├── TraceDetailHeaderView.tsx  view — "Observability › Trace detail" breadcrumb, with the combined
+    │   │                             IdentityPill (session + trace) right after the h1, + SummaryStrip,
+    │   │                             whose KPI tiles are Cost/Duration/Spans/Tool calls/Depth/Errors
+    │   │                             (Cost leads, gradient-emphasized)
+    │   ├── IdentityPill.tsx           breadcrumb-row identity pill: one bordered/rounded container, two
+    │   │                             segments sharing it (no gap, a 1px divider between). Both segments
+    │   │                             are plain, uncopyable text — eyebrow label + mono value (`title`
+    │   │                             carries the full value). The trace segment additionally carries a
+    │   │                             caret and is clickable (the whole segment, no inner icon target),
+    │   │                             opening SwitchTraceModal — but only when the session has more than
+    │   │                             one distinct trace to offer. Runs its own `fetchSessionPrompts`
+    │   │                             query (same key as SwitchTraceModal's own, `enabled: Boolean
+    │   │                             (sessionId)` rather than gated on the modal being open) purely to
+    │   │                             count `hasTraceAndPrompt`-filtered distinct trace ids before the
+    │   │                             first click; `canSwitchTraces` is false — segment inert, no caret,
+    │   │                             default cursor — both while that count is still loading (0) and
+    │   │                             once resolved to a single-trace session, not just when there's no
+    │   │                             `sessionId` at all
+    │   ├── SwitchTraceModal.tsx       container — fetches `fetchSessionPrompts(sessionId)` (query key
+    │   │                             `['session-prompts', sessionId]`, shared with both SessionsPage's
+    │   │                             own query and IdentityPill's count query, so by the time this opens
+    │   │                             the data is almost always already in cache) filtered through the
+    │   │                             same `hasTraceAndPrompt` predicate IdentityPill counts with
+    │   │                             (exported from SwitchTraceModalView, single source of truth for
+    │   │                             "is this row a switchable trace"), and on a non-current row click
+    │   │                             closes the modal and navigates to `/traces/:traceId`
+    │   ├── SwitchTraceModalView.tsx   view — MUI Dialog, `min(800px, 92vw)` wide, `64vh` max height with
+    │   │                             internal scroll. Header: "Switch trace · session <mono id>" +
+    │   │                             GhostButton Close. Body: one SwitchTraceModalRow per turn, wrapped
+    │   │                             in LongValueModalProvider (the same "view formatted" dialog
+    │   │                             SpanInspectorDrawer uses — see SwitchTraceModalRow) so a long
+    │   │                             ordinary prompt can be opened full-size rather than only ever
+    │   │                             showing as a clipped line
+    │   ├── SwitchTraceModalRow.tsx    one row: 5-column grid — time / prompt / cost / tokens / flag —
+    │   │                             newest (current) at the bottom, the order the endpoint already
+    │   │                             returns. The current row (matching the page's own traceId) gets the
+    │   │                             same `action.selected`-tinted background + `inset 2px 0 0
+    │   │                             primary.main` left accent SpanWaterfallRow uses for a selected span,
+    │   │                             is inert (no onClick, default cursor), and shows a "current" flag
+    │   │                             pill. Other rows are hover+pointer and navigate on click. No ERROR
+    │   │                             flag — that needs a per-row cross-reference against each trace's
+    │   │                             error count, which the prompts endpoint doesn't carry and which
+    │   │                             fetching per-row here would turn into an N+1 on every open; left for
+    │   │                             a future backend field. The Prompt cell renders through the shared
+    │   │                             `components/PromptSummaryText` (see frontend/CLAUDE.md's
+    │   │                             components/ section) rather than its own subagent-notification
+    │   │                             branching: an ordinary prompt renders through the `renderOrdinary`
+    │   │                             render-prop, wired here to `LongAttrValue` (clamp at
+    │   │                             LONG_VALUE_ATTR, "view formatted (N chars)" button → the shared
+    │   │                             modal, jsonrepair-then-raw-text display — the same path the drawer's
+    │   │                             attribute grids use); a `<task-notification>` envelope instead shows
+    │   │                             only the muted-italic "SUBAGENT · <summary text>" line — no way to
+    │   │                             open the raw envelope from this row (an earlier revision added a
+    │   │                             "view envelope" button wired to the same modal; removed as
+    │   │                             unnecessary — the summary is judged sufficient here). `title` still
+    │   │                             carries the full raw prompt either way
     │   ├── SummaryStrip.tsx           collapsible "Overview" panel: header (click to collapse) +
-    │   │                             optional "Prompt" row + the KPI tile row + TokenCompositionCard
+    │   │                             optional "Prompt" row (rendered through `components/PromptSummaryText`,
+    │   │                             same as SwitchTraceModalRow — no `renderOrdinary` passed, so an
+    │   │                             ordinary prompt falls through to its plain-text default) + the KPI
+    │   │                             tile row + TokenCompositionCard
     │   │                             (one log-scaled list — one row per nonzero token category, sorted
     │   │                             by magnitude, swatch + label [+ "0.1×" rate tag, cache-read row
     │   │                             only] + bar + value + share%, plus the "N% cached" chip, model-call
     │   │                             count, and total cost) + MetaFooter (root span, services, started —
-    │   │                             no ids; those live in the header's IdChips), laid out
+    │   │                             no ids; those live in the header's IdentityPill), laid out
     │   │                             space-between across the card's full width. Tooltip fires only
     │   │                             when a value element overflows; the panel always starts expanded
     │   │                             on navigation (collapse is per-view only)
@@ -218,7 +272,7 @@ TraceDetailPage/
 ```
 ┌─ TraceDetailHeaderView ──────────────────────────────────────────────────────────┐
 │ Observability                                                                    │
-│ Traces › Trace detail  [TRACE 0102…⧉]  [SESSION abc…⧉]  ← IdChips, next to the h1 │
+│ Traces › Trace detail  [SESSION abc… │ TRACE 0102…⧉⌄]  ← IdentityPill, next to the h1 │
 │ ┌─ SummaryStrip: "Overview" ─────────────────────────────────────────┐          │
 │ │ ▾ OVERVIEW                                                          │  ← click to
 │ ├────────────────────────────────────────────────────────────────────┤    collapse
@@ -424,11 +478,63 @@ Within each bucket logs are sorted by `event.sequence` (when present on both sid
 `event.timestamp` attribute (the authoritative SDK wall-clock time) then by
 `log.timestamp` (the OTLP record time, which can lag by seconds when the exporter batches).
 
+**`tool_decision` and `tool_result` logs can land outside the `claude_code.tool` call they're
+about, and `bucketLogsBySpan` corrects that — but only when the log's own `span_id` doesn't
+already put it somewhere meaningful.** Claude Code stamps both event types with whatever span was
+*active* at the instant they fired. That's sometimes exactly right and worth keeping as-is: a
+`tool_decision` made while `claude_code.tool.blocked_on_user` (a real permission wait) was active
+is genuinely that specific span, more precise than the wrapper `claude_code.tool` span itself —
+verified on live data (an `ExitPlanMode` call blocked ~28s on user approval: the `tool_decision`
+log's own `span_id` was the `blocked_on_user` span's id exactly). It's sometimes wrong: the same
+event firing outside any of the call's own spans lands on the `claude_code.interaction` turn root
+instead — verified on live data for a same-turn `Read` call's `tool_result`, which otherwise left
+the `Read` span's own Logs section empty. Same "logged against the wrong span" shape the Cost
+section documents for `api_request`, but fixed differently: `tool_decision`/`tool_result` don't
+need a backend view, because the correlating key is already in the same trace payload the page
+has in memory — both event types carry their own `tool_use_id`, which is unique per call and
+matches the `tool_use_id` on the wrapper `claude_code.tool` span (verified 1:1, no collisions,
+always same trace).
+
+`collectToolCallFamilies` walks the tree once and, for every span `isToolCallSpan` recognizes as a
+wrapper (the same rule the header's Tool calls tile and Collapse-all use — excludes
+`tool.execution`/`tool.blocked_on_user` themselves) that also carries a `tool_use_id`, records that
+wrapper's own span id plus the full set of span ids in its subtree (itself and every descendant,
+however deep). For each log: if its own `span_id` already falls inside that subtree, it's left
+alone — that includes a real `blocked_on_user` attribution, which is *more* specific than the
+wrapper and must not be clobbered. Only when the log's own `span_id` points **outside** the whole
+family (absent, or on an ambient ancestor like the turn root) does the `tool_use_id` fallback
+kick in, re-pointing the log at the wrapper span. **It never redirects a log into a specific
+sub-span** (`tool.execution` vs `tool.blocked_on_user`) — nothing in the log itself says which
+phase it belongs to, and landing one level up on the wrapper beats guessing wrong between two SDK
+sub-spans that mean very different things (an instant auto-approve vs. tens of seconds waiting on
+a human). This is an **exact correlation, not a heuristic**, same caution as `span_efforts`' exact
+`request_id` join (see the `effort` gotcha below). `toolUseIdOf` treats a missing/non-string/empty
+`tool_use_id` as "no correlation key," so a log or span from an older Claude Code build without the
+attribute falls straight through to the plain `span_id`/root resolution, unaffected.
+
+**A prior revision of this correlation was wrong in a way worth remembering**: it matched purely
+by `tool_use_id` — any span carrying it, wrapper or `tool.execution` sub-span alike — and
+overrode the log's own `span_id` unconditionally. Since `tool.execution` carries the same
+`tool_use_id` as its wrapper (verified: identical value on every sampled parent/child pair), that
+version silently migrated *every* `tool_decision`, including ones already correctly attributed to
+a real `blocked_on_user` wait, onto `tool.execution` — destroying the one distinction ("was this
+decision instant, or did it wait on a human") the page could otherwise show. If you're tempted to
+simplify this back to a flat `tool_use_id → span_id` map, this is why not to.
+
+**`hook_execution_start`/`hook_execution_complete` (`PreToolUse`/`PostToolUse`) have no such key**
+— they carry a `hook_name` like `"PreToolUse:Read"` but no `tool_use_id`, so there is no exact way
+to attach one hook run to a specific tool call among several of the same name in one turn. They
+stay wherever their own `span_id` resolves (in practice, the root) rather than guessing by
+adjacency or hook name — a known, deliberately unfixed gap, not an oversight.
+
 The buckets feed the drawer only — its Logs section receives the pre-bucketed array for the
 selected span, and `costOfSpanRequests` reads the same array for the per-call cost (see Cost).
-The waterfall row deliberately carries no log-count badge: a count of correlated log records is
-a property of the telemetry, not of what the span did, and it competed for row width with the
-token, cost, and error pills that answer questions someone actually scans the waterfall for.
+`costOfSpanRequests` is unaffected by the `tool_use_id` correlation above: it filters for
+`event.name === 'api_request'` logs specifically, and `tool_decision`/`tool_result` are never
+that event, so moving them off the root span changes nothing about cost. The waterfall row
+deliberately carries no log-count badge: a count of correlated log records is a property of the
+telemetry, not of what the span did, and it competed for row width with the token, cost, and
+error pills that answer questions someone actually scans the waterfall for.
 
 ### Zoom window and visible row filtering
 
@@ -622,14 +728,43 @@ so the edge tracks the cursor 1:1.
   trace like the rest of the view's interaction state. A side effect worth knowing: muting badges
   frees up the name column, which is the cheap fix if the span name or model pill is clipping on a
   crowded row — don't chase that by widening `gridColumns` first.
-- **The trace/session ids are copy-to-clipboard chips in the header, not footer text.**
-  `TraceDetailHeaderView` renders `IdChip` (`TraceDetailHeader/IdChip.tsx` +
-  `useCopyToClipboard.ts`) inline in the breadcrumb row, right after the "Trace detail" h1 — always
-  for the trace id, and for the session id only when it's truthy. The value truncates at 150px with
-  an ellipsis; the `title` attribute and the click-to-copy both use the full untruncated value.
-  `SummaryStrip`'s `MetaFooter` no longer takes `traceId`/`sessionId` props at all — it's down to
-  Root span / Services / Started, laid out `justifyContent: 'space-between'` across the card's full
-  width instead of left-clustered.
+- **The trace/session ids live in one combined identity pill in the header, not footer text.**
+  `TraceDetailHeaderView` renders `IdentityPill` (`TraceDetailHeader/IdentityPill.tsx`) inline in
+  the breadcrumb row, right after the "Trace detail" h1 — a single bordered/rounded container with
+  the session segment first (it's the trace's parent) and the trace segment second, divided by a
+  1px rule, no gap. Both segments are plain text (`title` carries the full value; neither is
+  copy-to-clipboard anymore — the pre-Aurora `IdChip` copy icon was dropped). The session segment
+  is entirely inert; clicking the trace segment (its caret signals this) opens `SwitchTraceModal`,
+  listing every other trace recorded under that session (see the switch-trace section below) —
+  **but only when the session has more than one distinct trace.** `IdentityPill` runs its own
+  `fetchSessionPrompts` query (`enabled: Boolean(sessionId)`, not gated on a click) purely to count
+  distinct trace ids among `hasTraceAndPrompt`-filtered rows; `canSwitchTraces` is false — no caret,
+  default cursor, no hover, click is a no-op — both while that count is still resolving and once
+  it resolves to one (or zero). Don't read "no caret" as "no session"; check `sessionId` itself for
+  that case. Without a `sessionId` at all, only the plain, non-interactive trace segment renders —
+  the pre-pill single-chip fallback. `SummaryStrip`'s `MetaFooter` still doesn't take
+  `traceId`/`sessionId` props — it's down to Root span / Services / Started, laid out
+  `justifyContent: 'space-between'` across the card's full width instead of left-clustered.
+- **Switching traces reads the Sessions page's own prompt-timeline endpoint, not a new one.**
+  `SwitchTraceModal` (and `IdentityPill`'s count query above it) call `fetchSessionPrompts
+  (sessionId)` (`GET /api/sessions/{sessionId}/prompts`) — the same fetcher `PromptTimelinePanel`
+  on `SessionsPage` uses, and the same query key (`['session-prompts', sessionId]`) across all
+  three call sites, so they share one cache entry: by the time a reader clicks the pill enough
+  times to open the modal, `IdentityPill`'s own eager query has almost always already populated it.
+  `SwitchTraceModal`'s own query keeps `enabled: open` regardless — harmless extra safety, not a
+  second fetch, since it just subscribes to the same cached/in-flight query. Rows with a null
+  `traceId` (pre-tracing sessions) or a null `prompt` (capture disabled) are filtered out client
+  side (`hasTraceAndPrompt`, exported from `SwitchTraceModalView.tsx` — the one place this
+  predicate is defined, shared by the modal's row list and the pill's count) before rendering or
+  counting — neither is a trace a reader can jump to. The **current** row (matching
+  the page's own `traceId`) gets the same selected-row treatment `SpanWaterfallRow` uses (tinted
+  background + `inset 2px 0 0 primary.main` left accent) and is inert; every other row navigates
+  to `/traces/:traceId` and closes the modal on click. **There is deliberately no ERROR flag on
+  non-current rows** — the design calls for one, but flagging it correctly needs a per-row
+  cross-reference against each trace's error count, which the prompts endpoint doesn't carry.
+  Doing that lookup per row here would turn every modal open into an N+1 burst of
+  `trace-summary`-style requests; left as an explicit gap for a future backend field
+  (e.g. an `errorCount` or `hasError` column on `SessionPromptRow`) rather than adding it.
 - **`kind` is deliberately not on the waterfall row.** Nearly every real Claude Code span is
   `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace

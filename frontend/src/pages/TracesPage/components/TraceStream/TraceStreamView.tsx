@@ -21,6 +21,7 @@ import {
 import TraceSummaryInline from '../TraceSummaryInline';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
+import PromptSummaryText from '../../../../components/PromptSummaryText';
 
 // Aurora sync: inserted a Prompt column (minmax(180px,1fr)) between Operation
 // and Latency — the trace's initiating user prompt, via promptOf() →
@@ -306,7 +307,7 @@ const TraceStreamView = ({
                     minWidth: 0,
                   }}
                 >
-                  {prompt ?? '—'}
+                  {prompt ? <PromptSummaryText prompt={prompt} /> : '—'}
                 </Box>
                 <Box
                   sx={{ display: 'flex', alignItems: 'center', height: '100%' }}

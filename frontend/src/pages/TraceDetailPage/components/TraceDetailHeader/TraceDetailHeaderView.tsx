@@ -4,7 +4,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { formatDuration, formatUsd } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
 import SummaryStrip, { type SummaryItem } from './SummaryStrip';
-import IdChip from './IdChip';
+import IdentityPill from './IdentityPill';
 import { fontFamilies } from '../../../../theme/typography';
 import type { TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
 
@@ -168,8 +168,7 @@ const TraceDetailHeaderView = ({
             >
               Trace detail
             </Typography>
-            <IdChip label="TRACE" value={traceId} />
-            {sessionId ? <IdChip label="SESSION" value={sessionId} /> : null}
+            <IdentityPill traceId={traceId} sessionId={sessionId} />
           </Box>
         </Box>
       </Box>
