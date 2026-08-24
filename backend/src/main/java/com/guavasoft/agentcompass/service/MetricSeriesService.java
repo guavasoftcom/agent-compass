@@ -230,7 +230,7 @@ public class MetricSeriesService {
             "Tokens consumed across Claude Code sessions, summed over the window. The biggest cost "
                 + "driver — split by model to see where they go. The input/output/cache breakdown "
                 + "lives on the Token Usage page.",
-            ValueFormat.NUMBER, orderedSplits("Model", MODEL_ATTRIBUTE, "Type", typeAttribute)),
+            ValueFormat.NUMBER, orderedSplits("Model", MODEL_ATTRIBUTE)),
         new MetricSpec(
             "cost", tuningProperties.getCostUsageMetric(), "USD", "Spend",
             "Billed spend in USD over the window. Split by model to see which model drives the bill.",

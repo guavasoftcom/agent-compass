@@ -66,19 +66,13 @@ export const METRICS: MetricSeries[] = [
     delta: '+18.3%',
     dir: 'up',
     description:
-      'Tokens consumed across Claude Code sessions, summed over the window. The biggest cost driver — split by model or token type to see where they go.',
+      'Tokens consumed across Claude Code sessions, summed over the window. The biggest cost driver — split by model to see where they go.',
     trend: scale(52),
     splits: {
       Model: [
         { label: 'claude-sonnet-4', value: '7.8M', pct: 60, colorIndex: 0 },
         { label: 'claude-opus-4', value: '3.6M', pct: 28, colorIndex: 1 },
         { label: 'claude-haiku-3.5', value: '1.6M', pct: 12, colorIndex: 2 },
-      ],
-      Type: [
-        { label: 'cache read', value: '8.9M', pct: 68, colorIndex: 2 },
-        { label: 'input', value: '2.4M', pct: 18, colorIndex: 0 },
-        { label: 'cache creation', value: '1.2M', pct: 9, colorIndex: 3 },
-        { label: 'output', value: '486K', pct: 4, colorIndex: 1 },
       ],
     },
   },
