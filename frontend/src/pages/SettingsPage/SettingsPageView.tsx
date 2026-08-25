@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { alpha, Box, useTheme } from '@mui/material';
+import { alpha, Box, Button, Tooltip, useTheme } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import PageLayout from '../../components/PageLayout';
 import StatCard from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
-import GhostButton from '../../components/GhostButton';
 import PillTabs from '../../components/PillTabs';
 import { groupForPath } from '../../App/navGroups';
 import { colorForIndex } from '../../theme/theme';
@@ -227,9 +227,32 @@ const SettingsPageView = ({
       }
       error={error}
       actions={
-        <GhostButton onClick={onReload} disabled={isReloading}>
-          {isReloading ? 'Refreshing…' : 'Refresh'}
-        </GhostButton>
+        <Tooltip title="Refresh">
+          <Button
+            variant="outlined"
+            size="medium"
+            onClick={onReload}
+            disabled={isReloading}
+            sx={{
+              minWidth: 'auto',
+              px: 1,
+              '@keyframes spin': {
+                from: { transform: 'rotate(0deg)' },
+                to: { transform: 'rotate(360deg)' },
+              },
+            }}
+          >
+            <RefreshIcon
+              sx={
+                isReloading
+                  ? {
+                      animation: 'spin 1s linear infinite',
+                    }
+                  : undefined
+              }
+            />
+          </Button>
+        </Tooltip>
       }
     >
       {/* Headline figures */}

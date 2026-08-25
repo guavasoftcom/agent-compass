@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { SpanRow } from '../../../../api';
 import { tokenBreakdownForSpan, type TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
 import { isToolCallSpan } from '../../../TracesPage/traceDerivations';
+import type { OpGroup } from './SummaryStrip';
 import TraceDetailHeaderView from './TraceDetailHeaderView';
 
 interface Props {
@@ -16,6 +17,11 @@ interface Props {
   // Reused here instead of a second depth walker so the KPI's Depth tile and
   // the waterfall's indentation always agree, including on orphan spans.
   depthBySpanId: Map<string, number>;
+  // The page's `selfTimeNanosBySpanId` memo (own duration minus the union of
+  // children's wall-clock intervals) — reused for the Time by operation
+  // breakdown so it always agrees with the per-span "self time" bar shown in
+  // the span inspector dock, instead of a second, cruder self-time pass.
+  selfTimeNanosBySpanId: Map<string, number>;
   // Backend-authoritative trace cost from the `['trace-summary', traceId]`
   // query (`TraceRow.totalCostUsd`) — the same total the Traces list Cost
   // column shows. Null while that query hasn't resolved yet, or when it
@@ -36,11 +42,14 @@ interface HeaderAggregates {
   toolCallCount: number;
 }
 
+const OP_TOP_COUNT = 6;
+
 // Container: aggregates the per-span summary data (unique services, the
-// four-way token breakdown, model- and tool-call counts) in a single memoized
-// pass over `spans`, and hands plain values to the presentational view. Cost
-// and max depth are threaded down rather than recomputed here — see the
-// `traceCostUsd` / `depthBySpanId` prop docs above.
+// four-way token breakdown, model- and tool-call counts, and the Time by
+// operation self-time groups) in a single memoized pass over `spans`, and
+// hands plain values to the presentational view. Cost and max depth are
+// threaded down rather than recomputed here — see the `traceCostUsd` /
+// `depthBySpanId` prop docs above.
 const TraceDetailHeader = ({
   traceId,
   sessionId,
@@ -50,6 +59,7 @@ const TraceDetailHeader = ({
   totalMs,
   errorCount,
   depthBySpanId,
+  selfTimeNanosBySpanId,
   traceCostUsd,
   firstUserPrompt,
 }: Props) => {
@@ -103,6 +113,56 @@ const TraceDetailHeader = ({
     return deepestAncestorCount < 0 ? 0 : deepestAncestorCount + 1;
   }, [depthBySpanId]);
 
+  // Time by operation: self-time grouped by exact span name — no folding of
+  // sub-spans into their parent's bucket. `claude_code.tool`,
+  // `claude_code.tool.execution`, and `claude_code.tool.blocked_on_user` stay
+  // three separate rows, same as the Traces list's inline expand, because
+  // that's the granularity a reader deciding "where did the time go" wants —
+  // the coarser "how many tool calls happened" question is what the Tool
+  // calls KPI (which does fold sub-spans via `isToolCallSpan`) answers.
+  const opBreakdown = useMemo(() => {
+    const groups = new Map<string, OpGroup>();
+    for (const span of spans) {
+      const group = groups.get(span.name) ?? {
+        name: span.name,
+        selfTimeMs: 0,
+        count: 0,
+        errorCount: 0,
+      };
+      group.selfTimeMs += (selfTimeNanosBySpanId.get(span.spanId) ?? 0) / 1e6;
+      group.count += 1;
+      if (span.statusCode === 'error') {
+        group.errorCount += 1;
+      }
+      groups.set(span.name, group);
+    }
+    const operations = [...groups.values()].sort(
+      (a, b) => b.selfTimeMs - a.selfTimeMs,
+    );
+    const shownOperations = operations.slice(0, OP_TOP_COUNT);
+    const remainingOperations = operations.slice(OP_TOP_COUNT);
+    if (remainingOperations.length) {
+      shownOperations.push(
+        remainingOperations.reduce<OpGroup>(
+          (acc, group) => ({
+            ...acc,
+            selfTimeMs: acc.selfTimeMs + group.selfTimeMs,
+            count: acc.count + group.count,
+            errorCount: acc.errorCount + group.errorCount,
+          }),
+          {
+            name: `other · ${remainingOperations.length} ops`,
+            selfTimeMs: 0,
+            count: 0,
+            errorCount: 0,
+            other: true,
+          },
+        ),
+      );
+    }
+    return { shownOperations, opCount: groups.size };
+  }, [spans, selfTimeNanosBySpanId]);
+
   return (
     <TraceDetailHeaderView
       traceId={traceId}
@@ -118,6 +178,8 @@ const TraceDetailHeader = ({
       toolCallCount={aggregates.toolCallCount}
       maximumDepth={maximumDepth}
       totalCostUsd={traceCostUsd ?? 0}
+      shownOperations={opBreakdown.shownOperations}
+      opCount={opBreakdown.opCount}
       firstUserPrompt={firstUserPrompt}
     />
   );

@@ -1,11 +1,23 @@
 import { useState } from 'react';
-import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton, Stack, Tooltip } from '@mui/material';
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Stack,
+  Tooltip,
+} from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CloseIcon from '@mui/icons-material/Close';
 import { Link as RouterLink } from 'react-router-dom';
 import type { SessionCacheEfficiencyRow } from '../../../../api';
-import { cacheEfficiencyBand, formatCacheEfficiency } from '../../../../lib/cacheEfficiency';
+import {
+  cacheEfficiencyBand,
+  formatCacheEfficiency,
+} from '../../../../lib/cacheEfficiency';
 import {
   USD_FORMATTER,
   formatCompact,
@@ -79,16 +91,35 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
   // so a token kind keeps one color across the whole page, not just within
   // this dialog.
   const segments = [
-    { label: TOKEN_KIND_LABELS.cacheRead, value: row.cacheReadTokens, color: TOKEN_KIND_COLORS.cacheRead },
-    { label: TOKEN_KIND_LABELS.input, value: row.inputTokens, color: TOKEN_KIND_COLORS.input },
-    { label: TOKEN_KIND_LABELS.cacheCreation, value: row.cacheCreationTokens, color: TOKEN_KIND_COLORS.cacheCreation },
-    { label: TOKEN_KIND_LABELS.output, value: row.outputTokens, color: TOKEN_KIND_COLORS.output },
+    {
+      label: TOKEN_KIND_LABELS.cacheRead,
+      value: row.cacheReadTokens,
+      color: TOKEN_KIND_COLORS.cacheRead,
+    },
+    {
+      label: TOKEN_KIND_LABELS.input,
+      value: row.inputTokens,
+      color: TOKEN_KIND_COLORS.input,
+    },
+    {
+      label: TOKEN_KIND_LABELS.cacheCreation,
+      value: row.cacheCreationTokens,
+      color: TOKEN_KIND_COLORS.cacheCreation,
+    },
+    {
+      label: TOKEN_KIND_LABELS.output,
+      value: row.outputTokens,
+      color: TOKEN_KIND_COLORS.output,
+    },
   ];
   // The bar shows the session's whole token mix, so its denominator is all four
   // kinds — NOT the KPI tile's inputSideTokens. Read as its own sum rather than
   // from row.totalTokens so a contract drift shows up as segments that don't
   // fill the track instead of as overflow.
-  const segmentTotal = segments.reduce((running, segment) => running + segment.value, 0);
+  const segmentTotal = segments.reduce(
+    (running, segment) => running + segment.value,
+    0,
+  );
   // A zero-value segment still gets a legend row (reading "0"), but is dropped
   // before the bar chips: the MINIMUM_SEGMENT_WIDTH floor would otherwise paint
   // a visible sliver for a value that isn't actually present.
@@ -108,8 +139,20 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
           {row.sessionId}
         </Box>
         {row.endTimestamp ? (
-          <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
-            <Box component="span" sx={{ display: 'inline-block', mt: 0.5, fontSize: 12, color: 'text.secondary' }}>
+          <Tooltip
+            title={formatTimestamp(row.endTimestamp)}
+            placement="top"
+            arrow
+          >
+            <Box
+              component="span"
+              sx={{
+                display: 'inline-block',
+                mt: 0.5,
+                fontSize: 12,
+                color: 'text.secondary',
+              }}
+            >
               Last activity {formatRelativeTime(row.endTimestamp)}
             </Box>
           </Tooltip>
@@ -117,6 +160,7 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
         <Box
           sx={{
             mt: 1.1,
+            ml: 1,
             display: 'inline-flex',
             alignItems: 'center',
             height: 22,
@@ -143,7 +187,9 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
 
       <DialogContent dividers>
         <Stack spacing={2}>
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
+          <Box
+            sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}
+          >
             <KpiTile
               label="Cache efficiency"
               value={formatCacheEfficiency(row.cacheEfficiency)}
@@ -159,11 +205,12 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
                 height: 8,
                 borderRadius: radii.xs,
                 overflow: 'hidden',
-                bgcolor: theme.custom?.progressTrack ?? theme.palette.action.hover,
+                bgcolor:
+                  theme.custom?.progressTrack ?? theme.palette.action.hover,
               }}
             >
-              {segmentTotal > 0
-                && nonZeroSegments.map((segment) => (
+              {segmentTotal > 0 &&
+                nonZeroSegments.map((segment) => (
                   <Box
                     key={segment.label}
                     sx={{
@@ -179,7 +226,12 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
               {segments.map((segment) => (
                 <Box
                   key={segment.label}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: 12.5 }}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    fontSize: 12.5,
+                  }}
                 >
                   <Box
                     sx={{
@@ -190,7 +242,9 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
                       bgcolor: segment.color,
                     }}
                   />
-                  <Box sx={{ flex: 1, color: 'text.secondary' }}>{segment.label}</Box>
+                  <Box sx={{ flex: 1, color: 'text.secondary' }}>
+                    {segment.label}
+                  </Box>
                   <Box sx={{ fontFamily: fontFamilies.mono, fontWeight: 600 }}>
                     {formatCompact(segment.value)}
                   </Box>
@@ -208,7 +262,11 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
             color="inherit"
             fullWidth
             endIcon={<ArrowForwardIcon />}
-            sx={{ height: 40, borderRadius: radii.sm, fontFamily: fontFamilies.display }}
+            sx={{
+              height: 40,
+              borderRadius: radii.sm,
+              fontFamily: fontFamilies.display,
+            }}
           >
             View in Sessions
           </Button>
@@ -235,13 +293,18 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
  * have been cached". Don't read the Cache read segment's width as the KPI's
  * percentage — it is smaller by exactly the output share.
  */
-const SessionCacheEfficiencyDialog = ({ row, onClose }: SessionCacheEfficiencyDialogProps) => {
+const SessionCacheEfficiencyDialog = ({
+  row,
+  onClose,
+}: SessionCacheEfficiencyDialogProps) => {
   // Keep the last selection rendered while the Dialog's exit transition runs,
   // so the body doesn't flash to an empty/degraded state during the ~200ms
   // fade-out — the same guarded render-phase pattern SpanInspectorDrawer uses
   // so its content "slides out instead of vanishing". Compared by session id,
   // not object identity: the caller can rebuild an equal row as a new object.
-  const [lastRow, setLastRow] = useState<SessionCacheEfficiencyRow | null>(null);
+  const [lastRow, setLastRow] = useState<SessionCacheEfficiencyRow | null>(
+    null,
+  );
   if (row != null && row.sessionId !== lastRow?.sessionId) {
     setLastRow(row);
   }
@@ -249,7 +312,9 @@ const SessionCacheEfficiencyDialog = ({ row, onClose }: SessionCacheEfficiencyDi
 
   return (
     <Dialog open={row != null} onClose={onClose} maxWidth="xs" fullWidth>
-      {effectiveRow != null ? <DialogBody row={effectiveRow} onClose={onClose} /> : null}
+      {effectiveRow != null ? (
+        <DialogBody row={effectiveRow} onClose={onClose} />
+      ) : null}
     </Dialog>
   );
 };

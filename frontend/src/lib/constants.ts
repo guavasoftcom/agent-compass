@@ -29,8 +29,9 @@ export const MS_PER_DAY = 24 * MS_PER_HOUR;
 export const AUTO_REFRESH_INTERVAL_MS = MS_PER_MINUTE;
 
 // Live-tail poll cadence for the cursor-paged Stream views (Logs, Traces): how
-// often each prepends genuinely new rows while auto-refresh is on.
-export const TAIL_INTERVAL_MS = 1500;
+// often each prepends genuinely new rows while auto-refresh is on. Aligned with
+// Claude Code's OTEL_LOGS_EXPORT_INTERVAL and OTEL_TRACES_EXPORT_INTERVAL (5000ms).
+export const TAIL_INTERVAL_MS = 5000;
 
 // Widest span (in milliseconds) a resolved window may ever cover. Mirrors the
 // backend's `@ValidDateRange(maxDays = 30)` / `DateRangeValidator`
