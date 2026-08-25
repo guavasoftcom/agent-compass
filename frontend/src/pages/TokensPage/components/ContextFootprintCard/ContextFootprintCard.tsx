@@ -15,8 +15,8 @@ export interface ContextFootprintCardProps {
 }
 
 /**
- * "What's filling the context window" — tools ranked by the total bytes their
- * results pushed into context.
+ * "Tool results filling the context window" — tools ranked by the total bytes
+ * their results pushed into context.
  *
  * Deliberately kept visually distinct from the exact-token cards above it (its
  * own "estimated" chip, byte-first values) because its token figure is
@@ -61,7 +61,7 @@ const ContextFootprintCard = ({ rows }: ContextFootprintCardProps) => {
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5, flexWrap: 'wrap' }}>
-        <Typography variant="subtitle1">What&apos;s filling the context window</Typography>
+        <Typography variant="subtitle1">Tool results filling the context window</Typography>
         <Chip label="estimated" size="small" variant="outlined" sx={{ height: 20, fontSize: 11 }} />
         <Tooltip
           title={

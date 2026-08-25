@@ -3,7 +3,7 @@ import { Box, Typography } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { formatDuration, formatUsd } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
-import SummaryStrip, { type SummaryItem } from './SummaryStrip';
+import SummaryStrip, { type OpGroup, type SummaryItem } from './SummaryStrip';
 import IdentityPill from './IdentityPill';
 import { fontFamilies } from '../../../../theme/typography';
 import type { TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
@@ -22,6 +22,9 @@ export interface TraceDetailHeaderViewProps {
   toolCallCount: number;
   maximumDepth: number;
   totalCostUsd: number;
+  // Time-by-operation self-time breakdown — see SummaryStrip's OpBreakdownCard.
+  shownOperations: OpGroup[];
+  opCount: number;
   // Aurora sync: the trace's first user prompt, shown as a header row inside
   // the summary panel above the KPI tiles. Requires a `firstUserPrompt` field
   // on TraceRow (populated from the root/first prompt-bearing span, mirroring
@@ -33,9 +36,11 @@ export interface TraceDetailHeaderViewProps {
 // session id when the trace has one, right after the "Trace detail" h1 — see
 // IdChip. The Overview panel's meta footer (SummaryStrip) is left with just
 // Root span / Services / Started. What's left up here below the chips is the
-// five at-a-glance KPI tiles, Cost leading and gradient-emphasized; the old
-// single "Tokens" tile became the richer Token composition card inside the
-// panel.
+// four at-a-glance KPI tiles, Cost leading and gradient-emphasized — Duration
+// was dropped once Time by operation (below the tiles) started stating the
+// trace's total self-time itself, so repeating it as its own tile was pure
+// duplication. The old single "Tokens" tile became the richer Token
+// composition card inside the panel.
 const TraceDetailHeaderView = ({
   traceId,
   sessionId,
@@ -50,6 +55,8 @@ const TraceDetailHeaderView = ({
   toolCallCount,
   maximumDepth,
   totalCostUsd,
+  shownOperations,
+  opCount,
   firstUserPrompt,
 }: TraceDetailHeaderViewProps) => {
   const durationLabel = formatDuration(totalMs * 1e6);
@@ -57,6 +64,7 @@ const TraceDetailHeaderView = ({
   const startedAtLabel = new Date(earliestStartMs).toLocaleTimeString('en-US', {
     hour12: false,
   });
+  const rootColor = spanColor(rootName);
 
   const summary: SummaryItem[] = [
     {
@@ -65,12 +73,6 @@ const TraceDetailHeaderView = ({
       emphasis: true,
       value: costLabel,
       title: costLabel,
-    },
-    {
-      label: 'Duration',
-      monospace: true,
-      value: durationLabel,
-      title: durationLabel,
     },
     { label: 'Spans', value: spanCount, title: String(spanCount) },
     { label: 'Tool calls', value: toolCallCount, title: String(toolCallCount) },
@@ -178,8 +180,11 @@ const TraceDetailHeaderView = ({
         tokenBreakdown={tokenBreakdown}
         modelCallCount={modelCallCount}
         totalCostUsd={totalCostUsd}
+        shownOperations={shownOperations}
+        opCount={opCount}
+        totalMs={totalMs}
         rootName={rootName}
-        rootColor={spanColor(rootName)}
+        rootColor={rootColor}
         serviceLabels={serviceLabels}
         startedAtLabel={startedAtLabel}
         durationLabel={durationLabel}

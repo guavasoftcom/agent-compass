@@ -346,6 +346,7 @@ const TraceDetailPageView = ({
         totalMs={totalMs}
         errorCount={errorSpans.length}
         depthBySpanId={depthBySpanId}
+        selfTimeNanosBySpanId={selfTimeNanosBySpanId}
         traceCostUsd={traceCostUsd}
         firstUserPrompt={firstUserPrompt}
       />

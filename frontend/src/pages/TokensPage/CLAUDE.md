@@ -90,7 +90,7 @@ TokensPage/
 │ │ … click a row → SessionCacheEfficiencyDialog                          │  │
 │ └───────────────────────────────────────────────────────────────────────┘  │
 │ ┌─ ContextFootprintCard ────────────────────────────────────────────────┐  │
-│ │ "What's filling the context window" [estimated] + ⓘ                   │  │
+│ │ "Tool results filling the context window" [estimated] + ⓘ             │  │
 │ │ BreakdownList per tool — rank № · bytes · ~est. tokens · calls · p95  │  │
 │ └───────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘

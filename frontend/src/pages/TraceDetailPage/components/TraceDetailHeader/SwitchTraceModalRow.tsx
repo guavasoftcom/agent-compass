@@ -1,7 +1,6 @@
 import { Box, alpha } from '@mui/material';
 import { formatRelativeTime } from '../../../../lib/format';
 import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
-import { LONG_VALUE_ATTR, LongAttrValue } from '../SpanInspectorDrawer/longValue';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
 import type { SwitchTraceRow } from './SwitchTraceModalView';
 
@@ -54,10 +53,7 @@ const SwitchTraceModalRow = ({ row, isCurrent, onSelect }: Props) => {
           wordBreak: 'break-word',
         }}
       >
-        <PromptSummaryText
-          prompt={row.prompt}
-          renderOrdinary={(p) => <LongAttrValue attrKey="Prompt" value={p} limit={LONG_VALUE_ATTR} />}
-        />
+        <PromptSummaryText prompt={row.prompt} />
       </Box>
       <Box
         sx={{
