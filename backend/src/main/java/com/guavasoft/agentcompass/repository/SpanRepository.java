@@ -87,9 +87,23 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
     // Uses native SQL because JPQL has no percentile_cont equivalent or jsonb
     // operator support;
     // duration_nanos is already persisted, so no end-start arithmetic is needed.
+    //
+    // MCP calls are the SPAN-side mirror image of the log-side problem the rest of this feature
+    // fixes: they arrive as 19+ separate raw "mcp__<server>__<tool>" names (one per server tool)
+    // rather than one collapsed constant, crowding the latency table. starts_with()/split_part()
+    // collapse them to one 'mcp:<server>' row per method — NOT LIKE :mcpPrefix || '%', because
+    // Postgres treats a bare underscore as the LIKE single-character wildcard, so
+    // 'LIKE mcp__%' would match "mcp" plus any two characters plus anything, not literally two
+    // underscores; it only "works" today by accident since no other tool name starts with "mcp".
+    // This latency figure intentionally stays span-derived (span duration includes time blocked on
+    // user approval), unlike the log-derived MCP aggregation in LogRecordRepository — see
+    // TuningProperties.mcpToolName's javadoc for why the two signals disagree and are read
+    // differently.
     @Query(value = """
             SELECT
-              attributes->>:toolAttribute                                         AS tool,
+              CASE WHEN starts_with(attributes->>:toolAttribute, :mcpPrefix)
+                   THEN 'mcp:' || split_part(attributes->>:toolAttribute, '__', 2)
+                   ELSE attributes->>:toolAttribute END                            AS tool,
               COUNT(*)                                                            AS calls,
               percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_nanos)        AS p50_nanos,
               percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_nanos)        AS p95_nanos
@@ -106,11 +120,14 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("scopeName") String scopeName,
             @Param("spanName") String spanName,
             @Param("toolAttribute") String toolAttribute,
+            @Param("mcpPrefix") String mcpPrefix,
             @Param("since") Instant since);
 
     @Query(value = """
             SELECT
-              attributes->>:toolAttribute                                         AS tool,
+              CASE WHEN starts_with(attributes->>:toolAttribute, :mcpPrefix)
+                   THEN 'mcp:' || split_part(attributes->>:toolAttribute, '__', 2)
+                   ELSE attributes->>:toolAttribute END                            AS tool,
               COUNT(*)                                                            AS calls,
               percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_nanos)        AS p50_nanos,
               percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_nanos)        AS p95_nanos
@@ -128,6 +145,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("scopeName") String scopeName,
             @Param("spanName") String spanName,
             @Param("toolAttribute") String toolAttribute,
+            @Param("mcpPrefix") String mcpPrefix,
             @Param("start") Instant start,
             @Param("end") Instant end);
 

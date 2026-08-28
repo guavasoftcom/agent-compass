@@ -8,6 +8,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
 import com.guavasoft.agentcompass.model.IdentifierUsageCount;
+import com.guavasoft.agentcompass.model.McpServerUsage;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolContextFootprint;
 import com.guavasoft.agentcompass.model.ToolDenialCount;
@@ -206,6 +207,53 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[1].tool").value("Edit"));
 
         verify(logService).aggregateToolDenials(1440);
+    }
+
+    @Test
+    void mcpUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
+        when(logService.aggregateMcpServerUsage(anyInt())).thenReturn(List.of(
+                new McpServerUsage("playwright", "browser_evaluate", 460L, 54L, 0.1174, 1820L, 13100L,
+                        6_500_000L, 1_625_000L, 180_000L),
+                new McpServerUsage("CodeGraphContext", "query", 8L, 2L, 0.25, 200L, 400L, 5_000L, 1_250L, 900L)));
+
+        mockMvc.perform(get("/api/tool-activity/mcp-usage"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].server").value("playwright"))
+                .andExpect(jsonPath("$[0].tool").value("browser_evaluate"))
+                .andExpect(jsonPath("$[0].calls").value(460))
+                .andExpect(jsonPath("$[0].failures").value(54))
+                .andExpect(jsonPath("$[0].failureRate").value(0.1174))
+                .andExpect(jsonPath("$[0].avgDurationMs").value(1820))
+                .andExpect(jsonPath("$[0].p95DurationMs").value(13100))
+                .andExpect(jsonPath("$[0].totalBytes").value(6_500_000))
+                .andExpect(jsonPath("$[0].estimatedTokens").value(1_625_000))
+                .andExpect(jsonPath("$[1].server").value("CodeGraphContext"));
+
+        verify(logService).aggregateMcpServerUsage(1440);
+    }
+
+    @Test
+    void mcpUsageDelegatesToTheRangeFormWhenBothBoundsArePresent() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(logService.aggregateMcpServerUsageInRange(rangeStart, rangeEnd)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/mcp-usage")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        verify(logService).aggregateMcpServerUsageInRange(rangeStart, rangeEnd);
+    }
+
+    @Test
+    void mcpUsageRejectsDateRangeExceedingThirtyDays() throws Exception {
+        mockMvc.perform(get("/api/tool-activity/mcp-usage")
+                .param("startTimestamp", "2026-01-01T00:00:00Z")
+                .param("endTimestamp", "2026-02-01T00:00:00Z"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

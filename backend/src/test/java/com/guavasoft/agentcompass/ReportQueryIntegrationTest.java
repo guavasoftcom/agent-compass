@@ -50,10 +50,32 @@ class ReportQueryIntegrationTest {
     private static final String ATTR_SUCCESS = "success";
     private static final String ATTR_ERROR = "error";
     private static final String ATTR_SESSION_ID = "session.id";
+    private static final String ATTR_TOOL_PARAMETERS = "tool_parameters";
 
     private static final String EVENT_TOOL_RESULT = "tool_result";
     private static final String TOOL_BASH = "Bash";
     private static final String TOOL_READ = "Read";
+    private static final String MCP_TOOL_NAME = "mcp_tool";
+
+    /** MCP section fixtures: two servers, one (server, tool) row each, both successful. */
+    private static final String MCP_SERVER_PLAYWRIGHT = "playwright";
+    private static final String MCP_SERVER_CODE_GRAPH = "CodeGraphContext";
+    private static final String MCP_TOOL_BROWSER_EVALUATE = "browser_evaluate";
+    private static final String MCP_TOOL_SEARCH = "search";
+    private static final long MCP_PLAYWRIGHT_DURATION_MS = 1200L;
+    private static final long MCP_PLAYWRIGHT_RESULT_BYTES = 4096L;
+    private static final long MCP_CODE_GRAPH_DURATION_MS = 800L;
+    private static final long MCP_CODE_GRAPH_RESULT_BYTES = 1024L;
+
+    /** MCP suggestion-rule fixtures: a server crossing the failure-rate threshold vs. a control. */
+    private static final String MCP_SERVER_FLAKY = "flaky-server";
+    private static final String MCP_SERVER_RELIABLE = "reliable-server";
+    private static final String MCP_TOOL_BROWSE = "browse";
+    private static final int MCP_FLAKY_CALL_COUNT = 10;
+    private static final int MCP_FLAKY_FAILURE_COUNT = 3;
+    private static final int MCP_RELIABLE_CALL_COUNT = 10;
+    private static final long MCP_SUGGESTION_FIXTURE_DURATION_MS = 500L;
+    private static final long MCP_SUGGESTION_FIXTURE_RESULT_BYTES = 100L;
 
     private static final String GIT_STATUS_TOOL_INPUT = "{\"command\":\"git status\"}";
     private static final String GIT_DIFF_TOOL_INPUT = "{\"command\":\"git diff\"}";
@@ -249,6 +271,52 @@ class ReportQueryIntegrationTest {
     }
 
     @Test
+    void renderMarkdownRendersMcpServersSectionRolledUpPerServer() {
+        saveMcpToolResult(windowStart.plusSeconds(OFFSET_READ_CALL), MCP_SERVER_PLAYWRIGHT,
+                MCP_TOOL_BROWSER_EVALUATE, true, MCP_PLAYWRIGHT_DURATION_MS, MCP_PLAYWRIGHT_RESULT_BYTES);
+        saveMcpToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), MCP_SERVER_CODE_GRAPH,
+                MCP_TOOL_SEARCH, true, MCP_CODE_GRAPH_DURATION_MS, MCP_CODE_GRAPH_RESULT_BYTES);
+
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+
+        // One row per (server, tool) collapses to one row per server here since each server has
+        // exactly one tool in this fixture; p95 of a single-row group is that row's own duration.
+        // This exercises the exact ReportService context-map keys against report.mustache's
+        // placeholders end to end — a renamed key (e.g. p95Ms) would render this section blank
+        // rather than fail, which no other test in this suite would catch.
+        assertThat(markdown)
+                .contains("## MCP servers")
+                .contains("| `" + MCP_SERVER_PLAYWRIGHT + "` | 1 | 0.0% | " + MCP_PLAYWRIGHT_DURATION_MS
+                        + " | " + MCP_PLAYWRIGHT_RESULT_BYTES + " | 80.0% |")
+                .contains("| `" + MCP_SERVER_CODE_GRAPH + "` | 1 | 0.0% | " + MCP_CODE_GRAPH_DURATION_MS
+                        + " | " + MCP_CODE_GRAPH_RESULT_BYTES + " | 20.0% |")
+                .contains("Total: **5120** bytes (~1280 tokens");
+    }
+
+    @Test
+    void renderMarkdownSuggestsNarrowingAnMcpServerWithHighFailureRate() {
+        for (int callIndex = 0; callIndex < MCP_FLAKY_CALL_COUNT; callIndex++) {
+            boolean failed = callIndex < MCP_FLAKY_FAILURE_COUNT;
+            saveMcpToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + callIndex), MCP_SERVER_FLAKY,
+                    MCP_TOOL_BROWSE, !failed, MCP_SUGGESTION_FIXTURE_DURATION_MS, MCP_SUGGESTION_FIXTURE_RESULT_BYTES);
+        }
+        for (int callIndex = 0; callIndex < MCP_RELIABLE_CALL_COUNT; callIndex++) {
+            saveMcpToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 100 + callIndex), MCP_SERVER_RELIABLE,
+                    MCP_TOOL_BROWSE, true, MCP_SUGGESTION_FIXTURE_DURATION_MS, MCP_SUGGESTION_FIXTURE_RESULT_BYTES);
+        }
+
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+
+        // 30% failures trips MCP_SERVER_HIGH_FAILURE_RATE_THRESHOLD (10%); the all-success
+        // control server, seeded with the same call volume and byte size, must not trip either
+        // condition of the rule, isolating the failure-rate path from the context-share one.
+        assertThat(markdown)
+                .contains("MCP server `" + MCP_SERVER_FLAKY + "`")
+                .contains("check whether it earns its cost")
+                .doesNotContain("MCP server `" + MCP_SERVER_RELIABLE + "`");
+    }
+
+    @Test
     void renderMarkdownSuggestsCappingTheTailOnlyWhenP95OutrunsTheMean() {
         for (int callIndex = 0; callIndex < TAIL_SMALL_CALL_COUNT; callIndex++) {
             saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + callIndex), TOOL_READ,
@@ -313,6 +381,36 @@ class ReportQueryIntegrationTest {
 
     private void saveOversizedToolResult(Instant timestamp, String toolName, String toolInputJson, long resultBytes) {
         saveToolResultRow(timestamp, toolName, toolInputJson, true, null, null, resultBytes);
+    }
+
+    /**
+     * Seeds an MCP-shaped {@code tool_result} row: {@code tool_name} is the generic
+     * {@link #MCP_TOOL_NAME} constant every server shares, with real server/tool identity carried
+     * in the {@link #ATTR_TOOL_PARAMETERS} attribute as a JSON *string* (matching the stringified
+     * blob {@code aggregateMcpServerUsageInRange}'s {@code ::jsonb} cast depends on) rather than a
+     * nested object. Duration and result size are bound directly, unlike {@link #saveToolResultRow}
+     * which hardcodes both, since the MCP suggestion-rule test needs both varied per call.
+     */
+    private void saveMcpToolResult(Instant timestamp, String server, String tool, boolean success,
+            long durationMs, long resultBytes) {
+        LogRecordEntity entity = new LogRecordEntity();
+        entity.setTimestamp(timestamp);
+        entity.setObservedTimestamp(timestamp);
+        entity.setReceivedAt(Instant.now());
+        entity.setScopeName("claude_code.tools");
+        entity.setBody("tool result");
+
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(ATTR_EVENT_NAME, EVENT_TOOL_RESULT);
+        attributes.put(ATTR_TOOL_NAME, MCP_TOOL_NAME);
+        attributes.put(ATTR_TOOL_PARAMETERS,
+                "{\"mcp_server_name\":\"" + server + "\",\"mcp_tool_name\":\"" + tool + "\"}");
+        attributes.put(ATTR_SUCCESS, String.valueOf(success));
+        attributes.put(ATTR_DURATION_MS, durationMs);
+        attributes.put(ATTR_RESULT_SIZE_BYTES, resultBytes);
+        entity.setAttributes(attributes);
+        entity.setResourceAttributes(Map.of("service.name", "claude-code"));
+        logRecordRepository.save(entity);
     }
 
     private void saveToolResultRow(Instant timestamp, String toolName, String toolInputJson, boolean success,

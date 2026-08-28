@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
 import com.guavasoft.agentcompass.model.IdentifierUsageCount;
+import com.guavasoft.agentcompass.model.McpServerUsage;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
@@ -37,7 +38,8 @@ import java.util.List;
 @Validated
 @RequestMapping("/api/tool-activity")
 @Tag(name = "Tool Activity",
-        description = "Tool call counts, latency, failure rates, denials, repeats, skill and subagent usage, and hook executions")
+        description = "Tool call counts, latency, failure rates, denials, repeats, skill, subagent, and "
+                + "MCP server usage, and hook executions")
 public class ToolActivityController {
 
     private final LogService logService;
@@ -278,6 +280,34 @@ public class ToolActivityController {
                     timeWindowParams.endTimestamp());
         }
         return logService.aggregateSubagentUsage(minutes);
+    }
+
+    @GetMapping("/mcp-usage")
+    @Operation(
+            summary = "Per-(server, tool) MCP invocation stats over the window",
+            description = "Counts tool_result events whose tool_name equals the shared MCP constant "
+                    + "('mcp_tool'), grouped by the real server and tool identity carried inside the "
+                    + "tool_parameters JSON attribute (tool_name itself is one constant for every MCP "
+                    + "server, so it cannot be the group key). Latency and byte figures come from the "
+                    + "log's own duration_ms / tool_result_size_bytes, not span duration — span duration "
+                    + "on an MCP call includes time blocked on user approval, which would conflate server "
+                    + "slowness with approval latency. estimatedTokens follows the same ranking-only "
+                    + "convention as /api/tool-activity/context-footprint. Rows for one server are "
+                    + "grouped together, sorted by that server's total calls descending.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "One row per distinct (server, tool) pair observed in the window",
+            content = @Content(
+                    mediaType = "application/json",
+                    array = @ArraySchema(schema = @Schema(implementation = McpServerUsage.class)))))
+    public List<McpServerUsage> mcpUsage(
+            @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return logService.aggregateMcpServerUsageInRange(timeWindowParams.startTimestamp(),
+                    timeWindowParams.endTimestamp());
+        }
+        return logService.aggregateMcpServerUsage(minutes);
     }
 
     @GetMapping("/hook-executions")

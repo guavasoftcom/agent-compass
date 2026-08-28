@@ -396,7 +396,18 @@ trace link for those rows, not a disabled placeholder.
   `SERVICE_HUE['claude_code.tools']`) rather than a per-category palette; there is no `TOOL_CAT`
   mapping in the React code — the design mockup keeps one for a possible future per-category split,
   but the current UI has no behavior difference across categories, so building that mapping here
-  would be unused code. The grid's Cost column and the drawer header's cost figure both tier
+  would be unused code.
+- **`ToolChips`' per-turn tool names are deliberately NOT MCP-aware.** Every other tool
+  aggregation in the backend now splits the collapsed `mcp_tool` bucket back out to
+  `mcp:<server>` (see `AGENTS.md`'s MCP configuration note and `backend/CLAUDE.md`'s two-signal
+  naming finding), but `LogRecordRepository.findToolEventsForSession` — the query behind this
+  panel's `tools` field — was left reading the raw `tool_name` attribute on purpose. It is a
+  per-turn detail list, not an analysis surface: an MCP call in a turn's chip row still reads
+  `mcp_tool` rather than naming its server, the same way `aggregateToolRepeats` is deliberately
+  left unsplit for its own documented reason. Don't "fix" this without also deciding whether
+  `SessionPromptToolCount` needs a `server` field — the per-turn rollup is currently keyed on
+  `tool_name` alone.
+- The grid's Cost column and the drawer header's cost figure both tier
   through the exported `CostValue` component (`costTier`/`COST_WARM_THRESHOLD_USD` in
   `sessionsFormat.ts`): plain below $8, `auroraColors.gold` from $8, and the same violet→pink
   `gradients.auroraActionSoft` text the "Median cost" stat card uses once cost reaches the **live**

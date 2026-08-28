@@ -80,6 +80,7 @@ public class TraceService {
         tuningProperties.getToolSpanScope(),
         tuningProperties.getToolSpanName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpSpanToolPrefix(),
         since);
     return rows.stream()
         .map(TraceService::toToolLatency)
@@ -91,6 +92,7 @@ public class TraceService {
         tuningProperties.getToolSpanScope(),
         tuningProperties.getToolSpanName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpSpanToolPrefix(),
         start,
         end);
     return rows.stream()

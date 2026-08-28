@@ -120,7 +120,7 @@ Coverage: **{{bashCoverageWithCommand}} of {{bashCoverageTotal}}** Bash calls in
 | `{{tool}}` | {{calls}} | {{avgMs}} | {{p95Ms}} | {{avgOut}} |
 {{/performance}}
 
-Latency tails (p95) surface tools that occasionally do heavy work — long shell commands, slow MCP servers, large file reads. If a tool's p95 is much higher than its average, consider whether the agent could narrow its inputs (smaller globs, shorter shell pipelines, paged reads). `Agent` is the exception: subagents legitimately run for many minutes and return a short summary — high latency here is delegation working, not a defect.
+Latency tails (p95) surface tools that occasionally do heavy work — long shell commands, slow MCP servers (now split per server, e.g. `mcp:playwright`, rather than lumped under one row), large file reads. These figures are the log's own execution time (`duration_ms`), not span duration, so an MCP row here is never inflated by time spent waiting on the user to approve the call — see the dedicated MCP servers section below for a per-server rollup. If a tool's p95 is much higher than its average, consider whether the agent could narrow its inputs (smaller globs, shorter shell pipelines, paged reads). `Agent` is the exception: subagents legitimately run for many minutes and return a short summary — high latency here is delegation working, not a defect.
 
 {{/hasPerformance}}
 ## Tool call mix
@@ -136,7 +136,7 @@ Total tool calls: **{{total}}**.
 {{#hasContextFootprint}}
 ## Context footprint
 
-How much result text each tool pushed into the context window over this window, ranked by total bytes. Same exclusions as the oversized list below — externally determined tools (`Agent`, `WebSearch`, `WebFetch`) and image reads are left out, so every row is something a rule could change. Calls that reported no result size are excluded rather than counted as zero, so *Calls* here reads lower than the tool call mix above.
+How much result text each tool pushed into the context window over this window, ranked by total bytes. Same exclusions as the oversized list below — externally determined tools (`Agent`, `WebSearch`, `WebFetch`) and image reads are left out, so every row is something a rule could change. MCP calls are NOT excluded and, like everywhere else in this report, are broken out per server (`mcp:playwright`, `mcp:CodeGraphContext`, …) instead of one lumped `mcp_tool` row — see the dedicated MCP servers section below for the same servers rolled up with failure rate and latency alongside their context cost. Calls that reported no result size are excluded rather than counted as zero, so *Calls* here reads lower than the tool call mix above.
 
 | Tool | Calls | Total bytes | Share | Avg bytes | p95 bytes |
 |---|---:|---:|---:|---:|---:|
@@ -149,10 +149,24 @@ Total: **{{contextFootprintTotalBytes}}** bytes (~{{contextFootprintEstimatedTok
 Read the table by comparing **Avg bytes** against **p95 bytes**. A p95 several times the average means a few blowout calls carry the row and the fix is a cap on those calls — page the read, scope the glob, pipe dump-style output through `head`. A p95 close to the average means the tool returns too much on *every* call, which usually needs a different tool or a narrower default rather than a limit.
 
 {{/hasContextFootprint}}
+{{#hasMcpServers}}
+## MCP servers
+
+Per-server rollup of MCP tool calls — answers whether a server is worth its latency and context cost, one row per server rather than per tool. Latency is EXECUTION time (the log's own `duration_ms`), never span duration: a span wrapping an MCP call includes time spent blocked on user approval, which would conflate server slowness with how long the user took to approve it (measured on live data: one tool showed p95 297s on spans against 8ms average execution in the log). `p95 ms` below is the MAX of the server's own tools' p95s — a worst-case bound, not a recomputed per-server percentile, since averaging or re-deriving one percentile from several already-aggregated ones is not statistically valid.
+
+| Server | Calls | Failure rate | p95 ms | Context bytes | Share |
+|---|---:|---:|---:|---:|---:|
+{{#mcpServers}}
+| `{{server}}` | {{calls}} | {{failureRate}} | {{p95Ms}} | {{totalBytes}} | {{share}} |
+{{/mcpServers}}
+
+Total: **{{mcpServersTotalBytes}}** bytes (~{{mcpServersEstimatedTokens}} tokens, estimated at 4 bytes each — same ranking-only convention as the context footprint above, not a billed count). A server whose failure rate or context share runs well ahead of how often it's actually called is a candidate to narrow (allow fewer of its tools) or drop outright — see the Suggestions section above if one was flagged.
+
+{{/hasMcpServers}}
 {{#hasOversized}}
 ## Oversized tool results
 
-The largest tool results in the window. Identical calls (same tool, scope, and size) are grouped — *Calls* shows how many times that exact payload was pulled into context, so the true context cost of a row is Bytes × Calls. Payloads this size usually indicate an unscoped read or shell dump. Externally-determined results (`Agent`, `WebSearch`, `WebFetch`) and image/binary reads are excluded at the query level, so every row here is tunable.
+The largest tool results in the window. Identical calls (same tool, scope, and size) are grouped — *Calls* shows how many times that exact payload was pulled into context, so the true context cost of a row is Bytes × Calls. Payloads this size usually indicate an unscoped read or shell dump. Externally-determined results (`Agent`, `WebSearch`, `WebFetch`) and image/binary reads are excluded at the query level, so every row here is tunable. MCP results ARE included, shown as `mcp:<server>` with Scope set to the server-side tool name (e.g. `browser_evaluate`) rather than a file path or command — MCP calls carry their identity in `tool_parameters`, not `tool_input`, so the usual scope columns would otherwise be blank.
 
 | Tool | Scope | Bytes | Calls |
 |---|---|---:|---:|

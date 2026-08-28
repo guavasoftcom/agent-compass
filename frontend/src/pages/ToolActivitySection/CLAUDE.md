@@ -1,7 +1,7 @@
 # Tool activity section
 
-A `SectionLayout` wrapper that groups the four tool-activity tabs — Calls, Reliability,
-Skills & Subagents, and Denials — under the `/tools/*` parent route with a shared
+A `SectionLayout` wrapper that groups the five tool-activity tabs — Calls, Reliability,
+Skills & Subagents, MCP Servers, and Denials — under the `/tools/*` parent route with a shared
 `selection` / `autoRefresh` context. It makes no backend calls of its own; all data
 fetching happens inside the child tab pages.
 
@@ -18,6 +18,7 @@ Child tab pages (each in its own folder):
 - [`../ToolCallsPage/`](../ToolCallsPage/) — `/tools/calls`
 - [`../ToolReliabilityPage/`](../ToolReliabilityPage/) — `/tools/reliability`
 - [`../SkillsAgentsPage/`](../SkillsAgentsPage/) — `/tools/skills-agents`
+- [`../McpServersPage/`](../McpServersPage/) — `/tools/mcp-servers`
 - [`../PermissionDenialsPage/`](../PermissionDenialsPage/) — `/tools/permissions`
 
 ## Routing
@@ -30,6 +31,7 @@ In `App.tsx` the section is a React Router 7 nested route:
   <Route path="calls" element={<ToolCallsPage />} />
   <Route path="reliability" element={<ToolReliabilityPage />} />
   <Route path="skills-agents" element={<SkillsAgentsPage />} />
+  <Route path="mcp-servers" element={<McpServersPage />} />
   <Route path="permissions" element={<PermissionDenialsPage />} />
 </Route>
 ```
@@ -44,12 +46,13 @@ Legacy redirects in `App.tsx` preserve old paths:
 
 ## Section-scoped reload and polling
 
-`QUERY_KEY_PREFIXES` lists every React Query key prefix used across the four child tabs:
+`QUERY_KEY_PREFIXES` lists every React Query key prefix used across the five child tabs:
 
 ```ts
 'tool-calls', 'tool-calls-timeseries', 'tool-calls-latency',
 'tool-repeats', 'tool-failure-rates',
 'skill-usage', 'subagent-usage',
+'mcp-usage',
 'tool-denials', 'hook-executions'
 ```
 

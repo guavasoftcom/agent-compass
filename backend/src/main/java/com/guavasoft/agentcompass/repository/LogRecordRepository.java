@@ -50,6 +50,43 @@ import java.util.List;
 // event_name for the same reason.
 public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long> {
 
+  // MCP calls collapse to one constant tool_name (:mcpToolName, "mcp_tool") on every log-backed
+  // aggregation, so every query that groups on the tool dimension needs to split that bucket back
+  // out by server, the same way every other tool is already split by :toolAttribute. Real identity
+  // lives in :parametersAttribute (tool_parameters), a JSON-encoded STRING, parsed with the same
+  // NULLIF/::jsonb idiom tool_input uses elsewhere in this file. Declared once here and
+  // concatenated into each @Query string (still a compile-time constant, since both operands are
+  // final Strings) rather than copy-pasted 14 times, so a future change to the parsing logic or to
+  // TuningProperties.mcpToolName's default cannot silently miss a callsite. The 'mcp:' prefix keeps
+  // MCP rows self-identifying and sortable wherever tools are listed, and can never collide with a
+  // real tool literally named 'playwright'.
+  //
+  // NOT applied to aggregateToolRepeats/InRange (per-server identity doesn't give an MCP call a
+  // *scope*, so re-admitting it would reintroduce the "(no scope)" false-repeat bug that query's own
+  // comment documents) or to findToolEventsForSession (a per-turn detail list, not an analysis
+  // surface — see the Sessions page CLAUDE.md).
+  String MCP_AWARE_TOOL_EXPRESSION = """
+      CASE WHEN attributes ->> :toolAttribute = :mcpToolName
+           THEN 'mcp:' || COALESCE(NULLIF((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :serverKey, ''), 'unknown')
+           ELSE COALESCE(attributes ->> :toolAttribute, 'unknown') END""";
+
+  // Companion to MCP_AWARE_TOOL_EXPRESSION for the two report queries whose *scope* column is
+  // normally read from tool_input's file_path/command. MCP calls never populate tool_input — their
+  // identity lives in :parametersAttribute instead — so without this an MCP row split by server
+  // would still show an empty scope. :toolKey is TuningProperties.mcpToolNameAttribute
+  // ("mcp_tool_name", e.g. "browser_evaluate"), the one piece of MCP identity that makes an
+  // oversized/slow row actionable.
+  String MCP_AWARE_TOOL_INPUT_SCOPE_EXPRESSION = """
+      CASE WHEN attributes ->> :toolAttribute = :mcpToolName
+           THEN COALESCE((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :toolKey, '')
+           ELSE COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+                    ltrim(regexp_replace(
+                      (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                      '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
+                      '')),
+                    '')
+      END""";
+
   // Logs correlated to a trace by OTLP trace context. Claude Code >= 2.1.152 stamps
   // trace_id + span_id onto every event log emitted inside an active span, so a
   // trace's logs are exactly the rows carrying its trace_id. The frontend then
@@ -147,10 +184,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp);
 
+  // Tool dimension is MCP-aware (MCP_AWARE_TOOL_EXPRESSION): this feeds the tool-mix donut on the
+  // same ToolCallsPage as the calls-over-time chart aggregateToolCallsTimeseries/InRange reads —
+  // splitting one and not the other would show the donut and the stacked chart disagreeing on
+  // whether an MCP call reads 'mcp_tool' or 'mcp:playwright'.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COUNT(*)                                            AS calls
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
+        COUNT(*) AS calls
       FROM log_records
       WHERE event_name = :eventName
         AND timestamp >= :since
@@ -160,12 +202,16 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolCalls(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("since") Instant since);
 
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COUNT(*)                                            AS calls
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
+        COUNT(*) AS calls
       FROM log_records
       WHERE event_name = :eventName
         AND timestamp >= :start
@@ -176,6 +222,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolCallsInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -199,7 +248,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // only.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)                                           AS calls,
         ROUND(AVG((attributes ->> 'duration_ms')::numeric))                                AS avg_ms,
         ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (attributes ->> 'duration_ms')::numeric)) AS p95_ms,
@@ -214,6 +264,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolPerformanceInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -240,7 +293,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // interpolation semantics every other percentile in this codebase uses.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown')                     AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)::bigint                                                       AS calls,
         SUM((attributes ->> 'tool_result_size_bytes')::numeric)::bigint        AS total_bytes,
         ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
@@ -256,6 +310,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolContextFootprintInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -271,9 +328,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // context budget went, and "delegate this to a subagent" is one of the answers
   // it exists to inform. Neither query is the other's filtered view; changing one
   // is not automatically a reason to change the other.
+  //
+  // excludedTools matches RAW tool names (e.g. "Agent") — the exclusion predicate below stays
+  // against attributes ->> :toolAttribute on purpose, unlike the projected 'tool' column. Adding
+  // "mcp:playwright" here would silently no-op; exclude an MCP server by adding "mcp_tool"
+  // instead, which drops every server (there is no per-server exclusion on this query).
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown')                     AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)::bigint                                                       AS calls,
         SUM((attributes ->> 'tool_result_size_bytes')::numeric)::bigint        AS total_bytes,
         ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
@@ -292,6 +355,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateTunableToolContextFootprintInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
       @Param("end") Instant end);
@@ -320,10 +386,14 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // prefers the
   // smallest NON-EMPTY message (MIN over NULLIF) so a blank-error row can't mask
   // a useful one.
+  // Tool dimension is MCP-aware: unsplit, this query would print 'mcp_tool' as one anonymous row
+  // a few sections away from the report's dedicated MCP section attributing the same failures to
+  // named servers by number (playwright carries the largest single share on live data).
   @Query(value = """
       WITH failure_events AS (
         SELECT
-          COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
+        """ + MCP_AWARE_TOOL_EXPRESSION + """
+         AS tool,
           COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
           COALESCE(attributes ->> 'error', '')               AS error_message,
           COALESCE(
@@ -357,6 +427,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolFailuresInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -426,6 +499,69 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("apiRequestEventName") String apiRequestEventName,
       @Param("modelAttribute") String modelAttribute,
       @Param("agentNameAttribute") String agentNameAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Per-(server, tool) MCP usage: calls, failures, latency, and result-size aggregates over
+  // tool_result events whose tool_name is the shared :mcpToolName constant. Simpler than
+  // aggregateToolInvocationsByInnerAttributeAndModelInRange above, which this is modeled on: no
+  // model correlation (MCP calls carry no model dimension) and no LEFT JOIN LATERAL, because
+  // tool_result already carries duration_ms and tool_result_size_bytes directly. Identity is
+  // extracted with the same COALESCE(NULLIF(...)) idiom used there, reading :serverKey /
+  // :toolKey out of the :parametersAttribute JSON string; missing or blank values bucket under
+  // 'unknown' rather than being dropped. Denials are NOT covered here — tool_decision rows carry
+  // the same tool_parameters, and are picked up by the MCP_AWARE_TOOL_EXPRESSION split of
+  // aggregateToolDenials/InRange instead of a second query.
+  //
+  // Filters on the event_name COLUMN, never attributes ->> 'event.name' — see the file-header
+  // comment. tool_name is filtered the same way: the generated column (V17), not
+  // attributes ->> :toolAttribute, is what idx_log_records_tool_name_ts actually indexes — the
+  // planner cannot use that index for a differently-shaped expression even when the two always
+  // agree, which is why "no migration needed" in the design for this feature specifically depends
+  // on filtering the column. That ties this query's correctness to tuning.tool-attribute staying
+  // "tool_name" (the same tradeoff V17 already made for the rest of the Logs-page queries), so
+  // there is no :toolAttribute bind param here — nothing in this query would use it. Ordered so
+  // every row for one server arrives together, sorted by that server's total calls descending,
+  // matching aggregateToolInvocationsByInnerAttributeAndModelInRange.
+  // A window function's PARTITION BY cannot resolve a bare SELECT-list alias — only a genuine
+  // ORDER BY/GROUP BY item can use the "output column name" extension Postgres otherwise allows
+  // throughout this file (e.g. plain "GROUP BY tool"). aggregateToolInvocationsByInnerAttributeAndModelInRange's
+  // "PARTITION BY identifier" only works because identifier is a real column of its subagent_calls
+  // CTE, not an alias introduced in the same SELECT list — so this query needs the same CTE shape
+  // rather than a flat SELECT, or "PARTITION BY server" fails with "column server does not exist".
+  @Query(value = """
+      WITH mcp_calls AS (
+        SELECT
+          COALESCE(NULLIF((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :serverKey, ''), 'unknown') AS server,
+          COALESCE(NULLIF((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :toolKey, ''), 'unknown')   AS tool,
+          (attributes ->> 'duration_ms')::numeric            AS duration_ms,
+          (attributes ->> 'tool_result_size_bytes')::numeric AS result_bytes,
+          attributes ->> 'success' = 'false'                 AS failed
+        FROM log_records
+        WHERE event_name = :eventName
+          AND tool_name = :mcpToolName
+          AND timestamp >= :start
+          AND timestamp <= :end
+      )
+      SELECT
+        server,
+        tool,
+        COUNT(*)                                                                     AS calls,
+        COUNT(*) FILTER (WHERE failed)                                               AS failures,
+        ROUND(AVG(duration_ms))                                                      AS avg_ms,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms))             AS p95_ms,
+        SUM(result_bytes)::bigint                                                    AS total_bytes,
+        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY result_bytes))::bigint    AS p95_bytes
+      FROM mcp_calls
+      GROUP BY server, tool
+      ORDER BY SUM(COUNT(*)) OVER (PARTITION BY server) DESC, server, calls DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateMcpServerUsageInRange(
+      @Param("eventName") String eventName,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
+      @Param("toolKey") String toolKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -503,7 +639,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // derive failure_rate without a second query.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown')              AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)                                                        AS calls,
         COUNT(*) FILTER (WHERE attributes ->> 'success' = 'false')      AS failures
       FROM log_records
@@ -515,11 +652,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolFailureRates(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("since") Instant since);
 
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown')              AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)                                                        AS calls,
         COUNT(*) FILTER (WHERE attributes ->> 'success' = 'false')      AS failures
       FROM log_records
@@ -532,12 +673,19 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolFailureRatesInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
+  // Historically hardcoded 'tool_name' rather than binding :toolAttribute — the one documented
+  // exception to this file's "never hardcode tool_name" convention. Splitting MCP rows onto
+  // :toolAttribute/MCP_AWARE_TOOL_EXPRESSION brings both back in line with every sibling query.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> 'tool_name', 'unknown') AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COALESCE(attributes ->> 'source', 'unknown')    AS source,
         COUNT(*)                                         AS count
       FROM log_records
@@ -549,11 +697,16 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       """, nativeQuery = true)
   List<Object[]> aggregateToolDenials(
       @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("since") Instant since);
 
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> 'tool_name', 'unknown') AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COALESCE(attributes ->> 'source', 'unknown')    AS source,
         COUNT(*)                                         AS count
       FROM log_records
@@ -566,6 +719,10 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       """, nativeQuery = true)
   List<Object[]> aggregateToolDenialsInRange(
       @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end);
 
@@ -609,10 +766,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end);
 
+  // Tool dimension is MCP-aware — see the note beside aggregateToolCalls. Splitting this feed
+  // also changes LogService#buildToolCallTimeseries's top-N selection: MCP servers now compete
+  // for chart slots individually instead of as one 'mcp_tool' lump, which is the intent, but it
+  // shifts what falls into the synthetic 'Other' bucket.
   @Query(value = """
       SELECT
         date_bin(make_interval(secs => :bucketSeconds), timestamp, :since) AS bucket,
-        COALESCE(attributes ->> :toolAttribute, 'unknown')                 AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)                                                           AS calls
       FROM log_records
       WHERE event_name = :eventName
@@ -623,13 +785,17 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolCallsTimeseries(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("since") Instant since,
       @Param("bucketSeconds") long bucketSeconds);
 
   @Query(value = """
       SELECT
         date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
-        COALESCE(attributes ->> :toolAttribute, 'unknown')                 AS tool,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
         COUNT(*)                                                           AS calls
       FROM log_records
       WHERE event_name = :eventName
@@ -641,6 +807,9 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateToolCallsTimeseriesInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds);
@@ -721,16 +890,22 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // regex as
   // the hotspot bucketing so re-runs of `cd x && <cmd>` and plain `<cmd>` group
   // together.
+  //
+  // Tool dimension is MCP-aware (MCP_AWARE_TOOL_EXPRESSION): left unsplit, a large MCP result
+  // would still surface as an anonymous 'mcp_tool' row — the exact problem this feature exists to
+  // fix, sitting in the same report as the section that fixes it everywhere else. The scope
+  // column is ALSO MCP-aware (MCP_AWARE_TOOL_INPUT_SCOPE_EXPRESSION): MCP calls never populate
+  // tool_input (their identity lives in tool_parameters instead), so without it an MCP row would
+  // show a real bytes figure against a blank scope. excludedTools below intentionally keeps
+  // matching the RAW attributes ->> :toolAttribute value, not the projected 'mcp:<server>' tool —
+  // adding "mcp:playwright" there would silently no-op; exclude MCP entirely by adding "mcp_tool".
   @Query(value = """
       WITH sized_calls AS (
         SELECT
-          COALESCE(attributes ->> :toolAttribute, 'unknown')      AS tool,
-          COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-                   ltrim(regexp_replace(
-                     (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                     '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
-                     '')),
-                   '')                                            AS scope,
+        """ + MCP_AWARE_TOOL_EXPRESSION + """
+         AS tool,
+        """ + MCP_AWARE_TOOL_INPUT_SCOPE_EXPRESSION + """
+         AS scope,
           ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
         FROM log_records
         WHERE event_name = :eventName
@@ -754,6 +929,10 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateOversizedToolResultsInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
+      @Param("toolKey") String toolKey,
       @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
       @Param("end") Instant end,
@@ -859,15 +1038,16 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // bucketing, so the report attributes a worst-call fact to the command that
   // actually ran
   // (`./mvnw verify`), never back to a `cd` bucket.
+  //
+  // Tool and scope are MCP-aware the same way, and for the same reasons, as
+  // aggregateOversizedToolResultsInRange above — see its comment. excludedTools likewise stays
+  // against the raw attributes ->> :toolAttribute value.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> :toolAttribute, 'unknown') AS tool,
-        COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-                 ltrim(regexp_replace(
-                   (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
-                   '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
-                   '')),
-                 '')                                       AS scope,
+      """ + MCP_AWARE_TOOL_EXPRESSION + """
+       AS tool,
+      """ + MCP_AWARE_TOOL_INPUT_SCOPE_EXPRESSION + """
+       AS scope,
         ((attributes ->> 'duration_ms')::numeric)::bigint            AS duration_ms,
         ((attributes ->> 'tool_result_size_bytes')::numeric)::bigint AS bytes
       FROM log_records
@@ -888,6 +1068,10 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   List<Object[]> aggregateSlowAndLargeCallsInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
+      @Param("mcpToolName") String mcpToolName,
+      @Param("parametersAttribute") String parametersAttribute,
+      @Param("serverKey") String serverKey,
+      @Param("toolKey") String toolKey,
       @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
       @Param("end") Instant end,

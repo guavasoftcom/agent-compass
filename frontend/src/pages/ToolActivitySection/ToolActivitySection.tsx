@@ -4,10 +4,11 @@ const TABS: readonly SectionTab[] = [
   { to: '/tools/calls', label: 'Calls' },
   { to: '/tools/reliability', label: 'Reliability' },
   { to: '/tools/skills-agents', label: 'Skills & Subagents' },
+  { to: '/tools/mcp-servers', label: 'MCP Servers' },
   { to: '/tools/permissions', label: 'Denials' },
 ];
 
-// React Query key prefixes used by the four child pages. Drives the section-level
+// React Query key prefixes used by the five child pages. Drives the section-level
 // Refresh button and the polling indicator.
 const QUERY_KEY_PREFIXES: readonly string[] = [
   'tool-calls',
@@ -17,6 +18,7 @@ const QUERY_KEY_PREFIXES: readonly string[] = [
   'tool-failure-rates',
   'skill-usage',
   'subagent-usage',
+  'mcp-usage',
   'tool-denials',
   'hook-executions',
 ];

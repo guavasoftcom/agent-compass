@@ -10,6 +10,7 @@ const ToolActivitySection = lazy(() => import('../pages/ToolActivitySection'));
 const ToolCallsPage = lazy(() => import('../pages/ToolCallsPage'));
 const ToolReliabilityPage = lazy(() => import('../pages/ToolReliabilityPage'));
 const SkillsAgentsPage = lazy(() => import('../pages/SkillsAgentsPage'));
+const McpServersPage = lazy(() => import('../pages/McpServersPage'));
 const PermissionDenialsPage = lazy(() => import('../pages/PermissionDenialsPage'));
 const TokensPage = lazy(() => import('../pages/TokensPage'));
 const SessionsPage = lazy(() => import('../pages/SessionsPage'));
@@ -31,6 +32,7 @@ const App = () => {
           <Route path="calls" element={<ToolCallsPage />} />
           <Route path="reliability" element={<ToolReliabilityPage />} />
           <Route path="skills-agents" element={<SkillsAgentsPage />} />
+          <Route path="mcp-servers" element={<McpServersPage />} />
           <Route path="permissions" element={<PermissionDenialsPage />} />
         </Route>
 

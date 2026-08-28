@@ -23,9 +23,16 @@ export interface ContextFootprintCardProps {
  * `bytes / 4`, not a billed count. The two must never look like they add up.
  *
  * Rows past the top N collapse into one "Other" bucket rather than being
- * dropped, so the percentages still sum to 100 — MCP tool names
- * (`mcp__server__tool`) can proliferate and would otherwise make the visible
- * shares silently incomplete.
+ * dropped, so the percentages still sum to 100 — MCP servers can proliferate
+ * (each one is its own row here, `mcp:<server>`, e.g. `mcp:playwright`) and
+ * would otherwise make the visible shares silently incomplete. That
+ * per-server split is a fact about THIS log-backed endpoint specifically:
+ * `tool_name` on the underlying log rows is one shared constant (`mcp_tool`)
+ * for every server, and the backend query recovers the real per-server
+ * identity from a separate JSON attribute rather than parsing `tool_name`
+ * itself — contrast the span-backed latency card, where MCP names collapse
+ * the same way but arrive as the raw `mcp__server__tool` proliferation this
+ * comment used to describe.
  */
 const ContextFootprintCard = ({ rows }: ContextFootprintCardProps) => {
   const totalBytes = rows.reduce((sum, row) => sum + row.totalBytes, 0);

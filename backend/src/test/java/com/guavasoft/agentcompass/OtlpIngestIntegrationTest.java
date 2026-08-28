@@ -106,6 +106,56 @@ class OtlpIngestIntegrationTest {
         }
 
         @Test
+        void ingestedOtlpMcpToolResultLogsSplitByServerInToolCallsAggregation() {
+                long timestampNanos = System.currentTimeMillis() * 1_000_000L;
+                ScopeLogs.Builder scopeLogs = ScopeLogs.newBuilder()
+                                .setScope(InstrumentationScope.newBuilder().setName("test-scope").build());
+                for (int i = 0; i < 3; i++) {
+                        scopeLogs.addLogRecords(mcpToolResultLog(timestampNanos, "playwright", "browser_evaluate"));
+                }
+                scopeLogs.addLogRecords(mcpToolResultLog(timestampNanos, "CodeGraphContext", "query"));
+
+                ExportLogsServiceRequest request = ExportLogsServiceRequest.newBuilder()
+                                .addResourceLogs(ResourceLogs.newBuilder()
+                                                .setResource(Resource.newBuilder()
+                                                                .addAttributes(stringAttr("service.name",
+                                                                                "claude-code"))
+                                                                .build())
+                                                .addScopeLogs(scopeLogs.build())
+                                                .build())
+                                .build();
+
+                post("/v1/logs", request.toByteArray());
+
+                ResponseEntity<List<ToolCallCount>> queryResponse = new RestTemplate().exchange(
+                                baseUrl() + "/api/tool-activity/calls?minutes=1440",
+                                HttpMethod.GET,
+                                null,
+                                new ParameterizedTypeReference<List<ToolCallCount>>() {
+                                });
+
+                List<ToolCallCount> rows = queryResponse.getBody();
+                assertThat(rows).isNotNull();
+                assertThat(rows).extracting(ToolCallCount::getTool)
+                                .contains("mcp:playwright", "mcp:CodeGraphContext")
+                                .doesNotContain("mcp_tool");
+                ToolCallCount playwright = rows.stream()
+                                .filter(row -> "mcp:playwright".equals(row.getTool())).findFirst().orElseThrow();
+                assertThat(playwright.getCalls()).isEqualTo(3L);
+        }
+
+        private static LogRecord mcpToolResultLog(long timestampNanos, String mcpServerName, String mcpToolName) {
+                String toolParametersJson = "{\"mcp_server_name\":\"" + mcpServerName
+                                + "\",\"mcp_tool_name\":\"" + mcpToolName + "\"}";
+                return LogRecord.newBuilder()
+                                .setTimeUnixNano(timestampNanos)
+                                .addAttributes(stringAttr("event.name", "tool_result"))
+                                .addAttributes(stringAttr("tool_name", "mcp_tool"))
+                                .addAttributes(stringAttr("tool_parameters", toolParametersJson))
+                                .build();
+        }
+
+        @Test
         void ingestedOtlpLogsArePersisted() {
                 long now = System.currentTimeMillis() * 1_000_000L;
                 AnyValue editFailedBody = AnyValue.newBuilder()
