@@ -1,6 +1,5 @@
 import { Box, LinearProgress, useTheme } from '@mui/material';
 import { colorForIndex, radii } from '../../theme/theme';
-import { fontFamilies } from '../../theme/typography';
 
 /**
  * One row in a BreakdownList. Either `colorIndex` (resolved via the shared
@@ -45,13 +44,8 @@ export interface BreakdownRow {
  * - `'stacked'`   — each row is a flex line (optional dot · label · value ·
  *   percentage) followed by a LinearProgress bar below it. Matches the
  *   MetricBreakdown style. Works well inside a narrow right-hand panel.
- *
- * - `'column-card'` — each row renders as a self-contained vertical card
- *   (dot + label on top, big display-font value + inline percentage, then
- *   bar). Matches the TokenByModelCard style. The caller is responsible for
- *   putting the BreakdownList inside an appropriate grid container.
  */
-export type BreakdownListLayout = 'grid-row' | 'stacked' | 'column-card';
+export type BreakdownListLayout = 'grid-row' | 'stacked';
 
 export interface BreakdownListProps {
   rows: BreakdownRow[];
@@ -78,14 +72,8 @@ export interface BreakdownListProps {
    */
   showRank?: boolean;
   /**
-   * When `true`, the value is rendered in the display font at a large
-   * typographic size (matching the "Token sum by model" card). Only
-   * meaningful for `'column-card'` layout.
-   */
-  largeValue?: boolean;
-  /**
    * Percentage precision for the inline "N%" label. Defaults to `1`.
-   * Pass `0` to hide decimals (e.g. TokenByModelCard already has integers).
+   * Pass `0` to hide decimals (e.g. MetricBreakdown already has integers).
    */
   percentageDecimalPlaces?: number;
 }
@@ -110,19 +98,18 @@ const resolveColor = (row: BreakdownRow): string => {
 
 /**
  * A shared "label · value · percentage · LinearProgress" list used across
- * ToolRankingCard, MetricBreakdown, TokenByModelCard, and ContextFootprintCard.
+ * ToolRankingCard, MetricBreakdown, and ContextFootprintCard.
  *
- * The call sites use different `layout` variants; `showColorDot` / `showRank` /
- * `largeValue` cover the remaining visual differences. The surrounding
- * Paper/title/heading stays in each card — this component replaces only the
- * repeated row+bar markup.
+ * The call sites use different `layout` variants; `showColorDot` / `showRank`
+ * cover the remaining visual differences. The surrounding Paper/title/heading
+ * stays in each card — this component replaces only the repeated row+bar
+ * markup.
  */
 const BreakdownList = ({
   rows,
   layout = 'stacked',
   showColorDot = false,
   showRank = false,
-  largeValue = false,
   percentageDecimalPlaces = 1,
 }: BreakdownListProps) => {
   const theme = useTheme();
@@ -191,104 +178,6 @@ const BreakdownList = ({
           );
         })}
       </Box>
-    );
-  }
-
-  if (layout === 'column-card') {
-    return (
-      <>
-        {rows.map((row, index) => {
-          const color = resolveColor(row);
-          return (
-            <Box key={`${row.label}-${index}`} sx={{ minWidth: 0 }}>
-              {showColorDot && (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    fontWeight: 600,
-                    fontSize: 14,
-                    mb: 1.5,
-                    minWidth: 0,
-                  }}
-                >
-                  <Box
-                    sx={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: '3px',
-                      bgcolor: color,
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Box
-                    sx={{
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {row.label}
-                  </Box>
-                </Box>
-              )}
-              {!showColorDot && (
-                <Box sx={{ fontWeight: 600, fontSize: 14, mb: 1.5, minWidth: 0 }}>
-                  {row.label}
-                </Box>
-              )}
-              {largeValue ? (
-                <Box
-                  sx={{
-                    fontFamily: fontFamilies.display,
-                    fontWeight: 800,
-                    fontSize: 28,
-                    letterSpacing: '-0.6px',
-                    color: 'text.primary',
-                  }}
-                >
-                  {row.value}
-                  <Box
-                    component="span"
-                    sx={{
-                      fontSize: 14,
-                      color: 'text.secondary',
-                      fontWeight: 600,
-                      ml: 0.625,
-                    }}
-                  >
-                    · {row.percentage.toFixed(percentageDecimalPlaces)}%
-                  </Box>
-                </Box>
-              ) : (
-                <Box sx={{ fontSize: '0.875rem', fontVariantNumeric: 'tabular-nums' }}>
-                  <Box component="span" sx={{ fontWeight: 700 }}>{row.value}</Box>
-                  <Box component="span" sx={{ color: 'text.secondary', ml: 0.5 }}>
-                    · {row.percentage.toFixed(percentageDecimalPlaces)}%
-                  </Box>
-                </Box>
-              )}
-              <LinearProgress
-                variant="determinate"
-                value={row.percentage}
-                sx={{
-                  mt: 1.625,
-                  height: 8,
-                  borderRadius: radii.pill,
-                  bgcolor: trackColor,
-                  '& .MuiLinearProgress-bar': { backgroundColor: color, borderRadius: radii.pill },
-                }}
-              />
-              {row.secondaryText && (
-                <Box sx={{ mt: 0.5, fontSize: 12, color: 'text.secondary' }}>
-                  {row.secondaryText}
-                </Box>
-              )}
-            </Box>
-          );
-        })}
-      </>
     );
   }
 

@@ -224,19 +224,20 @@ public class MetricService {
   // near-full-table scans of the token.usage metric (bucket-by-type timeseries,
   // per-model totals, grand total) with one GROUPING SETS query -- see that
   // query's Javadoc. The grand total it already returns is also what
-  // aggregateCostTotalsOnly needs for costPer1k, so the Tokens page's cost
+  // aggregateCostTotalsAndByModel needs for costPer1k, so the Tokens page's cost
   // figure no longer pays for its own separate aggregateTotalTokens scan either.
   //
-  // This endpoint's cost figure deliberately uses aggregateCostTotalsOnly rather
-  // than the full aggregateCostSummary: the Tokens page (this method's only
-  // caller) reads just CostSummary.spend24h and .deltaPct off the embedded
-  // object (see TokensPageView.tsx) -- not trend, byModel, burnRate,
-  // projected30d, or costPer1k's own inputs beyond what's already at hand -- so
-  // running aggregateCostBreakdown's GROUPING SETS scan (bucket + model + total
-  // over ALL cost.usage rows in the window) here would compute a 14-bucket trend
-  // and a per-model breakdown solely to discard them. aggregateCostSummary
-  // itself is unchanged and still backs GET /api/metrics/cost, which is the
-  // endpoint that actually needs the full breakdown.
+  // This endpoint's cost figure deliberately uses aggregateCostTotalsAndByModel
+  // rather than the full aggregateCostSummary: the Tokens page (this method's
+  // only caller) reads CostSummary.spend24h, .deltaPct, and .byModel off the
+  // embedded object (see TokensPageView.tsx / CostByModelCard) but never .trend
+  // -- so aggregateCostTotalsAndByModel still runs aggregateCostBreakdown's
+  // GROUPING SETS scan for the per-model rows (cheap: one pass either way) but
+  // requests it with a single time bucket spanning the whole window, discarding
+  // the bucket rows a real trend would need rather than computing a 14-bucket
+  // series solely to throw it away. aggregateCostSummary itself is unchanged
+  // and still backs GET /api/metrics/cost, which is the endpoint that actually
+  // needs the trend.
   private TokenUsageSummary buildTokenUsageSummaryForWindow(Instant start, Instant end, long bucketSeconds) {
     List<Object[]> breakdownRows = metricPointRepository.aggregateTokenUsageBreakdown(
         tuningProperties.getTokenUsageMetric(),
@@ -247,7 +248,7 @@ public class MetricService {
         bucketSeconds);
     List<ModelTokenShare> byModel = buildTokensByModel(breakdownRows);
     long totalTokens = extractTokenGrandTotal(breakdownRows);
-    CostSummary cost = aggregateCostTotalsOnly(start, end, totalTokens);
+    CostSummary cost = aggregateCostTotalsAndByModel(start, end, totalTokens);
     return buildTokenUsageSummary(breakdownRows, bucketSeconds, byModel, cost);
   }
 
@@ -713,15 +714,18 @@ public class MetricService {
   }
 
   // Lean sibling of aggregateCostSummary for callers that only need the scalar
-  // figures (spend, delta, burn rate, projection, cost/1k) -- currently just the
-  // Tokens page via buildTokenUsageSummaryForWindow, see its Javadoc. Skips
-  // aggregateCostBreakdown's GROUPING SETS scan entirely (no trend, no
-  // per-model breakdown are computed) and takes totalTokens as a parameter
-  // rather than running its own aggregateTotalTokens scan, since the caller
-  // already has it from aggregateTokenUsageBreakdown's grand-total row. trend
-  // and byModel come back empty -- not wrong, just not computed -- so this must
-  // never back an endpoint whose caller reads either field.
-  private CostSummary aggregateCostTotalsOnly(Instant from, Instant to, long totalTokens) {
+  // figures plus the per-model breakdown (spend, delta, burn rate, projection,
+  // cost/1k, byModel) but never the trend -- currently just the Tokens page via
+  // buildTokenUsageSummaryForWindow, see its Javadoc. Takes totalTokens as a
+  // parameter rather than running its own aggregateTotalTokens scan, since the
+  // caller already has it from aggregateTokenUsageBreakdown's grand-total row.
+  // Still runs aggregateCostBreakdown for the per-model rows, but with a single
+  // bucket spanning the whole window -- the GROUPING SETS scan is one pass
+  // regardless of bucket count, so this pays for the per-model rows without
+  // paying for a trend series nothing here reads. trend comes back empty -- not
+  // wrong, just not computed -- so this must never back an endpoint whose
+  // caller reads it.
+  private CostSummary aggregateCostTotalsAndByModel(Instant from, Instant to, long totalTokens) {
     double windowSeconds = Math.max(1.0, Duration.between(from, to).getSeconds());
     double windowHours = windowSeconds / SECONDS_PER_HOUR;
     Duration windowDuration = Duration.ofSeconds((long) windowSeconds);
@@ -737,6 +741,10 @@ public class MetricService {
     double projected30d = burnRate * HOURS_PER_MONTH;
     double costPer1k = totalTokens == 0L ? 0.0 : currentSpend / (totalTokens / TOKENS_PER_COST_UNIT);
 
+    List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
+        costMetricName, from, to, (long) windowSeconds);
+    List<CostModelShare> byModel = buildCostByModel(breakdownRows, currentSpend);
+
     return new CostSummary(
         formatUsd(currentSpend),
         formatDeltaPct(deltaPct),
@@ -744,7 +752,7 @@ public class MetricService {
         formatProjected(projected30d),
         formatCostPer1k(costPer1k),
         List.of(),
-        List.of(),
+        byModel,
         "");
   }
 

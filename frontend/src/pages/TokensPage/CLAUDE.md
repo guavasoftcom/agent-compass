@@ -1,8 +1,8 @@
 # Tokens page
 
-Token usage dashboard, split across two in-page tabs. **Overview**: spend KPIs, a stacked-area
-time-series chart of the four token types over the selected window, a token-composition donut
-with cache-efficiency health gauge, and a per-model token breakdown. **Cache & Context**: a
+Token usage dashboard, split across two in-page tabs. **Overview**: spend KPIs, a token-composition
+donut with cache-efficiency health gauge, a merged per-model tokens+cost table, and a stacked-area
+time-series chart of the four token types over the selected window. **Cache & Context**: a
 worst-cache-efficiency session ranking (rows open a per-session detail dialog) and an estimated
 per-tool context footprint.
 Backend counterpart: `SessionController.tokenUsage` →
@@ -23,9 +23,9 @@ TokensPage/
 │   ├── TokenSummaryCards/      four-tile KPI strip (Total cost · Total tokens · Models used · Top model)
 │   │   ├── TokenSummaryCards.tsx
 │   │   └── index.ts
-│   ├── TokenByModelCard/       per-model token sums — name + colour dot, big total, share bar
-│   │   ├── TokenByModelCard.tsx
-│   │   └── index.ts
+│   ├── TokenCostByModelCard/   merged per-model table — Model | Tokens (value+share bar) | Cost
+│   │   ├── TokenCostByModelCard.tsx   (value+share, no bar); hand-built table (Box component=
+│   │   └── index.ts                  "table"), not BreakdownList — see gotcha below
 │   ├── TokenCompositionCard/   token-mix donut (SVG hand-built) + cache-efficiency gauge
 │   │   ├── TokenCompositionCard.tsx
 │   │   └── index.ts
@@ -64,12 +64,6 @@ TokensPage/
 │ └──────────────┘ └──────────────┘ └──────────────┘ └────────────────────┘  │
 │  ← TokenSummaryCards: 4-column grid (xs:1, sm:2, lg:4) ──────────────────  │
 │                                                                             │
-│ ┌─ Paper: Token usage over time ────────────────────────────────────────┐  │
-│ │ title + ⓘ tooltip      [AreaTrendLegend — Cache read/creation/Input/  │  │
-│ │                          Output; click to toggle series visibility]   │  │
-│ │ AreaTrendChart (stacked=false, yScale=log, height=320)                │  │
-│ └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
 │ ┌─ TokenCompositionCard ────────────────────────────────────────────────┐  │
 │ │ ┌──── donut (SVG) ────┐  │  Cache read ratio                         │  │
 │ │ │  total-tokens label  │  │  big % + LinearProgress bar (0–100%)     │  │
@@ -77,9 +71,18 @@ TokensPage/
 │ │ descriptive legend rows  │  savings note (savedTokens)               │  │
 │ └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
-│ ┌─ TokenByModelCard ────────────────────────────────────────────────────┐  │
-│ │ "Token sum by model"                                                  │  │
-│ │ BreakdownList (layout="column-card") — name/dot · big total · bar    │  │
+│ ┌─ TokenCostByModelCard ────────────────────────────────────────────────┐  │
+│ │ "Tokens & cost by model"                                              │  │
+│ │ Model            │ Tokens                    │ Cost                  │  │
+│ │ ● claude-sonnet-5│ 15.2M · 95% ▇▇▇▇▇▇▇▇▇░░░  │ $4.62           94%   │  │
+│ │ ● claude-haiku…  │ 863.1K · 5%  ▇░░░░░░░░░░  │ $0.28            6%   │  │
+│ └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│ ┌─ Paper: Token usage over time ────────────────────────────────────────┐  │
+│ │ title + ⓘ tooltip      [AreaTrendLegend — Cache read/creation/Input/  │  │
+│ │                          Output; click to toggle series visibility]   │  │
+│ │ AreaTrendChart (stacked=false, yScale=log, height=320)                │  │
+│ │ ← LAST card in the Overview stack (see Delta 2 gotcha below)          │  │
 │ └───────────────────────────────────────────────────────────────────────┘  │
 ├─ tab: Cache & Context ──────────────────────────────────────────────────────┤
 │ ┌─ CacheEfficiencyRankCard ─────────────────────────────────────────────┐  │
@@ -166,8 +169,18 @@ that card showing its own empty state. `onReload` refetches all three.
     `summary.cost.deltaPct` prefix (`-` → green down-arrow, otherwise red up-arrow).
   - `windowLabel` — derived from the current `selection` so cost captions read "vs. prev Last 24 h"
     (not a hardcoded "24h").
-- `TokenByModelCard` receives `summary.byModel` (`TokenModelShare[]`) verbatim; it delegates
-  rendering to `BreakdownList` with `layout="column-card"`.
+- `tokenCostRows` — the merged `TokenCostByModelCard` row set, built by zipping `summary.byModel`
+  (`TokenModelShare[]`) with `summary.cost.byModel` (`CostModelShare[]`) on `model` (a `Map` keyed
+  by model name for the cost lookup). Both source arrays are already pre-formatted by the backend
+  and independently ordered by their own metric (token share vs. cost share); the zip re-sorts by
+  token share so the merged table has one consistent row order regardless of how the two disagreed.
+  A model present in `byModel` but absent from `cost.byModel` (shouldn't happen — both come from
+  the same window — but not structurally guaranteed) falls back to `usd: '—'`, `costShare: 0`
+  rather than dropping the row. Backed by `MetricService.aggregateCostTotalsAndByModel` (formerly
+  `aggregateCostTotalsOnly`, which left `byModel` empty on purpose — see that method's Javadoc):
+  it still skips computing a cost trend (nothing on this page reads one), but now runs
+  `aggregateCostBreakdown`'s GROUPING SETS query with a single window-spanning bucket to get the
+  per-model rows at no extra scan cost.
 - `TokenCompositionCard` contains the only hand-built SVG on this page: a donut built from
   `<circle>` arcs using `strokeDasharray` / `strokeDashoffset` math. The ratio gauge uses a
   standard MUI `LinearProgress`.
@@ -326,8 +339,29 @@ that card showing its own empty state. `onReload` refetches all three.
   The field is named `spend24h` for historical reasons but always reflects the selected window's
   spend — don't treat it as a 24-hour-only metric. The same applies to `deltaPct`, `burnRate`,
   `projected30d`, and `costPer1k`.
-- **`summary.byModel[].tokens` is a pre-formatted string** (e.g. `"7.8M"`). `TokenByModelCard`
-  renders it as-is; don't pass it through `formatCompact`.
+- **`summary.byModel[].tokens` and `summary.cost.byModel[].usd` are pre-formatted strings**
+  (e.g. `"7.8M"`, `"$380.80"`). `TokenCostByModelCard` renders both as-is; don't pass either
+  through `formatCompact` or a currency formatter.
+- **`TokenCostByModelCard` merged the old separate "Token sum by model" and "Cost by model" cards
+  (2026-08 Aurora handoff, `Token Usage Handoff/`) and moved the trend chart to the end of the
+  Overview stack.** New order: Summary KPIs → Composition → **Tokens & cost by model** →
+  **Token usage over time** (previously the chart sat 3rd, between composition and the by-model
+  card). Only the Cost column skips the share bar — a second bar on the same row would compete
+  with the Tokens column's bar for attention, so Cost reads as a plain right-aligned figure
+  (value + share %). The handoff's own source (`Token Usage Handoff/source/TokensPage/`) is stale
+  relative to the shipped page — it predates the Cache & Context tab, the cache-efficiency ranking,
+  and the context-footprint card entirely, so `TokensPage.tsx` was **not** overwritten wholesale;
+  only the two described deltas (the merge, the reorder) were applied on top of the current
+  container/view. Applying such a handoff always means diffing its source against the live files
+  and porting the named deltas by hand, not copying files over — see
+  [[project_claude_design_regressions]] for the general pattern.
+- **`TokenCostByModelCard` uses the hand-built `Box component="table"` idiom, not MUI's `Table` /
+  `TableRow` / `TableCell` components** — the handoff's own source used the latter, which this repo
+  reserves for nothing (see `frontend/CLAUDE.md`'s Charts and grids section); `CacheEfficiencyRankCard`
+  above is the sibling example. The dot + model name still sit in an inner flex `Box` inside the
+  cell rather than `display: flex` directly on the `<td>`/`Box component="td"` itself — the handoff
+  mockup found and documented that setting it on the cell breaks that row's height sync with its
+  siblings (a dead strip on hover); that constraint carried over even though the element changed.
 - **Log scale requires at least two points.** The chart is hidden and `emptyMessage` is shown
   when `axisDates.length < 2`. If there is exactly one bucket, a targeted message says so rather
   than a generic "No data."

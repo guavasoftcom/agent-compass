@@ -18,7 +18,7 @@ import type {
   WindowSelection,
 } from '../../api';
 import TokenSummaryCards from './components/TokenSummaryCards';
-import TokenByModelCard from './components/TokenByModelCard';
+import TokenCostByModelCard from './components/TokenCostByModelCard';
 import TokenCompositionCard from './components/TokenCompositionCard';
 import CacheEfficiencyRankCard from './components/CacheEfficiencyRankCard';
 import ContextFootprintCard from './components/ContextFootprintCard';
@@ -216,6 +216,31 @@ const TokensPageView = ({
   const modelRows = summary.byModel ?? [];
   const topModel = modelRows[0];
 
+  // Merged "Tokens & cost by model" table row set — zips summary.byModel
+  // (TokenModelShare[]) with summary.cost.byModel (CostModelShare[]) on
+  // `model`. Both halves are pre-formatted by the backend and already sorted
+  // by their own metric; re-sort by token share here so the table has one
+  // consistent order regardless of how the two arrays individually ordered
+  // themselves.
+  const tokenCostRows = useMemo(() => {
+    const costByModel = new Map(
+      summary.cost.byModel.map((row) => [row.model, row]),
+    );
+    return (summary.byModel ?? [])
+      .map((tokenRow) => {
+        const costRow = costByModel.get(tokenRow.model);
+        return {
+          model: tokenRow.model,
+          colorIndex: tokenRow.colorIndex,
+          tokens: tokenRow.tokens,
+          tokenShare: tokenRow.share,
+          usd: costRow?.usd ?? '—',
+          costShare: costRow?.share ?? 0,
+        };
+      })
+      .sort((left, right) => right.tokenShare - left.tokenShare);
+  }, [summary.byModel, summary.cost.byModel]);
+
   // Window label for cost captions, derived from the selection (never hardcode "24h").
   let windowLabel: string;
   if (selection.kind === 'preset') {
@@ -347,10 +372,11 @@ const TokensPageView = ({
             savedTokens={formatCompact(summary.cacheReadTokens)}
           />
 
-          {/* Per-model token sums — full width, below the composition card */}
-          <TokenByModelCard rows={modelRows} />
+          {/* Merged per-model table — tokens + cost, below the composition card */}
+          <TokenCostByModelCard rows={tokenCostRows} />
 
-          {/* Token usage over time — Aurora area chart */}
+          {/* Token usage over time — Aurora area chart. Last in the Overview
+              stack (not 3rd, between composition and the by-model table). */}
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Box
               sx={{
