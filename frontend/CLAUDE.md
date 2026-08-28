@@ -24,10 +24,14 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.
   - `FacetRail` — shared filter-rail (search box + checkbox facet sections); Logs' `LogFacetRail` and Traces' `TraceFacetRail` build sections for it.
   - `LiveTailToggle` — shared live-tail pill; Traces' `TraceTailToggle` wraps it.
-  - `BreakdownList` — shared ranked-breakdown list; used by the metric and token breakdowns. The
-    leading marker on the `'stacked'` layout is a choice between `showColorDot` (a color the row
-    shares with another chart) and `showRank` (a 1-based position number, when the ordering is
-    the point and the color means nothing) — pick one rather than adding a third variant.
+  - `BreakdownList` — shared ranked-breakdown list (`'grid-row'` / `'stacked'` layouts); used by
+    the Metrics breakdown and `ContextFootprintCard`. The leading marker on the `'stacked'` layout
+    is a choice between `showColorDot` (a color the row shares with another chart) and `showRank`
+    (a 1-based position number, when the ordering is the point and the color means nothing) — pick
+    one rather than adding a third variant. A third `'column-card'` layout existed for the Tokens
+    page's old separate "Token sum by model" / "Cost by model" cards; it was removed when those
+    merged into `TokenCostByModelCard`'s own hand-built table (its last two consumers) — don't
+    reintroduce it for a single caller without a second one lined up.
   - `ChartCard` — shared titled chart-container card; used by the Tool-activity cards.
   - `PromptSummaryText` — renders a prompt, substituting `lib/promptSummary.ts`'s
     `promptSummaryRenderer` summary (a muted, italic "SUBAGENT · ..." line) whenever the prompt
