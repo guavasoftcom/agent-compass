@@ -15,7 +15,11 @@ import BreakdownList, { type BreakdownRow } from '../../components/BreakdownList
 import { colorForIndex } from '../../theme/theme';
 import { formatBytes, formatCompact } from '../../lib/format';
 import type { McpServerUsageRow } from '../../api';
-import { UNKNOWN_SERVER, type McpServerRollupWithShare } from './mcpDerivations';
+import {
+  SLOW_P95_MS,
+  UNKNOWN_SERVER,
+  type McpServerRollupWithShare,
+} from './mcpDerivations';
 
 export interface McpServersPageViewProps {
   toolRows: McpServerUsageRow[];
@@ -40,6 +44,81 @@ const headSx = {
   color: 'text.secondary',
   borderColor: 'divider',
 } as const;
+
+/** One `(server, tool)` row's cells — shared by the main table and the collapsed long-tail table
+ * below it, so a reader can expand the disclosure and still see every column, not just the tool
+ * name and call count. */
+const ToolDetailTableRow = ({ row }: { row: McpServerUsageRow }) => (
+  <TableRow>
+    <TableCell
+      sx={{
+        fontWeight: 600,
+        ...(row.server === UNKNOWN_SERVER && {
+          fontStyle: 'italic',
+          color: 'text.disabled',
+        }),
+      }}
+    >
+      {row.server}
+    </TableCell>
+    <TableCell sx={{ fontFamily: 'monospace', fontSize: 13 }}>{row.tool}</TableCell>
+    <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+      {row.calls.toLocaleString()}
+    </TableCell>
+    <TableCell
+      align="right"
+      sx={{
+        fontVariantNumeric: 'tabular-nums',
+        color: row.failures > 0 ? 'warning.main' : 'text.secondary',
+      }}
+    >
+      {formatPercent(row.failureRate)}
+    </TableCell>
+    <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+      {formatDurationMs(row.avgDurationMs)}
+    </TableCell>
+    <TableCell
+      align="right"
+      sx={{
+        fontVariantNumeric: 'tabular-nums',
+        ...(row.p95DurationMs >= SLOW_P95_MS && {
+          fontWeight: 600,
+          color: 'warning.main',
+        }),
+      }}
+    >
+      {formatDurationMs(row.p95DurationMs)}
+    </TableCell>
+    <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+      {formatBytes(row.totalBytes)}
+    </TableCell>
+    <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', color: 'text.secondary' }}>
+      {formatCompact(row.estimatedTokens)}
+    </TableCell>
+  </TableRow>
+);
+
+const toolDetailTableSx = {
+  '& td, & th': { borderColor: 'divider' },
+  '& tbody tr:last-of-type td': { border: 0 },
+  '& tbody tr': { transition: 'background-color 120ms' },
+  '& tbody tr:hover': { backgroundColor: 'action.hover' },
+} as const;
+
+const ToolDetailTableHead = () => (
+  <TableHead>
+    <TableRow>
+      <TableCell sx={headSx}>Server</TableCell>
+      <TableCell sx={headSx}>Tool</TableCell>
+      <TableCell align="right" sx={headSx}>Calls</TableCell>
+      <TableCell align="right" sx={headSx}>Failure rate</TableCell>
+      <TableCell align="right" sx={headSx}>Avg</TableCell>
+      <TableCell align="right" sx={headSx}>P95</TableCell>
+      <TableCell align="right" sx={headSx}>Context bytes</TableCell>
+      <TableCell align="right" sx={headSx}>Est. tokens</TableCell>
+    </TableRow>
+  </TableHead>
+);
 
 /** "Servers" ranking — one bar per server, dot-colored to match the mix donut. */
 const ServerRankingCard = ({
@@ -102,70 +181,11 @@ const McpToolDetailTable = ({
         <Typography color="text.secondary">No MCP calls in this window.</Typography>
       ) : (
         <Box sx={{ overflowX: 'auto' }}>
-          <Table
-            size="small"
-            sx={{
-              '& td, & th': { borderColor: 'divider' },
-              '& tbody tr:last-of-type td': { border: 0 },
-              '& tbody tr': { transition: 'background-color 120ms' },
-              '& tbody tr:hover': { backgroundColor: 'action.hover' },
-            }}
-          >
-            <TableHead>
-              <TableRow>
-                <TableCell sx={headSx}>Server</TableCell>
-                <TableCell sx={headSx}>Tool</TableCell>
-                <TableCell align="right" sx={headSx}>Calls</TableCell>
-                <TableCell align="right" sx={headSx}>Failure rate</TableCell>
-                <TableCell align="right" sx={headSx}>Avg</TableCell>
-                <TableCell align="right" sx={headSx}>P95</TableCell>
-                <TableCell align="right" sx={headSx}>Context bytes</TableCell>
-                <TableCell align="right" sx={headSx}>Est. tokens</TableCell>
-              </TableRow>
-            </TableHead>
+          <Table size="small" sx={toolDetailTableSx}>
+            <ToolDetailTableHead />
             <TableBody>
               {sortedRows.map((row) => (
-                <TableRow key={`${row.server}::${row.tool}`}>
-                  <TableCell
-                    sx={{
-                      fontWeight: 600,
-                      ...(row.server === UNKNOWN_SERVER && {
-                        fontStyle: 'italic',
-                        color: 'text.disabled',
-                      }),
-                    }}
-                  >
-                    {row.server}
-                  </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: 13 }}>{row.tool}</TableCell>
-                  <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {row.calls.toLocaleString()}
-                  </TableCell>
-                  <TableCell
-                    align="right"
-                    sx={{
-                      fontVariantNumeric: 'tabular-nums',
-                      color: row.failures > 0 ? 'warning.main' : 'text.secondary',
-                    }}
-                  >
-                    {formatPercent(row.failureRate)}
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {formatDurationMs(row.avgDurationMs)}
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {formatDurationMs(row.p95DurationMs)}
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {formatBytes(row.totalBytes)}
-                  </TableCell>
-                  <TableCell
-                    align="right"
-                    sx={{ fontVariantNumeric: 'tabular-nums', color: 'text.secondary' }}
-                  >
-                    {formatCompact(row.estimatedTokens)}
-                  </TableCell>
-                </TableRow>
+                <ToolDetailTableRow key={`${row.server}::${row.tool}`} row={row} />
               ))}
             </TableBody>
           </Table>

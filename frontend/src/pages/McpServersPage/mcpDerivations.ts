@@ -7,6 +7,9 @@ import type { McpServerUsageRow } from '../../api';
 /** Server bucket for rows whose identity couldn't be resolved from `tool_parameters`. */
 export const UNKNOWN_SERVER = 'unknown';
 
+/** P95 duration at or above which `McpToolDetailTable` flags a row's P95 cell as slow. */
+export const SLOW_P95_MS = 5000;
+
 /**
  * One server's rollup across all of its (server, tool) rows — the shape the report's own
  * "MCP servers" section rolls up to, mirrored here so the dashboard answers the same

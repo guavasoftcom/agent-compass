@@ -44,6 +44,8 @@ add indirection without benefit.
 │ ┌─ McpToolDetailTable (full width) ─────────────────────────────────┐   │
 │ │  Server | Tool | Calls | Failure rate | Avg | P95 | Context bytes |  │
 │ │  Est. tokens — one row per (server, tool) pair, calls desc          │   │
+│ │  Failure rate and P95 cells flag warning.main when outlying         │   │
+│ │  (see Data flow and semantics)                                      │   │
 │ └───────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -121,6 +123,17 @@ single response feeds every card on the page — there is no second query.
   every raw `McpServerUsageRow`, calls-descending. This is the drill-down the per-server rollup
   can't show: a server can have one dominant tool and several rarely-used ones, and the failure
   rate or latency of any *one* tool doesn't necessarily match its server's overall figure.
+- **Outlier flagging (no row collapse)** — a reader's eye should go to the rows worth
+  investigating without hiding any row: every `(server, tool)` pair from `toolRows` renders,
+  calls-descending, in one table. Failure rate already rendered `warning.main` for any
+  `failures > 0`; P95 gets the same treatment via `mcpDerivations.ts`'s `SLOW_P95_MS` (5000ms)
+  constant — `p95DurationMs >= SLOW_P95_MS` renders `warning.main` + `fontWeight: 600`.
+  `ToolDetailTableRow`/`ToolDetailTableHead` (file-local in `McpServersPageView.tsx`) hold the
+  per-row cell rendering and header so they stay defined once. An earlier version of this
+  table also collapsed zero-failure/low-volume rows into a closed `<details>` disclosure
+  (mirroring `ToolReliabilityPageView`'s `zerowrap` pattern); that collapse was removed on
+  request — the table is now a flat, ungrouped list of every row, no matter how low-volume.
+  Don't reintroduce a collapse/disclosure here without it being asked for again.
 
 ## Gotchas
 
