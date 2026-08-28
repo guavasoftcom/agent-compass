@@ -4,6 +4,7 @@ import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.model.BashCommandCoverage;
 import com.guavasoft.agentcompass.model.BashCommandHotspot;
 import com.guavasoft.agentcompass.model.EditFailureLoop;
+import com.guavasoft.agentcompass.model.McpServerUsage;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
 import com.guavasoft.agentcompass.model.PathNearMiss;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
@@ -63,6 +64,15 @@ public class ReportService {
   private static final int CONTEXT_TAIL_SUGGESTION_LIMIT = 2;
   private static final String SHARE_FORMAT = "%.1f%%";
   private static final String TRUNCATION_SUFFIX = "…";
+  // An MCP server above this failure rate is a prime AGENTS.md tuning target, same order of
+  // magnitude as the guidance ToolFailureRate's javadoc gives for any tool (>0.2-0.3), but set
+  // lower here because a whole external server failing this often is worth flagging even before
+  // it reaches "prime target" territory for a single built-in tool.
+  private static final double MCP_SERVER_HIGH_FAILURE_RATE_THRESHOLD = 0.10;
+  // A server whose share of MCP context bytes runs this many times ahead of its share of MCP
+  // calls is spending disproportionately on context relative to how often it's actually used.
+  private static final double MCP_SERVER_CONTEXT_SHARE_TO_CALL_SHARE_RATIO = 2.0;
+  private static final int MCP_SERVER_SUGGESTION_LIMIT = 3;
 
   private final LogService logService;
   private final TuningProperties tuningProperties;
@@ -178,6 +188,22 @@ public class ReportService {
         })
         .toList();
 
+    List<McpServerUsage> mcpServerUsageRows = logService.aggregateMcpServerUsageInRange(start, end);
+    List<McpServerRollup> mcpServerRollups = rollUpMcpServersByServer(mcpServerUsageRows);
+    long mcpServersTotalBytes = mcpServerRollups.stream().mapToLong(McpServerRollup::totalBytes).sum();
+    List<Map<String, Object>> mcpServersContext = mcpServerRollups.stream()
+        .map(rollup -> {
+          Map<String, Object> serverRow = new LinkedHashMap<>();
+          serverRow.put("server", rollup.server());
+          serverRow.put(CTX_CALLS, rollup.calls());
+          serverRow.put("failureRate", formatShare(rollup.failures(), rollup.calls()));
+          serverRow.put(CTX_P95_MS, rollup.p95DurationMs());
+          serverRow.put("totalBytes", rollup.totalBytes());
+          serverRow.put("share", formatShare(rollup.totalBytes(), mcpServersTotalBytes));
+          return serverRow;
+        })
+        .toList();
+
     List<RedundantFileRead> redundantReads = logService.aggregateRedundantFileReadsInRange(start, end);
     List<Map<String, Object>> redundantReadsContext = redundantReads.stream()
         .map(redundantRead -> {
@@ -219,7 +245,8 @@ public class ReportService {
         .toList();
 
     List<String> suggestions = buildSuggestions(
-        bashHotspots, bashCoverage, oversized, contextFootprint, redundantReads, editLoops, slowLarge);
+        bashHotspots, bashCoverage, oversized, contextFootprint, redundantReads, editLoops, slowLarge,
+        mcpServerRollups);
 
     Map<String, Object> context = new HashMap<>();
     context.put("minutes", minutesForContext);
@@ -250,11 +277,44 @@ public class ReportService {
     context.put("contextFootprintEstimatedTokens", contextFootprint.stream()
         .mapToLong(ToolContextFootprint::estimatedTokens)
         .sum());
+    context.put("hasMcpServers", !mcpServersContext.isEmpty());
+    context.put("mcpServers", mcpServersContext);
+    context.put("mcpServersTotalBytes", mcpServersTotalBytes);
+    context.put("mcpServersEstimatedTokens", mcpServerUsageRows.stream()
+        .mapToLong(McpServerUsage::estimatedTokens)
+        .sum());
     context.put("hasRedundantReads", !redundantReadsContext.isEmpty());
     context.put("redundantReads", redundantReadsContext);
     context.put("hasEditLoops", !editLoopsContext.isEmpty());
     context.put("editLoops", editLoopsContext);
     return template.execute(context);
+  }
+
+  /**
+   * One MCP server, rolled up across every tool row {@link com.guavasoft.agentcompass.model.McpServerUsage}
+   * reports for it. p95DurationMs is the MAX of the per-tool p95s rather than a recomputed
+   * per-server percentile — averaging or re-deriving a percentile from already-aggregated per-tool
+   * percentiles is not statistically valid, whereas MAX gives a defensible worst-case bound for the
+   * "is this server worth its latency cost" question the report section answers. Order matches the
+   * repository query: servers arrive together, sorted by total calls descending.
+   */
+  private record McpServerRollup(String server, long calls, long failures, long totalBytes, long p95DurationMs) {}
+
+  private static List<McpServerRollup> rollUpMcpServersByServer(List<McpServerUsage> mcpServerUsageRows) {
+    Map<String, long[]> totalsByServer = new LinkedHashMap<>();
+    for (McpServerUsage usage : mcpServerUsageRows) {
+      long[] totals = totalsByServer.computeIfAbsent(usage.server(), key -> new long[4]);
+      totals[0] += usage.calls();
+      totals[1] += usage.failures();
+      totals[2] += usage.totalBytes();
+      totals[3] = Math.max(totals[3], usage.p95DurationMs());
+    }
+    List<McpServerRollup> rollups = new ArrayList<>(totalsByServer.size());
+    for (Map.Entry<String, long[]> entry : totalsByServer.entrySet()) {
+      long[] totals = entry.getValue();
+      rollups.add(new McpServerRollup(entry.getKey(), totals[0], totals[1], totals[2], totals[3]));
+    }
+    return rollups;
   }
 
   // Derive concrete tuning suggestions from the just-fetched data. Each rule is a
@@ -286,7 +346,8 @@ public class ReportService {
       List<ToolContextFootprint> contextFootprint,
       List<RedundantFileRead> redundantReads,
       List<EditFailureLoop> editLoops,
-      List<SlowAndLargeCall> slowLarge) {
+      List<SlowAndLargeCall> slowLarge,
+      List<McpServerRollup> mcpServerRollups) {
     List<String> bullets = new ArrayList<>();
     Map<String, Integer> indexByKey = new HashMap<>();
 
@@ -368,6 +429,34 @@ public class ReportService {
             footprint.p95Bytes(),
             averageBytes(footprint) == 0 ? 0.0 : (double) footprint.p95Bytes() / averageBytes(footprint),
             footprint.calls())));
+
+    // MCP server rule, beside the tail-shape rule above: flags a server whose failure rate or
+    // context share is disproportionate to how often it's actually called — the same "is this
+    // worth its cost" question the tail-shape rule asks of a single tool, one level up at the
+    // server. A server can trip either condition without tripping the other (a chatty-but-reliable
+    // server vs. a rarely-called one that eats context whenever it is).
+    long totalMcpCalls = mcpServerRollups.stream().mapToLong(McpServerRollup::calls).sum();
+    long totalMcpBytes = mcpServerRollups.stream().mapToLong(McpServerRollup::totalBytes).sum();
+    mcpServerRollups.stream()
+        .filter(rollup -> rollup.calls() > 0)
+        .filter(rollup -> {
+          double failureRate = (double) rollup.failures() / rollup.calls();
+          double callShare = totalMcpCalls == 0 ? 0.0 : (double) rollup.calls() / totalMcpCalls;
+          double byteShare = totalMcpBytes == 0 ? 0.0 : (double) rollup.totalBytes() / totalMcpBytes;
+          boolean highFailureRate = failureRate >= MCP_SERVER_HIGH_FAILURE_RATE_THRESHOLD;
+          boolean disproportionateContextShare = rollup.totalBytes() >= OVERSIZED_BYTES_THRESHOLD
+              && byteShare >= callShare * MCP_SERVER_CONTEXT_SHARE_TO_CALL_SHARE_RATIO;
+          return highFailureRate || disproportionateContextShare;
+        })
+        .limit(MCP_SERVER_SUGGESTION_LIMIT)
+        .forEach(rollup -> bullets.add(String.format(
+            "MCP server `%s` (%d calls, %.1f%% failure rate, %d bytes of context) — check whether it "
+                + "earns its cost: narrow which of its tools the agent is allowed to call, or drop the "
+                + "server if a built-in tool already covers the same need.",
+            rollup.server(),
+            rollup.calls(),
+            100.0 * rollup.failures() / rollup.calls(),
+            rollup.totalBytes())));
 
     redundantReads.stream()
         .filter(redundantRead -> HUNTING_LOOP_PATTERN.equals(classifyReadPattern(redundantRead)))

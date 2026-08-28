@@ -9,6 +9,7 @@ import type {
   IdentifierUsageRow,
   ListResult,
   LogRow,
+  McpServerUsageRow,
   SessionCacheEfficiencyRow,
   SessionKpis,
   SessionPromptRow,
@@ -55,6 +56,13 @@ export const fetchSubagentUsage = (
 ): Promise<IdentifierUsageRow[]> => {
   const params = windowQueryParams(selection);
   return getJson(`/api/tool-activity/subagent-usage?${params.toString()}`);
+};
+
+export const fetchMcpServerUsage = (
+  selection: WindowSelection = { kind: 'preset', minutes: 1440 },
+): Promise<McpServerUsageRow[]> => {
+  const params = windowQueryParams(selection);
+  return getJson(`/api/tool-activity/mcp-usage?${params.toString()}`);
 };
 
 export const fetchToolFailureRates = (

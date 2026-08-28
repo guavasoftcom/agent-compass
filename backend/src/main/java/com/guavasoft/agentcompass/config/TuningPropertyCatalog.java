@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  * Describes every {@link TuningProperties} field for {@code GET /api/system/configuration}: which
  * group it belongs to, what it drives, and whether overriding it also requires a Flyway migration.
  *
- * <p><b>Why this is authored by hand.</b> Reflection can read the 47 values but not the three things
+ * <p><b>Why this is authored by hand.</b> Reflection can read the 52 values but not the three things
  * that make the endpoint worth having — the grouping, the one-line descriptions, and above all the
  * {@link SqlMirroring} flag, which is a fact about the migration history and cannot be derived from
  * the field. A hand-written list rots silently, so {@code TuningPropertyCatalogTest} reflects over
@@ -266,6 +266,35 @@ public class TuningPropertyCatalog {
                   "Identifier credited to a dispatch that names no agent type — that is the agent it "
                       + "actually runs on, so an unknown bucket would under-report a real one",
                   TuningProperties::getDefaultSubagentType))),
+
+      new CatalogGroup(
+          "MCP tools",
+          "MCP calls are named differently on the two signals that carry them — logs collapse "
+              + "every server to one constant, spans carry a per-server prefixed name — so this "
+              + "group's properties parse identity back out of each side rather than reading it "
+              + "off tool_name directly. Not SQL-mirrored: every query here is already gated by "
+              + "the indexed tool_name column, so no generated column is warranted.",
+          List.of(
+              CatalogEntry.plain("mcpToolName",
+                  "toolAttribute value marking an MCP dispatch on the LOG side (tool_result / "
+                      + "tool_decision) — one constant shared by every server. The span side uses "
+                      + "a per-server prefixed name instead; see mcpSpanToolPrefix.",
+                  TuningProperties::getMcpToolName),
+              CatalogEntry.plain("mcpParametersAttribute",
+                  "JSON-string attribute on an MCP log record holding the real server/tool "
+                      + "identity, parsed the same NULLIF/::jsonb way tool_input is read elsewhere",
+                  TuningProperties::getMcpParametersAttribute),
+              CatalogEntry.plain("mcpServerNameAttribute",
+                  "Key inside mcpParametersAttribute naming the MCP server that handled the call",
+                  TuningProperties::getMcpServerNameAttribute),
+              CatalogEntry.plain("mcpToolNameAttribute",
+                  "Key inside mcpParametersAttribute naming the server-side tool that was invoked",
+                  TuningProperties::getMcpToolNameAttribute),
+              CatalogEntry.plain("mcpSpanToolPrefix",
+                  "Prefix encoding MCP identity on the SPAN side as mcp__<server>__<tool>, parsed "
+                      + "with starts_with()/split_part() rather than LIKE (which would treat the "
+                      + "double underscore as two wildcard characters)",
+                  TuningProperties::getMcpSpanToolPrefix))),
 
       new CatalogGroup(
           "Severity classification",

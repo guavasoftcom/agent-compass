@@ -202,6 +202,53 @@ public class TuningProperties {
   private String defaultSubagentType = "general-purpose";
 
   /**
+   * {@link #toolAttribute} value that marks a tool_result or tool_decision emitted for an MCP
+   * server call. Claude Code names MCP calls differently on the two signals that carry them, and
+   * this property is the log-side one: every MCP server's calls share this single constant here,
+   * while the {@link #toolSpanName} span instead carries the prefixed raw form
+   * {@code mcp__<server>__<tool>} (see {@link #mcpSpanToolPrefix}). The real server/tool identity
+   * on the log side lives in {@link #mcpParametersAttribute}, not in this attribute's value — so
+   * log-backed aggregations split MCP calls back out by reading that JSON blob, while the
+   * span-backed latency aggregation instead parses the prefixed name. Getting this backwards
+   * (treating the log constant as if it were per-server, or the span prefix as if every server
+   * used a shared name) is the mistake both frontend docs this feature corrects had made, each
+   * about the signal the other author wasn't looking at.
+   */
+  private String mcpToolName = "mcp_tool";
+
+  /**
+   * Attribute key on an MCP {@link #toolAttribute} log record carrying a JSON-encoded string
+   * (not a nested object) with that call's server and tool identity. Parsed the same
+   * NULLIF/::jsonb way {@code tool_input} is read elsewhere in this codebase. Holds
+   * {@link #mcpServerNameAttribute} and {@link #mcpToolNameAttribute} at 100% coverage on live
+   * data.
+   */
+  private String mcpParametersAttribute = "tool_parameters";
+
+  /**
+   * Key inside {@link #mcpParametersAttribute} naming the MCP server that handled the call
+   * (e.g. {@code playwright}). Missing or blank values bucket under {@code unknown} rather than
+   * being dropped.
+   */
+  private String mcpServerNameAttribute = "mcp_server_name";
+
+  /**
+   * Key inside {@link #mcpParametersAttribute} naming the server-side tool that was invoked
+   * (e.g. {@code browser_evaluate}).
+   */
+  private String mcpToolNameAttribute = "mcp_tool_name";
+
+  /**
+   * Prefix (including the double-underscore separator) that {@link #toolSpanName} spans use to
+   * encode MCP identity as {@code mcp__<server>__<tool>} — the span-side counterpart to
+   * {@link #mcpToolName}. Parsed with {@code starts_with()}/{@code split_part()}, never
+   * {@code LIKE}: Postgres treats a bare underscore as the LIKE single-character wildcard, so
+   * {@code LIKE 'mcp__%'} would match "mcp" plus any two characters plus anything, not literally
+   * two underscores.
+   */
+  private String mcpSpanToolPrefix = "mcp__";
+
+  /**
    * Attribute key on an {@link #apiRequestEventName} log record carrying the
    * model that served the turn. Same values as the {@code model} attribute on
    * the token-usage metric streams, so the per-model breakdowns on

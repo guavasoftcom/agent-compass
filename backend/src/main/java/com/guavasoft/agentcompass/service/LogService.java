@@ -22,6 +22,7 @@ import com.guavasoft.agentcompass.model.LogHistogram;
 import com.guavasoft.agentcompass.model.LogPage;
 import com.guavasoft.agentcompass.model.LogQueryCriteria;
 import com.guavasoft.agentcompass.model.LogRecord;
+import com.guavasoft.agentcompass.model.McpServerUsage;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
 import com.guavasoft.agentcompass.model.PathNearMiss;
 import com.guavasoft.agentcompass.model.RedundantFileRead;
@@ -724,6 +725,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolCalls(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         since);
     return mapToolCallCounts(rows);
   }
@@ -732,6 +736,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolCallsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         start,
         end);
     return mapToolCallCounts(rows);
@@ -741,6 +748,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolPerformanceInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         start,
         end);
     return mapToolPerformance(rows);
@@ -761,9 +771,50 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolFailuresInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         start,
         end);
     return mapToolFailures(rows);
+  }
+
+  public List<McpServerUsage> aggregateMcpServerUsage(int minutes) {
+    Instant end = Instant.now();
+    return aggregateMcpServerUsageInRange(end.minus(Duration.ofMinutes(minutes)), end);
+  }
+
+  public List<McpServerUsage> aggregateMcpServerUsageInRange(Instant start, Instant end) {
+    List<Object[]> rows = logRecordRepository.aggregateMcpServerUsageInRange(
+        tuningProperties.getToolEventName(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
+        tuningProperties.getMcpToolNameAttribute(),
+        start,
+        end);
+    return mapMcpServerUsage(rows);
+  }
+
+  private static List<McpServerUsage> mapMcpServerUsage(List<Object[]> rows) {
+    return rows.stream()
+        .map(row -> {
+          long calls = ((Number) row[2]).longValue();
+          long failures = row[3] == null ? 0L : ((Number) row[3]).longValue();
+          long totalBytes = row[6] == null ? 0L : ((Number) row[6]).longValue();
+          return new McpServerUsage(
+              (String) row[0],
+              (String) row[1],
+              calls,
+              failures,
+              calls == 0L ? 0.0 : (double) failures / (double) calls,
+              row[4] == null ? 0L : ((Number) row[4]).longValue(),
+              row[5] == null ? 0L : ((Number) row[5]).longValue(),
+              totalBytes,
+              totalBytes / BYTES_PER_ESTIMATED_TOKEN,
+              row[7] == null ? 0L : ((Number) row[7]).longValue());
+        })
+        .toList();
   }
 
   public List<IdentifierUsageCount> aggregateSkillUsage(int minutes) {
@@ -841,6 +892,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolFailureRates(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         since);
     return mapToolFailureRates(rows);
   }
@@ -849,6 +903,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolFailureRatesInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         start,
         end);
     return mapToolFailureRates(rows);
@@ -872,6 +929,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateToolContextFootprintInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         start,
         end);
     return mapToolContextFootprint(rows);
@@ -886,6 +946,9 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateTunableToolContextFootprintInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         tuningProperties.getExternallyDeterminedTools(),
         start,
         end);
@@ -909,13 +972,24 @@ public class LogService {
   public List<ToolDenialCount> aggregateToolDenials(int minutes) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = logRecordRepository.aggregateToolDenials(
-        tuningProperties.getToolDecisionEventName(), since);
+        tuningProperties.getToolDecisionEventName(),
+        tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
+        since);
     return mapToolDenials(rows);
   }
 
   public List<ToolDenialCount> aggregateToolDenialsInRange(Instant start, Instant end) {
     List<Object[]> rows = logRecordRepository.aggregateToolDenialsInRange(
-        tuningProperties.getToolDecisionEventName(), start, end);
+        tuningProperties.getToolDecisionEventName(),
+        tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
+        start,
+        end);
     return mapToolDenials(rows);
   }
 
@@ -991,6 +1065,10 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateOversizedToolResultsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
+        tuningProperties.getMcpToolNameAttribute(),
         tuningProperties.getExternallyDeterminedTools(),
         start,
         end,
@@ -1052,6 +1130,10 @@ public class LogService {
     List<Object[]> rows = logRecordRepository.aggregateSlowAndLargeCallsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
+        tuningProperties.getMcpToolNameAttribute(),
         tuningProperties.getExternallyDeterminedTools(),
         start,
         end,
@@ -1180,6 +1262,9 @@ public class LogService {
     List<Object[]> rawRows = logRecordRepository.aggregateToolCallsTimeseries(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         since,
         bucketSeconds);
     return buildToolCallTimeseries(rawRows, bucketSeconds, topTools);
@@ -1193,6 +1278,9 @@ public class LogService {
     List<Object[]> rawRows = logRecordRepository.aggregateToolCallsTimeseriesInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
+        tuningProperties.getMcpToolName(),
+        tuningProperties.getMcpParametersAttribute(),
+        tuningProperties.getMcpServerNameAttribute(),
         start,
         end,
         bucketSeconds);

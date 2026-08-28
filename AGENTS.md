@@ -80,7 +80,7 @@ is the authoritative per-property reference.
 The authoritative, machine-readable list of which properties are mirrored is
 [TuningPropertyCatalog.java](backend/src/main/java/com/guavasoft/agentcompass/config/TuningPropertyCatalog.java),
 surfaced at runtime by `GET /api/system/configuration` and on the dashboard's Settings page. It
-classifies all 47 properties three ways and a reflection test fails the build if a newly added
+classifies all 52 properties three ways and a reflection test fails the build if a newly added
 property is left unclassified. Prefer it over the prose below, which names the seven worst offenders
 but is not exhaustive: the real count is **17 across six migrations**, and it includes three
 (`tool-decision-event-name`, `api-request-body-event-name`, `hook-execution-event-name`) whose
@@ -124,6 +124,19 @@ section and drops externally determined tools (`Agent`, `WebSearch`, `WebFetch`)
 the same exclusions the oversized-result list uses, because the report's header tells readers not
 to write rules against those. Neither query is the other's filtered view; changing one is not
 automatically a reason to change the other, and their totals are supposed to differ.
+
+MCP tool calls are named differently on the two signals that carry them, which is why
+`TuningProperties` carries five `mcp-*` properties instead of reusing `tool-attribute`: on
+`log_records` every MCP server's calls share the single constant `mcp_tool` (`tool-name`), with
+real server/tool identity in the `tool_parameters` JSON-string attribute (`mcp-parameters-attribute`,
+`mcp-server-name-attribute`, `mcp-tool-name-attribute`); on `spans` the raw name is the prefixed
+form `mcp__<server>__<tool>` (`mcp-span-tool-prefix`), parsed with `starts_with()`/`split_part()`
+rather than `LIKE` (a bare `_` is the `LIKE` single-character wildcard). All five stay
+`NOT_MIRRORED` — no generated column is needed since every MCP query is already gated by the
+indexed `tool_name` column. `/api/tool-activity/mcp-usage` and the report's "MCP servers" section
+read the log side (execution-only `duration_ms`, not span duration, which includes time blocked on
+user approval); every other log-backed tool aggregation now splits the collapsed `mcp_tool` bucket
+back out to `mcp:<server>` rows the same way.
 
 Spend is measurable two ways — those cumulative counters, and the exact per-call figures on
 `api_request` log records — and **the two do not reconcile**: on real data they disagree by tens

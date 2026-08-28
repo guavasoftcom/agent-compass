@@ -128,7 +128,14 @@ container.
   (worst case: every MCP server's tools report as the single generic `mcp_tool` name, so two
   unrelated MCP calls in a row used to register as a "repeat"; dropping unscoped rows removed
   it, along with noise from `Agent`/`WebFetch`/`TodoWrite`/`Grep`/`ToolSearch` and stray
-  Edit/Write/Read calls with no captured `file_path`). The card therefore never receives an
+  Edit/Write/Read calls with no captured `file_path`). That `mcp_tool` collapse is a fact about
+  this **log**-backed query specifically, and this query is deliberately left unsplit (a
+  per-server identity still isn't a *scope*, so re-admitting these rows would reintroduce the
+  same false-repeat bug) — every other log-backed aggregation on this page and the rest of the
+  dashboard now splits it back out to `mcp:<server>` rows, and the **span**-backed latency card
+  never had this problem to begin with: `tool_name` there is already the per-server prefixed
+  form `mcp__<server>__<tool>` (collapsed to one `mcp:<server>` row per server instead, the
+  opposite direction). The card therefore never receives an
   unscoped row and has no `(no scope)` rendering branch — don't reintroduce one without
   reintroducing the backend rows it would represent. Rows represent the longest consecutive
   run of the same tool acting on the same scope within a session, aggregated across sessions.

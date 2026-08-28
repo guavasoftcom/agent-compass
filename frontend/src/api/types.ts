@@ -22,6 +22,28 @@ export interface IdentifierUsageRow {
   byModel: Record<string, number>;
 }
 
+/**
+ * One (server, tool) pair from `GET /api/tool-activity/mcp-usage` — mirrors the backend's
+ * `McpServerUsage` record field-for-field. Unlike `IdentifierUsageRow` (skills/subagents), MCP
+ * calls carry no model dimension, so this shape reports failure rate, latency, and context
+ * bytes instead of a `byModel` split. Rows are keyed by `(server, tool)`, not by `tool` alone —
+ * one server (e.g. "playwright") can own many rows, one per tool it exposes (e.g.
+ * "browser_evaluate", "browser_click").
+ */
+export interface McpServerUsageRow {
+  server: string;
+  tool: string;
+  calls: number;
+  failures: number;
+  /** 0..1 — `failures / calls` for this (server, tool) pair. */
+  failureRate: number;
+  avgDurationMs: number;
+  p95DurationMs: number;
+  totalBytes: number;
+  /** `totalBytes / 4`, matching `ToolContextFootprintRow.estimatedTokens` — not billed spend. */
+  estimatedTokens: number;
+}
+
 export interface LogRow {
   id: number;
   timestamp: string;
