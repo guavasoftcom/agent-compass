@@ -40,32 +40,110 @@ import com.guavasoft.agentcompass.service.TrendService;
 @Validated
 @RequestMapping("/api/trends")
 @Tag(name = "Trends",
-        description = "Before/after diff for the Trend Report page: the selected window compared against "
-                + "the immediately preceding period of equal length, across 11 metrics in 4 groups "
-                + "(Cost, Token efficiency, Reliability, Activity).")
+        description = "Before/after diffs for the Trend Report page: the selected window compared against "
+                + "the immediately preceding period of equal length, split into four independently-fetchable "
+                + "sections (Cost, Token efficiency, Reliability, Activity) so the frontend is not blocked by "
+                + "the slowest section's query.")
 public class TrendsController {
+
+    private static final String DEFAULT_MINUTES = "1440";
+    private static final String MINUTES_EXAMPLE = "1440";
+    private static final String MINUTES_DESCRIPTION = "Window size in minutes";
 
     private final TrendService trendService;
 
-    @GetMapping
+    @GetMapping("/cost")
     @Operation(
-            summary = "Trend report: current vs. previous period across 11 metrics",
+            summary = "Cost section: current vs. previous period",
             description = "Compares the selected window against the immediately preceding period of equal "
-                    + "length. Cost and token metrics are read from the metric_points cumulative-counter "
-                    + "pipeline; reliability and activity metrics are read from log_records tool_result "
-                    + "events. Each metric carries a before/after scalar plus a 7-point sparkline per side.")
+                    + "length for the Cost section: total_cost, cost_per_session, blended_rate_per_1m. Read "
+                    + "from the metric_points cumulative-counter pipeline. Each metric carries a before/after "
+                    + "scalar plus a 7-point sparkline per side.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
-            description = "Trend report for the requested window",
+            description = "Cost trend section for the requested window",
             content = @Content(
                     mediaType = "application/json",
                     schema = @Schema(implementation = TrendsResponse.class))))
-    public TrendsResponse trends(
-            @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
+    public TrendsResponse costTrends(
+            @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
+            @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return trendService.trendsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return trendService.costTrendsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
         }
-        return trendService.trends(minutes);
+        return trendService.costTrends(minutes);
+    }
+
+    @GetMapping("/token-efficiency")
+    @Operation(
+            summary = "Token efficiency section: current vs. previous period",
+            description = "Compares the selected window against the immediately preceding period of equal "
+                    + "length for the Token efficiency section: cache_read_ratio_pct, tokens_total, "
+                    + "tokens_per_session. Read from the metric_points cumulative-counter pipeline. Each "
+                    + "metric carries a before/after scalar plus a 7-point sparkline per side.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "Token efficiency trend section for the requested window",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = TrendsResponse.class))))
+    public TrendsResponse tokenEfficiencyTrends(
+            @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
+            @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return trendService.tokenEfficiencyTrendsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+        }
+        return trendService.tokenEfficiencyTrends(minutes);
+    }
+
+    @GetMapping("/reliability")
+    @Operation(
+            summary = "Reliability section: current vs. previous period",
+            description = "Compares the selected window against the immediately preceding period of equal "
+                    + "length for the Reliability section: tool_errors, error_rate_pct, session_failures. "
+                    + "Read from log_records tool_result events. Each metric carries a before/after scalar "
+                    + "plus a 7-point sparkline per side.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "Reliability trend section for the requested window",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = TrendsResponse.class))))
+    public TrendsResponse reliabilityTrends(
+            @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
+            @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return trendService.reliabilityTrendsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+        }
+        return trendService.reliabilityTrends(minutes);
+    }
+
+    @GetMapping("/activity")
+    @Operation(
+            summary = "Activity section: current vs. previous period",
+            description = "Compares the selected window against the immediately preceding period of equal "
+                    + "length for the Activity section: sessions, avg_duration_min. Read from the "
+                    + "metric_points cumulative-counter pipeline. Each metric carries a before/after scalar "
+                    + "plus a 7-point sparkline per side.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "Activity trend section for the requested window",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = TrendsResponse.class))))
+    public TrendsResponse activityTrends(
+            @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
+            @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
+            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
+            return trendService.activityTrendsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+        }
+        return trendService.activityTrends(minutes);
     }
 }

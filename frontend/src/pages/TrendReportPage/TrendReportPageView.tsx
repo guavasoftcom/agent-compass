@@ -50,8 +50,17 @@ import {
   formatMetricValue,
   formatPeriod,
   type FormattedPeriod,
+  type TrendSectionDefinition,
   type TrendSectionKey,
 } from './trendReportDerivations';
+
+/** One section's independent query state — Cost, Token efficiency, Reliability, and Activity
+ *  each load, error, and render on their own timeline rather than sharing one page-wide state. */
+export interface TrendSectionState {
+  data: TrendReport | undefined;
+  isLoading: boolean;
+  error: Error | null;
+}
 
 export interface TrendReportPageViewProps {
   selection: WindowSelection;
@@ -61,9 +70,7 @@ export interface TrendReportPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (autoRefresh: boolean) => void;
   isPolling: boolean;
-  report: TrendReport | undefined;
-  isLoading: boolean;
-  error: Error | null;
+  sections: Record<TrendSectionKey, TrendSectionState>;
 }
 
 const CenterIcon = ({ children }: { children: ReactNode }) => (
@@ -104,7 +111,7 @@ const SECTION_ICONS: Record<TrendSectionKey, ReactNode> = {
 };
 
 /** Trend Report metric rows never fetch on their own — this view builds every row's props from
- *  the single `report.metrics` bundle the container already fetched. */
+ *  whichever section's `metrics` bundle the container already fetched. */
 const buildRowProps = (metricKey: TrendMetricKey, trend: TrendMetric) => {
   const labels = METRIC_LABELS[metricKey];
   const delta = computeDelta(metricKey, trend);
@@ -127,6 +134,42 @@ const buildRowProps = (metricKey: TrendMetricKey, trend: TrendMetric) => {
   };
 };
 
+/**
+ * Renders one section's body from its own independent query state — skeleton rows while it's
+ * still loading with nothing to show yet, a short inline message if it errored with nothing to
+ * show, or its real `MetricRow`s once data has arrived. This is what lets a slow or failed
+ * section render on its own timeline instead of waiting on, or blocking, its siblings.
+ */
+const renderSectionBody = (section: TrendSectionDefinition, sectionState: TrendSectionState): ReactNode => {
+  if (sectionState.isLoading && !sectionState.data) {
+    return section.metricKeys.map((metricKey) => <MetricRowSkeleton key={metricKey} />);
+  }
+
+  if (sectionState.error && !sectionState.data) {
+    return (
+      <Box sx={{ px: 3, py: 2 }}>
+        <Typography variant="body2" sx={{ color: 'error.main' }}>
+          Couldn&apos;t load this section.
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (!sectionState.data) {
+    return null;
+  }
+
+  const data = sectionState.data;
+  return section.metricKeys.map((metricKey) => {
+    const trend = data.metrics[metricKey];
+    if (!trend) {
+      return null;
+    }
+    const rowProps = buildRowProps(metricKey, trend);
+    return <MetricRow key={metricKey} {...rowProps} />;
+  });
+};
+
 const TrendReportPageView = ({
   selection,
   onSelectionChange,
@@ -135,9 +178,7 @@ const TrendReportPageView = ({
   autoRefresh,
   onAutoRefreshChange,
   isPolling,
-  report,
-  isLoading,
-  error,
+  sections,
 }: TrendReportPageViewProps) => {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === 'dark';
@@ -163,13 +204,35 @@ const TrendReportPageView = ({
   };
 
   const windowSpanLabel = describeWindowSpan(selection, windows);
-  const showSkeleton = !report && isLoading;
-  const comparingFromDate = report
-    ? formatComparingFromDate(report.current)
-    : null;
-  const beforePeriod: FormattedPeriod = report ? formatPeriod(report.previous) : { primary: '—', secondary: null };
-  const afterPeriod: FormattedPeriod = report ? formatPeriod(report.current) : { primary: '—', secondary: null };
-  const summaryCallouts = report ? buildSummaryCallouts(report.metrics) : [];
+
+  // All four sections compute identical window boundaries from the same request, so the period
+  // bar and "Comparing from" pill can read off whichever section resolved first.
+  const anyLoadedReport = TREND_SECTIONS.map((section) => sections[section.key].data).find(Boolean);
+  const showSkeleton = !anyLoadedReport && TREND_SECTIONS.every((section) => sections[section.key].isLoading);
+  const comparingFromDate = anyLoadedReport ? formatComparingFromDate(anyLoadedReport.current) : null;
+  const beforePeriod: FormattedPeriod = anyLoadedReport
+    ? formatPeriod(anyLoadedReport.previous)
+    : { primary: '—', secondary: null };
+  const afterPeriod: FormattedPeriod = anyLoadedReport
+    ? formatPeriod(anyLoadedReport.current)
+    : { primary: '—', secondary: null };
+
+  // buildSummaryCallouts already tolerates a partial metrics map — merging whatever sections
+  // have loaded so far means callouts appear incrementally (Cost's total_cost, Reliability's
+  // tool_errors, Activity's sessions) rather than waiting for every section to resolve.
+  const mergedMetrics = TREND_SECTIONS.reduce<Partial<Record<TrendMetricKey, TrendMetric>>>(
+    (accumulated, section) => ({ ...accumulated, ...sections[section.key].data?.metrics }),
+    {},
+  );
+  const summaryCallouts = buildSummaryCallouts(mergedMetrics);
+
+  // A page-wide error banner only makes sense once every section has failed with nothing to
+  // show — otherwise each failed section renders its own inline message below, and the page
+  // still has real content from its siblings.
+  const allSectionsErroredWithNoData = TREND_SECTIONS.every(
+    (section) => sections[section.key].error && !sections[section.key].data,
+  );
+  const pageError = allSectionsErroredWithNoData ? sections[TREND_SECTIONS[0].key].error : null;
 
   return (
     <PageLayout
@@ -218,7 +281,7 @@ const TrendReportPageView = ({
           isPolling={isPolling}
         />
       }
-      error={error}
+      error={pageError}
     >
       <Paper
         variant="outlined"
@@ -379,38 +442,19 @@ const TrendReportPageView = ({
             </Box>
           </Box>
 
-          {showSkeleton &&
-            TREND_SECTIONS.map((section) => (
-              <Box key={section.key}>
-                <SectionHeader
-                  label={section.label}
-                  accentColor={sectionAccent[section.key]}
-                  icon={SECTION_ICONS[section.key]}
-                />
-                {section.metricKeys.map((metricKey) => (
-                  <MetricRowSkeleton key={metricKey} />
-                ))}
-              </Box>
-            ))}
-
-          {report &&
-            TREND_SECTIONS.map((section) => (
-              <Box key={section.key}>
-                <SectionHeader
-                  label={section.label}
-                  accentColor={sectionAccent[section.key]}
-                  icon={SECTION_ICONS[section.key]}
-                />
-                {section.metricKeys.map((metricKey) => {
-                  const trend = report.metrics[metricKey];
-                  if (!trend) {
-                    return null;
-                  }
-                  const rowProps = buildRowProps(metricKey, trend);
-                  return <MetricRow key={metricKey} {...rowProps} />;
-                })}
-              </Box>
-            ))}
+          {/* Each section independently checks its own sections[section.key] state — a slow or
+              failed section renders its own skeleton/error/rows without waiting on, or blocking,
+              its siblings. */}
+          {TREND_SECTIONS.map((section) => (
+            <Box key={section.key}>
+              <SectionHeader
+                label={section.label}
+                accentColor={sectionAccent[section.key]}
+                icon={SECTION_ICONS[section.key]}
+              />
+              {renderSectionBody(section, sections[section.key])}
+            </Box>
+          ))}
 
           {showSkeleton && (
             <Box

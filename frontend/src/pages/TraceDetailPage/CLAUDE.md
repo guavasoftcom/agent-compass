@@ -101,6 +101,10 @@ TraceDetailPage/
 │                               persistChipsOff — reads/writes the muted-badge-family set to
 │                               localStorage['ac-wf-chips-off']; pure, no React (see Badge
 │                               visibility below)
+├── summaryStripVisibility.ts   loadOverviewCollapsed/persistOverviewCollapsed — reads/writes the
+│                               Overview panel's collapsed flag to
+│                               localStorage['ac-wf-overview-collapsed']; pure, no React; same
+│                               idiom as chipVisibility.ts (see Gotchas)
 ├── index.ts                    re-exports TraceDetailPage as default
 └── components/
     ├── TraceDetailHeader/
@@ -175,8 +179,8 @@ TraceDetailPage/
     │   │                             count, and total cost) + MetaFooter (root span, services, started —
     │   │                             no ids; those live in the header's IdentityPill), laid out
     │   │                             space-between across the card's full width. Tooltip fires only
-    │   │                             when a value element overflows; the panel always starts expanded
-    │   │                             on navigation (collapse is per-view only)
+    │   │                             when a value element overflows; the collapsed state persists
+    │   │                             to localStorage across traces and reloads (see Gotchas)
     │   └── index.ts
     ├── WaterfallToolbar/
     │   ├── WaterfallToolbar.tsx       toolbar row: "Span waterfall" label + a six-key legend
@@ -706,12 +710,15 @@ so the edge tracks the cursor 1:1.
   a trace whose errors are expected, that is a panel to close on every navigation. Errors are
   still one click away through the toolbar's "Next error" (`errorIndexRef` starts at -1, so the
   first press selects the first error). Don't re-add the auto-select.
-- **The Overview panel always starts expanded.** `SummaryStrip` owns `collapsed` as plain
-  `useState(false)` — no `localStorage` persistence. Navigating to a trace (including
-  `key={traceId}` remounting the view for a different trace) always shows the panel expanded;
-  a click-to-collapse only lasts for the current view. An earlier revision persisted the choice
-  to `localStorage['trace-detail-overview-collapsed']` so it carried across traces; that was
-  deliberately removed so the panel doesn't arrive collapsed from an unrelated earlier session.
+- **The Overview panel's collapsed state persists across traces and reloads.** `SummaryStrip`
+  initializes `collapsed` from `loadOverviewCollapsed()` (`../../summaryStripVisibility.ts`,
+  `localStorage['ac-wf-overview-collapsed']`, same read-once-on-init idiom as
+  `chipVisibility.ts`'s badge-family mutes) and `toggleCollapsed` persists every flip via
+  `persistOverviewCollapsed`. Navigating to a different trace (`key={traceId}` remounting the view)
+  re-reads the same stored preference rather than resetting to expanded. A prior revision removed
+  an earlier version of this persistence on the reasoning that the panel shouldn't arrive collapsed
+  from an unrelated earlier session — reinstated on request, so don't re-remove it without
+  checking whether that reasoning still applies.
 - **The cache hit-rate chip excludes output tokens.** `cacheHitRatePercent` in
   `../TracesPage/tokenBreakdown.ts` (shared by `SummaryStrip`'s trace-level chip and the drawer
   `TokensSection`'s per-span one — one formula, so the two can't drift)

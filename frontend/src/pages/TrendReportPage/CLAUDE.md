@@ -19,19 +19,24 @@ Before/after diff view: compares the selected window (`current`) against the imm
 preceding window of equal length (`previous`) across eleven metrics grouped into four sections
 (Cost, Token efficiency, Reliability, Activity). Answers "is usage trending more efficient" at a
 glance — cost down, cache reuse up, tool errors down — rather than a single-window snapshot like
-every other top-level page. Backend counterpart: `GET /api/trends` (see
-`design_handoff_trend_report/BACKEND_API.md` for the original proposal this page was built
-against — the live contract uses camelCase field names, see `trendReportApi.ts`).
+every other top-level page. Each of the four sections fetches independently from its own
+endpoint (`GET /api/trends/cost`, `/api/trends/token-efficiency`, `/api/trends/reliability`,
+`/api/trends/activity` — see `design_handoff_trend_report/BACKEND_API.md` for the original
+single-endpoint proposal this page was built against — the live contract uses camelCase field
+names, see `trendReportApi.ts`) so a slow or failed section doesn't block its siblings from
+rendering.
 
 ## Files
 
 ```
 TrendReportPage/
-├── TrendReportPage.tsx        container — window context, single useQuery, selectionKey/
-│                              refetchInterval wiring (mirrors MetricsPage.tsx)
+├── TrendReportPage.tsx        container — window context, one useQueries call (one query per
+│                              TREND_SECTIONS entry), selectionKey/refetchInterval wiring
+│                              (mirrors MetricsPage.tsx's window/auto-refresh pattern)
 ├── TrendReportPageView.tsx    view — period bar, section headers + metric rows, summary strip;
-│                              no queries, no context
-├── trendReportApi.ts          TrendPeriod/TrendMetric/TrendReport types + fetchTrendReport()/
+│                              no queries, no context; renders each section from its own
+│                              independent sections[section.key] state
+├── trendReportApi.ts          TrendPeriod/TrendMetric/TrendReport types + fetchTrendSection()/
 │                              resolveTrendReportSelection(); page-local getJSON helper
 │                              (mirrors MetricsPage/metricsApi.ts)
 ├── trendReportApi.test.ts     vitest coverage for resolveTrendReportSelection's day-snapping
@@ -71,19 +76,28 @@ TrendReportPage/
 
 ## Who calls which API
 
-| Container hook | Query key | Fetcher → endpoint |
+One `useQueries` call in the container builds one independent query per `TREND_SECTIONS` entry:
+
+| Section | Query key | Fetcher → endpoint |
 |---|---|---|
-| `useQuery` | `['trend-report', selectionKey]` | `fetchTrendReport(selection)` → `GET /api/trends?…` |
+| Cost | `['trend-report', 'cost', selectionKey]` | `fetchTrendSection('cost', selection)` → `GET /api/trends/cost?…` |
+| Token efficiency | `['trend-report', 'tokenEfficiency', selectionKey]` | `fetchTrendSection('tokenEfficiency', selection)` → `GET /api/trends/token-efficiency?…` |
+| Reliability | `['trend-report', 'reliability', selectionKey]` | `fetchTrendSection('reliability', selection)` → `GET /api/trends/reliability?…` |
+| Activity | `['trend-report', 'activity', selectionKey]` | `fetchTrendSection('activity', selection)` → `GET /api/trends/activity?…` |
 
 `selectionKey` follows the same `preset:<minutes>` / `custom:<start>:<end>` pattern as every other
-page (computed from the *raw* selection, not the day-snapped one below — see the gotcha). `MetricRow`
-and `SectionHeader` never fetch — the view derives every row's props from the single
-`report.metrics` bundle.
+page (computed from the *raw* selection, not the day-snapped one below — see the gotcha), and is
+shared across all four query keys — only the section-key segment differs. `TREND_SECTIONS` is a
+compile-time constant of fixed length 4, so mapping it into `useQueries`' array doesn't violate
+rules-of-hooks. Every response shares the same `TrendReport` shape (`current`/`previous`/`metrics`);
+each endpoint just returns a subset of the eleven metric keys. `MetricRow` and `SectionHeader` never
+fetch — the view derives each section's rows from that section's own resolved `metrics` bundle.
 
 - **Windows over 24 hours are snapped to whole calendar days before the request is sent.**
-  `trendReportApi.ts`'s `resolveTrendReportSelection` runs inside `fetchTrendReport`, ahead of
-  `windowQueryParams`: a preset or custom selection spanning more than 24 hours is converted to an
-  explicit `custom` selection whose `startTimestamp`/`endTimestamp` land on 00:00:00.000 / 23:59:59.999
+  `trendReportApi.ts`'s `resolveTrendReportSelection` runs inside `fetchTrendSection`, ahead of
+  `windowQueryParams`, identically for all four sections: a preset or custom selection spanning
+  more than 24 hours is converted to an explicit `custom` selection whose
+  `startTimestamp`/`endTimestamp` land on 00:00:00.000 / 23:59:59.999
   of their calendar day, in the **browser's local timezone** (this app runs on the operator's own
   workstation, not a server whose timezone the browser can't assume). "Last 7 days" therefore
   becomes the last 7 full calendar days ending today, not "7×24h before this exact instant" — a
@@ -123,13 +137,17 @@ and `SectionHeader` never fetch — the view derives every row's props from the 
   a per-row `bgcolor` back; two adjacent rows painting the same color independently is visually
   identical until a future redesign wants a different wash per section, at which point the
   single-overlay approach would need revisiting anyway.
-- **Summary strip is derived, not hardcoded.** `buildSummaryCallouts` reads `total_cost`,
-  `tool_errors`, and `sessions` off the fetched response and generates three short sentences
-  (Cost / Reliability / Volume) from their actual before/after figures and `computeDelta`
-  classification — never the reference design's example copy ("driven by cache efficiency and
-  model-mix changes" etc., which describes data this page doesn't have). A metric missing from a
-  degraded response drops its callout instead of throwing; the strip section renders nothing at
-  all when `summaryCallouts` is empty (e.g. before the first successful fetch).
+- **Summary strip is derived, not hardcoded.** `buildSummaryCallouts` reads `total_cost` (from
+  Cost), `tool_errors` (from Reliability), and `sessions` (from Activity) off a merged metrics
+  object — `TrendReportPageView` spreads `sections[section.key].data?.metrics` for every section
+  in `TREND_SECTIONS` order before calling it — and generates three short sentences (Cost /
+  Reliability / Volume) from their actual before/after figures and `computeDelta` classification
+  — never the reference design's example copy ("driven by cache efficiency and model-mix changes"
+  etc., which describes data this page doesn't have). Because the merge only pulls in whatever
+  sections have resolved so far, callouts appear incrementally as their owning section's request
+  completes rather than waiting for all four; a metric missing from a degraded response just
+  drops its callout instead of throwing, and the strip section renders nothing at all when
+  `summaryCallouts` is empty (e.g. before any section's first successful fetch).
 - **Section icon accent colors** map to `theme/colors.ts`'s `auroraColors` hues (cost = `gold`,
   activity = `cyan`) or existing theme tokens (token efficiency = `theme.palette.primary.main`,
   reliability = `theme.palette.success.main`) — chosen in `TrendReportPageView`, not hardcoded
@@ -157,11 +175,14 @@ and `SectionHeader` never fetch — the view derives every row's props from the 
   the backend endpoint may not exist yet in early development; the page just shows TanStack
   Query's loading/error state until it does. Add a fixture store here the same way those pages
   did if offline UI iteration becomes a recurring need.
-- **The "Comparing from" pill and both period-bar date ranges only render once `report` has
-  loaded** — before the first successful fetch they show `null`/`—` rather than a guessed date,
-  since the page has no window-derived date math of its own; `formatComparingFromDate`/
-  `formatPeriod` both read off the server's own `current`/`previous` timestamps, which already
-  reflect whatever `resolveTrendReportSelection` sent (day-snapped or exact, per the note above).
+- **The "Comparing from" pill and both period-bar date ranges render off whichever section
+  resolved first, not a specific one.** `TrendReportPageView` computes `anyLoadedReport` by
+  scanning `TREND_SECTIONS` in order for the first section whose `sections[section.key].data` is
+  defined — safe because all four sections compute identical window boundaries from the same
+  request. Before any section has loaded they show `null`/`—` rather than a guessed date, since
+  the page has no window-derived date math of its own; `formatComparingFromDate`/`formatPeriod`
+  both read off the server's own `current`/`previous` timestamps, which already reflect whatever
+  `resolveTrendReportSelection` sent (day-snapped or exact, per the note above).
 - **Each period-bar date renders as two lines, not one string.** `formatPeriod` returns
   `{ primary, secondary }` — `primary` is the date (`"Aug 30"`, or `"Aug 24 – Aug 30"` when the
   period spans more than one calendar day) and `secondary` is the time-of-day range
@@ -174,19 +195,31 @@ and `SectionHeader` never fetch — the view derives every row's props from the 
   case: a multi-day, non-day-aligned span needs `"Aug 29 – Aug 30"` as `primary`, not one end's
   date awkwardly fused to the other's time.
 - **`TrendReportPage.tsx`'s `selectionKey` is built from the raw selection, not the day-snapped
-  one `fetchTrendReport` actually requests.** A `preset:10080` key stays stable all day even though
+  one `fetchTrendSection` actually requests.** A `preset:10080` key stays stable all day even though
   the day-snapped request window it resolves to shifts forward at local midnight — relying on
   `staleTime`/the 60s auto-refresh poll to eventually pick up the new day rather than an
   immediate cache-key change. If a "Last 7 days" comparison ever needs to flip to the new day the
   instant it turns, key on `resolveTrendReportSelection(selection)`'s resolved bounds instead of
-  the raw preset.
-- **The initial load (`isLoading && !report`) renders full skeleton content, not a spinner/text
-  placeholder.** `TrendReportPageView`'s `showSkeleton` flag drives: a pill-shaped `Skeleton` for
-  the "Comparing from" chip, `Skeleton` text in place of both period-bar date labels, the *real*
-  `SectionHeader`s (label/icon/accent are static, not data-dependent) each followed by one
-  `MetricRowSkeleton` per `TREND_SECTIONS` metric key, and three skeleton blocks where the
-  summary strip's callouts land. This mirrors `PurgeDryRunCard`'s `PurgeDryRunSkeleton`
-  pattern (Settings page) — match real content's structure/sizing so the card doesn't reflow
-  once data arrives, rather than a generic spinner. On a refetch with existing `report` data
-  (auto-refresh, manual reload), `showSkeleton` is false and the old content stays put — only the
-  very first load shows skeletons.
+  the raw preset. This applies identically to all four section query keys.
+- **The page-wide top skeleton (period bar + "Comparing from" pill) only shows while every
+  section is still loading with no data at all** — `showSkeleton` is
+  `!anyLoadedReport && TREND_SECTIONS.every(s => sections[s.key].isLoading)`. Each section's own
+  body (real `SectionHeader`, then either `MetricRowSkeleton` rows, an inline error message, or
+  real `MetricRow`s) is driven independently by `renderSectionBody(section, sections[section.key])`
+  in `TrendReportPageView.tsx` — see the "per-section state" gotcha below. This mirrors
+  `PurgeDryRunCard`'s `PurgeDryRunSkeleton` pattern (Settings page): match real content's
+  structure/sizing so the card doesn't reflow once data arrives, rather than a generic spinner. On
+  a refetch with existing data (auto-refresh, manual reload), a section's own skeleton doesn't
+  reappear — only its very first load shows one.
+- **Loading/error/data state is per-section, not page-wide — don't re-couple the four sections
+  back into one shared state.** The container's `sections: Record<TrendSectionKey,
+  TrendSectionState>` (one `{ data, isLoading, error }` per `useQueries` result) is the whole
+  point of the split: a slow `blended_rate_per_1m` sparkline query in Cost must not delay
+  Reliability's or Activity's rows from painting, and one section erroring must not blank the
+  other three. `TrendReportPageView` never derives a single page-wide `isLoading`/`error` from
+  `sections` (aside from `showSkeleton`'s "every section still loading" check and the page-level
+  error banner's "every section errored with nothing to show" check, both deliberately
+  conjunctive across all four) — a future edit that collapses `sections` into one aggregate state,
+  or that makes `onReload`/`isPolling` gate on all four resolving together instead of `some(...)
+  isFetching`, would silently undo the independent-per-section behavior this page exists to
+  provide.

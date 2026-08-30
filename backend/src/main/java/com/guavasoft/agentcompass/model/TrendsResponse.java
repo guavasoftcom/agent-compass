@@ -24,18 +24,21 @@ import java.util.Map;
 
 @Schema(name = "TrendsResponse", description = "Before/after diff comparing the selected window (current) "
         + "against the immediately preceding period of equal length (previous), across 11 metrics in 4 "
-        + "groups (Cost, Token efficiency, Reliability, Activity). Cost/token metrics read exclusively "
-        + "from the metric_points cumulative-counter pipeline (SUM(value_delta)); reliability/activity "
-        + "metrics read exclusively from log_records -- the two pipelines are never mixed within one "
-        + "comparison. See backend/CLAUDE.md's two-pipelines note.")
+        + "groups (Cost, Token efficiency, Reliability, Activity), each served by its own GET /api/trends/* "
+        + "endpoint so one response's metrics map only carries that section's subset of keys. Cost/token "
+        + "metrics read exclusively from the metric_points cumulative-counter pipeline (SUM(value_delta)); "
+        + "reliability/activity metrics read exclusively from log_records -- the two pipelines are never "
+        + "mixed within one comparison. See backend/CLAUDE.md's two-pipelines note.")
 public record TrendsResponse(
         @Schema(description = "The selected window") Window current,
         @Schema(description = "The immediately preceding period of equal duration: "
                 + "windowDuration = Duration.between(current.start, current.end), "
                 + "previous.start = current.start - windowDuration, previous.end = current.start.") Window previous,
-        @Schema(description = "One entry per tracked metric, keyed by its id: total_cost, cost_per_session, "
-                + "blended_rate_per_1m, cache_read_ratio_pct, tokens_total, tokens_per_session, tool_errors, "
-                + "error_rate_pct, session_failures, sessions, avg_duration_min.")
+        @Schema(description = "One entry per metric in this section, keyed by its id. GET /api/trends/cost: "
+                + "total_cost, cost_per_session, blended_rate_per_1m. GET /api/trends/token-efficiency: "
+                + "cache_read_ratio_pct, tokens_total, tokens_per_session. GET /api/trends/reliability: "
+                + "tool_errors, error_rate_pct, session_failures. GET /api/trends/activity: sessions, "
+                + "avg_duration_min.")
         Map<String, MetricTrend> metrics) {
 
     @Schema(name = "TrendsResponse.Window", description = "An inclusive time window")

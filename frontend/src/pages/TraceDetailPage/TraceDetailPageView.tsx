@@ -479,6 +479,7 @@ const TraceDetailPageView = ({
                   costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
                   isRollupCost={costOfSpan(s) > 0}
                   chipsOff={chipsOff}
+                  logs={logsBySpanId.get(s.spanId)}
                   gridColumns={gridColumns}
                   left={left}
                   right={right}

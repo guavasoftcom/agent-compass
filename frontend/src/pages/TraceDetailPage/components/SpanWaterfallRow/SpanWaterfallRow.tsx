@@ -16,7 +16,7 @@ see <https://www.gnu.org/licenses/>.
 import { Box, Tooltip, alpha, useTheme } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { neutralColors, tokenFigureColor } from '../../../../theme/colors';
-import type { SpanRow } from '../../../../api';
+import type { SpanRow, LogRow } from '../../../../api';
 import {
   formatDuration,
   formatTokens,
@@ -50,6 +50,8 @@ interface Props {
   // except error/descendant-error, which name the row's status rather than an
   // optional figure and are never hidden.
   chipsOff: Set<ChipFamily>;
+  // Log rows associated with this span, used to detect skills executed.
+  logs?: LogRow[];
   gridColumns: string;
   // Horizontal bar geometry (percent of the visible zoom window).
   left: number;
@@ -256,6 +258,25 @@ const SpanCostBadge = ({
   );
 };
 
+// Extract skill name from logs with a skill_activated event. The event.name
+// attribute is the short form ("skill_activated"); the log's own `body` field
+// carries the dotted form ("claude_code.skill_activated") instead.
+const extractSkillName = (logs?: LogRow[]): string | null => {
+  if (!logs) {
+    return null;
+  }
+  for (const log of logs) {
+    const eventName = log.attributes?.['event.name'];
+    if (eventName === 'skill_activated') {
+      const skillName = log.attributes?.['skill.name'];
+      if (skillName && typeof skillName === 'string') {
+        return skillName;
+      }
+    }
+  }
+  return null;
+};
+
 // Whichever attribute carries what the tool was actually asked to do, in
 // preference order. `full_command` first: on a Bash span it is the whole
 // heredoc, where `command` is only its first line.
@@ -387,6 +408,26 @@ const SpanToolBadge = ({ span }: { span: SpanRow }) => {
   );
 };
 
+const SpanSkillBadge = ({ skillName }: { skillName: string | null }) => {
+  if (!skillName) {
+    return null;
+  }
+  return (
+    <Tooltip arrow placement="top" title={skillName}>
+      <Box
+        component="span"
+        sx={{
+          ...spanChipSx,
+          color: 'success.main',
+          bgcolor: (t) => alpha(t.palette.success.main, 0.15),
+        }}
+      >
+        Skill
+      </Box>
+    </Tooltip>
+  );
+};
+
 const SpanWaterfallRow = ({
   span,
   depth,
@@ -398,6 +439,7 @@ const SpanWaterfallRow = ({
   costUsd,
   isRollupCost,
   chipsOff,
+  logs,
   gridColumns,
   left,
   right,
@@ -407,6 +449,7 @@ const SpanWaterfallRow = ({
 }: Props) => {
   const theme = useTheme();
   const tokens = tokenBreakdownForSpan(span);
+  const skillName = extractSkillName(logs);
   // Which model an llm_request row actually went to — the tool chip's counterpart
   // for model spans, so a trace that switched models mid-run reads off the tree
   // instead of one drawer open at a time. `model` and `gen_ai.request.model` are
@@ -571,6 +614,7 @@ const SpanWaterfallRow = ({
           </Box>
         ) : null}
         {!chipsOff.has('tool') ? <SpanToolBadge span={span} /> : null}
+        <SpanSkillBadge skillName={skillName} />
         {isError ? (
           <Box
             component="span"
