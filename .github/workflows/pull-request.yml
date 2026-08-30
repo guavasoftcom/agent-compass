@@ -29,7 +29,8 @@ jobs:
 
       # Runs checkstyle (bound to the validate phase) and the Testcontainers
       # integration tests; ubuntu-latest ships a running Docker daemon, which
-      # those tests need to start Postgres.
+      # those tests need to start Postgres. License headers are checked in the
+      # validate phase as well.
       - name: Build, check and test
         working-directory: backend
         run: ./mvnw --batch-mode --no-transfer-progress verify
@@ -66,6 +67,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: yarn install --immutable
+
+      - name: Check license headers
+        working-directory: frontend
+        run: yarn license:check
 
       - name: Lint
         working-directory: frontend

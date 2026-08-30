@@ -1,3 +1,18 @@
+/*
+Copyright (c) 2026 Guadalupe Garcia <guad.daniel.garcia@gmail.com>
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not,
+see <https://www.gnu.org/licenses/>.
+*/
 // Single source of truth for every raw color the dashboard paints.
 //
 // `theme.ts`, `traceColors.ts`, and the page/component `sx` props all reference
@@ -48,6 +63,13 @@ export const neutralColors = {
   titleDark: '#efeaff', // page title (dark)
   shadowIndigo: '#241450', // card / popover shadow base (light)
   shadowDeep: '#0a061e', // heavy chart-tooltip shadow base
+  // Solid (non-alpha) equivalent of `progressTrack` (inkLight/white @ 8%) flattened onto the
+  // card surface (paperBg) — for a full-width band (e.g. a section-label row) that needs the
+  // same muted tone as a progress-bar track but can't be a translucent wash, since its own
+  // opacity would otherwise expose whatever renders underneath it (card gradients, column
+  // washes) instead of reading as one flat panel color.
+  surfaceMutedLight: '#ededee',
+  surfaceMutedDark: '#272431',
 } as const;
 
 // ─── Semantic aliases ───────────────────────────────────────────────────────

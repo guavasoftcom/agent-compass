@@ -1,3 +1,18 @@
+/*
+Copyright (c) 2026 Guadalupe Garcia <guad.daniel.garcia@gmail.com>
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not,
+see <https://www.gnu.org/licenses/>.
+*/
 import { useState } from 'react';
 import {
   Box,
@@ -19,7 +34,11 @@ import { USD_FORMATTER } from '../../../../lib/format';
 import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 import { sessionsDeepLink } from '../../../SessionsPage/SessionsPage';
-import { CATEGORY_LABELS, CATEGORY_ORDER, categoryColor } from '../../costDerivations';
+import {
+  CATEGORY_LABELS,
+  CATEGORY_ORDER,
+  categoryColor,
+} from '../../costDerivations';
 
 export interface SessionCostDialogProps {
   /** The selected session, or null when the dialog is closed. */
@@ -29,12 +48,13 @@ export interface SessionCostDialogProps {
   onClose: () => void;
 }
 
-const CATEGORY_TO_SESSION_FIELD: Record<CostCategory, keyof CostSessionShare> = {
-  MAIN_LOOP: 'mainLoopCostUsd',
-  SUBAGENT: 'subagentCostUsd',
-  SKILL: 'skillCostUsd',
-  AUXILIARY: 'auxiliaryCostUsd',
-};
+const CATEGORY_TO_SESSION_FIELD: Record<CostCategory, keyof CostSessionShare> =
+  {
+    MAIN_LOOP: 'mainLoopCostUsd',
+    SUBAGENT: 'subagentCostUsd',
+    SKILL: 'skillCostUsd',
+    AUXILIARY: 'auxiliaryCostUsd',
+  };
 
 interface DialogBodyProps {
   session: CostSessionShare;
@@ -52,7 +72,8 @@ interface DialogBodyProps {
  */
 const DialogBody = ({ session, totalCostUsd, onClose }: DialogBodyProps) => {
   const theme = useTheme();
-  const shareOfSpend = totalCostUsd === 0 ? 0 : (session.costUsd / totalCostUsd) * 100;
+  const shareOfSpend =
+    totalCostUsd === 0 ? 0 : (session.costUsd / totalCostUsd) * 100;
 
   // Same four categories, same colors, as the money map and trend chart elsewhere
   // on this page — CATEGORY_ORDER/categoryColor from costDerivations.ts, not a
@@ -66,13 +87,6 @@ const DialogBody = ({ session, totalCostUsd, onClose }: DialogBodyProps) => {
   return (
     <>
       <DialogTitle sx={{ pr: 6, pb: 2 }}>
-        {session.firstUserPrompt ? (
-          <Box sx={{ fontWeight: 700, fontSize: 16 }}>{session.firstUserPrompt}</Box>
-        ) : (
-          <Box sx={{ fontWeight: 700, fontSize: 16, color: 'text.disabled', fontStyle: 'italic' }}>
-            No prompt captured
-          </Box>
-        )}
         <Box
           sx={{
             mt: 0.5,
@@ -96,15 +110,25 @@ const DialogBody = ({ session, totalCostUsd, onClose }: DialogBodyProps) => {
 
       <DialogContent dividers>
         <Stack spacing={2}>
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
-            <KpiTile label="Cost" value={USD_FORMATTER.format(session.costUsd)} />
-            <KpiTile label="Share of spend" value={`${shareOfSpend.toFixed(1)}%`} />
+          <Box
+            sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}
+          >
+            <KpiTile
+              label="Cost"
+              value={USD_FORMATTER.format(session.costUsd)}
+            />
+            <KpiTile
+              label="Share of spend"
+              value={`${shareOfSpend.toFixed(1)}%`}
+            />
           </Box>
 
           <SegmentedBar
             segments={segments}
             formatValue={(value) => USD_FORMATTER.format(value)}
-            trackColor={theme.custom?.progressTrack ?? theme.palette.action.hover}
+            trackColor={
+              theme.custom?.progressTrack ?? theme.palette.action.hover
+            }
             hideZeroSegmentsInLegend
           />
 
@@ -117,7 +141,11 @@ const DialogBody = ({ session, totalCostUsd, onClose }: DialogBodyProps) => {
             color="inherit"
             fullWidth
             endIcon={<ArrowForwardIcon />}
-            sx={{ height: 40, borderRadius: radii.sm, fontFamily: fontFamilies.display }}
+            sx={{
+              height: 40,
+              borderRadius: radii.sm,
+              fontFamily: fontFamilies.display,
+            }}
           >
             View in Sessions
           </Button>
@@ -137,7 +165,11 @@ const DialogBody = ({ session, totalCostUsd, onClose }: DialogBodyProps) => {
  * (`CostSessionShare` carries all four category fields, guaranteed to sum to
  * `costUsd`) — opening this costs no fetch.
  */
-const SessionCostDialog = ({ session, totalCostUsd, onClose }: SessionCostDialogProps) => {
+const SessionCostDialog = ({
+  session,
+  totalCostUsd,
+  onClose,
+}: SessionCostDialogProps) => {
   // Keep the last selection rendered while the Dialog's exit transition runs, so
   // the body doesn't flash to an empty state during the ~200ms fade-out — same
   // idiom as SessionCacheEfficiencyDialog's lastRow / SpanInspectorDrawer.
@@ -151,7 +183,11 @@ const SessionCostDialog = ({ session, totalCostUsd, onClose }: SessionCostDialog
   return (
     <Dialog open={session != null} onClose={onClose} maxWidth="xs" fullWidth>
       {effectiveSession != null ? (
-        <DialogBody session={effectiveSession} totalCostUsd={totalCostUsd} onClose={onClose} />
+        <DialogBody
+          session={effectiveSession}
+          totalCostUsd={totalCostUsd}
+          onClose={onClose}
+        />
       ) : null}
     </Dialog>
   );

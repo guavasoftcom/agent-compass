@@ -1,0 +1,16 @@
+{
+  "license": "LICENSE-HEADER",
+  "ignore": [
+    ".git/**",
+    ".yarn/**",
+    ".husky/**",
+    "coverage/**",
+    "build/**",
+    ".vite/**",
+    "yarn.lock",
+    "*.gz",
+    "package-lock.json",
+    ".pnp.cjs",
+    ".pnp.loader.mjs"
+  ]
+}

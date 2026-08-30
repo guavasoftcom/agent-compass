@@ -1,0 +1,33 @@
+#!/bin/sh
+
+echo "🔍 Checking license headers..."
+
+# Frontend license check
+echo "Checking frontend..."
+cd frontend
+yarn license:check > /dev/null 2>&1
+frontend_status=$?
+cd ..
+
+# Backend license check. Uses the fully-qualified plugin coordinate rather
+# than the "license:" shorthand -- Maven's default prefix resolution maps
+# that shorthand to org.codehaus.mojo:license-maven-plugin (an unrelated
+# plugin also on this machine), not the com.mycila one configured in pom.xml.
+echo "Checking backend..."
+./backend/mvnw -f backend/pom.xml -q com.mycila:license-maven-plugin:4.3:check > /dev/null 2>&1
+backend_status=$?
+
+# Report results
+if [ $frontend_status -ne 0 ] || [ $backend_status -ne 0 ]; then
+  echo ""
+  echo "❌ License header check failed. Fix with:"
+  if [ $frontend_status -ne 0 ]; then
+    echo "   yarn --cwd frontend license:fix"
+  fi
+  if [ $backend_status -ne 0 ]; then
+    echo "   ./backend/mvnw -f backend/pom.xml com.mycila:license-maven-plugin:4.3:format"
+  fi
+  exit 1
+fi
+
+echo "✅ License headers valid"

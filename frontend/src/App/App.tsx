@@ -1,3 +1,18 @@
+/*
+Copyright (c) 2026 Guadalupe Garcia <guad.daniel.garcia@gmail.com>
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not,
+see <https://www.gnu.org/licenses/>.
+*/
 import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppShell from './AppShell';
@@ -20,6 +35,7 @@ const LogsPage = lazy(() => import('../pages/LogsPage'));
 const TracesPage = lazy(() => import('../pages/TracesPage'));
 const TraceDetailPage = lazy(() => import('../pages/TraceDetailPage'));
 const ReportPage = lazy(() => import('../pages/ReportPage'));
+const TrendReportPage = lazy(() => import('../pages/TrendReportPage'));
 const SettingsPage = lazy(() => import('../pages/SettingsPage'));
 
 const App = () => {
@@ -45,6 +61,7 @@ const App = () => {
         <Route path="/traces" element={<TracesPage />} />
         <Route path="/traces/:traceId" element={<TraceDetailPage />} />
         <Route path="/report" element={<ReportPage />} />
+        <Route path="/trend-report" element={<TrendReportPage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Legacy paths from before the Tool activity section existed. */}
