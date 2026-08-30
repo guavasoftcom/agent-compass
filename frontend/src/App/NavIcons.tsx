@@ -33,7 +33,7 @@ export const ToolUsageIcon = ({ size = 20 }: NavIconProps) => (
 export const TokenUsageIcon = ({ size = 20 }: NavIconProps) => (
   <svg {...svgProps(size)}>
     <circle cx="12" cy="12" r="8" />
-    <path d="M12 8v8M9.5 14a2.5 2 0 0 0 5 0c0-2.5-5-1.5-5-4a2.5 2 0 0 1 5 0" />
+    <path d="M12 6v12M9 9h6M9 15h6" />
   </svg>
 );
 
@@ -55,6 +55,13 @@ export const TracesIcon = ({ size = 20 }: NavIconProps) => (
 export const LogsIcon = ({ size = 20 }: NavIconProps) => (
   <svg {...svgProps(size)}>
     <path d="M4 6h12M4 12h16M4 18h10" />
+  </svg>
+);
+
+export const CostIcon = ({ size = 20 }: NavIconProps) => (
+  <svg {...svgProps(size)}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 7v10M9.5 9.5a2.5 2 0 0 1 2.5-1.5c1.4 0 2.5.7 2.5 1.75S13.4 11.5 12 11.5s-2.5.8-2.5 1.75S10.6 15 12 15c1.4 0 2.5-.6 2.5-1.5" />
   </svg>
 );
 

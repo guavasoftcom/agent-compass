@@ -193,6 +193,7 @@ export default function TraceDetailPage() {
       sessionId={sessionId}
       firstUserPrompt={traceSummary?.firstUserPrompt ?? null}
       traceCostUsd={traceSummary?.totalCostUsd ?? null}
+      traceBackgroundCostUsd={traceSummary?.backgroundCostUsd ?? 0}
     />
   );
 }

@@ -10,8 +10,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
+import com.guavasoft.agentcompass.repository.SpanRepository;
 import com.guavasoft.agentcompass.service.LogService;
 
 import java.time.Instant;
@@ -22,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.data.Offset.offset;
 
 /**
  * Exercises the skill-usage and subagent-usage aggregations against a real
@@ -54,6 +57,9 @@ class SkillSubagentUsageQueryIntegrationTest {
     LogRecordRepository repository;
 
     @Autowired
+    SpanRepository spanRepository;
+
+    @Autowired
     LogService service;
 
     /** Window spanning 60 minutes; rows are seeded at fixed offsets inside it. */
@@ -69,11 +75,22 @@ class SkillSubagentUsageQueryIntegrationTest {
     private static final String ATTR_SKILL_NAME    = "skill.name";
     private static final String ATTR_SUBAGENT_TYPE = "subagent_type";
     private static final String ATTR_PROMPT_ID     = "prompt.id";
+    private static final String ATTR_COST_USD      = "cost_usd";
+    private static final String ATTR_TOOL_USE_ID   = "tool_use_id";
+    private static final String ATTR_REQUEST_ID    = "request_id";
 
     private static final String EVENT_API_REQUEST = "api_request";
     private static final String EVENT_TOOL_RESULT = "tool_result";
 
     private static final String TOOL_AGENT = "Agent";
+
+    // Span names/shape mirror LogsQueryIntegrationTest's
+    // logsForTraceRepointsSubagentLogsOffTheDispatchingTaskSpan: root -> tool wrapper
+    // -> tool.execution (the dispatch) -> child llm_request carrying request_id.
+    private static final String SPAN_NAME_ROOT           = "claude_code.interaction";
+    private static final String SPAN_NAME_TOOL_WRAPPER   = "claude_code.tool";
+    private static final String SPAN_NAME_TOOL_EXECUTION = "claude_code.tool.execution";
+    private static final String SPAN_NAME_LLM_REQUEST    = "claude_code.llm_request";
 
     private static final String SESSION_ID = "session-1";
 
@@ -110,9 +127,34 @@ class SkillSubagentUsageQueryIntegrationTest {
     private static final int OFFSET_SHIP_SKILL_ON_SONNET        = 480;
     private static final int OFFSET_VERIFY_SKILL_ON_OPUS        = 540;
 
+    // cost_usd values for the seeded api_request rows. Chosen so ship's skill-cost
+    // total (below) is easy to hand-verify against the sum of these four turns.
+    private static final double COST_MAIN_LOOP_ON_OPUS       = 0.10;
+    private static final double COST_SUBAGENT_TURN_ON_SONNET = 0.05;
+    private static final double COST_MAIN_LOOP_ON_SONNET     = 0.08;
+    private static final double COST_SHIP_ON_OPUS            = 0.20;
+    private static final double COST_SHIP_LATER_TURN         = 0.15;
+    private static final double COST_SHIP_SUBAGENT_TURN      = 0.05;
+    private static final double COST_SHIP_ON_SONNET          = 0.30;
+    private static final double COST_VERIFY_ON_OPUS          = 0.50;
+
+    // Sum of every api_request row carrying skill.name=ship, including the one made
+    // from inside the subagent it spawned — see
+    // skillCostSumsAllTurnsIncludingTheOneMadeInsideASpawnedSubagent.
+    private static final double SHIP_SKILL_TOTAL_COST_USD =
+            COST_SHIP_ON_OPUS + COST_SHIP_LATER_TURN + COST_SHIP_SUBAGENT_TURN + COST_SHIP_ON_SONNET;
+
+    private static final double COST_ASSERTION_TOLERANCE = 0.0001;
+
+    // Offsets/values for the span-correlated subagent-cost tests below.
+    private static final int OFFSET_COST_CORRELATED_DISPATCH = 600;
+    private static final int OFFSET_ORPHAN_DISPATCHES         = 660;
+    private static final double COST_CORRELATED_SUBAGENT_CALL = 1.23;
+
     @BeforeEach
     void seed() {
         repository.deleteAll();
+        spanRepository.deleteAll();
         windowStart = Instant.now().minus(60, ChronoUnit.MINUTES);
         windowEnd = Instant.now();
 
@@ -120,7 +162,8 @@ class SkillSubagentUsageQueryIntegrationTest {
         saveLog(OFFSET_MAIN_LOOP_TURN_ON_OPUS, Map.of(
                 ATTR_EVENT_NAME, EVENT_API_REQUEST,
                 ATTR_SESSION_ID, SESSION_ID,
-                ATTR_MODEL, MODEL_OPUS));
+                ATTR_MODEL, MODEL_OPUS,
+                ATTR_COST_USD, COST_MAIN_LOOP_ON_OPUS));
 
         // A turn from inside the subagent run, on a different model. It is nearer
         // in time to the tool_result below than the dispatching turn is, so it
@@ -129,7 +172,8 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_EVENT_NAME, EVENT_API_REQUEST,
                 ATTR_SESSION_ID, SESSION_ID,
                 ATTR_MODEL, MODEL_SONNET,
-                ATTR_AGENT_NAME, "custom"));
+                ATTR_AGENT_NAME, "custom",
+                ATTR_COST_USD, COST_SUBAGENT_TURN_ON_SONNET));
 
         saveLog(OFFSET_FIRST_EXPLORE_DISPATCH, Map.of(
                 ATTR_EVENT_NAME, EVENT_TOOL_RESULT,
@@ -140,7 +184,8 @@ class SkillSubagentUsageQueryIntegrationTest {
         saveLog(OFFSET_MAIN_LOOP_TURN_ON_SONNET, Map.of(
                 ATTR_EVENT_NAME, EVENT_API_REQUEST,
                 ATTR_SESSION_ID, SESSION_ID,
-                ATTR_MODEL, MODEL_SONNET));
+                ATTR_MODEL, MODEL_SONNET,
+                ATTR_COST_USD, COST_MAIN_LOOP_ON_SONNET));
 
         // Identifier carried inside tool_input rather than as a flat attribute —
         // the COALESCE fallback has to find it.
@@ -164,7 +209,8 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_SESSION_ID, SESSION_ID,
                 ATTR_MODEL, MODEL_OPUS,
                 ATTR_SKILL_NAME, SKILL_SHIP,
-                ATTR_PROMPT_ID, PROMPT_FIRST_SHIP));
+                ATTR_PROMPT_ID, PROMPT_FIRST_SHIP,
+                ATTR_COST_USD, COST_SHIP_ON_OPUS));
 
         // Same invocation, later turn, different model. It must not add a second
         // call, and must not move the invocation into the Sonnet bucket.
@@ -173,18 +219,22 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_SESSION_ID, SESSION_ID,
                 ATTR_MODEL, MODEL_SONNET,
                 ATTR_SKILL_NAME, SKILL_SHIP,
-                ATTR_PROMPT_ID, PROMPT_FIRST_SHIP));
+                ATTR_PROMPT_ID, PROMPT_FIRST_SHIP,
+                ATTR_COST_USD, COST_SHIP_LATER_TURN));
 
         // A turn from inside a subagent the skill spawned. It inherits skill.name,
         // reports the subagent's model, and carries a prompt id of its own — so
         // only the agent.name check keeps it from counting as a third invocation.
+        // Its cost DOES still belong to the skill's cost total (unlike its call
+        // count) — see skillCostSumsAllTurnsIncludingTheOneMadeInsideASpawnedSubagent.
         saveLog(OFFSET_SHIP_SKILL_SUBAGENT_TURN, Map.of(
                 ATTR_EVENT_NAME, EVENT_API_REQUEST,
                 ATTR_SESSION_ID, SESSION_ID,
                 ATTR_MODEL, MODEL_HAIKU,
                 ATTR_SKILL_NAME, SKILL_SHIP,
                 ATTR_PROMPT_ID, PROMPT_SHIP_SUBAGENT,
-                ATTR_AGENT_NAME, "custom"));
+                ATTR_AGENT_NAME, "custom",
+                ATTR_COST_USD, COST_SHIP_SUBAGENT_TURN));
 
         // Second ship invocation — a separate prompt, so a separate call.
         saveLog(OFFSET_SHIP_SKILL_ON_SONNET, Map.of(
@@ -192,14 +242,16 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_SESSION_ID, SESSION_ID,
                 ATTR_MODEL, MODEL_SONNET,
                 ATTR_SKILL_NAME, SKILL_SHIP,
-                ATTR_PROMPT_ID, PROMPT_SECOND_SHIP));
+                ATTR_PROMPT_ID, PROMPT_SECOND_SHIP,
+                ATTR_COST_USD, COST_SHIP_ON_SONNET));
 
         saveLog(OFFSET_VERIFY_SKILL_ON_OPUS, Map.of(
                 ATTR_EVENT_NAME, EVENT_API_REQUEST,
                 ATTR_SESSION_ID, SESSION_ID,
                 ATTR_MODEL, MODEL_OPUS,
                 ATTR_SKILL_NAME, SKILL_VERIFY,
-                ATTR_PROMPT_ID, PROMPT_VERIFY));
+                ATTR_PROMPT_ID, PROMPT_VERIFY,
+                ATTR_COST_USD, COST_VERIFY_ON_OPUS));
     }
 
     @Test
@@ -284,6 +336,37 @@ class SkillSubagentUsageQueryIntegrationTest {
     }
 
     @Test
+    void skillCostSumsAllTurnsIncludingTheOneMadeInsideASpawnedSubagent() {
+        // The direct opposite of skillUsageExcludesTurnsMadeInsideSubagentsTheSkillSpawned
+        // just above: that test asserts the subagent-spawned turn does NOT add a call and
+        // does NOT contribute a Haiku bucket to calls-by-model, because a skill
+        // "invocation" is one prompt, and that turn is not a new prompt entering the
+        // skill. Cost has no such notion of "one invocation" -- every api_request row
+        // that ran while the skill was active spent real money, including that one -- so
+        // the two queries deliberately disagree about which turns they cover. calls()
+        // stays 2 for ship; costUsd sums all four of its turns.
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+
+        IdentifierUsageCount ship = rows.stream()
+                .filter(row -> SKILL_SHIP.equals(row.tool()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(ship.calls()).isEqualTo(2L);
+        assertThat(ship.costUsd()).isCloseTo(SHIP_SKILL_TOTAL_COST_USD, offset(COST_ASSERTION_TOLERANCE));
+        // Unlike byModel (which excludes Haiku entirely), costByModel DOES carry the
+        // subagent-spawned turn's model, because that turn's cost is real spend.
+        assertThat(ship.costByModel()).containsEntry(MODEL_HAIKU, COST_SHIP_SUBAGENT_TURN);
+        assertThat(ship.costByModel().values().stream().mapToDouble(Double::doubleValue).sum())
+                .isCloseTo(SHIP_SKILL_TOTAL_COST_USD, offset(COST_ASSERTION_TOLERANCE));
+
+        IdentifierUsageCount verify = rows.stream()
+                .filter(row -> SKILL_VERIFY.equals(row.tool()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(verify.costUsd()).isCloseTo(COST_VERIFY_ON_OPUS, offset(COST_ASSERTION_TOLERANCE));
+    }
+
+    @Test
     void subagentUsageAttributesCallsToTheDispatchingMainLoopTurnNotTheSubagentsOwnTurns() {
         List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
 
@@ -342,6 +425,117 @@ class SkillSubagentUsageQueryIntegrationTest {
     }
 
     @Test
+    void subagentCostAttributesToTheDispatchedSubagentTypeNotTheDispatchingTurnsModel() {
+        // Unlike calls (resolved by walking back to the last main-loop api_request in
+        // the session), cost is resolved by span correlation: the dispatching
+        // tool_result's own execution span, and the llm_request span(s) directly
+        // beneath it. This seeds that span tree -- root -> tool wrapper -> tool.execution
+        // (the dispatch) -> child llm_request carrying request_id -- mirroring
+        // LogsQueryIntegrationTest#logsForTraceRepointsSubagentLogsOffTheDispatchingTaskSpan.
+        String traceId = "trace-cost-correlated";
+        String toolUseId = "toolu_cost_dispatch";
+        String requestId = "req_cost_dispatch";
+        String subagentType = "cost-correlated-agent";
+        String costCorrelatedSession = "session-cost-correlated";
+
+        // Dispatching main-loop turn, deliberately on a DIFFERENT model than the
+        // subagent's own priced call below -- proves cost is not read off this turn,
+        // the way the invocation count's model is.
+        saveLog(OFFSET_COST_CORRELATED_DISPATCH, Map.of(
+                ATTR_EVENT_NAME, EVENT_API_REQUEST,
+                ATTR_SESSION_ID, costCorrelatedSession,
+                ATTR_MODEL, MODEL_OPUS));
+
+        saveLog(OFFSET_COST_CORRELATED_DISPATCH, Map.of(
+                ATTR_EVENT_NAME, EVENT_TOOL_RESULT,
+                ATTR_SESSION_ID, costCorrelatedSession,
+                ATTR_TOOL_NAME, TOOL_AGENT,
+                ATTR_SUBAGENT_TYPE, subagentType,
+                ATTR_TOOL_USE_ID, toolUseId));
+
+        String rootSpanId = "r000000000000001";
+        String toolWrapperSpanId = "w000000000000001";
+        String toolExecutionSpanId = "e000000000000001";
+        String llmRequestSpanId = "l000000000000001";
+        saveSpan(traceId, rootSpanId, null, SPAN_NAME_ROOT, Map.of());
+        saveSpan(traceId, toolWrapperSpanId, rootSpanId, SPAN_NAME_TOOL_WRAPPER,
+                Map.of(ATTR_TOOL_USE_ID, toolUseId));
+        saveSpan(traceId, toolExecutionSpanId, toolWrapperSpanId, SPAN_NAME_TOOL_EXECUTION,
+                Map.of(ATTR_TOOL_USE_ID, toolUseId));
+        saveSpan(traceId, llmRequestSpanId, toolExecutionSpanId, SPAN_NAME_LLM_REQUEST,
+                Map.of(ATTR_REQUEST_ID, requestId));
+
+        // The subagent's own priced LLM call, correlated purely by request_id.
+        saveLog(OFFSET_COST_CORRELATED_DISPATCH, Map.of(
+                ATTR_EVENT_NAME, EVENT_API_REQUEST,
+                ATTR_REQUEST_ID, requestId,
+                ATTR_MODEL, MODEL_SONNET,
+                ATTR_COST_USD, COST_CORRELATED_SUBAGENT_CALL));
+
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+
+        IdentifierUsageCount subagent = rows.stream()
+                .filter(row -> subagentType.equals(row.tool()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(subagent.costUsd()).isCloseTo(COST_CORRELATED_SUBAGENT_CALL, offset(COST_ASSERTION_TOLERANCE));
+        assertThat(subagent.costByModel())
+                .containsExactlyInAnyOrderEntriesOf(Map.of(MODEL_SONNET, COST_CORRELATED_SUBAGENT_CALL));
+        // The dispatching turn's own model must not appear -- that would mean cost fell
+        // back to the "last main-loop turn" heuristic instead of the span correlation.
+        assertThat(subagent.costByModel()).doesNotContainKey(MODEL_OPUS);
+    }
+
+    @Test
+    void subagentDispatchWithNoMatchingExecutionSpanReportsZeroCostRatherThanBeingDropped() {
+        String subagentTypeNoSpanAtAll = "orphan-no-execution-span";
+        String subagentTypeNoChildLlmSpan = "orphan-no-child-llm-span";
+        String orphanSession = "session-orphan-dispatches";
+
+        // Dispatch 1: its tool_use_id never matches any span at all.
+        saveLog(OFFSET_ORPHAN_DISPATCHES, Map.of(
+                ATTR_EVENT_NAME, EVENT_TOOL_RESULT,
+                ATTR_SESSION_ID, orphanSession,
+                ATTR_TOOL_NAME, TOOL_AGENT,
+                ATTR_SUBAGENT_TYPE, subagentTypeNoSpanAtAll,
+                ATTR_TOOL_USE_ID, "toolu_orphan_no_span"));
+
+        // Dispatch 2: its execution span DOES exist, but has no child llm_request span
+        // beneath it -- a subagent that made zero billed LLM calls.
+        saveLog(OFFSET_ORPHAN_DISPATCHES, Map.of(
+                ATTR_EVENT_NAME, EVENT_TOOL_RESULT,
+                ATTR_SESSION_ID, orphanSession,
+                ATTR_TOOL_NAME, TOOL_AGENT,
+                ATTR_SUBAGENT_TYPE, subagentTypeNoChildLlmSpan,
+                ATTR_TOOL_USE_ID, "toolu_orphan_childless"));
+
+        String traceId = "trace-orphan-dispatches";
+        saveSpan(traceId, "r000000000000002", null, SPAN_NAME_ROOT, Map.of());
+        saveSpan(traceId, "w000000000000002", "r000000000000002", SPAN_NAME_TOOL_WRAPPER,
+                Map.of(ATTR_TOOL_USE_ID, "toolu_orphan_childless"));
+        saveSpan(traceId, "e000000000000002", "w000000000000002", SPAN_NAME_TOOL_EXECUTION,
+                Map.of(ATTR_TOOL_USE_ID, "toolu_orphan_childless"));
+        // Deliberately no llm_request span beneath e000000000000002.
+
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+
+        assertThat(rows)
+                .filteredOn(row -> subagentTypeNoSpanAtAll.equals(row.tool()))
+                .singleElement()
+                .satisfies(row -> {
+                    assertThat(row.costUsd()).isEqualTo(0.0);
+                    assertThat(row.costByModel()).isEmpty();
+                });
+        assertThat(rows)
+                .filteredOn(row -> subagentTypeNoChildLlmSpan.equals(row.tool()))
+                .singleElement()
+                .satisfies(row -> {
+                    assertThat(row.costUsd()).isEqualTo(0.0);
+                    assertThat(row.costByModel()).isEmpty();
+                });
+    }
+
+    @Test
     void emptyWindowReturnsNoRowsRatherThanAnUnknownBucket() {
         Instant beforeAnySeededRow = windowStart.minus(10, ChronoUnit.MINUTES);
 
@@ -360,5 +554,19 @@ class SkillSubagentUsageQueryIntegrationTest {
         entity.setAttributes(new HashMap<>(attributes));
         entity.setResourceAttributes(Map.of("service.name", "claude-code"));
         repository.save(entity);
+    }
+
+    // Mirrors LogsQueryIntegrationTest's saveSpan helper.
+    private void saveSpan(String traceId, String spanId, String parentSpanId, String name, Map<String, Object> attributes) {
+        SpanEntity entity = new SpanEntity();
+        entity.setTraceId(traceId);
+        entity.setSpanId(spanId);
+        entity.setParentSpanId(parentSpanId);
+        entity.setName(name);
+        entity.setStartTimestamp(windowStart);
+        entity.setEndTimestamp(windowStart.plusSeconds(1));
+        entity.setReceivedAt(Instant.now());
+        entity.setAttributes(new HashMap<>(attributes));
+        spanRepository.save(entity);
     }
 }

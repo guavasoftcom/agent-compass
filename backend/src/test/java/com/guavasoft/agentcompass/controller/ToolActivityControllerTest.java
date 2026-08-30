@@ -60,8 +60,10 @@ class ToolActivityControllerTest {
     @Test
     void skillUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
         when(logService.aggregateSkillUsage(anyInt())).thenReturn(List.of(
-                new IdentifierUsageCount("verify", 4L, Map.of("claude-opus-4-8", 3L, "claude-sonnet-4-6", 1L)),
-                new IdentifierUsageCount("ship", 1L, Map.of("claude-opus-4-8", 1L))));
+                new IdentifierUsageCount("verify", 4L, Map.of("claude-opus-4-8", 3L, "claude-sonnet-4-6", 1L),
+                        4.20, Map.of("claude-opus-4-8", 3.15, "claude-sonnet-4-6", 1.05)),
+                new IdentifierUsageCount("ship", 1L, Map.of("claude-opus-4-8", 1L),
+                        0.75, Map.of("claude-opus-4-8", 0.75))));
 
         mockMvc.perform(get("/api/tool-activity/skill-usage"))
                 .andExpect(status().isOk())
@@ -70,8 +72,11 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].calls").value(4))
                 .andExpect(jsonPath("$[0].byModel.['claude-opus-4-8']").value(3))
                 .andExpect(jsonPath("$[0].byModel.['claude-sonnet-4-6']").value(1))
+                .andExpect(jsonPath("$[0].costUsd").value(4.20))
+                .andExpect(jsonPath("$[0].costByModel.['claude-opus-4-8']").value(3.15))
                 .andExpect(jsonPath("$[1].tool").value("ship"))
-                .andExpect(jsonPath("$[1].byModel.['claude-opus-4-8']").value(1));
+                .andExpect(jsonPath("$[1].byModel.['claude-opus-4-8']").value(1))
+                .andExpect(jsonPath("$[1].costUsd").value(0.75));
 
         verify(logService).aggregateSkillUsage(1440);
     }
@@ -79,14 +84,17 @@ class ToolActivityControllerTest {
     @Test
     void subagentUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
         when(logService.aggregateSubagentUsage(anyInt())).thenReturn(List.of(
-                new IdentifierUsageCount("Explore", 7L, Map.of("claude-opus-4-8", 7L))));
+                new IdentifierUsageCount("Explore", 7L, Map.of("claude-opus-4-8", 7L),
+                        2.45, Map.of("claude-opus-4-8", 2.45))));
 
         mockMvc.perform(get("/api/tool-activity/subagent-usage"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].tool").value("Explore"))
                 .andExpect(jsonPath("$[0].calls").value(7))
-                .andExpect(jsonPath("$[0].byModel.['claude-opus-4-8']").value(7));
+                .andExpect(jsonPath("$[0].byModel.['claude-opus-4-8']").value(7))
+                .andExpect(jsonPath("$[0].costUsd").value(2.45))
+                .andExpect(jsonPath("$[0].costByModel.['claude-opus-4-8']").value(2.45));
 
         verify(logService).aggregateSubagentUsage(1440);
     }

@@ -18,7 +18,18 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
     `DonutCard` legend values default to a thousands-separated count, which suits every caller whose
     slices are counts; pass `formatSliceValue` when they are not (the Settings page's storage donut
     passes `formatBytes`). Format at the legend rather than pre-scaling the slice values, which would
-    distort the ring's own proportions.
+    distort the ring's own proportions. `DonutCard`'s center value auto-shrinks to fit the ring's
+    inner edge — a hidden probe measures the value at the base 36px size on every render
+    (`useLayoutEffect`, so there's no flash at the oversized size first) and scales the visible font
+    size down just enough to keep it clear of the stroke, rather than a fixed size that overflows on
+    a long value (e.g. a 4-digit dollar total). Don't hardcode the center value's `fontSize` back to
+    a constant — a caller with unusually long values (many digits, a long unit suffix) needing a
+    smaller starting point should get a `centerValueBaseFontSize`-style override added to the
+    component, not a one-off inline style at the call site. `orientation` (`'vertical'` default —
+    ring on top, legend below; `'horizontal'` — ring left, legend flexes right, for a card that
+    isn't paired 2-up) and `showBars` (adds a full-width progress bar under each ranked-list row,
+    replacing the row divider) are both opt-in, added for the Cost page's Model mix card — see that
+    page's CLAUDE.md gotcha for why `BreakdownList` wasn't the fit instead.
   - `TablePager` — shared offset-pager footer (rows-per-page `SegmentedToggle` + range label + prev/next); used by Sessions, Logs, and Traces tables.
   - `StreamTableToggle` — shared Stream|Table view-mode `SegmentedToggle`; used by Logs and (via `TraceViewToggle`) Traces.
   - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.

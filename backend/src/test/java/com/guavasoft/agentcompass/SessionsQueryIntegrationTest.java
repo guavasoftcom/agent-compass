@@ -11,6 +11,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionPromptToolCount;
@@ -19,6 +20,7 @@ import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
+import com.guavasoft.agentcompass.repository.SpanRepository;
 import com.guavasoft.agentcompass.service.LogService;
 import com.guavasoft.agentcompass.service.MetricService;
 import com.guavasoft.agentcompass.service.PageBounds;
@@ -71,6 +73,9 @@ class SessionsQueryIntegrationTest {
   LogRecordRepository logRecordRepository;
 
   @Autowired
+  SpanRepository spanRepository;
+
+  @Autowired
   MetricService metricService;
 
   @Autowired
@@ -96,6 +101,7 @@ class SessionsQueryIntegrationTest {
   void seedSessions() {
     metricPointRepository.deleteAll();
     logRecordRepository.deleteAll();
+    spanRepository.deleteAll();
     seededMetricPointIds.clear();
     Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
 
@@ -609,6 +615,111 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void promptsForSessionUsesTraceTotalCostEvenWhenTheTurnHasItsOwnRequestAttributedCost() {
+    // Reproduces the bug: turn 0 dispatches a fire-and-forget subagent (its own
+    // span closes immediately) that keeps issuing requests after turn 1's prompt
+    // was typed. Those later requests are logged with turn 1's prompt.id even
+    // though they share turn 0's trace_id. Turn 0 ALSO has its own
+    // prompt-id-matched requests, so it takes the REQUEST attribution branch --
+    // the one that discarded trace correlation before this fix.
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(300);
+    String turnZeroPromptId = "v-prompt-0";
+    String turnOnePromptId = "v-prompt-1";
+
+    saveUserPrompt("V", "Refactor the widget", turnZeroStart, TRACE_TURN_ZERO, turnZeroPromptId);
+    saveUserPrompt("V", "Ship it", turnOneStart, TRACE_TURN_ONE, turnOnePromptId);
+
+    // Turn 0's own request.
+    saveApiRequest("V", TRACE_TURN_ZERO, turnZeroPromptId, 3.0, turnZeroStart.plusSeconds(30));
+    // The detached subagent's request: turn 0's trace, but turn 1's prompt id --
+    // logged well after turn 1 started.
+    saveApiRequest("V", TRACE_TURN_ZERO, turnOnePromptId, 10.0, turnOneStart.plusSeconds(30));
+    // Turn 1's own real request.
+    saveApiRequest("V", TRACE_TURN_ONE, turnOnePromptId, 2.0, turnOneStart.plusSeconds(35));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("V");
+
+    assertThat(prompts).hasSize(2);
+    SessionPrompt turnZero = prompts.get(0);
+    assertThat(turnZero.attribution()).isEqualTo(SessionPrompt.TurnAttribution.REQUEST);
+    // Trace total (3.0 + 10.0), NOT the turn's own prompt-id-scoped sum (3.0) --
+    // the bug this test guards against.
+    assertThat(turnZero.costUsd()).isEqualTo(13.0);
+
+    SessionPrompt turnOne = prompts.get(1);
+    assertThat(turnOne.attribution()).isEqualTo(SessionPrompt.TurnAttribution.REQUEST);
+    // Trace total for turn 1's OWN trace (2.0) -- NOT the prompt-id-scoped sum
+    // (10.0 + 2.0 = 12.0), which would over-count by including the detached
+    // subagent's misattributed request. Trace correlation fixes both directions.
+    assertThat(turnOne.costUsd()).isEqualTo(2.0);
+  }
+
+  @Test
+  void promptsForSessionCorrelatesToolCallsByTraceRatherThanTimeWindow() {
+    // Mirrors the cost bug for tool calls: a detached subagent's tool_result
+    // events fire after the next turn started, so wall-clock bucketing alone
+    // would split them across both turns' displayed counts. Trace correlation
+    // keeps them all with the turn whose trace they share.
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(300);
+
+    saveUserPrompt("W", "Refactor the widget", turnZeroStart, TRACE_TURN_ZERO);
+    saveUserPrompt("W", "Ship it", turnOneStart, TRACE_TURN_ONE);
+
+    // Turn 0's trace: two Read calls before the window boundary, one Bash call
+    // AFTER turn 1 started -- wall-clock bucketing would misattribute the Bash
+    // call to turn 1, even though it shares turn 0's trace.
+    saveToolResult("W", "Read", TRACE_TURN_ZERO, turnZeroStart.plusSeconds(60));
+    saveToolResult("W", "Read", TRACE_TURN_ZERO, turnZeroStart.plusSeconds(120));
+    saveToolResult("W", "Bash", TRACE_TURN_ZERO, turnOneStart.plusSeconds(60));
+    // Turn 1's own tool call, correctly inside its own window.
+    saveToolResult("W", "Write", TRACE_TURN_ONE, turnOneStart.plusSeconds(90));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("W");
+
+    assertThat(prompts).hasSize(2);
+    assertThat(prompts.get(0).tools()).containsExactlyInAnyOrder(
+        new SessionPromptToolCount("Read", 2L), new SessionPromptToolCount("Bash", 1L));
+    assertThat(prompts.get(1).tools()).containsExactly(new SessionPromptToolCount("Write", 1L));
+  }
+
+  @Test
+  void promptsForSessionSplitsBackgroundCostAndToolsAfterTheRootSpanCloses() {
+    // The own-vs-background boundary is the turn's claude_code.interaction root
+    // span closing, not the next turn starting -- this seeds that root span
+    // explicitly and puts activity on both sides of it.
+    Instant turnStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant rootSpanEnd = turnStart.plusSeconds(10);
+    String promptId = "x-prompt-0";
+
+    saveUserPrompt("X", "Refactor the widget", turnStart, TRACE_TURN_ZERO, promptId);
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-x", turnStart, rootSpanEnd);
+
+    // Own: before the root span closes.
+    saveApiRequest("X", TRACE_TURN_ZERO, promptId, 3.0, turnStart.plusSeconds(5));
+    saveToolResult("X", "Read", TRACE_TURN_ZERO, turnStart.plusSeconds(5));
+    // Background: after the root span closes -- a detached subagent still
+    // running under the same trace.
+    saveApiRequest("X", TRACE_TURN_ZERO, promptId, 9.99, rootSpanEnd.plusSeconds(600));
+    saveToolResult("X", "Bash", TRACE_TURN_ZERO, rootSpanEnd.plusSeconds(600));
+    saveToolResult("X", "Bash", TRACE_TURN_ZERO, rootSpanEnd.plusSeconds(660));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("X");
+
+    assertThat(prompts).hasSize(1);
+    SessionPrompt turn = prompts.get(0);
+    // costUsd/tools are the FULL trace total (own + background) -- unchanged by
+    // the split, matching what the trace detail page reports for this trace.
+    assertThat(turn.costUsd()).isEqualTo(12.99);
+    assertThat(turn.tools()).containsExactlyInAnyOrder(
+        new SessionPromptToolCount("Read", 1L), new SessionPromptToolCount("Bash", 2L));
+    // The background-* fields isolate exactly the post-root-span portion.
+    assertThat(turn.backgroundCostUsd()).isEqualTo(9.99);
+    assertThat(turn.backgroundTools()).containsExactly(new SessionPromptToolCount("Bash", 2L));
+  }
+
+  @Test
   void promptsForSessionReturnsNullModelCostTokensAndEmptyToolsWhenTurnHasNoEvents() {
     Instant timestamp = Instant.now().minus(5, ChronoUnit.MINUTES);
     saveUserPrompt("G", "Just chatting", timestamp, null);
@@ -646,10 +757,18 @@ class SessionsQueryIntegrationTest {
   }
 
   private void saveToolResult(String sessionId, String toolName, Instant timestamp) {
+    saveToolResult(sessionId, toolName, null, timestamp);
+  }
+
+  // Trace-carrying variant for the trace-correlated tool-attribution tests: a
+  // real tool_result row carries whatever trace was active when it fired, the
+  // same top-level trace_id column saveApiRequest stamps.
+  private void saveToolResult(String sessionId, String toolName, String traceId, Instant timestamp) {
     LogRecordEntity entity = new LogRecordEntity();
     entity.setTimestamp(timestamp);
     entity.setObservedTimestamp(timestamp);
     entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
     entity.setAttributes(Map.of(
         "event.name", TOOL_EVENT_NAME,
         "session.id", sessionId,
@@ -697,6 +816,23 @@ class SessionsQueryIntegrationTest {
     logRecordRepository.save(entity);
   }
 
+  // Prompt-id-carrying variant: needed to put a turn on the REQUEST attribution
+  // branch (matched against saveApiRequest's promptId overload), rather than the
+  // 3-arg version above which leaves prompt.id unset (INTERVAL-only turns).
+  private void saveUserPrompt(String sessionId, String promptText, Instant timestamp, String traceId, String promptId) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setAttributes(Map.of(
+        "event.name", USER_PROMPT_EVENT_NAME,
+        "session.id", sessionId,
+        PROMPT_ATTRIBUTE, promptText,
+        PROMPT_ID_ATTRIBUTE, promptId));
+    logRecordRepository.save(entity);
+  }
+
   /**
    * Seeds one {@code api_request} log the way Claude Code emits it: the request's
    * own cost in {@code cost_usd}, and the trace/span that was active when it was
@@ -715,6 +851,45 @@ class SessionsQueryIntegrationTest {
         "session.id", sessionId,
         "cost_usd", String.valueOf(costUsd)));
     logRecordRepository.save(entity);
+  }
+
+  /**
+   * Same as {@link #saveApiRequest(String, String, double, Instant)} but also
+   * stamps {@code prompt.id} -- what puts a turn on the REQUEST attribution
+   * branch (LogService#resolveApiRequestTurns joins on this) rather than
+   * INTERVAL. Needed to reproduce the detached-subagent bug: a turn only hits
+   * the REQUEST branch's cost bug when it has its OWN prompt-id-matched
+   * requests, separate from whatever else shares its trace_id.
+   */
+  private void saveApiRequest(String sessionId, String traceId, String promptId, double costUsd, Instant timestamp) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setSpanId(traceId.substring(0, 16));
+    entity.setAttributes(Map.of(
+        "event.name", API_REQUEST_EVENT_NAME,
+        "session.id", sessionId,
+        PROMPT_ID_ATTRIBUTE, promptId,
+        "cost_usd", String.valueOf(costUsd)));
+    logRecordRepository.save(entity);
+  }
+
+  // Seeds a trace's root claude_code.interaction span with an explicit end
+  // timestamp, for the own-vs-background split tests -- findCostSplitByTraceIds/
+  // findToolEventsSplitByTraceIds bucket activity before/after this instant.
+  private void saveInteractionRootSpan(String traceId, String spanId, Instant startTimestamp, Instant endTimestamp) {
+    SpanEntity entity = new SpanEntity();
+    entity.setTraceId(traceId);
+    entity.setSpanId(spanId);
+    entity.setParentSpanId(null);
+    entity.setName("claude_code.interaction");
+    entity.setStartTimestamp(startTimestamp);
+    entity.setEndTimestamp(endTimestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setAttributes(Map.of());
+    spanRepository.save(entity);
   }
 
   private void saveCost(String sessionId, String model, String querySource, double value, Instant timestamp) {

@@ -282,6 +282,11 @@ const TokensPageView = ({
       value: summary.cost.spend24h,
       sub: costSub,
       accent: true,
+      infoTooltip:
+        'Based on a running cost counter, not the exact per-call cost the Cost page uses. '
+        + 'The two don\'t line up exactly — expect "Total spend" on the Cost page to read a '
+        + 'few percent lower than this for the same window.',
+      infoTooltipSeverity: 'warning' as const,
     },
     {
       label: 'Total tokens',

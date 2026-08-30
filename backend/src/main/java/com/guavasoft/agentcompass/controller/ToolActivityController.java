@@ -236,7 +236,11 @@ public class ToolActivityController {
                     + "Skills that never trigger have descriptions that don't match what the agent looks "
                     + "for. The 'tool' field carries the skill identifier; 'byModel' splits the count by "
                     + "the model that ran the skill, read straight off the same log records and taken "
-                    + "from each invocation's earliest turn so the split sums to the row total.")
+                    + "from each invocation's earliest turn so the split sums to the row total. 'costUsd' "
+                    + "and 'costByModel' sum cost_usd across ALL api_request rows carrying the skill "
+                    + "attribute, including turns made inside a subagent it spawned — a broader "
+                    + "population than 'calls' counts, since every one of those turns spent real money "
+                    + "even though only the main-loop ones count as an invocation.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per distinct skill observed in the window, sorted by calls desc",
@@ -265,7 +269,13 @@ public class ToolActivityController {
                     + "the turn that emitted the tool_use. Calls whose dispatching turn is not in the "
                     + "data bucket under an 'unknown' model. A dispatch that named no subagent type at "
                     + "all is credited to the default agent type (the one such a dispatch actually runs "
-                    + "on), not to an 'unknown' identifier.")
+                    + "on), not to an 'unknown' identifier. 'costUsd' and 'costByModel' are resolved "
+                    + "differently from 'calls': the dispatching tool_result carries no cost of its own, "
+                    + "so cost is correlated via spans — the subagent's own tool.execution span, and the "
+                    + "llm_request spans directly beneath it — to find the LLM calls the subagent itself "
+                    + "made, priced from their api_request logs. A dispatch with no matching execution "
+                    + "span, or one with no billed LLM calls beneath it, reports costUsd 0 rather than "
+                    + "being dropped.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per distinct subagent observed in the window, sorted by calls desc",

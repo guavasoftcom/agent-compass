@@ -182,7 +182,9 @@ class SessionControllerTest {
                         List.of(new SessionPromptToolCount("Read", 4L), new SessionPromptToolCount("Edit", 2L)),
                         "9a7ac484-195b-4a74-a78d-1cf67c973af5",
                         11L,
-                        SessionPrompt.TurnAttribution.REQUEST)));
+                        SessionPrompt.TurnAttribution.REQUEST,
+                        9.99,
+                        List.of(new SessionPromptToolCount("Bash", 3L)))));
 
         mockMvc.perform(get("/api/sessions/{sessionId}/prompts", sessionId))
                 .andExpect(status().isOk())
@@ -215,7 +217,15 @@ class SessionControllerTest {
                 // promptId is the join key into /requests; the drill-down cannot
                 // group a turn's calls without it.
                 .andExpect(jsonPath("$[0].promptId").value(nullValue()))
-                .andExpect(jsonPath("$[1].promptId").value("9a7ac484-195b-4a74-a78d-1cf67c973af5"));
+                .andExpect(jsonPath("$[1].promptId").value("9a7ac484-195b-4a74-a78d-1cf67c973af5"))
+                // backgroundCostUsd/backgroundTools explain why costUsd/tools (already
+                // trace totals) can exceed what happened while this turn was active.
+                .andExpect(jsonPath("$[0].backgroundCostUsd").value(nullValue()))
+                .andExpect(jsonPath("$[0].backgroundTools", hasSize(0)))
+                .andExpect(jsonPath("$[1].backgroundCostUsd").value(9.99))
+                .andExpect(jsonPath("$[1].backgroundTools", hasSize(1)))
+                .andExpect(jsonPath("$[1].backgroundTools[0].name").value("Bash"))
+                .andExpect(jsonPath("$[1].backgroundTools[0].count").value(3));
 
         verify(logService).promptsForSession(sessionId);
     }

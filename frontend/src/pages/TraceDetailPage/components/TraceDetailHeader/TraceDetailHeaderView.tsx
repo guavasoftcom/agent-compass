@@ -1,6 +1,7 @@
 import { Link as RouterLink } from 'react-router-dom';
-import { Box, Typography } from '@mui/material';
+import { Box, Tooltip, Typography } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { formatDuration, formatUsd } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
 import SummaryStrip, { type OpGroup, type SummaryItem } from './SummaryStrip';
@@ -22,6 +23,10 @@ export interface TraceDetailHeaderViewProps {
   toolCallCount: number;
   maximumDepth: number;
   totalCostUsd: number;
+  // Portion of totalCostUsd billed after this trace's own root span closed —
+  // e.g. a fire-and-forget subagent dispatch that kept issuing requests after
+  // the turn that launched it ended. 0 hides the Cost tile's info tooltip.
+  backgroundCostUsd: number;
   // Time-by-operation self-time breakdown — see SummaryStrip's OpBreakdownCard.
   shownOperations: OpGroup[];
   opCount: number;
@@ -55,12 +60,14 @@ const TraceDetailHeaderView = ({
   toolCallCount,
   maximumDepth,
   totalCostUsd,
+  backgroundCostUsd,
   shownOperations,
   opCount,
   firstUserPrompt,
 }: TraceDetailHeaderViewProps) => {
   const durationLabel = formatDuration(totalMs * 1e6);
   const costLabel = formatUsd(totalCostUsd);
+  const backgroundCostLabel = formatUsd(backgroundCostUsd);
   const startedAtLabel = new Date(earliestStartMs).toLocaleTimeString('en-US', {
     hour12: false,
   });
@@ -71,7 +78,26 @@ const TraceDetailHeaderView = ({
       label: 'Cost',
       monospace: true,
       emphasis: true,
-      value: costLabel,
+      value:
+        backgroundCostUsd > 0 ? (
+          <>
+            {costLabel}{' '}
+            <Tooltip
+              title={
+                `Includes ${backgroundCostLabel} billed after this trace's own root span closed — ` +
+                'e.g. a fire-and-forget subagent dispatch that kept issuing requests after the turn ' +
+                'that launched it ended.'
+              }
+              arrow
+            >
+              <InfoOutlinedIcon
+                sx={{ fontSize: 14, color: 'warning.main', cursor: 'help', verticalAlign: 'text-bottom' }}
+              />
+            </Tooltip>
+          </>
+        ) : (
+          costLabel
+        ),
       title: costLabel,
     },
     { label: 'Spans', value: spanCount, title: String(spanCount) },

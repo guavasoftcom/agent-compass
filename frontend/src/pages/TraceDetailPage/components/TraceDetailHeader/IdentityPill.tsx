@@ -35,7 +35,8 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
     if (!prompts) {
       return 0;
     }
-    return new Set(prompts.filter(hasTraceAndPrompt).map((row) => row.traceId)).size;
+    return new Set(prompts.filter(hasTraceAndPrompt).map((row) => row.traceId))
+      .size;
   }, [prompts]);
 
   // false while the query hasn't resolved yet, so the segment starts inert
@@ -69,7 +70,10 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
               borderColor: 'divider',
             }}
           >
-            <Box component="span" sx={{ typography: 'eyebrowSm', color: 'text.disabled' }}>
+            <Box
+              component="span"
+              sx={{ typography: 'eyebrowSm', color: 'text.disabled' }}
+            >
               SESSION
             </Box>
             <Box
@@ -94,7 +98,9 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
             }
           }}
           title={
-            canSwitchTraces ? `trace: ${traceId} — click to switch traces` : `trace: ${traceId}`
+            canSwitchTraces
+              ? `trace: ${traceId} — click to switch traces`
+              : `trace: ${traceId}`
           }
           sx={{
             display: 'inline-flex',
@@ -109,7 +115,10 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
             '&:hover': canSwitchTraces ? { bgcolor: 'action.hover' } : {},
           }}
         >
-          <Box component="span" sx={{ typography: 'eyebrowSm', color: 'text.disabled' }}>
+          <Box
+            component="span"
+            sx={{ typography: 'eyebrowSm', color: 'text.disabled' }}
+          >
             TRACE
           </Box>
           <Box
@@ -123,7 +132,9 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
           >
             {traceId}
           </Box>
-          {canSwitchTraces ? <ExpandMoreIcon sx={{ fontSize: 14, color: 'text.disabled' }} /> : null}
+          {canSwitchTraces ? (
+            <ExpandMoreIcon sx={{ fontSize: 20, color: 'primary.main' }} />
+          ) : null}
         </Box>
       </Box>
       {sessionId ? (

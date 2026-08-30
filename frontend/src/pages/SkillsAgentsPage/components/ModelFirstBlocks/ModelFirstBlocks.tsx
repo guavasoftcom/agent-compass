@@ -28,6 +28,18 @@ export interface ModelFirstBlocksProps {
   blocks: ModelFirstBlock[];
   isLoading: boolean;
   emptyLabel: string;
+  /**
+   * Formats a single row's value. Defaults to a thousands-separated count,
+   * right for the default calls metric — the Skills & Subagents page's Cost
+   * mode passes `USD_FORMATTER.format` instead.
+   */
+  formatValue?: (value: number) => string;
+  /**
+   * Formats a block header's total (the right-aligned figure next to the
+   * model name). Defaults to `"<count> calls"`; the Cost mode passes a
+   * formatter that renders the dollar total with no "calls" suffix.
+   */
+  formatTotal?: (value: number) => string;
 }
 
 const BAR_TRACK_COLUMN = '1fr 2fr 34px';
@@ -55,6 +67,8 @@ const ModelFirstBlocks = ({
   blocks,
   isLoading,
   emptyLabel,
+  formatValue = (value: number) => value.toLocaleString(),
+  formatTotal = (value: number) => `${value.toLocaleString()} calls`,
 }: ModelFirstBlocksProps) => {
   const hasAnyData = blocks.some((block) => block.totalCalls > 0);
 
@@ -96,7 +110,7 @@ const ModelFirstBlocks = ({
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {block.totalCalls.toLocaleString()} calls
+                    {formatTotal(block.totalCalls)}
                   </Typography>
                 </Stack>
 
@@ -150,7 +164,7 @@ const ModelFirstBlocks = ({
                           component="span"
                           sx={{ textAlign: 'right', color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}
                         >
-                          {row.calls.toLocaleString()}
+                          {formatValue(row.calls)}
                         </Box>
                       </Box>
                     ))}

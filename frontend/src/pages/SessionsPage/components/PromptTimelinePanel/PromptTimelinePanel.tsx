@@ -132,10 +132,20 @@ const ModelChip = ({ model }: { model: string | null | undefined }) => {
 
 const ToolChips = ({
   tools,
+  muted = false,
 }: {
   tools: { name: string; count: number }[] | null | undefined;
+  // Background-activity variant: dimmer fill/text than the default chip, so a
+  // turn's own tool calls (default) read as the primary signal and a trace's
+  // background subagent calls (muted) read as secondary context. Never shows
+  // the "No tool calls" fallback — callers only render this variant when
+  // there's a non-empty background list to show.
+  muted?: boolean;
 }) => {
   if (!tools || tools.length === 0) {
+    if (muted) {
+      return null;
+    }
     return (
       <Box sx={{ display: 'flex', mt: 0.25 }}>
         <Box
@@ -149,8 +159,17 @@ const ToolChips = ({
   }
   const shown = tools.slice(0, 5);
   const overflow = tools.length - shown.length;
+  const chipColor = muted ? 'text.disabled' : auroraColors.mutedSlate;
   return (
-    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.25 }}>
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, mt: 0.25 }}>
+      {muted ? (
+        <Box
+          component="span"
+          sx={{ fontSize: 10.5, fontStyle: 'italic', color: 'text.disabled', mr: 0.25 }}
+        >
+          background:
+        </Box>
+      ) : null}
       {shown.map((tool, index) => (
         <Box
           key={`${tool.name}-${index}`}
@@ -168,9 +187,11 @@ const ToolChips = ({
             // Same blue as the "Tools" span hue on the Trace Detail page
             // (auroraColors.cyanBright) — every tool chip renders in one flat
             // color rather than a per-category palette, matching that page's
-            // convention that a tool call is one visual category.
-            color: auroraColors.mutedSlate,
-            bgcolor: alpha(auroraColors.mutedSlate, 0.16),
+            // convention that a tool call is one visual category. The muted
+            // variant dims to text.disabled so background activity doesn't
+            // compete visually with the turn's own tool calls above it.
+            color: chipColor,
+            bgcolor: muted ? alpha(neutralColors.inkLight, 0.12) : alpha(auroraColors.mutedSlate, 0.16),
           }}
         >
           {tool.name}
@@ -544,6 +565,45 @@ const TurnAttributionMarker = ({
   );
 };
 
+// Flags a turn whose trace cost (already included in costUsd above it) is
+// partly background spend — e.g. a fire-and-forget subagent dispatch that kept
+// issuing requests after this turn ended and the next prompt was typed. Null
+// when there's no background cost, matching the "only the exception earns ink"
+// convention TurnAttributionMarker follows.
+const BackgroundCostBadge = ({
+  backgroundCostUsd,
+}: {
+  backgroundCostUsd: number | null | undefined;
+}) => {
+  if (!backgroundCostUsd) {
+    return null;
+  }
+  return (
+    <Tooltip
+      title={
+        'Includes spend from a subagent this turn dispatched that kept running after the turn ' +
+        "ended — it's part of the cost above, not additional."
+      }
+      placement="top"
+      arrow
+    >
+      <Box
+        component="span"
+        sx={{
+          fontFamily: fontFamilies.mono,
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'warning.main',
+          cursor: 'help',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {`+${USD_FORMATTER.format(backgroundCostUsd)} background`}
+      </Box>
+    </Tooltip>
+  );
+};
+
 // Aurora glass timeline: a gradient rail with a glowing dot per turn, each turn
 // a translucent card carrying its timestamp, model chip, per-turn cost, prompt
 // text (or a placeholder for pre-capture rows), tool-call chips, and an optional
@@ -821,6 +881,7 @@ const PromptTimelinePanel = ({
                         {USD_FORMATTER.format(turn.costUsd)}
                       </Box>
                     ) : null}
+                    <BackgroundCostBadge backgroundCostUsd={turn.backgroundCostUsd} />
                     <TokenUsage tokens={turn.tokens} />
                     <TurnAttributionMarker
                       attribution={turn.attribution}
@@ -893,6 +954,7 @@ const PromptTimelinePanel = ({
                 </Box>
 
                 <ToolChips tools={turn.tools} />
+                <ToolChips tools={turn.backgroundTools} muted />
               </Box>
             </Fragment>
           );

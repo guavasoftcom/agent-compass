@@ -13,6 +13,11 @@ export type IdentifierRowWithShare = IdentifierUsageRow & { share: number };
 export interface IdentifierRowsWithTotal {
   rows: IdentifierRowWithShare[];
   total: number;
+  /** Sum of every row's `costUsd`. Cost display was removed from this page (it now
+   * lives on the dedicated Cost page) but the field is kept here — computed
+   * alongside `total` in the same pass over the same row set — in case a future
+   * caller needs it without re-deriving it from scratch. */
+  costTotal: number;
 }
 
 /** Identifier bucket for calls the backend couldn't attribute to a real skill/subagent. */
@@ -20,11 +25,12 @@ export const UNKNOWN_IDENTIFIER = 'unknown';
 
 export const withShare = (rows: IdentifierUsageRow[]): IdentifierRowsWithTotal => {
   const total = rows.reduce((sum, row) => sum + row.calls, 0);
+  const costTotal = rows.reduce((sum, row) => sum + row.costUsd, 0);
   const enriched: IdentifierRowWithShare[] = rows.map((row) => ({
     ...row,
     share: total === 0 ? 0 : (100 * row.calls) / total,
   }));
-  return { rows: enriched, total };
+  return { rows: enriched, total, costTotal };
 };
 
 // The app's aurora trio is reserved for these three model families, in this

@@ -60,6 +60,15 @@ public class TraceSummary {
             example = "0.42")
     private double totalCostUsd;
 
+    @Schema(description = "Portion of totalCostUsd billed AFTER this trace's own claude_code.interaction root "
+            + "span closed -- e.g. a fire-and-forget subagent dispatch (an Agent tool call whose own span "
+            + "closes immediately) that kept issuing requests long after the turn that launched it ended. "
+            + "totalCostUsd already includes this amount; this field exists so a reader can see why a trace "
+            + "costs more than what happened while its root span was open. 0 when the trace has no root span,"
+            + " or no activity after it closed.",
+            example = "9.99")
+    private double backgroundCostUsd;
+
     @Schema(description = "The user prompt that initiated this trace, whitespace-collapsed and truncated to 200 "
             + "characters. Taken from the earliest user_prompt log record correlated to this trace by trace_id, "
             + "mirroring SessionSummary.firstUserPrompt. Null in two cases: the trace is not rooted in a "

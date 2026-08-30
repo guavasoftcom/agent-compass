@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import {
   ToolUsageIcon,
   TokenUsageIcon,
+  CostIcon,
   SessionsIcon,
   TracesIcon,
   LogsIcon,
@@ -27,6 +28,7 @@ const navGroups: NavGroup[] = [
   {
     heading: 'Activity',
     items: [
+      { to: '/cost', label: 'Cost', icon: <CostIcon /> },
       { to: '/tools', label: 'Tool Usage', icon: <ToolUsageIcon /> },
       { to: '/tokens', label: 'Token Usage', icon: <TokenUsageIcon /> },
       { to: '/sessions', label: 'Sessions', icon: <SessionsIcon /> },
@@ -42,15 +44,11 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: 'Reports',
-    items: [
-      { to: '/report', label: 'Tuning Report', icon: <ReportIcon /> },
-    ],
+    items: [{ to: '/report', label: 'Tuning Report', icon: <ReportIcon /> }],
   },
   {
     heading: 'System',
-    items: [
-      { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
-    ],
+    items: [{ to: '/settings', label: 'Settings', icon: <SettingsIcon /> }],
   },
 ];
 

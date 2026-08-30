@@ -86,6 +86,15 @@ public class TraceExplorerService {
      */
     private static final int PROMPT_PREVIEW_LENGTH = 200;
 
+    // Matches a trace's root claude_code.interaction span for the own-vs-background
+    // cost split in backgroundCostUsdForTrace. Mirrors LogService's identically-named
+    // constant of the same purpose (own-vs-background split via the same repository
+    // query); not shared as a single cross-class constant because this is a
+    // structural root-span-name pattern, not a deployment-tunable value -- the same
+    // duplication-over-sharing precedent SpanRepository already sets for this exact
+    // literal (~40 inline occurrences, no shared constant).
+    private static final String INTERACTION_ROOT_SPAN_NAME_PATTERN = "claude_code.interaction%";
+
     private final SpanRepository spanRepository;
     private final LogRecordRepository logRecordRepository;
     private final TuningProperties tuningProperties;
@@ -641,7 +650,30 @@ public class TraceExplorerService {
         if (rows.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(toTraceSummaries(rows).get(0));
+        TraceSummary summary = toTraceSummaries(rows).get(0);
+        summary.setBackgroundCostUsd(backgroundCostUsdForTrace(traceId));
+        return Optional.of(summary);
+    }
+
+    /**
+     * Portion of this one trace's cost billed after its own root span closed. A
+     * single-element call to the same trace-correlated split query the Sessions
+     * prompt timeline uses ({@link LogRecordRepository#findCostSplitByTraceIds})
+     * rather than a new column on {@code traceSummaryById} -- that query's row
+     * mapper ({@link #toTraceSummary}) is shared by 20 other list/sort/histogram
+     * queries with an identical column order, so adding a column there for a
+     * field only this single-trace endpoint needs would mean touching all of them.
+     */
+    private double backgroundCostUsdForTrace(String traceId) {
+        List<Object[]> rows = logRecordRepository.findCostSplitByTraceIds(
+                List.of(traceId),
+                tuningProperties.getApiRequestEventName(),
+                tuningProperties.getApiRequestCostAttribute(),
+                INTERACTION_ROOT_SPAN_NAME_PATTERN);
+        if (rows.isEmpty() || rows.get(0)[2] == null) {
+            return 0.0;
+        }
+        return ((Number) rows.get(0)[2]).doubleValue();
     }
 
     // =========================================================================

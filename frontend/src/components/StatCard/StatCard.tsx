@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
-import { Box, Paper, Typography } from '@mui/material';
+import { Box, Paper, Tooltip, Typography } from '@mui/material';
 import type { PaperProps } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { gradients } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
 
@@ -39,6 +40,23 @@ export interface StatCardProps {
    * already lowercase identifiers (MetricKpiStrip).
    */
   labelUppercase?: boolean;
+  /**
+   * Optional info-icon tooltip rendered inline next to the label. Use this to flag a
+   * caveat the value can't state on its own — e.g. that this figure is measured from a
+   * different pipeline than a similarly-named KPI elsewhere in the dashboard and the
+   * two don't reconcile (see the Cost page's "Total spend" and the Tokens page's
+   * "Total cost", which read from api_request logs and the cost.usage counter
+   * respectively and can legitimately disagree by a few percent).
+   */
+  infoTooltip?: ReactNode;
+  /**
+   * Tints the `infoTooltip` icon `warning.main` instead of the default `text.secondary`,
+   * for a caveat worth noticing at a glance rather than only on hover — e.g. a KPI that
+   * looks the same as one on another page but is measured differently and won't match
+   * it. Still the info icon shape (this isn't an error or a broken state), just more
+   * visually salient. Defaults to `'info'`.
+   */
+  infoTooltipSeverity?: 'info' | 'warning';
   /**
    * Optional inline trend badge rendered to the right of the value (delta text +
    * directional arrow). Green for "up", red for "down".
@@ -99,6 +117,8 @@ const StatCard = ({
   displayFont = false,
   displayFontSize = 30,
   labelUppercase = true,
+  infoTooltip,
+  infoTooltipSeverity = 'info',
   trend,
   long = false,
   adornment,
@@ -151,30 +171,45 @@ const StatCard = ({
           {adornment}
         </Box>
       )}
-      {labelUppercase ? (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600, ...(adornment ? { pr: 1.5 } : {}) }}
-        >
-          {label}
-        </Typography>
-      ) : (
-        <Typography
-          sx={{
-            fontSize: 12,
-            fontWeight: 600,
-            fontFamily: fontFamilies.body,
-            color: 'text.secondary',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            ...(adornment ? { pr: 1.5 } : {}),
-          }}
-        >
-          {label}
-        </Typography>
-      )}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        {labelUppercase ? (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600, minWidth: 0, ...(adornment ? { pr: 1.5 } : {}) }}
+          >
+            {label}
+          </Typography>
+        ) : (
+          <Typography
+            sx={{
+              fontSize: 12,
+              fontWeight: 600,
+              fontFamily: fontFamilies.body,
+              color: 'text.secondary',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+              ...(adornment ? { pr: 1.5 } : {}),
+            }}
+          >
+            {label}
+          </Typography>
+        )}
+        {infoTooltip && (
+          <Tooltip title={infoTooltip} arrow>
+            <InfoOutlinedIcon
+              sx={{
+                fontSize: 14,
+                color: infoTooltipSeverity === 'warning' ? 'warning.main' : 'text.secondary',
+                cursor: 'help',
+                flexShrink: 0,
+              }}
+            />
+          </Tooltip>
+        )}
+      </Box>
 
       {displayFont ? (
         <Box
