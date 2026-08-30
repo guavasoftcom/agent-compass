@@ -163,19 +163,54 @@ export const computeBeforeSharePct = (before: number, after: number): number => 
 
 // ─── Period / window formatting ─────────────────────────────────────────────
 
-// UTC explicitly: the backend's `current`/`previous` timestamps are day-boundary-aligned in UTC
-// (or the org's configured tz, per BACKEND_API.md's `tz` param), and formatting in the browser's
-// local zone could shift a boundary instant onto the wrong calendar day (e.g. midnight UTC
-// reading as the previous evening in a negative-UTC-offset zone) — same reasoning as every other
-// page's timestamp handling staying in the zone the server meant.
-const PERIOD_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const PERIOD_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const PERIOD_TIME_ONLY_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
+});
 
-/** "Aug 15 – Aug 21" — `period.end` is treated as exclusive, so the label shows the last
- *  covered instant rather than the boundary timestamp itself. */
-export const formatPeriodRange = (period: TrendPeriod): string => {
+const isStartOfDay = (date: Date): boolean =>
+  date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0 && date.getMilliseconds() === 0;
+
+const isEndOfDay = (date: Date): boolean =>
+  date.getHours() === 23 && date.getMinutes() === 59 && date.getSeconds() === 59 && date.getMilliseconds() === 999;
+
+export interface FormattedPeriod {
+  /** Date portion, in the browser's local timezone — a single day ("Aug 30") or a date
+   *  range ("Aug 24 – Aug 30") when the period spans more than one calendar day. */
+  primary: string;
+  /** Time-of-day portion ("3:00 – 3:59 PM"), or null when the period runs start-of-day to
+   *  end-of-day (a time range would be uninformative — always 12:00 AM–11:59:59.999 PM). */
+  secondary: string | null;
+}
+
+/**
+ * Splits a period into a date line and an optional time line for two-tier display, rather
+ * than one long string — easier to scan, and correct on a multi-day span, which a single
+ * "start–end" string can't represent without either showing two full dates (long) or
+ * silently dropping the end date down to just its time (the bug this replaced: a 7-day
+ * window rendered as "Aug 24, 12:00 AM–11:59 PM", which reads as one day, not seven).
+ * `period.end` is treated as exclusive, so the displayed end is the last covered instant
+ * rather than the boundary timestamp itself.
+ */
+export const formatPeriod = (period: TrendPeriod): FormattedPeriod => {
   const start = new Date(period.start);
   const end = new Date(new Date(period.end).getTime() - 1);
-  return `${PERIOD_DATE_FORMATTER.format(start)} – ${PERIOD_DATE_FORMATTER.format(end)}`;
+  const sameDay = start.toDateString() === end.toDateString();
+
+  const primary = sameDay
+    ? PERIOD_DATE_FORMATTER.format(start)
+    : `${PERIOD_DATE_FORMATTER.format(start)} – ${PERIOD_DATE_FORMATTER.format(end)}`;
+
+  if (isStartOfDay(start) && isEndOfDay(end)) {
+    return { primary, secondary: null };
+  }
+
+  return {
+    primary,
+    secondary: `${PERIOD_TIME_ONLY_FORMATTER.format(start)} – ${PERIOD_TIME_ONLY_FORMATTER.format(end)}`,
+  };
 };
 
 /** "Aug 22" — the date the current ("after") period starts, for the header's "Comparing from" pill. */

@@ -65,6 +65,10 @@ public class TrendService {
 
   private static final String SESSION_PERIOD_CURRENT = "current";
 
+  private static final String ROW_TYPE_COST = "cost";
+  private static final String ROW_TYPE_TOKEN_TOTAL = "token_total";
+  private static final String ROW_TYPE_TOKEN_TYPE = "token_type";
+
   private static final String METRIC_TOTAL_COST = "total_cost";
   private static final String METRIC_COST_PER_SESSION = "cost_per_session";
   private static final String METRIC_BLENDED_RATE_PER_1M = "blended_rate_per_1m";
@@ -104,9 +108,10 @@ public class TrendService {
     String toolEventName = tuningProperties.getToolEventName();
     String successAttribute = tuningProperties.getSuccessAttribute();
 
-    CostAndTokenTotals costAndTokenTotals = queryCostAndTokenTotals(costMetric, tokenMetric, from, to, priorFrom);
-    CacheReadRatioTotals cacheReadRatioTotals =
-        queryCacheReadRatioTotals(tokenMetric, tokenTypeAttribute, from, to, priorFrom);
+    CombinedTotals combinedTotals =
+        queryMetricsTotalsCombined(costMetric, tokenMetric, tokenTypeAttribute, from, to, priorFrom);
+    CostAndTokenTotals costAndTokenTotals = combinedTotals.costAndTokenTotals();
+    CacheReadRatioTotals cacheReadRatioTotals = combinedTotals.cacheReadRatioTotals();
     SessionTotals sessionTotals =
         querySessionTotals(costMetric, activeTimeMetric, from, to, priorFrom);
     ToolFailureTotals toolFailureTotals =
@@ -123,16 +128,19 @@ public class TrendService {
       sessionFailuresBefore = longAt(sessionFailureRow, 1);
     }
 
-    // Sparklines: one call per side per query family, bucketed to the same
-    // fixed 7-point width on both sides (the two windows are equal length).
-    BucketSeries beforeCostAndTokens = queryCostAndTokenTrend(costMetric, tokenMetric, priorFrom, from, bucketSeconds);
-    BucketSeries afterCostAndTokens = queryCostAndTokenTrend(costMetric, tokenMetric, from, to, bucketSeconds);
-    double[] beforeCacheReadRatio = queryCacheReadRatioTrend(tokenMetric, tokenTypeAttribute, priorFrom, from, bucketSeconds);
-    double[] afterCacheReadRatio = queryCacheReadRatioTrend(tokenMetric, tokenTypeAttribute, from, to, bucketSeconds);
-    SessionBucketSeries beforeSessions =
-        querySessionTrend(costMetric, activeTimeMetric, priorFrom, from, bucketSeconds);
-    SessionBucketSeries afterSessions =
-        querySessionTrend(costMetric, activeTimeMetric, from, to, bucketSeconds);
+    // Sparklines: one consolidated call per query family (both periods at
+    // once), bucketed to the same fixed 7-point width on both sides (the two
+    // windows are equal length).
+    CombinedMetricsSparklines combinedMetricsSparklines = queryMetricsSparklinesCombined(
+        costMetric, tokenMetric, activeTimeMetric, from, to, priorFrom, bucketSeconds);
+    BucketSeries beforeCostAndTokens = combinedMetricsSparklines.before();
+    BucketSeries afterCostAndTokens = combinedMetricsSparklines.after();
+    SessionBucketSeries beforeSessions = combinedMetricsSparklines.beforeSessions();
+    SessionBucketSeries afterSessions = combinedMetricsSparklines.afterSessions();
+    CombinedCacheReadRatio combinedCacheReadRatio =
+        queryCacheReadRatioTrendCombined(tokenMetric, tokenTypeAttribute, from, to, priorFrom, bucketSeconds);
+    double[] beforeCacheReadRatio = combinedCacheReadRatio.before();
+    double[] afterCacheReadRatio = combinedCacheReadRatio.after();
     ToolFailureBucketSeries beforeToolFailures =
         queryToolFailureTrend(toolEventName, successAttribute, priorFrom, from, bucketSeconds);
     ToolFailureBucketSeries afterToolFailures =
@@ -212,23 +220,23 @@ public class TrendService {
 
   private record CostAndTokenTotals(double costBefore, double costAfter, double tokensBefore, double tokensAfter) {}
 
-  private CostAndTokenTotals queryCostAndTokenTotals(
-      String costMetric, String tokenMetric, Instant from, Instant to, Instant priorFrom) {
-    Object[] costRow = firstRow(metricPointRepository.aggregateCostCurrentAndPriorTotals(costMetric, from, to, priorFrom));
-    Object[] tokenRow = firstRow(metricPointRepository.aggregateTotalTokensCurrentAndPrior(tokenMetric, from, to, priorFrom));
-    double costAfter = costRow == null ? 0.0 : doubleAt(costRow, 0);
-    double costBefore = costRow == null ? 0.0 : doubleAt(costRow, 1);
-    double tokensAfter = tokenRow == null ? 0.0 : doubleAt(tokenRow, 0);
-    double tokensBefore = tokenRow == null ? 0.0 : doubleAt(tokenRow, 1);
-    return new CostAndTokenTotals(costBefore, costAfter, tokensBefore, tokensAfter);
-  }
-
   private record CacheReadRatioTotals(double ratioPctBefore, double ratioPctAfter) {}
 
-  private CacheReadRatioTotals queryCacheReadRatioTotals(
-      String tokenMetric, String tokenTypeAttribute, Instant from, Instant to, Instant priorFrom) {
-    List<Object[]> rows = metricPointRepository.aggregateTokenTypeCurrentAndPriorTotals(
-        tokenMetric, tokenTypeAttribute, from, to, priorFrom);
+  // Reads MetricPointRepository#aggregateMetricsTotalsCombined's single UNION ALL result
+  // set -- replacing the three separate calls (aggregateCostCurrentAndPriorTotals,
+  // aggregateTotalTokensCurrentAndPrior, aggregateTokenTypeCurrentAndPriorTotals) that
+  // used to build queryCostAndTokenTotals and queryCacheReadRatioTotals independently --
+  // and reassembles the identical two DTOs from the row_type-discriminated rows.
+  private record CombinedTotals(CostAndTokenTotals costAndTokenTotals, CacheReadRatioTotals cacheReadRatioTotals) {}
+
+  private CombinedTotals queryMetricsTotalsCombined(
+      String costMetric, String tokenMetric, String tokenTypeAttribute, Instant from, Instant to, Instant priorFrom) {
+    List<Object[]> rows = metricPointRepository.aggregateMetricsTotalsCombined(
+        costMetric, tokenMetric, tokenTypeAttribute, from, to, priorFrom);
+    double costAfter = 0.0;
+    double costBefore = 0.0;
+    double tokensAfter = 0.0;
+    double tokensBefore = 0.0;
     double inputAfter = 0.0;
     double inputBefore = 0.0;
     double cacheCreationAfter = 0.0;
@@ -236,23 +244,34 @@ public class TrendService {
     double cacheReadAfter = 0.0;
     double cacheReadBefore = 0.0;
     for (Object[] row : rows) {
-      String tokenType = (String) row[0];
-      double afterTotal = doubleAt(row, 1);
-      double beforeTotal = doubleAt(row, 2);
-      if (TOKEN_TYPE_INPUT.equals(tokenType)) {
-        inputAfter = afterTotal;
-        inputBefore = beforeTotal;
-      } else if (TOKEN_TYPE_CACHE_CREATION.equals(tokenType)) {
-        cacheCreationAfter = afterTotal;
-        cacheCreationBefore = beforeTotal;
-      } else if (TOKEN_TYPE_CACHE_READ.equals(tokenType)) {
-        cacheReadAfter = afterTotal;
-        cacheReadBefore = beforeTotal;
+      String rowType = (String) row[0];
+      String tokenType = (String) row[1];
+      double currentTotal = doubleAt(row, 2);
+      double priorTotal = doubleAt(row, 3);
+      if (ROW_TYPE_COST.equals(rowType)) {
+        costAfter = currentTotal;
+        costBefore = priorTotal;
+      } else if (ROW_TYPE_TOKEN_TOTAL.equals(rowType)) {
+        tokensAfter = currentTotal;
+        tokensBefore = priorTotal;
+      } else if (ROW_TYPE_TOKEN_TYPE.equals(rowType)) {
+        if (TOKEN_TYPE_INPUT.equals(tokenType)) {
+          inputAfter = currentTotal;
+          inputBefore = priorTotal;
+        } else if (TOKEN_TYPE_CACHE_CREATION.equals(tokenType)) {
+          cacheCreationAfter = currentTotal;
+          cacheCreationBefore = priorTotal;
+        } else if (TOKEN_TYPE_CACHE_READ.equals(tokenType)) {
+          cacheReadAfter = currentTotal;
+          cacheReadBefore = priorTotal;
+        }
       }
     }
-    return new CacheReadRatioTotals(
+    CostAndTokenTotals costAndTokenTotals = new CostAndTokenTotals(costBefore, costAfter, tokensBefore, tokensAfter);
+    CacheReadRatioTotals cacheReadRatioTotals = new CacheReadRatioTotals(
         cacheReadRatioPct(inputBefore, cacheCreationBefore, cacheReadBefore),
         cacheReadRatioPct(inputAfter, cacheCreationAfter, cacheReadAfter));
+    return new CombinedTotals(costAndTokenTotals, cacheReadRatioTotals);
   }
 
   private static double cacheReadRatioPct(double input, double cacheCreation, double cacheRead) {
@@ -312,68 +331,111 @@ public class TrendService {
 
   private record BucketSeries(double[] costs, double[] tokens) {}
 
-  private BucketSeries queryCostAndTokenTrend(
-      String costMetric, String tokenMetric, Instant start, Instant end, long bucketSeconds) {
-    List<Object[]> rows = metricPointRepository.aggregateCostAndTokenTrend(costMetric, tokenMetric, start, end, bucketSeconds);
-    double[] costs = new double[SPARKLINE_POINTS];
-    double[] tokens = new double[SPARKLINE_POINTS];
-    for (Object[] row : rows) {
-      int bucketIndex = intAt(row, 0);
-      if (bucketIndex < 0 || bucketIndex >= SPARKLINE_POINTS) {
-        continue;
-      }
-      costs[bucketIndex] = doubleAt(row, 1);
-      tokens[bucketIndex] = doubleAt(row, 2);
-    }
-    return new BucketSeries(costs, tokens);
-  }
-
-  private double[] queryCacheReadRatioTrend(
-      String tokenMetric, String tokenTypeAttribute, Instant start, Instant end, long bucketSeconds) {
-    List<Object[]> rows =
-        metricPointRepository.aggregateTokenTypeTrend(tokenMetric, tokenTypeAttribute, start, end, bucketSeconds);
-    double[] input = new double[SPARKLINE_POINTS];
-    double[] cacheCreation = new double[SPARKLINE_POINTS];
-    double[] cacheRead = new double[SPARKLINE_POINTS];
-    for (Object[] row : rows) {
-      int bucketIndex = intAt(row, 0);
-      if (bucketIndex < 0 || bucketIndex >= SPARKLINE_POINTS) {
-        continue;
-      }
-      String tokenType = (String) row[1];
-      double total = doubleAt(row, 2);
-      if (TOKEN_TYPE_INPUT.equals(tokenType)) {
-        input[bucketIndex] = total;
-      } else if (TOKEN_TYPE_CACHE_CREATION.equals(tokenType)) {
-        cacheCreation[bucketIndex] = total;
-      } else if (TOKEN_TYPE_CACHE_READ.equals(tokenType)) {
-        cacheRead[bucketIndex] = total;
-      }
-    }
-    double[] ratioPct = new double[SPARKLINE_POINTS];
-    for (int index = 0; index < SPARKLINE_POINTS; index++) {
-      ratioPct[index] = cacheReadRatioPct(input[index], cacheCreation[index], cacheRead[index]);
-    }
-    return ratioPct;
-  }
-
   private record SessionBucketSeries(double[] sessionCounts, double[] avgDurationSeconds) {}
 
-  private SessionBucketSeries querySessionTrend(
-      String costMetric, String activeTimeMetric, Instant start, Instant end, long bucketSeconds) {
-    List<Object[]> rows = metricPointRepository.aggregateSessionCountAndDurationTrend(
-        costMetric, activeTimeMetric, start, end, bucketSeconds);
-    double[] sessionCounts = new double[SPARKLINE_POINTS];
-    double[] avgDurationSeconds = new double[SPARKLINE_POINTS];
+  // Reads MetricPointRepository#aggregateMetricsSparklinesCombined's single
+  // (period, bucket_index, cost_total, token_total, session_count,
+  // avg_duration_seconds) result set into the same BucketSeries/
+  // SessionBucketSeries shapes the four now-consolidated calls (two
+  // aggregateCostAndTokenTrend + two aggregateSessionCountAndDurationTrend)
+  // used to build separately -- 'current' rows fill the "after" arrays,
+  // 'prior' rows fill "before", mirroring querySessionTotals' period split.
+  private record CombinedMetricsSparklines(
+      BucketSeries before, BucketSeries after, SessionBucketSeries beforeSessions, SessionBucketSeries afterSessions) {}
+
+  private CombinedMetricsSparklines queryMetricsSparklinesCombined(
+      String costMetric, String tokenMetric, String activeTimeMetric,
+      Instant from, Instant to, Instant priorFrom, long bucketSeconds) {
+    List<Object[]> rows = metricPointRepository.aggregateMetricsSparklinesCombined(
+        costMetric, tokenMetric, activeTimeMetric, from, to, priorFrom, bucketSeconds);
+    double[] beforeCosts = new double[SPARKLINE_POINTS];
+    double[] afterCosts = new double[SPARKLINE_POINTS];
+    double[] beforeTokens = new double[SPARKLINE_POINTS];
+    double[] afterTokens = new double[SPARKLINE_POINTS];
+    double[] beforeSessionCounts = new double[SPARKLINE_POINTS];
+    double[] afterSessionCounts = new double[SPARKLINE_POINTS];
+    double[] beforeAvgDurationSeconds = new double[SPARKLINE_POINTS];
+    double[] afterAvgDurationSeconds = new double[SPARKLINE_POINTS];
     for (Object[] row : rows) {
-      int bucketIndex = intAt(row, 0);
+      int bucketIndex = intAt(row, 1);
       if (bucketIndex < 0 || bucketIndex >= SPARKLINE_POINTS) {
         continue;
       }
-      sessionCounts[bucketIndex] = doubleAt(row, 1);
-      avgDurationSeconds[bucketIndex] = doubleAt(row, 2);
+      boolean current = SESSION_PERIOD_CURRENT.equals(row[0]);
+      double costTotal = doubleAt(row, 2);
+      double tokenTotal = doubleAt(row, 3);
+      double sessionCount = doubleAt(row, 4);
+      double avgDurationSeconds = doubleAt(row, 5);
+      if (current) {
+        afterCosts[bucketIndex] = costTotal;
+        afterTokens[bucketIndex] = tokenTotal;
+        afterSessionCounts[bucketIndex] = sessionCount;
+        afterAvgDurationSeconds[bucketIndex] = avgDurationSeconds;
+      } else {
+        beforeCosts[bucketIndex] = costTotal;
+        beforeTokens[bucketIndex] = tokenTotal;
+        beforeSessionCounts[bucketIndex] = sessionCount;
+        beforeAvgDurationSeconds[bucketIndex] = avgDurationSeconds;
+      }
     }
-    return new SessionBucketSeries(sessionCounts, avgDurationSeconds);
+    return new CombinedMetricsSparklines(
+        new BucketSeries(beforeCosts, beforeTokens),
+        new BucketSeries(afterCosts, afterTokens),
+        new SessionBucketSeries(beforeSessionCounts, beforeAvgDurationSeconds),
+        new SessionBucketSeries(afterSessionCounts, afterAvgDurationSeconds));
+  }
+
+  // Reads MetricPointRepository#aggregateTokenTypeSparklinesCombined's single
+  // (period, bucket_index, token_type, total) result set, replacing the two
+  // aggregateTokenTypeTrend calls the same way the method above replaces the
+  // cost/token/session pair.
+  private record CombinedCacheReadRatio(double[] before, double[] after) {}
+
+  private CombinedCacheReadRatio queryCacheReadRatioTrendCombined(
+      String tokenMetric, String tokenTypeAttribute, Instant from, Instant to, Instant priorFrom, long bucketSeconds) {
+    List<Object[]> rows = metricPointRepository.aggregateTokenTypeSparklinesCombined(
+        tokenMetric, tokenTypeAttribute, from, to, priorFrom, bucketSeconds);
+    double[] beforeInput = new double[SPARKLINE_POINTS];
+    double[] beforeCacheCreation = new double[SPARKLINE_POINTS];
+    double[] beforeCacheRead = new double[SPARKLINE_POINTS];
+    double[] afterInput = new double[SPARKLINE_POINTS];
+    double[] afterCacheCreation = new double[SPARKLINE_POINTS];
+    double[] afterCacheRead = new double[SPARKLINE_POINTS];
+    for (Object[] row : rows) {
+      int bucketIndex = intAt(row, 1);
+      if (bucketIndex < 0 || bucketIndex >= SPARKLINE_POINTS) {
+        continue;
+      }
+      boolean current = SESSION_PERIOD_CURRENT.equals(row[0]);
+      String tokenType = (String) row[2];
+      double total = doubleAt(row, 3);
+      if (TOKEN_TYPE_INPUT.equals(tokenType)) {
+        if (current) {
+          afterInput[bucketIndex] = total;
+        } else {
+          beforeInput[bucketIndex] = total;
+        }
+      } else if (TOKEN_TYPE_CACHE_CREATION.equals(tokenType)) {
+        if (current) {
+          afterCacheCreation[bucketIndex] = total;
+        } else {
+          beforeCacheCreation[bucketIndex] = total;
+        }
+      } else if (TOKEN_TYPE_CACHE_READ.equals(tokenType)) {
+        if (current) {
+          afterCacheRead[bucketIndex] = total;
+        } else {
+          beforeCacheRead[bucketIndex] = total;
+        }
+      }
+    }
+    double[] beforeRatioPct = new double[SPARKLINE_POINTS];
+    double[] afterRatioPct = new double[SPARKLINE_POINTS];
+    for (int index = 0; index < SPARKLINE_POINTS; index++) {
+      beforeRatioPct[index] = cacheReadRatioPct(beforeInput[index], beforeCacheCreation[index], beforeCacheRead[index]);
+      afterRatioPct[index] = cacheReadRatioPct(afterInput[index], afterCacheCreation[index], afterCacheRead[index]);
+    }
+    return new CombinedCacheReadRatio(beforeRatioPct, afterRatioPct);
   }
 
   private record ToolFailureBucketSeries(double[] totalCalls, double[] failures) {}

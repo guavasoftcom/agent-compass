@@ -3,7 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/guavasoftcom/agent-compass)](https://github.com/guavasoftcom/agent-compass/releases/latest)
 [![CI](https://github.com/guavasoftcom/agent-compass/actions/workflows/pull-request.yml/badge.svg)](https://github.com/guavasoftcom/agent-compass/actions/workflows/pull-request.yml)
 [![GHCR](https://img.shields.io/badge/ghcr.io-agent--compass-2496ED?logo=docker&logoColor=white)](https://github.com/guavasoftcom/agent-compass/pkgs/container/agent-compass)
-[![License](https://img.shields.io/github/license/guavasoftcom/agent-compass)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
 OTLP/HTTP telemetry sink + Postgres store + markdown tuning report + React/MUI dashboard for coding-agent self-tuning.
 

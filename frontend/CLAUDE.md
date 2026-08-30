@@ -26,7 +26,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
 - `components/` — cross-page primitives:
   - `PageLayout` — page chrome (title row, subtitle, actions slot, error Alert, body).
   - `PageActions` — composes `WindowSelector` + reload button + auto-refresh toggle; this is what most pages pass into `PageLayout`'s `actions` slot.
-  - `WindowSelector` — preset-or-custom datetime picker; emits `WindowSelection`.
+  - `WindowSelector` — preset-or-custom date picker (whole calendar days, no time-of-day); emits `WindowSelection`.
   - `SectionLayout` — `PageLayout` + tab strip + shared `selection` / `autoRefresh` context (`useSectionContext`) for grouped pages like Tool activity.
   - `PillTabs` — the Aurora pill tab strip (wrapping row, active tab lifted onto a paper-tinted surface). Two forms from one component: pass `to` on each tab for routed section tabs (`SectionLayout`), or omit it and handle `onChange` for in-page tabs (`TokensPage`). Use it rather than restyling a `ButtonBase` row, so a tab looks the same whether or not it changes the URL.
   - `StatCard`, `AttributeList`, `Sparkline`, `DonutCard`, etc. — leaf presentational primitives.

@@ -153,6 +153,7 @@ const CostPageView = ({
 
   return (
     <PageLayout
+      eyebrow="Activity"
       title="Cost"
       subtitle={
         'Where spend went over the selected window, measured from api_request records — the '
