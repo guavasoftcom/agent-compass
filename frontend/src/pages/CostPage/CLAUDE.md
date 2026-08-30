@@ -213,13 +213,15 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
 - **`costPer1k` and `burnRatePerDay` are computed in the view, not the backend.** The backend
   sends `burnRatePerHour` (× 24 here) and enough token totals to derive cost-per-1k client-side;
   there was no reason to duplicate that arithmetic in a service that already returns the inputs.
-  **It renders through its own `COST_PER_1K_FORMATTER` (3 decimals), not the shared 2-decimal
+  **It renders through its own `COST_PER_1K_FORMATTER` (5 decimals), not the shared 2-decimal
   `USD_FORMATTER`/`usdOrDash`.** Cache-read tokens dominate the token total but cost comparatively
-  little, so real values are routinely sub-cent (e.g. `$0.003`) and rounded straight to `"$0.00"`
-  by a 2-decimal formatter — indistinguishable from an actual zero. 3 decimals matches the Tokens
-  page's own cost-per-1k figure (`CostSummary.costPer1k`, formatted server-side by
-  `MetricService.formatCostPer1k` as `"$%.3f"`) — same concept, same precision, computed on two
-  different sides of the API only because this page's version didn't exist server-side yet.
+  little, so real values are routinely sub-mill (e.g. `$0.00033` on a cache-heavy window) —
+  a 2-decimal formatter rounds that straight to `"$0.00"`, and even 3 decimals (the original
+  choice here) still rounds it to `"$0.000"`, both indistinguishable from an actual zero. 5
+  decimals matches the Tokens page's own cost-per-1k figure (`CostSummary.costPer1k`, formatted
+  server-side by `MetricService.formatCostPer1k` as `"$%.5f"`) — same concept, same precision,
+  computed on two different sides of the API only because this page's version didn't exist
+  server-side yet.
 - **A category with zero categories at all (`breakdown.categories.length === 0`) is a real "no
   priced requests in this window" answer**, not a loading state — `MoneyMapCard` and
   `CostDriversCard` both render an explicit empty message rather than a blank card, guarded by

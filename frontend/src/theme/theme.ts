@@ -9,6 +9,7 @@ declare module '@mui/material/styles' {
       progressTrack: string;
       rowStripe: string;
       titleColor: string;
+      surfaceMuted: string;
     };
   }
   interface ThemeOptions {
@@ -16,6 +17,7 @@ declare module '@mui/material/styles' {
       progressTrack?: string;
       rowStripe?: string;
       titleColor?: string;
+      surfaceMuted?: string;
     };
   }
 }
@@ -67,6 +69,7 @@ interface ThemeTokens {
   progressTrack: string;
   rowStripe: string;
   titleColor: string;
+  surfaceMuted: string;
 }
 
 // Aurora radial "glow" backdrop painted behind the whole app (fixed, non-scrolling).
@@ -115,6 +118,7 @@ const TOKENS: Record<ColorMode, ThemeTokens> = {
     rowStripe: alpha(neutralColors.inkLight, 0.04),
     // Deep indigo page-title color (matches the Aurora mockup — not pure ink).
     titleColor: neutralColors.titleLight,
+    surfaceMuted: neutralColors.surfaceMutedLight,
   },
   dark: {
     primary: auroraColors.violetLight,
@@ -134,6 +138,7 @@ const TOKENS: Record<ColorMode, ThemeTokens> = {
     progressTrack: alpha(neutralColors.white, 0.08),
     rowStripe: alpha(neutralColors.white, 0.04),
     titleColor: neutralColors.titleDark,
+    surfaceMuted: neutralColors.surfaceMutedDark,
   },
 };
 
@@ -155,6 +160,7 @@ export const createAppTheme = (mode: ColorMode = 'light'): Theme => {
       progressTrack: tokens.progressTrack,
       rowStripe: tokens.rowStripe,
       titleColor: tokens.titleColor,
+      surfaceMuted: tokens.surfaceMuted,
     },
     shape: { borderRadius: 12 },
     typography: {

@@ -57,16 +57,19 @@ const usdOrDash = (value: number): string => (Number.isFinite(value) ? USD_FORMA
 
 // Cost per 1k tokens is usually well under a cent — cache-read tokens dominate
 // the denominator but cost comparatively little (see AGENTS.md) — so the shared
-// 2-decimal USD_FORMATTER rounds real, nonzero figures down to "$0.00". Fixed at
-// 3 decimals instead, matching the Tokens page's identical figure: the backend's
-// `MetricService.formatCostPer1k` formats its own (server-computed) cost-per-1k
-// as `"$%.3f"`. This one is computed client-side (see costPer1k below) so it
-// needs its own formatter, but the precision matches on purpose.
+// 2-decimal USD_FORMATTER rounds real, nonzero figures down to "$0.00". On a
+// cache-heavy window even 3 decimals isn't enough (real figures routinely land
+// around $0.0003/1k, which still rounds to "$0.000" — indistinguishable from a
+// genuine zero), so this is fixed at 5 decimals instead, matching the Tokens
+// page's identical figure: the backend's `MetricService.formatCostPer1k`
+// formats its own (server-computed) cost-per-1k as `"$%.5f"`. This one is
+// computed client-side (see costPer1k below) so it needs its own formatter,
+// but the precision matches on purpose.
 const COST_PER_1K_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
-  minimumFractionDigits: 3,
-  maximumFractionDigits: 3,
+  minimumFractionDigits: 5,
+  maximumFractionDigits: 5,
 });
 const costPer1kOrDash = (value: number): string =>
   (Number.isFinite(value) ? COST_PER_1K_FORMATTER.format(value) : '—');

@@ -8,6 +8,7 @@ import {
   LogsIcon,
   MetricsIcon,
   ReportIcon,
+  TrendReportIcon,
   SettingsIcon,
 } from './NavIcons';
 
@@ -44,7 +45,10 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: 'Reports',
-    items: [{ to: '/report', label: 'Tuning Report', icon: <ReportIcon /> }],
+    items: [
+      { to: '/report', label: 'Tuning Report', icon: <ReportIcon /> },
+      { to: '/trend-report', label: 'Trend Report', icon: <TrendReportIcon /> },
+    ],
   },
   {
     heading: 'System',

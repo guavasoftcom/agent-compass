@@ -872,8 +872,13 @@ public class MetricService {
     return String.format(Locale.US, "$%.0f", projected);
   }
 
+  // 5 decimals, not 3: cache-read tokens dominate the denominator (see this
+  // class's two-pipelines note and AGENTS.md) but are billed at a steep
+  // discount, so on a cache-heavy window the real figure is routinely
+  // sub-mill (e.g. $0.00033/1k) -- 3 decimals rounded that straight to
+  // "$0.000", indistinguishable from a genuine zero.
   private static String formatCostPer1k(double costPer1k) {
-    return String.format(Locale.US, "$%.3f", costPer1k);
+    return String.format(Locale.US, "$%.5f", costPer1k);
   }
 
   // ---------------------------------------------------------------------------

@@ -53,7 +53,21 @@ docker compose down
 
 ## Upgrade to a newer release
 
-The default image reference is `:latest`, so upgrading is a pull plus a recreate:
+[update.sh](../update.sh) does this in one command — pulls the latest image and recreates just the `app` container:
+
+```sh
+./update.sh
+```
+
+Or, without a checkout:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/update.sh | bash
+```
+
+It defaults to the same `~/.agent-compass` directory install.sh uses (override with `--dir`, `--file`, or `$AGENT_COMPASS_HOME`).
+
+The default image reference is `:latest`, so upgrading is a pull plus a recreate — this is exactly what the script above runs:
 
 ```sh
 docker compose pull app

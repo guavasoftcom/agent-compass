@@ -47,21 +47,34 @@ export const SessionsIcon = ({ size = 20 }: NavIconProps) => (
 
 export const TracesIcon = ({ size = 20 }: NavIconProps) => (
   <svg {...svgProps(size)}>
-    <path d="M3 17l5-6 4 3 6-8" />
-    <circle cx="18" cy="6" r="1.4" fill="currentColor" stroke="none" />
+    <rect x="3" y="5" width="10" height="3" rx="1" />
+    <rect x="3" y="11" width="16" height="3" rx="1" />
+    <rect x="3" y="17" width="7" height="3" rx="1" />
   </svg>
 );
 
 export const LogsIcon = ({ size = 20 }: NavIconProps) => (
   <svg {...svgProps(size)}>
-    <path d="M4 6h12M4 12h16M4 18h10" />
+    <circle cx="4" cy="6" r="1" fill="currentColor" />
+    <path d="M8 6h12" />
+    <circle cx="4" cy="12" r="1" fill="currentColor" />
+    <path d="M8 12h12" />
+    <circle cx="4" cy="18" r="1" fill="currentColor" />
+    <path d="M8 18h8" />
+  </svg>
+);
+
+export const TrendReportIcon = ({ size = 20 }: NavIconProps) => (
+  <svg {...svgProps(size)}>
+    <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+    <polyline points="16 7 22 7 22 13" />
   </svg>
 );
 
 export const CostIcon = ({ size = 20 }: NavIconProps) => (
   <svg {...svgProps(size)}>
-    <circle cx="12" cy="12" r="8" />
-    <path d="M12 7v10M9.5 9.5a2.5 2 0 0 1 2.5-1.5c1.4 0 2.5.7 2.5 1.75S13.4 11.5 12 11.5s-2.5.8-2.5 1.75S10.6 15 12 15c1.4 0 2.5-.6 2.5-1.5" />
+    <line x1="12" y1="1" x2="12" y2="23" />
+    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
   </svg>
 );
 

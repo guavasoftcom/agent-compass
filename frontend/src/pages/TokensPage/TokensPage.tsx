@@ -32,7 +32,7 @@ const emptySummary: TokenUsageSummary = {
     deltaPct: '+0.0%',
     burnRate: '$0/h',
     projected30d: '$0',
-    costPer1k: '$0.000',
+    costPer1k: '$0.00000',
     trend: [],
     byModel: [],
     note: '',

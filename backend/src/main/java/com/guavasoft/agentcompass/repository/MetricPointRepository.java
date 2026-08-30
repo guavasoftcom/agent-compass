@@ -1303,4 +1303,238 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("decisionAttribute") String decisionAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
+
+  // ---------------------------------------------------------------------------
+  // Trend report (GET /api/trends)
+  // ---------------------------------------------------------------------------
+  //
+  // Every query below follows the half-open boundary convention established by
+  // aggregateCostCurrentAndPriorTotals: current = [:from, :to], prior =
+  // [:priorFrom, :from) -- a point landing exactly on :from counts once, in the
+  // current period only.
+
+  // Current+prior grand token total (tokens_total), mirroring aggregateTotalTokens
+  // but with the same current/prior FILTER shape as aggregateCostCurrentAndPriorTotals.
+  // Unlike aggregateTokenTypeCurrentAndPriorTotals below, this counts every
+  // value_delta unconditionally (no per-type grouping), matching
+  // aggregateTotalTokens' semantics exactly.
+  @Query(value = """
+      SELECT
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::bigint
+          AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::bigint
+          AS prior_total
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+      """, nativeQuery = true)
+  List<Object[]> aggregateTotalTokensCurrentAndPrior(
+      @Param("metricName") String metricName,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom);
+
+  // Per-token-type current+prior totals (cache_read_ratio_pct's three components:
+  // input, cacheCreation, cacheRead -- output is fetched too but unused by the
+  // ratio, since it shares this one scan for free). Row shape: (token_type,
+  // current_total, prior_total). A row with a null token_type (any point whose
+  // attributes lack the type key) is included for completeness but dropped by
+  // the service, mirroring aggregateTokenUsageBreakdown's WHERE token_type IS NOT
+  // NULL semantics.
+  @Query(value = """
+      SELECT
+        attributes ->> :tokenTypeAttribute AS token_type,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::bigint
+          AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::bigint
+          AS prior_total
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+      GROUP BY token_type
+      """, nativeQuery = true)
+  List<Object[]> aggregateTokenTypeCurrentAndPriorTotals(
+      @Param("metricName") String metricName,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom);
+
+  // Session count (sessions) and average whole-session wall-clock duration
+  // (avg_duration_min) for the current and prior period, in one scan.
+  //
+  // Session membership reuses aggregateSessionKpis' value_delta IS DISTINCT FROM 0
+  // test against the cost/active-time metrics -- see that query's Javadoc and the
+  // exporter zero-delta-re-export note in backend/CLAUDE.md -- so a session only
+  // counts toward a period if it had a real increment (not a heartbeat re-export)
+  // sometime in that period's [priorFrom, from) / [from, to] half.
+  //
+  // Duration is deliberately the WHOLE-SESSION wall clock (unbounded first_seen /
+  // last_seen, same as aggregateSessionSummaries' wall_seconds and
+  // SessionSummary.wallSeconds), not the sliver of that session's duration that
+  // happens to fall inside the half being measured -- a session can be assigned
+  // to both the current and prior period (its points span the boundary) and
+  // reports the identical whole-session duration in both rows, matching how the
+  // rest of this class treats whole-session totals as a property of the session,
+  // not of the window used to find it.
+  @Query(value = """
+      WITH windowed_points AS (
+        SELECT
+          session_id,
+          timestamp,
+          start_timestamp,
+          value_delta,
+          CASE
+            WHEN timestamp >= :from AND timestamp <= :to THEN 'current'
+            WHEN timestamp >= :priorFrom AND timestamp < :from THEN 'prior'
+          END AS period
+        FROM metric_points
+        WHERE metric_name IN (:costMetric, :activeTimeMetric)
+          AND session_id IS NOT NULL
+          AND timestamp >= :priorFrom
+          AND timestamp <= :to
+      ),
+      session_window AS (
+        SELECT session_id, period
+        FROM windowed_points
+        WHERE period IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
+        GROUP BY session_id, period
+      ),
+      session_span AS (
+        SELECT
+          w.session_id,
+          w.period,
+          MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_seen,
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
+        FROM session_window w
+        JOIN metric_points p ON p.session_id = w.session_id
+        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
+        GROUP BY w.session_id, w.period
+      )
+      SELECT
+        period,
+        COUNT(*)::bigint AS session_count,
+        COALESCE(AVG(EXTRACT(EPOCH FROM (last_seen - first_seen))), 0)::double precision
+          AS avg_duration_seconds
+      FROM session_span
+      GROUP BY period
+      """, nativeQuery = true)
+  List<Object[]> aggregateSessionCountAndDurationCurrentAndPrior(
+      @Param("costMetric") String costMetric,
+      @Param("activeTimeMetric") String activeTimeMetric,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom);
+
+  // ---------------------------------------------------------------------------
+  // Trend report sparklines (7 points per side, one call per side)
+  // ---------------------------------------------------------------------------
+  //
+  // Every query below returns a zero-based bucket_index (dense zero-fill happens
+  // in the service, same idiom as MetricService#buildSessionsTrend) rather than a
+  // bucket Instant, so the trend service can combine rows from different queries
+  // (e.g. cost and session-count buckets, to derive cost_per_session per bucket)
+  // by array index without reproducing date_bin's rounding in Java.
+
+  // Bucketed cost and token totals in one scan -- backs total_cost's and
+  // tokens_total's own sparklines, and (divided bucket-by-bucket against
+  // aggregateSessionCountAndDurationTrend's session_count) cost_per_session /
+  // tokens_per_session / blended_rate_per_1m's sparklines too.
+  @Query(value = """
+      SELECT
+        FLOOR(EXTRACT(EPOCH FROM (date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) - :start))
+          / :bucketSeconds)::int AS bucket_index,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :costMetric), 0)::double precision AS cost_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :tokenMetric), 0)::bigint AS token_total
+      FROM metric_points
+      WHERE metric_name IN (:costMetric, :tokenMetric)
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY bucket_index
+      ORDER BY bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateCostAndTokenTrend(
+      @Param("costMetric") String costMetric,
+      @Param("tokenMetric") String tokenMetric,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // Bucketed per-token-type totals -- backs cache_read_ratio_pct's sparkline
+  // (cacheRead / (input + cacheCreation + cacheRead) per bucket).
+  @Query(value = """
+      SELECT
+        FLOOR(EXTRACT(EPOCH FROM (date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) - :start))
+          / :bucketSeconds)::int AS bucket_index,
+        attributes ->> :tokenTypeAttribute AS token_type,
+        COALESCE(SUM(value_delta), 0)::bigint AS total
+      FROM metric_points
+      WHERE metric_name = :tokenMetric
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY bucket_index, token_type
+      ORDER BY bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateTokenTypeTrend(
+      @Param("tokenMetric") String tokenMetric,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // Bucketed session count and average whole-session wall-clock duration --
+  // backs sessions' and avg_duration_min's own sparklines, and is reused as the
+  // denominator for cost_per_session / tokens_per_session's sparklines. Same
+  // value_delta IS DISTINCT FROM 0 membership test and whole-session (unbounded)
+  // first_seen/last_seen as aggregateSessionCountAndDurationCurrentAndPrior --
+  // see that query's Javadoc.
+  @Query(value = """
+      WITH windowed_points AS (
+        SELECT
+          session_id,
+          timestamp,
+          start_timestamp,
+          value_delta,
+          FLOOR(EXTRACT(EPOCH FROM (date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) - :start))
+            / :bucketSeconds)::int AS bucket_index
+        FROM metric_points
+        WHERE metric_name IN (:costMetric, :activeTimeMetric)
+          AND session_id IS NOT NULL
+          AND timestamp >= :start
+          AND timestamp <= :end
+      ),
+      session_window AS (
+        SELECT session_id, bucket_index
+        FROM windowed_points
+        WHERE value_delta IS DISTINCT FROM 0
+        GROUP BY session_id, bucket_index
+      ),
+      session_span AS (
+        SELECT
+          w.session_id,
+          w.bucket_index,
+          MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_seen,
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
+        FROM session_window w
+        JOIN metric_points p ON p.session_id = w.session_id
+        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
+        GROUP BY w.session_id, w.bucket_index
+      )
+      SELECT
+        bucket_index,
+        COUNT(*)::bigint AS session_count,
+        COALESCE(AVG(EXTRACT(EPOCH FROM (last_seen - first_seen))), 0)::double precision AS avg_duration_seconds
+      FROM session_span
+      GROUP BY bucket_index
+      ORDER BY bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateSessionCountAndDurationTrend(
+      @Param("costMetric") String costMetric,
+      @Param("activeTimeMetric") String activeTimeMetric,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
 }

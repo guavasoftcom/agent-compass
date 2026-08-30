@@ -48,6 +48,13 @@ export const neutralColors = {
   titleDark: '#efeaff', // page title (dark)
   shadowIndigo: '#241450', // card / popover shadow base (light)
   shadowDeep: '#0a061e', // heavy chart-tooltip shadow base
+  // Solid (non-alpha) equivalent of `progressTrack` (inkLight/white @ 8%) flattened onto the
+  // card surface (paperBg) — for a full-width band (e.g. a section-label row) that needs the
+  // same muted tone as a progress-bar track but can't be a translucent wash, since its own
+  // opacity would otherwise expose whatever renders underneath it (card gradients, column
+  // washes) instead of reading as one flat panel color.
+  surfaceMutedLight: '#ededee',
+  surfaceMutedDark: '#272431',
 } as const;
 
 // ─── Semantic aliases ───────────────────────────────────────────────────────

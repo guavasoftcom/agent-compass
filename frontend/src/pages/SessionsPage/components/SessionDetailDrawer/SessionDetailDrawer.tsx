@@ -307,7 +307,7 @@ const SessionDetailDrawer = ({
         },
         paper: {
           sx: {
-            width: 600,
+            width: 550,
             maxWidth: '92vw',
             display: 'flex',
             flexDirection: 'column',

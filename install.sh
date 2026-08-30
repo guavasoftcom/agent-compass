@@ -273,7 +273,8 @@ endpoint = os.environ["AGENT_COMPASS_ENDPOINT"]
 telemetry_environment = {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
-    "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1000000000",
+    # Uncomment the line below to override the default 60KB content-capture limit (100MB here).
+    # "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "104857600",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_TRACES_EXPORTER": "otlp",

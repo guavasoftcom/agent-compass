@@ -201,7 +201,12 @@ const ToolChips = ({
               sx={{
                 fontWeight: 700,
                 fontSize: 10.5,
-                color: 'white',
+                // Not a literal 'white': in dark mode text.primary resolves to the
+                // same near-white, but in light mode white on the chip's pale
+                // alpha(mutedSlate, 0.16) ground made the count invisible. The muted
+                // variant keeps the chip's own dimmed hue so background tool rows
+                // don't regain emphasis through their counts.
+                color: muted ? chipColor : 'text.primary',
                 fontVariantNumeric: 'tabular-nums',
               }}
             >

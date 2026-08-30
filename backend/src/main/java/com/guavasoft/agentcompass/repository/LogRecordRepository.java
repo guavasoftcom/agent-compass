@@ -2466,4 +2466,118 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset);
+
+  // ---------------------------------------------------------------------------
+  // Trend report (GET /api/trends)
+  // ---------------------------------------------------------------------------
+  //
+  // Half-open boundary convention (see MetricPointRepository#aggregateCostCurrentAndPriorTotals):
+  // current = [:from, :to], prior = [:priorFrom, :from) -- a tool_result landing
+  // exactly on :from counts once, in the current period only.
+
+  // tool_errors and error_rate_pct's shared numerator/denominator, current and
+  // prior period, in one pass over the tool_result rows in [:priorFrom, :to].
+  // Filters on the event_name column (V16/V17), never attributes ->> 'event.name'
+  // -- see this file's header comment.
+  @Query(value = """
+      SELECT
+        COALESCE(COUNT(*) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::bigint
+          AS current_total_calls,
+        COALESCE(COUNT(*) FILTER (
+          WHERE timestamp >= :from AND timestamp <= :to AND attributes ->> :successAttribute = 'false'
+        ), 0)::bigint AS current_failures,
+        COALESCE(COUNT(*) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::bigint
+          AS prior_total_calls,
+        COALESCE(COUNT(*) FILTER (
+          WHERE timestamp >= :priorFrom AND timestamp < :from AND attributes ->> :successAttribute = 'false'
+        ), 0)::bigint AS prior_failures
+      FROM log_records
+      WHERE event_name = :eventName
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolFailureCurrentAndPriorTotals(
+      @Param("eventName") String eventName,
+      @Param("successAttribute") String successAttribute,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom);
+
+  // session_failures: count of DISTINCT sessions with at least one failed
+  // tool_result in the period, current and prior. session.id is read as a raw
+  // jsonb extraction (no stored generated column on log_records for it, unlike
+  // event_name/tool_name) -- the same literal-key pattern every other session
+  // grouping in this file uses (see e.g. aggregateSessionCounts).
+  @Query(value = """
+      SELECT
+        COALESCE(COUNT(DISTINCT attributes ->> 'session.id') FILTER (
+          WHERE timestamp >= :from AND timestamp <= :to
+        ), 0)::bigint AS current_session_failures,
+        COALESCE(COUNT(DISTINCT attributes ->> 'session.id') FILTER (
+          WHERE timestamp >= :priorFrom AND timestamp < :from
+        ), 0)::bigint AS prior_session_failures
+      FROM log_records
+      WHERE event_name = :eventName
+        AND attributes ->> :successAttribute = 'false'
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+      """, nativeQuery = true)
+  List<Object[]> aggregateSessionFailuresCurrentAndPrior(
+      @Param("eventName") String eventName,
+      @Param("successAttribute") String successAttribute,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom);
+
+  // ---------------------------------------------------------------------------
+  // Trend report sparklines (7 points per side, one call per side)
+  // ---------------------------------------------------------------------------
+  //
+  // Both queries return a zero-based bucket_index rather than a bucket Instant,
+  // matching MetricPointRepository's trend-sparkline queries so the service can
+  // zero-fill and combine them the same way.
+
+  // Bucketed tool_result call and failure counts -- backs tool_errors' and
+  // error_rate_pct's sparklines in one pass.
+  @Query(value = """
+      SELECT
+        FLOOR(EXTRACT(EPOCH FROM (date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) - :start))
+          / :bucketSeconds)::int AS bucket_index,
+        COUNT(*)::bigint AS total_calls,
+        COUNT(*) FILTER (WHERE attributes ->> :successAttribute = 'false')::bigint AS failures
+      FROM log_records
+      WHERE event_name = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY bucket_index
+      ORDER BY bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateToolFailureTrend(
+      @Param("eventName") String eventName,
+      @Param("successAttribute") String successAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // Bucketed count of distinct sessions with at least one failed tool_result --
+  // backs session_failures' sparkline.
+  @Query(value = """
+      SELECT
+        FLOOR(EXTRACT(EPOCH FROM (date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) - :start))
+          / :bucketSeconds)::int AS bucket_index,
+        COUNT(DISTINCT attributes ->> 'session.id')::bigint AS failed_sessions
+      FROM log_records
+      WHERE event_name = :eventName
+        AND attributes ->> :successAttribute = 'false'
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY bucket_index
+      ORDER BY bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateSessionFailuresTrend(
+      @Param("eventName") String eventName,
+      @Param("successAttribute") String successAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
 }
