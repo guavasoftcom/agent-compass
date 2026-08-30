@@ -7,6 +7,8 @@
 
 OTLP/HTTP telemetry sink + Postgres store + markdown tuning report + React/MUI dashboard for coding-agent self-tuning.
 
+> **Just want it running?** `./install.sh` sets it up, `./update.sh` upgrades it later — see [Quick start](#quick-start).
+
 ## What this is
 
 Coding agents like Claude Code already emit OpenTelemetry — every tool call, token, dollar, and
@@ -100,7 +102,11 @@ Coding agents push **OTLP/HTTP protobuf** straight at the backend — no collect
 
 ## Quick start
 
-To *use* Agent Compass you need Docker and Claude Code — no JDK, no Node. [install.sh](install.sh) fetches the released image's compose stack, points Claude Code's telemetry at it, and starts it:
+To *use* Agent Compass you need Docker and Claude Code — no JDK, no Node.
+
+### Install
+
+[install.sh](install.sh) fetches the released image's compose stack, points Claude Code's telemetry at it, and starts it:
 
 ```sh
 git clone https://github.com/guavasoftcom/agent-compass.git
@@ -114,6 +120,20 @@ curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/ins
 ```
 
 The dashboard comes up on <http://localhost:18080>. Your `~/.claude/settings.json` is backed up before the telemetry env block is merged in, and the script prints the command that restores it. `./install.sh --help` covers the flags — `--port`, `--project` (scope the settings to one repository), `--with-hook`, `--no-start`, `--skip-settings`. Details, and what each telemetry variable feeds, in [docs/local-docker-deployment.md](docs/local-docker-deployment.md).
+
+### Update
+
+[update.sh](update.sh) pulls the latest image and recreates just the `app` container — Postgres and its data volume are untouched:
+
+```sh
+./update.sh
+```
+
+Same idea without a checkout:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/update.sh | bash
+```
 
 Everything below is for running from source.
 
@@ -330,6 +350,13 @@ docker build -t agent-compass:local .
 ```
 
 The Dockerfile defaults to `backend/target/*.jar` and `frontend/dist`, so no `--build-arg` is needed — and `clean` keeps the glob unambiguous once version bumps leave older jars behind.
+
+## License
+
+Agent Compass is licensed under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-or-later) —
+anyone can use, modify, and redistribute it, provided that any distributed modified version stays
+under GPLv3 too and ships (or offers) its source. See the [LICENSE](LICENSE) file for the full terms,
+and [CONTRIBUTING.md](CONTRIBUTING.md) for how contributed code is licensed.
 
 ## Why this stack
 
