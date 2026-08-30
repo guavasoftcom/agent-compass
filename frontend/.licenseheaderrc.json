@@ -1,0 +1,15 @@
+{
+  "license": "GPL-3.0-or-later",
+  "author": "Guadalupe Garcia <guad.daniel.garcia@gmail.com>",
+  "projectName": "Agent Compass",
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".git",
+    "coverage"
+  ],
+  "files": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
+}

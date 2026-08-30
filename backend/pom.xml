@@ -35,6 +35,7 @@
     <testcontainers.version>2.0.5</testcontainers.version>
     <checkstyle.plugin.version>3.6.0</checkstyle.plugin.version>
     <checkstyle.version>13.6.0</checkstyle.version>
+    <license.plugin.version>4.3</license.plugin.version>
   </properties>
 
   <dependencyManagement>
@@ -267,6 +268,33 @@
             <id>build-info</id>
             <goals>
               <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>com.mycila</groupId>
+        <artifactId>license-maven-plugin</artifactId>
+        <version>${license.plugin.version}</version>
+        <configuration>
+          <header>src/main/resources/license-header.txt</header>
+          <properties>
+            <year>2026</year>
+          </properties>
+          <includes>
+            <include>src/**/*.java</include>
+          </includes>
+          <excludes>
+            <exclude>src/main/resources/**</exclude>
+            <exclude>src/test/resources/**</exclude>
+          </excludes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>check-license</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>check</goal>
             </goals>
           </execution>
         </executions>
