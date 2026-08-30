@@ -40,6 +40,7 @@ MetricsPage/
 ├── MetricsPageView.tsx       view — selectedId / split state, composes the four
 │                             sub-components; chart-series derivation lives in
 │                             MetricTrendCard, not here
+├── MetricsPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── metricsApi.ts             MetricsQueryParams interface + fetchMetrics();
 │                             also defines the page-local getJSON helper
 │                             (does NOT use api/http.ts)

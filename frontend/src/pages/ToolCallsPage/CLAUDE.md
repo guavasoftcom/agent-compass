@@ -30,17 +30,21 @@ ToolCallsPage/
 │                               derives rowsWithShare + total, passes flat props to view
 ├── ToolCallsPageView.tsx       view — PageLayout + StatsRow + ToolLatencyCard + DonutCard
 │                               + CallsOverTimeCard; exports ToolCallRowWithShare type
+├── ToolCallsPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── components/
 │   ├── StatsRow/
 │   │   ├── StatsRow.tsx        container — derives topRow, slowestRow, spark; no fetch
 │   │   ├── StatsRowView.tsx    view — 4 StatCards (Total, Top tool, Distinct, Slowest p95)
 │   │   │                       with inline Sparkline and Accent helper
+│   │   ├── StatsRowView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 │   │   └── index.ts
 │   ├── CallsOverTimeCard/
 │   │   ├── CallsOverTimeCard.tsx     container — builds LineSeries[] from ToolCallTimeseries;
 │   │   │                             colors via colorForIndex, 'Other' gets action.disabled
 │   │   ├── CallsOverTimeCardView.tsx view — ChartCard wrapping shared AreaTrendChart +
 │   │   │                             AreaTrendLegend + useSeriesVisibility; empty states
+│   │   ├── CallsOverTimeCardView.test.tsx vitest coverage for the view (renderWithProviders,
+│   │   │                             prop fixtures)
 │   │   └── index.ts
 │   └── ToolLatencyCard/
 │       ├── ToolLatencyCard.tsx      container — caps rows at 10, builds 2-series LatencyBarSeries
@@ -48,6 +52,8 @@ ToolCallsPage/
 │       │                            derives yAxisWidth from longest label
 │       ├── ToolLatencyCardView.tsx  view — hand-built CSS segmented bars inside ChartCard;
 │       │                            EllipsisLabel component shows tooltip when text truncates
+│       ├── ToolLatencyCardView.test.tsx  vitest coverage for the view (renderWithProviders,
+│       │                            prop fixtures)
 │       └── index.ts
 └── index.ts
 ```

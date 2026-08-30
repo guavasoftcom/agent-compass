@@ -28,6 +28,8 @@ LogsPage/
 ├── LogsPageView.tsx      view + filter state + all page-level queries/fetches (see deviation
 │                         note) — histogram/facets/table `useQuery`, plus the stream cursor-page
 │                         and live-tail fetches (plain state, not TanStack Query)
+├── LogsPageView.test.tsx vitest coverage for the view — mocks the view's own fetcher imports
+│                         since it runs its own queries
 ├── logsApi.ts            the four fetchers; re-exports logsTypes + logsDerivations so
 │                         components import everything from './logsApi'
 ├── logsTypes.ts          DTO types + Severity/FacetKey enums + LogsFilters

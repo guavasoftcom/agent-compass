@@ -34,6 +34,7 @@ SkillsAgentsPage/
 │                                  derives share + model colours + coverage models + by-model blocks
 ├── SkillsAgentsPageView.tsx       view — StatCard strip + two DonutCards + two
 │                                  ModelFirstBlocks cards; no queries, no context
+├── SkillsAgentsPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── skillsAgentsDerivations.ts     pure derivations (withShare, buildModelColorIndexes,
 │                                  buildModelCoverageModels, buildModelFirstBlocks)
 ├── skillsAgentsDerivations.test.ts vitest coverage for the above

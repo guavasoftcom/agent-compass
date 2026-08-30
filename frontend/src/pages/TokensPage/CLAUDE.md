@@ -34,6 +34,7 @@ TokensPage/
 ├── TokensPageView.tsx          view — derives KPI cards, chart series, donut slices, cache-ratio
 │                               color/label; renders the PillTabs strip and the two tab panels
 │                               (TokensPageTab, TOKENS_PAGE_TABS)
+├── TokensPageView.test.tsx     vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── components/
 │   ├── TokenSummaryCards/      four-tile KPI strip (Total cost · Total tokens · Models used · Top model)
 │   │   ├── TokenSummaryCards.tsx

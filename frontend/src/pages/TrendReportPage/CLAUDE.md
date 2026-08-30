@@ -36,6 +36,7 @@ TrendReportPage/
 ├── TrendReportPageView.tsx    view — period bar, section headers + metric rows, summary strip;
 │                              no queries, no context; renders each section from its own
 │                              independent sections[section.key] state
+├── TrendReportPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── trendReportApi.ts          TrendPeriod/TrendMetric/TrendReport types + fetchTrendSection()/
 │                              resolveTrendReportSelection(); page-local getJSON helper
 │                              (mirrors MetricsPage/metricsApi.ts)

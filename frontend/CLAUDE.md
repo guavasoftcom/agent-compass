@@ -169,6 +169,27 @@ Tests are Vitest, colocated as `<name>.test.ts(x)` next to the module they cover
 declares 80% coverage thresholds that the suite doesn't meet yet, which is why CI runs
 `yarn test --run` and not `yarn test:coverage` — new tests should close that gap, not lower the bar.
 
+**Rendering tests use `@testing-library/react` + `jsdom`** (`test.environment: 'jsdom'`,
+`test.setupFiles: ['./src/test/setupTests.ts']` in `vite.config.js`; the setup file registers
+`@testing-library/jest-dom`'s matchers, runs `cleanup()` after each test, and stubs
+`ResizeObserver`, which jsdom doesn't implement and `AreaTrendChart`/`EllipsisLabel` both need to
+mount). Use the shared `renderWithProviders` helper (`src/test/renderWithProviders.tsx`) instead
+of RTL's bare `render()` — it wraps a component in the same provider stack `main.tsx` mounts the
+app under (`ColorModeProvider`, `QueryClientProvider`, a router), minus `WindowProvider` (only
+containers read `useWindowContext()`).
+
+Every `<Name>PageView.tsx` / `<Name>View.tsx` under `pages/` has a colocated `<Name>View.test.tsx`
+exercising it with `renderWithProviders` and prop fixtures — asserting rendered content and, via
+`@testing-library/user-event`, that interactive elements call their prop callbacks correctly.
+**Containers (`<Name>Page.tsx` / `<Name>.tsx`) are deliberately not tested this way and are listed
+in `vite.config.js`'s `coverage.exclude`** — testing them meaningfully needs MSW or
+`QueryClient` mocking on top of what a pure-props view needs, which is out of scope until that
+infra is added; the pure-logic derivations they call (`*Derivations.ts`) already have their own
+tests. The two documented container/view deviations get equivalent treatment in their view test:
+`LogsPageView.test.tsx` mocks the view's own fetcher imports since `LogsPageView` runs its own
+queries, and `TracesPageView.test.tsx` renders inside a `TracesExplorerContext.Provider` fixture
+since that view takes no props.
+
 Package manager is Yarn Berry, pinned by the `packageManager` field in `package.json` and resolved
 through Corepack (`corepack enable`) — don't install Yarn globally or bump the pin casually, since
 CI resolves the same field. The stray `package-lock.json` is legacy — don't `npm install`.

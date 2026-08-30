@@ -32,6 +32,7 @@ section-scoped reload, and how `useSectionContext()` is wired up.
 ToolReliabilityPage/
 ├── ToolReliabilityPage.tsx       container — useSectionContext, two useQuery calls, useMemo KPIs
 ├── ToolReliabilityPageView.tsx   view — StatCards + FailureRanking + ReliabilityMixCard + ToolRepeatsCard
+├── ToolReliabilityPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── components/
 │   └── ToolRepeatsCard/
 │       ├── ToolRepeatsCard.tsx   single-file presentational table card (no split needed)

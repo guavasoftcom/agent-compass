@@ -37,6 +37,7 @@ SessionsPage/
 │                           row object the drawer header needs; derives windowStartMs/windowEndMs
 │                           (lib/resolveWindow) for the timeline's out-of-window dimming; exports
 │                           SessionsKpis, PaginationModel, SessionsPageViewProps
+├── SessionsPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── index.ts                re-exports container default
 └── components/
     ├── sessionsFormat.ts        shared formatters: USD_PER_MINUTE_FORMATTER, formatDuration

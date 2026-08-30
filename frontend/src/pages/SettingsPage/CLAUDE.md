@@ -28,6 +28,7 @@ measured query plans and timings that shaped the SQL — read it before changing
 ```
 SettingsPage.tsx                                   container: 5 useQuery, retentionDays state, refetch-all
 SettingsPageView.tsx                               view: PageLayout + KPI strip + 5 sections
+SettingsPageView.test.tsx                          vitest coverage for the view (renderWithProviders, prop fixtures)
 settingsApi.ts                                     fetchers over the shared api/http getJson
 settingsTypes.ts                                   interfaces mirroring the Java records
 settingsDerivations.ts                             pure helpers (freshness, shares, spans, config filter)

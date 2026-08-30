@@ -29,6 +29,7 @@ PermissionDenialsPage/
 │                                  derives KPI values, passes flat props to the view
 ├── PermissionDenialsPageView.tsx  view — KPI strip + tool-breakdown grid + hook table;
 │                                  derives donut slices + tooltip from denialRows in a useMemo
+├── PermissionDenialsPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── components/
 │   ├── ToolDenialsCard/           "Denials by tool & source" — stacked bars per tool broken
 │   │                              down by denial source, with a legend per tool block
