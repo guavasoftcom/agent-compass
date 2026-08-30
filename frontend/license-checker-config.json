@@ -9,6 +9,8 @@
     ".vite/**",
     "yarn.lock",
     "*.gz",
-    "package-lock.json"
+    "package-lock.json",
+    ".pnp.cjs",
+    ".pnp.loader.mjs"
   ]
 }
