@@ -7,6 +7,10 @@ pair of model-first "by model" ranked-block cards. Backend counterpart: `ToolAct
 → `LogService` (`backend/.../controller/ToolActivityController.java`), endpoints
 `GET /api/tool-activity/skill-usage` and `GET /api/tool-activity/subagent-usage`.
 
+Cost display (per-skill/per-subagent spend, the Calls/Cost `SegmentedToggle`, and the "Skill
+spend"/"Subagent spend" KPI tiles) was removed from this page — spend now lives on the dedicated
+[Cost page](../CostPage/CostPage.tsx). This page is calls-only.
+
 ## Files
 
 ```
@@ -28,22 +32,22 @@ SkillsAgentsPage/
 ## Visual layout
 
 ```
-┌─ PageLayout (no title — SectionLayout owns the title row) ──────────────┐
-│ subtitle prose                                                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│ ┌─ 4-column StatCard grid ──────────────────────────────────────────┐   │
-│ │ Skill invocations │ Top skill │ Subagent invocations │ Top subagent│   │
-│ └───────────────────────────────────────────────────────────────────┘   │
-│ ┌─ 2-column DonutCard grid ─────────────────────────────────────────┐   │
-│ │  Skill mix (donut + ranked legend + coverage ticks + colour key)   │   │
-│ │  Subagent mix (same)                                               │   │
-│ └───────────────────────────────────────────────────────────────────┘   │
-│ ┌─ 2-column ModelFirstBlocks grid ──────────────────────────────────┐   │
-│ │  Skills by model: one block per model (Sonnet, Opus, Haiku),       │   │
-│ │  each block ranking the skills that model actually called          │   │
-│ │  Subagents by model (same)                                         │   │
-│ └───────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─ PageLayout (no title — SectionLayout owns the title row) ──────────────────┐
+│ subtitle prose                                                                │
+├───────────────────────────────────────────────────────────────────────────────┤
+│ ┌─ 4-column StatCard grid ──────────────────────────────────────────────┐    │
+│ │ Skill invocations │ Top skill │ Subagent invocations │ Top subagent   │    │
+│ └──────────────────────────────────────────────────────────────────────┘    │
+│ ┌─ 2-column DonutCard grid ─────────────────────────────────────────────┐    │
+│ │  Skill mix (donut + ranked legend + coverage ticks + colour key)       │    │
+│ │  Subagent mix (same)                                                   │    │
+│ └────────────────────────────────────────────────────────────────────────┘   │
+│ ┌─ 2-column ModelFirstBlocks grid ──────────────────────────────────────┐    │
+│ │  Skills by model: one block per model (Sonnet, Opus, Haiku),           │    │
+│ │  each block ranking the skills that model actually called              │    │
+│ │  Subagents by model (same)                                             │    │
+│ └────────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Who calls which API
@@ -57,9 +61,11 @@ Both fetchers live in `api/endpoints.ts` (the shared barrel, not a page-local mo
 
 Both return `IdentifierUsageRow[]` (imported from `../../api`). The `tool` field on each row
 carries the skill or subagent identifier; `calls` is the invocation count; `byModel` maps model
-id → calls and sums to `calls` (models with no calls are omitted, never sent as `0`). Both the
-mix donuts' coverage ticks and both "by model" cards are fed from these same two responses —
-there is no third query.
+id → calls and sums to `calls` (models with no calls are omitted, never sent as `0`). The response
+shape also carries `costUsd`/`costByModel` (still read and summed by `withShare` into
+`costTotal`), but this page no longer renders either — see the Cost page for spend. Both the mix
+donuts' coverage ticks and both "by model" cards are fed from these same two responses — there is
+no third query.
 
 ## Data flow and semantics
 
@@ -77,8 +83,10 @@ there is no third query.
   predicate alongside the other tool-activity tabs. The by-model cards need no prefix of their
   own — they ride on the same two queries.
 - **`withShare`** (in `skillsAgentsDerivations.ts`) maps `IdentifierUsageRow[]` to
-  `IdentifierRowWithShare[]` and computes `total`. It runs in two `useMemo` calls — one for skills,
-  one for subagents. `share` is `(100 * row.calls) / total`; total-zero guard sets `share = 0`.
+  `IdentifierRowWithShare[]` and computes `total` (sum of `calls`) and `costTotal` (sum of
+  `costUsd`, computed but not displayed — see the cost-tracking gotcha below), together in one
+  pass since they read the same row set. It runs in two `useMemo` calls — one for skills, one for
+  subagents. `share` is `(100 * row.calls) / total`; total-zero guard sets `share = 0`.
 - **`buildModelColorIndexes`** takes *both* row sets and returns `model id → palette index`. The
   three known model families — Sonnet, Opus, Haiku — always land at indexes 0/1/2 (the app's
   aurora violet/pink/cyan trio via `colorForIndex`), **regardless of call volume**; this is a
@@ -93,11 +101,11 @@ there is no third query.
   it — a model absent from one card's data still gets a tick/caption/block slot, just an unlit
   tick or an empty block.
 - **`buildModelFirstBlocks(rows, modelColorIndexes)`** produces one `ModelFirstBlock` per model in
-  `modelColorIndexes` order. Each block ranks only the rows that model actually called
+  `modelColorIndexes` order. Each block ranks only the rows that model actually made calls under
   (`byModel[model] > 0`), highest first; the bar scale inside a block is local to that block's own
-  max, not global across models. A model with zero calls anywhere in the row set still gets a
-  block (`rows: []`) so `ModelFirstBlocks` can render "No calls in this window" instead of
-  omitting the model — don't filter those blocks out upstream.
+  max, not global across models. A model with nothing anywhere in the row set still gets a block
+  (`rows: []`) so `ModelFirstBlocks` can render "No calls in this window" instead of omitting the
+  model — don't filter those blocks out upstream.
 - **`toSlices` helper** (module-private in the view) converts `IdentifierRowWithShare[]` into the
   `DonutCard` slice shape: `{ label: row.tool, value: row.calls, color: colorForIndex(index),
   muted, coverageByModel: row.byModel }`. `coverageByModel` is what `DonutCard` reads to light up
@@ -122,10 +130,7 @@ there is no third query.
   come from `Agent` `tool_result` records, which carry **no** model attribute at all, so the
   backend attributes each call to the last main-loop `api_request` in the same session at or
   before it (the turn that emitted the tool_use). Calls whose dispatching turn is not in the data
-  land in an `unknown` model bucket. Both by-model cards now use the identical subtitle sentence
-  ("…split by the model that made the call, ranked within each model.") per the design handoff —
-  that's a UI-copy decision, not a claim that the two computations are equivalent; this note is
-  the place to look if the subagent split ever needs re-explaining.
+  land in an `unknown` model bucket.
 - **Model colours are fixed by family, not page-local ranking.** Unlike most other per-model
   breakdowns in the app (e.g. Token Usage, which still ranks by that page's own volume), this page
   hardcodes Sonnet → violet, Opus → pink, Haiku → cyan via `buildModelColorIndexes`. Don't
@@ -141,6 +146,15 @@ there is no third query.
   dropped-rows bug. The same is true in reverse of the subagent card: `calls` there is one row per
   `Agent` `tool_result`, so the two cards count comparable units but neither counts model calls.
   Backend rationale lives on `LogRecordRepository.aggregateSkillInvocationsByModelInRange`.
+- **Cost display was removed; the API response and `withShare`'s `costTotal` still carry it.**
+  `IdentifierUsageRow.costUsd`/`costByModel` come back from both endpoints and `withShare` still
+  sums `costUsd` into `costTotal` (kept alongside `total` since both are computed from the same row
+  set in one pass), but nothing on this page reads `costTotal`, `row.costUsd`, or
+  `row.costByModel` anymore — see the [Cost page](../CostPage/CostPage.tsx) for spend figures. If
+  a `costUsd`/`costByModel` computation ever needs revisiting (semantics: skill cost sums every
+  turn a skill's run made including subagent turns, the opposite of `calls`'s dedup; subagent cost
+  is resolved per subagent *type* from direct child LLM-request spans only, not a deep descendant
+  walk), that logic lives entirely on the backend (`LogService`/`LogRecordRepository`), not here.
 - **`IdentifierUsageRow.tool`** carries a different semantic on each endpoint: skill identifier on
   `/skill-usage`, subagent identifier on `/subagent-usage`. The field is reused for both
   because the backend notes "the 'tool' field carries the skill identifier".
@@ -161,3 +175,7 @@ there is no third query.
 - **`DonutCard`'s `coverageTicks`/`legendCaption` are shared, generic props** (declared in
   `components/DonutCard`, not page-local) — any other page's mix donut could opt into the same
   per-model tick pattern by passing a `DonutCoverageModel[]` and each slice's `coverageByModel`.
+- **`ModelFirstBlocks`' `formatValue`/`formatTotal` props still exist** (defaulting to a
+  thousands-separated count and `"<count> calls"` respectively) but this page no longer passes
+  them — it always renders raw call counts. They remain generic, optional props on the shared
+  component in case a future caller needs a different unit.

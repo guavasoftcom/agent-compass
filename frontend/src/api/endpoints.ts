@@ -5,6 +5,7 @@
 
 import { getJson, getText, listWithTotalCount, windowQueryParams } from './http';
 import type {
+  CostBreakdown,
   HookExecutionRow,
   IdentifierUsageRow,
   ListResult,
@@ -164,6 +165,13 @@ export const fetchTraceLogs = (traceId: string): Promise<LogRow[]> =>
 // 404s when no spans carry the trace id.
 export const fetchTraceSummary = (traceId: string): Promise<TraceRow> =>
   getJson(`/api/traces/${encodeURIComponent(traceId)}/summary`);
+
+export const fetchCostBreakdown = (
+  selection: WindowSelection = { kind: 'preset', minutes: 1440 },
+): Promise<CostBreakdown> => {
+  const params = windowQueryParams(selection);
+  return getJson(`/api/cost/breakdown?${params.toString()}`);
+};
 
 export const fetchReportMarkdown = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },

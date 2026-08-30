@@ -135,7 +135,9 @@ class TuningPropertyCatalogTest {
                 "tuning.success-attribute",
                 "tuning.decision-attribute",
                 "tuning.status-attribute",
-                "tuning.num-non-blocking-error-attribute");
+                "tuning.num-non-blocking-error-attribute",
+                "tuning.tool-call-id-attribute",
+                "tuning.tool-execution-span-name");
         assertThat(byMirroring.get(SqlMirroring.SHARED_LITERAL)).containsExactlyInAnyOrder(
                 "tuning.tool-decision-event-name",
                 "tuning.api-request-body-event-name",

@@ -45,6 +45,11 @@ export interface TraceDetailPageViewProps {
   // backend-authoritative trace cost. Null while that query hasn't resolved
   // yet, or resolved with no cost; the header's Cost KPI treats both the same.
   traceCostUsd: number | null;
+  // TraceRow.backgroundCostUsd — the portion of traceCostUsd billed after this
+  // trace's own root span closed. Defaults to 0 (same as an unresolved query)
+  // rather than null, since the header only needs to know whether to show the
+  // background-cost caption at all.
+  traceBackgroundCostUsd: number;
 }
 
 const TraceDetailPageView = ({
@@ -63,6 +68,7 @@ const TraceDetailPageView = ({
   sessionId,
   firstUserPrompt,
   traceCostUsd,
+  traceBackgroundCostUsd,
 }: TraceDetailPageViewProps) => {
   const waterfallRef = useRef<HTMLDivElement>(null);
 
@@ -348,6 +354,7 @@ const TraceDetailPageView = ({
         depthBySpanId={depthBySpanId}
         selfTimeNanosBySpanId={selfTimeNanosBySpanId}
         traceCostUsd={traceCostUsd}
+        traceBackgroundCostUsd={traceBackgroundCostUsd}
         firstUserPrompt={firstUserPrompt}
       />
 

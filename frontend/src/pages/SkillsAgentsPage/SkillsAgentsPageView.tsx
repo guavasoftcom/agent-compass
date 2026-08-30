@@ -62,7 +62,7 @@ const SkillsAgentsPageView = ({
       }
       error={error}
     >
-      {/* Headline stats — Skills pair then Subagents pair */}
+      {/* Headline stats — Skills pair then Subagents pair. */}
       <Box
         sx={{
           display: 'grid',

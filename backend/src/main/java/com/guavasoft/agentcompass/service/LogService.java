@@ -117,6 +117,14 @@ public class LogService {
   private static final String CACHE_READ_TOKEN_TYPE = "cacheRead";
   private static final int TOKEN_BREAKDOWN_KIND_COUNT = 4;
 
+  // Matches a trace's root claude_code.interaction span for the own-vs-background
+  // cost/tool split in applyTraceCorrelatedActivity. Not on TuningProperties: this
+  // is a structural root-span-name pattern, not a deployment-tunable event/attribute
+  // name -- SpanRepository already hardcodes the identical literal inline in ~40
+  // native queries with no shared constant, so this follows that existing precedent
+  // rather than introducing a new configurable property nothing else treats as one.
+  private static final String INTERACTION_ROOT_SPAN_NAME_PATTERN = "claude_code.interaction%";
+
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
   private final MetricPointRepository metricPointRepository;
@@ -392,9 +400,11 @@ public class LogService {
     List<Instant> turnStartTimestamps = promptRows.stream().map(row -> (Instant) row[0]).toList();
     TurnTokenRollup turnTokenRollup = resolveModelAndTokensPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
     Map<Integer, Double> costByTurn = resolveCostPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
-    applyTraceCorrelatedCosts(promptRows, costByTurn);
     Map<Integer, List<SessionPromptToolCount>> toolsByTurn =
         resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+    Map<Integer, Double> backgroundCostByTurn = new HashMap<>();
+    Map<Integer, List<SessionPromptToolCount>> backgroundToolsByTurn = new HashMap<>();
+    applyTraceCorrelatedActivity(promptRows, costByTurn, toolsByTurn, backgroundCostByTurn, backgroundToolsByTurn);
     Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
@@ -403,18 +413,28 @@ public class LogService {
       String promptId = (String) row[PROMPT_ROW_PROMPT_ID];
       ApiRequestTurnRollup requestRollup =
           promptId == null ? null : requestRollupsByPromptId.get(promptId);
+      Double backgroundCostUsd = backgroundCostByTurn.get(turnIndex);
+      List<SessionPromptToolCount> backgroundTools =
+          backgroundToolsByTurn.getOrDefault(turnIndex, List.of());
       prompts.add(requestRollup != null
           ? new SessionPrompt(
               (Instant) row[0],
               (String) row[1],
               (String) row[2],
               requestRollup.model(),
-              requestRollup.costUsd(),
+              // Prefer the turn's trace-correlated total (when its trace has one) over
+              // the turn's own prompt-id-scoped request sum -- a fire-and-forget
+              // subagent this turn dispatched can keep issuing requests stamped with a
+              // LATER turn's prompt id, so the prompt-id-scoped sum alone
+              // undercounts. See applyTraceCorrelatedActivity.
+              costByTurn.getOrDefault(turnIndex, requestRollup.costUsd()),
               requestRollup.tokens(),
               toolsByTurn.getOrDefault(turnIndex, List.of()),
               promptId,
               requestRollup.requestCount(),
-              SessionPrompt.TurnAttribution.REQUEST)
+              SessionPrompt.TurnAttribution.REQUEST,
+              backgroundCostUsd,
+              backgroundTools)
           : new SessionPrompt(
               (Instant) row[0],
               (String) row[1],
@@ -425,7 +445,9 @@ public class LogService {
               toolsByTurn.getOrDefault(turnIndex, List.of()),
               promptId,
               0L,
-              SessionPrompt.TurnAttribution.INTERVAL));
+              SessionPrompt.TurnAttribution.INTERVAL,
+              backgroundCostUsd,
+              backgroundTools));
     }
     return prompts;
   }
@@ -531,36 +553,58 @@ public class LogService {
   private static final int PROMPT_ROW_TRACE_ID = 2;
   private static final int PROMPT_ROW_PROMPT_ID = 3;
 
-  // Overrides the metric-bucketed per-turn cost with the turn trace's own cost
-  // wherever the turn has a trace id that the trace_costs view knows.
+  // Overrides the metric-bucketed per-turn cost AND the wall-clock-bucketed
+  // per-turn tool list with the turn trace's own correlated activity, wherever
+  // the turn has a trace id. Also fills the two background-* out maps with
+  // whatever portion of that activity landed after the trace's own root span
+  // closed -- see findCostSplitByTraceIds/findToolEventsSplitByTraceIds.
   //
-  // Both numbers describe the same requests, but they bucket them differently:
-  // resolveCostPerTurn assigns a cost point to whichever turn interval its
-  // timestamp falls in, so a request that lands after the next prompt was typed
-  // is billed to that next turn, while the trace id says which turn actually
-  // issued it. That boundary skew is what made a prompt's cost disagree with the
-  // cost shown on the trace it links to (locally: exact agreement on ~8 of 10
-  // turns, off by a whole request on the rest). Correlating by trace id removes
-  // the disagreement by construction — same rows, same grouping key, one number.
+  // COST: resolveCostPerTurn (interval bucketing) and the caller's REQUEST-
+  // attribution branch (prompt-id joining) both bucket a request by WHEN it
+  // was logged / WHICH prompt id it carries, while the trace id says which
+  // turn actually issued the underlying work. Those disagree specifically
+  // when a turn dispatches a fire-and-forget subagent (an Agent tool call
+  // whose own span closes in milliseconds) that keeps issuing requests long
+  // after the turn ended and the next prompt was typed -- those requests get
+  // logged with the NEXT turn's prompt id even though they share THIS turn's
+  // trace id. Correlating by trace id removes the disagreement by
+  // construction -- same rows, same grouping key, one number, and it is the
+  // SAME number GET /api/traces/{traceId}/summary reports for that trace.
   //
-  // Turn-to-trace is not 1:1: several turns in a row can share one trace (a
-  // bare slash command immediately followed by its real prompt, both landing
-  // on the same claude_code.interaction trace before Claude Code closes it).
-  // Billing every one of those turns the trace's full cost would double- (or
-  // triple-) count it, so each trace is billed exactly once, to the FIRST
-  // (earliest / lowest turnIndex) turn that carries it — promptRows is already
-  // ordered oldest-first (findPromptsForSession: timestamp ASC, id ASC). Later
-  // turns sharing the trace have their cost explicitly cleared rather than
-  // left at whatever resolveCostPerTurn's time-bucketing assigned them --
-  // leaving that fallback value in place would silently reintroduce the same
-  // double-count through the other rollup. This restores the invariant that
-  // summing per-turn costs over a session equals summing trace_costs over the
-  // session's distinct traces.
+  // TOOLS: resolveToolsPerTurn has no trace correlation at all -- it buckets
+  // tool_result events purely by wall-clock window -- so the same detached-
+  // subagent scenario splits its tool calls across whichever turns happen to
+  // be "current" while it runs, matching neither turn's own trace. Once a
+  // turn has ANY trace id, its tools list is authoritatively the trace-
+  // correlated set (own + background), even when that set is empty -- unlike
+  // cost there is no pre-existing "absent row might mean not-yet-correlated"
+  // ambiguity to preserve here, since a present trace with zero tool_result
+  // rows is a genuine, authoritative zero.
   //
-  // Turns predating trace correlation (no trace id, or no api_request log
-  // carrying one) keep the metric-bucketed value: there is no trace to
-  // contradict, so the existing behaviour is left alone rather than zeroed.
-  private void applyTraceCorrelatedCosts(List<Object[]> promptRows, Map<Integer, Double> costByTurn) {
+  // Turn-to-trace is not 1:1 for cost: several turns in a row can share one
+  // trace (a bare slash command immediately followed by its real prompt, both
+  // landing on the same claude_code.interaction trace before Claude Code
+  // closes it). Billing every one of those turns the trace's full cost would
+  // double- (or triple-) count it, so each trace's cost is billed exactly
+  // once, to the FIRST (earliest / lowest turnIndex) turn that carries it --
+  // promptRows is already ordered oldest-first (findPromptsForSession:
+  // timestamp ASC, id ASC). Later turns sharing the trace have their cost
+  // explicitly cleared rather than left at whatever resolveCostPerTurn's
+  // time-bucketing assigned them, restoring the invariant that summing
+  // per-turn costs over a session equals summing trace_costs over the
+  // session's distinct traces. Their tools are deliberately left at whatever
+  // interval bucketing gave them -- the shared-trace case is rare and
+  // unrelated to the detached-subagent bug this method fixes.
+  //
+  // Turns predating trace correlation (no trace id) keep the metric-bucketed
+  // cost and wall-clock-bucketed tools: there is no trace to contradict, so
+  // the existing behaviour is left alone rather than zeroed.
+  private void applyTraceCorrelatedActivity(
+      List<Object[]> promptRows,
+      Map<Integer, Double> costByTurn,
+      Map<Integer, List<SessionPromptToolCount>> toolsByTurn,
+      Map<Integer, Double> backgroundCostByTurn,
+      Map<Integer, List<SessionPromptToolCount>> backgroundToolsByTurn) {
     List<String> traceIds = promptRows.stream()
         .map(row -> (String) row[PROMPT_ROW_TRACE_ID])
         .filter(Objects::nonNull)
@@ -569,30 +613,104 @@ public class LogService {
     if (traceIds.isEmpty()) {
       return;
     }
-    Map<String, Double> costByTraceId = new HashMap<>();
-    for (Object[] costRow : logRecordRepository.findCostByTraceIds(traceIds)) {
-      if (costRow[1] != null) {
-        costByTraceId.put((String) costRow[0], ((Number) costRow[1]).doubleValue());
-      }
+
+    Map<String, double[]> costSplitByTraceId = new HashMap<>();
+    for (Object[] row : logRecordRepository.findCostSplitByTraceIds(
+        traceIds,
+        tuningProperties.getApiRequestEventName(),
+        tuningProperties.getApiRequestCostAttribute(),
+        INTERACTION_ROOT_SPAN_NAME_PATTERN)) {
+      double total = row[1] == null ? 0.0 : ((Number) row[1]).doubleValue();
+      double background = row[2] == null ? 0.0 : ((Number) row[2]).doubleValue();
+      costSplitByTraceId.put((String) row[0], new double[] {total, background});
     }
+
+    Map<String, Map<String, long[]>> toolSplitByTraceId = new HashMap<>();
+    for (Object[] row : logRecordRepository.findToolEventsSplitByTraceIds(
+        traceIds,
+        tuningProperties.getToolEventName(),
+        tuningProperties.getToolAttribute(),
+        INTERACTION_ROOT_SPAN_NAME_PATTERN)) {
+      String traceId = (String) row[0];
+      String toolName = (String) row[1];
+      long ownCount = ((Number) row[2]).longValue();
+      long backgroundCount = ((Number) row[3]).longValue();
+      toolSplitByTraceId
+          .computeIfAbsent(traceId, key -> new HashMap<>())
+          .put(toolName, new long[] {ownCount, backgroundCount});
+    }
+
+    Set<String> traceIdsAlreadySeen = new HashSet<>();
     Set<String> traceIdsAlreadyBilled = new HashSet<>();
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
       String traceId = (String) promptRows.get(turnIndex)[PROMPT_ROW_TRACE_ID];
-      Double traceCost = traceId == null ? null : costByTraceId.get(traceId);
-      if (traceCost == null) {
+      if (traceId == null) {
         continue;
       }
-      if (traceIdsAlreadyBilled.add(traceId)) {
-        costByTurn.put(turnIndex, traceCost);
-      } else {
-        costByTurn.remove(turnIndex);
+      if (!traceIdsAlreadySeen.add(traceId)) {
+        // A later turn sharing an already-seen trace: only clear its cost if the
+        // trace actually had cost data billed to its first turn below -- a
+        // costless trace (e.g. tool-only) must not zero out this turn's own
+        // metric-bucketed cost just because it shares a trace id with another
+        // turn. Tools are left untouched here, same as before: they were
+        // already assigned to the trace's first turn and are not reprocessed.
+        if (traceIdsAlreadyBilled.contains(traceId)) {
+          costByTurn.remove(turnIndex);
+        }
+        continue;
+      }
+
+      double[] costSplit = costSplitByTraceId.get(traceId);
+      if (costSplit != null) {
+        traceIdsAlreadyBilled.add(traceId);
+        costByTurn.put(turnIndex, costSplit[0]);
+        if (costSplit[1] > 0) {
+          backgroundCostByTurn.put(turnIndex, costSplit[1]);
+        }
+      }
+
+      // toolSplitByTraceId is keyed by trace_id, so a turn whose tool_result logs were
+      // emitted WITHOUT a trace_id (independent of whether this turn's own prompt/
+      // api_request logs carry one) would look up empty here and overwrite a real
+      // wall-clock tool count with zero. Not solved defensively -- measured directly
+      // against the live database via prompt.id (the exact turn<->request join key,
+      // see AGENTS.md): zero turns have a trace-carrying prompt whose own tool_result
+      // rows are trace-less, i.e. trace-id coverage does not currently vary within a
+      // turn across event types. If that measurement stops holding (e.g. a tool-
+      // execution path that loses span context independently of the request path),
+      // this line would need to fall back to resolveToolsPerTurn's wall-clock value
+      // instead of an empty split whenever toolSplitByTraceId has no entry for the
+      // trace at all.
+      Map<String, long[]> toolSplit = toolSplitByTraceId.getOrDefault(traceId, Map.of());
+      toolsByTurn.put(turnIndex, toolCountsFromSplit(toolSplit, /* includeOwn= */ true));
+      List<SessionPromptToolCount> backgroundTools = toolCountsFromSplit(toolSplit, /* includeOwn= */ false);
+      if (!backgroundTools.isEmpty()) {
+        backgroundToolsByTurn.put(turnIndex, backgroundTools);
       }
     }
   }
 
+  // Builds a sorted, zero-filtered tool-count list from a trace's own/background
+  // split: includeOwn=true sums own+background (the trace's full tool-call set,
+  // matching what the trace detail page counts), includeOwn=false reports the
+  // background portion alone.
+  private static List<SessionPromptToolCount> toolCountsFromSplit(
+      Map<String, long[]> toolSplit, boolean includeOwn) {
+    return toolSplit.entrySet().stream()
+        .map(entry -> {
+          long[] counts = entry.getValue();
+          long count = includeOwn ? counts[0] + counts[1] : counts[1];
+          return new SessionPromptToolCount(entry.getKey(), count);
+        })
+        .filter(toolCount -> toolCount.count() > 0)
+        .sorted(Comparator.comparingLong(SessionPromptToolCount::count).reversed()
+            .thenComparing(SessionPromptToolCount::name))
+        .toList();
+  }
+
   // Per-turn cost rollup: SUM(value_delta) of the configured cost-usage metric
   // for this session, bucketed into the turn whose interval contains each point.
-  // Superseded per-turn by applyTraceCorrelatedCosts wherever a trace exists.
+  // Superseded per-turn by applyTraceCorrelatedActivity wherever a trace exists.
   private Map<Integer, Double> resolveCostPerTurn(
       String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
     List<Object[]> costPointRows = metricPointRepository.findCostPointsForSession(
@@ -831,7 +949,14 @@ public class LogService {
         tuningProperties.getAgentNameAttribute(),
         start,
         end);
-    return mapIdentifierUsageCounts(rows);
+    List<Object[]> costRows = logRecordRepository.aggregateSkillCostByModelInRange(
+        tuningProperties.getSkillEventName(),
+        tuningProperties.getSkillNameAttribute(),
+        tuningProperties.getModelAttribute(),
+        tuningProperties.getApiRequestCostAttribute(),
+        start,
+        end);
+    return mergeIdentifierUsageCost(mapIdentifierUsageCounts(rows), costRows);
   }
 
   public List<IdentifierUsageCount> aggregateSubagentUsage(int minutes) {
@@ -851,7 +976,21 @@ public class LogService {
         tuningProperties.getAgentNameAttribute(),
         start,
         end);
-    return mapIdentifierUsageCounts(rows);
+    List<Object[]> costRows = logRecordRepository.aggregateSubagentCostByModelInRange(
+        tuningProperties.getToolEventName(),
+        tuningProperties.getToolAttribute(),
+        tuningProperties.getSubagentToolName(),
+        tuningProperties.getSubagentTypeAttribute(),
+        tuningProperties.getDefaultSubagentType(),
+        tuningProperties.getToolCallIdAttribute(),
+        tuningProperties.getToolExecutionSpanName(),
+        tuningProperties.getLlmRequestSpanName(),
+        tuningProperties.getRequestIdAttribute(),
+        tuningProperties.getModelAttribute(),
+        tuningProperties.getApiRequestCostAttribute(),
+        start,
+        end);
+    return mergeIdentifierUsageCost(mapIdentifierUsageCounts(rows), costRows);
   }
 
   private static List<ToolCallCount> mapToolCallCounts(List<Object[]> rows) {
@@ -863,12 +1002,19 @@ public class LogService {
         .toList();
   }
 
+  // costUsd default for an identifier the cost query has no rows for -- the same
+  // "COALESCE to a real number, never leave it null" discipline
+  // TraceService#DEFAULT_SPAN_COST_USD already applies to Span.costUsd.
+  private static final double DEFAULT_IDENTIFIER_COST_USD = 0.0d;
+
   // Pivots (identifier, model, calls) rows into one IdentifierUsageCount per
   // identifier. The "tool" field carries the skill or subagent identifier so the
   // frontend can render both views with the same components. The query already
   // groups every row of one identifier together and sorts identifiers by their
   // total call count descending, so a LinkedHashMap preserves that order and the
-  // per-model maps stay sorted by call count within each row.
+  // per-model maps stay sorted by call count within each row. costUsd/costByModel
+  // are filled in afterwards by mergeIdentifierUsageCost -- this pivot only knows
+  // about invocation counts, so it defaults them.
   private static List<IdentifierUsageCount> mapIdentifierUsageCounts(List<Object[]> rows) {
     Map<String, Map<String, Long>> callsByIdentifierAndModel = new LinkedHashMap<>();
     for (Object[] row : rows) {
@@ -883,7 +1029,43 @@ public class LogService {
         .map(entry -> new IdentifierUsageCount(
             entry.getKey(),
             entry.getValue().values().stream().mapToLong(Long::longValue).sum(),
-            entry.getValue()))
+            entry.getValue(),
+            DEFAULT_IDENTIFIER_COST_USD,
+            Map.of()))
+        .toList();
+  }
+
+  // Enriches the invocation-count rows built by mapIdentifierUsageCounts with a
+  // separately-queried cost total, merged by identifier in Java -- the same
+  // "one grouped query per concern, merged" idiom TraceService#spansForTrace
+  // uses for Span.costUsd/Span.effort, rather than folding cost into the
+  // invocation-counting SQL itself. That keeps the existing, well-tested
+  // counting queries (and their DISTINCT ON / agent.name dedup) completely
+  // unchanged.
+  //
+  // An identifier present in usage but absent from costRows (a subagent that
+  // dispatched but made no billed LLM calls, or a skill query returning no
+  // rows) gets costUsd = 0.0 and an empty costByModel -- never null, never an
+  // exception. costRows is not walked for identifiers usage does not already
+  // have; the two queries share the same identifier-resolution logic, so this
+  // is not expected to drop real cost data in practice.
+  private static List<IdentifierUsageCount> mergeIdentifierUsageCost(
+      List<IdentifierUsageCount> usage, List<Object[]> costRows) {
+    Map<String, Map<String, Double>> costByIdentifierAndModel = new LinkedHashMap<>();
+    for (Object[] row : costRows) {
+      String identifier = (String) row[0];
+      String model = (String) row[1];
+      double costUsd = ((Number) row[2]).doubleValue();
+      costByIdentifierAndModel
+          .computeIfAbsent(identifier, key -> new LinkedHashMap<>())
+          .merge(model, costUsd, Double::sum);
+    }
+    return usage.stream()
+        .map(row -> {
+          Map<String, Double> costByModel = costByIdentifierAndModel.getOrDefault(row.tool(), Map.of());
+          double totalCostUsd = costByModel.values().stream().mapToDouble(Double::doubleValue).sum();
+          return new IdentifierUsageCount(row.tool(), row.calls(), row.byModel(), totalCostUsd, costByModel);
+        })
         .toList();
   }
 

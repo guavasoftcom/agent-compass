@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react';
-import { alpha, Box, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { alpha, Box, LinearProgress, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { neutralColors } from '../../theme/colors';
 import { fontFamilies } from '../../theme/typography';
+import { radii } from '../../theme/theme';
 
 export interface DonutSlice {
   label: string;
@@ -28,6 +29,8 @@ export interface DonutCoverageModel {
 
 export interface DonutCardProps {
   title: string;
+  /** Optional muted caption line under the title (e.g. "4 models identified, ranked by spend"). */
+  description?: ReactNode;
   slices: DonutSlice[];
   /** Big number shown in the ring center (e.g. a total or a percentage). */
   centerValue: ReactNode;
@@ -35,6 +38,23 @@ export interface DonutCardProps {
   centerLabel: string;
   /** Show a 1-based rank number before each legend row. */
   ranked?: boolean;
+  /**
+   * When `'horizontal'`, the ring sits to the left of the legend (flex row,
+   * ring fixed-size, legend flexes to fill the rest) instead of the default
+   * stack (ring centered on top, legend below). Use `'horizontal'` for a
+   * card that spans the full content width on its own — matches the Cost
+   * page's "Model mix" card; the default `'vertical'` suits a card paired
+   * side-by-side with another (e.g. Skill mix / Subagent mix in a 2-column
+   * grid), where there isn't enough width for a row layout to read well.
+   */
+  orientation?: 'vertical' | 'horizontal';
+  /**
+   * When `true`, each legend row gets a full-width progress bar (its share of
+   * `sum`) below the label/value line, instead of a hairline divider between
+   * rows. Matches the mockup's ranked-donut-list rows (rank + dot + label +
+   * value/% on one line, a colored bar beneath).
+   */
+  showBars?: boolean;
   hasData?: boolean;
   isLoading?: boolean;
   emptyLabel?: string;
@@ -55,9 +75,20 @@ export interface DonutCardProps {
    * Renders each legend row's raw value. Defaults to a thousands-separated
    * count, which is right for every caller whose slices are counts. Pass a
    * formatter when they are not — the Settings page's storage donut passes
-   * `formatBytes`, since "4,491,976,704" is not a size anyone reads.
+   * `formatBytes`, since "4,491,976,704" is not a size anyone reads. Also
+   * used to render each `coverageTicks` tooltip's amount, so a caller in a
+   * non-count mode (e.g. Skills & Subagents' Cost toggle) gets consistently
+   * formatted numbers in both the legend and the tick tooltips.
    */
   formatSliceValue?: (value: number) => string;
+  /**
+   * Unit word appended after `formatSliceValue`'s output in each coverage
+   * tick's tooltip (e.g. "40 calls"). Defaults to `'calls'`, matching the
+   * only current caller of `coverageTicks`. Pass `''` to omit the suffix —
+   * e.g. when `formatSliceValue` already renders a self-describing value
+   * like a currency string ("$12.34").
+   */
+  coverageValueLabel?: string;
 }
 
 const SIZE = 200;
@@ -67,6 +98,14 @@ const CENTER = SIZE / 2;
 const CIRC = 2 * Math.PI * RADIUS;
 const GAP_PX = 6; // gap between segments
 
+// Center value auto-shrink: the ring's inner edge (where the stroke stops),
+// minus a little breathing room so digits never sit flush against it.
+const INNER_DIAMETER = 2 * (RADIUS - STROKE / 2);
+const CENTER_TEXT_HORIZONTAL_PADDING = 14;
+const CENTER_VALUE_AVAILABLE_WIDTH = INNER_DIAMETER - CENTER_TEXT_HORIZONTAL_PADDING * 2;
+const CENTER_VALUE_BASE_FONT_SIZE = 36;
+const CENTER_VALUE_MINIMUM_FONT_SIZE = 16;
+
 /**
  * Aurora donut: a stroke-based ring (rounded caps + small gaps between segments),
  * a total in the center, and a legend below — matching the design mockup. Shares
@@ -75,18 +114,47 @@ const GAP_PX = 6; // gap between segments
  */
 const DonutCard = ({
   title,
+  description,
   slices,
   centerValue,
   centerLabel,
   ranked = false,
+  orientation = 'vertical',
+  showBars = false,
   hasData = true,
   isLoading = false,
   emptyLabel = 'No data in this window.',
   coverageTicks,
   legendCaption,
   formatSliceValue = (value: number) => value.toLocaleString(),
+  coverageValueLabel = 'calls',
 }: DonutCardProps) => {
   const theme = useTheme();
+
+  // Measures the center value at its natural (base-size) width via a hidden
+  // probe, then shrinks the visible font size just enough to keep it inside
+  // the ring's inner edge — so a long value (e.g. "$1,897.92") never grows
+  // wide enough to render on top of the ring stroke the way a fixed font
+  // size did. Runs before paint (useLayoutEffect), so there's no visible
+  // flash at the oversized base size first.
+  const centerValueProbeRef = useRef<HTMLSpanElement>(null);
+  const [centerValueFontSize, setCenterValueFontSize] = useState(CENTER_VALUE_BASE_FONT_SIZE);
+  useLayoutEffect(() => {
+    const probe = centerValueProbeRef.current;
+    if (!probe) {
+      return;
+    }
+    const naturalWidth = probe.scrollWidth;
+    setCenterValueFontSize(
+      naturalWidth > CENTER_VALUE_AVAILABLE_WIDTH
+        ? Math.max(
+            CENTER_VALUE_MINIMUM_FONT_SIZE,
+            Math.floor(CENTER_VALUE_BASE_FONT_SIZE * (CENTER_VALUE_AVAILABLE_WIDTH / naturalWidth)),
+          )
+        : CENTER_VALUE_BASE_FONT_SIZE,
+    );
+  }, [centerValue]);
+
   const sum = slices.reduce((acc, slice) => acc + slice.value, 0);
   const trackColor =
     theme.palette.mode === 'dark'
@@ -110,21 +178,33 @@ const DonutCard = ({
 
   return (
     <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
-      <Typography variant="subtitle1" gutterBottom>
+      <Typography variant="subtitle1" gutterBottom={!description}>
         {title}
       </Typography>
+      {description && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          {description}
+        </Typography>
+      )}
 
       {(!hasData || sum === 0) && !isLoading ? (
         <Typography color="text.secondary">{emptyLabel}</Typography>
       ) : (
         <>
+        <Box
+          sx={
+            orientation === 'horizontal'
+              ? { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', mt: 1.75 }
+              : undefined
+          }
+        >
           <Box
             sx={{
               position: 'relative',
               width: SIZE,
               height: SIZE,
-              mx: 'auto',
-              my: 1,
+              flexShrink: 0,
+              ...(orientation === 'vertical' ? { mx: 'auto', my: 1 } : {}),
             }}
           >
             <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
@@ -151,6 +231,24 @@ const DonutCard = ({
                 />
               ))}
             </svg>
+            {/* Hidden probe, rendered at the base font size purely to measure the
+                value's natural width — never shown, never counted for layout. */}
+            <Box
+              ref={centerValueProbeRef}
+              aria-hidden
+              sx={{
+                position: 'absolute',
+                visibility: 'hidden',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+                fontFamily: fontFamilies.display,
+                fontWeight: 800,
+                fontSize: CENTER_VALUE_BASE_FONT_SIZE,
+                letterSpacing: -1,
+              }}
+            >
+              {centerValue}
+            </Box>
             <Box
               sx={{
                 position: 'absolute',
@@ -160,15 +258,17 @@ const DonutCard = ({
                 alignItems: 'center',
                 justifyContent: 'center',
                 pointerEvents: 'none',
+                px: `${CENTER_TEXT_HORIZONTAL_PADDING}px`,
               }}
             >
               <Typography
                 sx={{
                   fontFamily: fontFamilies.display,
                   fontWeight: 800,
-                  fontSize: 36,
+                  fontSize: centerValueFontSize,
                   lineHeight: 1,
                   letterSpacing: -1,
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {centerValue}
@@ -176,26 +276,44 @@ const DonutCard = ({
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ letterSpacing: 1, textTransform: 'uppercase', mt: 0.5 }}
+                noWrap
+                sx={{
+                  letterSpacing: 1,
+                  textTransform: 'uppercase',
+                  mt: 0.5,
+                  maxWidth: '100%',
+                  textOverflow: 'ellipsis',
+                }}
               >
                 {centerLabel}
               </Typography>
             </Box>
           </Box>
 
-          <Stack sx={{ mt: 1.5 }}>
+          <Stack
+            sx={{
+              mt: orientation === 'horizontal' ? 0 : 1.5,
+              ...(orientation === 'horizontal' ? { flex: 1, minWidth: 240 } : {}),
+            }}
+          >
             {slices.map((slice, index) => {
               const pct = sum > 0 ? (slice.value / sum) * 100 : 0;
               return (
-                <Stack
+                <Box
                   key={slice.label}
+                  sx={{
+                    py: showBars ? 0 : 0.9,
+                    mb: showBars ? 1.25 : 0,
+                    borderBottom: !showBars && index < slices.length - 1 ? '1px solid' : 'none',
+                    borderColor: 'divider',
+                  }}
+                >
+                <Stack
                   direction="row"
                   spacing={1.25}
                   sx={{
                     alignItems: 'center',
-                    py: 0.9,
-                    borderBottom: index < slices.length - 1 ? '1px solid' : 'none',
-                    borderColor: 'divider',
+                    mb: showBars ? 0.75 : 0,
                   }}
                 >
                   {ranked && (
@@ -236,7 +354,7 @@ const DonutCard = ({
                         return (
                           <Tooltip
                             key={model.key}
-                            title={`${model.label} · ${lit ? `${calls.toLocaleString()} calls` : 'not used'}`}
+                            title={`${model.label} · ${lit ? `${formatSliceValue(calls)}${coverageValueLabel ? ` ${coverageValueLabel}` : ''}` : 'not used'}`}
                             placement="top"
                             arrow
                             disableInteractive
@@ -265,9 +383,23 @@ const DonutCard = ({
                     · {pct.toFixed(1)}%
                   </Typography>
                 </Stack>
+                {showBars && (
+                  <LinearProgress
+                    variant="determinate"
+                    value={pct}
+                    sx={{
+                      height: 6,
+                      borderRadius: radii.pill,
+                      bgcolor: trackColor,
+                      '& .MuiLinearProgress-bar': { backgroundColor: slice.color, borderRadius: radii.pill },
+                    }}
+                  />
+                )}
+                </Box>
               );
             })}
           </Stack>
+        </Box>
 
           {legendCaption && legendCaption.length > 0 && (
             <Stack

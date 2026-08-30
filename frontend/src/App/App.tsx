@@ -13,6 +13,7 @@ const SkillsAgentsPage = lazy(() => import('../pages/SkillsAgentsPage'));
 const McpServersPage = lazy(() => import('../pages/McpServersPage'));
 const PermissionDenialsPage = lazy(() => import('../pages/PermissionDenialsPage'));
 const TokensPage = lazy(() => import('../pages/TokensPage'));
+const CostPage = lazy(() => import('../pages/CostPage'));
 const SessionsPage = lazy(() => import('../pages/SessionsPage'));
 const MetricsPage = lazy(() => import('../pages/MetricsPage'));
 const LogsPage = lazy(() => import('../pages/LogsPage'));
@@ -37,6 +38,7 @@ const App = () => {
         </Route>
 
         <Route path="/tokens" element={<TokensPage />} />
+        <Route path="/cost" element={<CostPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/metrics" element={<MetricsPage />} />
         <Route path="/logs" element={<LogsPage />} />

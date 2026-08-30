@@ -87,6 +87,39 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
                     '')
       END""";
 
+  // Cost page's four-way work-category partition, in precedence order -- shared verbatim by
+  // aggregateCostByWorkCategoryInRange (page-wide) and aggregateCostByWorkCategoryForSessionsInRange
+  // (per-session), so the two can never silently disagree about which category a request with
+  // ambiguous attributes (e.g. a skill running inside a subagent) falls into:
+  //   1. SUBAGENT  -- query_source starts with :subagentQuerySourcePrefix
+  //   2. SKILL     -- carries :skillAttribute (and is not already SUBAGENT)
+  //   3. MAIN_LOOP -- query_source is one of :mainLoopQuerySources
+  //   4. AUXILIARY -- everything else (compact, generate_session_title, ...)
+  String WORK_CATEGORY_CASE_EXPRESSION = """
+      CASE
+        WHEN starts_with(attributes ->> :querySourceAttribute, :subagentQuerySourcePrefix) THEN 'SUBAGENT'
+        WHEN jsonb_exists(attributes, :skillAttribute) THEN 'SKILL'
+        WHEN attributes ->> :querySourceAttribute IN (:mainLoopQuerySources) THEN 'MAIN_LOOP'
+        ELSE 'AUXILIARY'
+      END""";
+
+  // Shared by findCostSplitByTraceIds and findToolEventsSplitByTraceIds: the timestamp each
+  // requested trace's own claude_code.interaction root span closed, one row per trace. Kept as
+  // a Java-side CTE fragment (not a Postgres view) specifically so trace_id IN :traceIds stays
+  // part of the CTE itself -- a view has no parameters, so a caller-side filter on top of it
+  // would depend on the planner pushing an IN-list predicate down through the view's own
+  // GROUP BY to avoid scanning every root span in the table on every call, which this codebase
+  // does not assume without measuring (see AGENTS.md's "measure, don't assume" rule).
+  String TRACE_ROOT_ENDS_CTE = """
+      root_ends AS (
+        SELECT trace_id, MAX(end_timestamp) AS root_end
+        FROM spans
+        WHERE parent_span_id IS NULL
+          AND name LIKE :rootSpanNamePattern
+          AND trace_id IN :traceIds
+        GROUP BY trace_id
+      )""";
+
   // Logs correlated to a trace by OTLP trace context. Claude Code >= 2.1.152 stamps
   // trace_id + span_id onto every event log emitted inside an active span, so a
   // trace's logs are exactly the rows carrying its trace_id. The frontend then
@@ -629,6 +662,325 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("agentNameAttribute") String agentNameAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end);
+
+  // Direct cost sum for skills. Deliberately NOT built on top of
+  // aggregateSkillInvocationsByModelInRange above: that query's DISTINCT ON
+  // (identifier, prompt_id) dedup and its NOT jsonb_exists(:agentNameAttribute)
+  // filter both exist to keep one prompt, or one subagent it spawned, from
+  // inflating an INVOCATION count -- but every api_request row under a skill,
+  // including the ones from inside a subagent it spawned, genuinely spent
+  // money. A dollar total therefore sums ALL of them rather than reusing that
+  // dedup, which is why this is a second, simpler query rather than an added
+  // SUM column on the first.
+  //
+  // The identifier expression is copied verbatim from the invocation query
+  // (same :skillAttribute key, same 'unknown' fallback, no tool_input lookup --
+  // Claude Code always stamps skill.name as a flat attribute) so the two
+  // queries agree on how a skill is named and LogService can merge their rows
+  // by identifier.
+  //
+  // COALESCE(SUM(...), 0): a skill run whose turns predate cost_usd being
+  // stamped (or a test fixture missing it) still needs a real number here --
+  // LogService#mergeIdentifierUsageCost reads cost_usd as a non-null double.
+  @Query(value = """
+      SELECT
+        COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown')          AS identifier,
+        COALESCE(NULLIF(attributes ->> :modelAttribute, ''), 'unknown')          AS model,
+        COALESCE(SUM((attributes ->> :costAttribute)::numeric), 0)::double precision AS cost_usd
+      FROM log_records
+      WHERE event_name = :eventName
+        AND jsonb_exists(attributes, :skillAttribute)
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY identifier, model
+      ORDER BY identifier, cost_usd DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateSkillCostByModelInRange(
+      @Param("eventName") String eventName,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("costAttribute") String costAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Per-subagent-type cost, via span correlation rather than the last-main-loop-turn
+  // heuristic aggregateToolInvocationsByInnerAttributeAndModelInRange above uses for
+  // invocation counts. That heuristic works for counting a dispatch (one row is one
+  // call, whoever paid for it) but cannot give a subagent's OWN spend: the dispatching
+  // tool_result carries no cost at all, and the model/cost that heuristic resolves
+  // belongs to the turn that ISSUED the dispatch, not the subagent's own LLM calls that
+  // ran after it.
+  //
+  // No WITH RECURSIVE is needed. A subagent's own LLM calls run with its dispatch's
+  // toolExecutionSpanName span open, so they are DIRECT children of that span -- never
+  // several levels down -- which means a single parent_span_id join reaches every
+  // llm_request span the subagent itself issued. This mirrors the request_id
+  // correlation span_efforts (V15) already does, just starting one hop earlier because
+  // subagent identity lives on the LOG side (the dispatching tool_result), not on any
+  // span:
+  //   1. subagent_dispatches: one row per :subagentToolName tool_result, carrying its
+  //      tool_use_id and the resolved identifier -- the same tool_input JSON fallback
+  //      + :defaultIdentifier default aggregateToolInvocationsByInnerAttributeAndModelInRange
+  //      uses, so the two queries agree on how a subagent is named.
+  //   2. LEFT JOIN to the spans row that IS this dispatch's own execution (name =
+  //      :toolExecutionSpanName, :toolCallIdAttribute match) -- the span every LLM call
+  //      the subagent itself makes hangs directly beneath.
+  //   3. LEFT JOIN to that span's direct children named :llmRequestSpanName, each
+  //      carrying :requestIdAttribute.
+  //   4. LEFT JOIN those request ids back to the priced 'api_request' log that
+  //      carries :costAttribute and :modelAttribute. event_name is a literal, not a
+  //      bind parameter, so this join can ride idx_log_records_request_id (V19) --
+  //      that index is partial on event_name = 'api_request' and Postgres's partial-
+  //      index prover matches expressions structurally, so a bound parameter here
+  //      could never be proven to satisfy it once the plan is promoted to generic
+  //      (see V19's migration comment). Every SpanRepository join against this same
+  //      index hardcodes the literal for the same reason.
+  // Every join is LEFT, and Postgres's three-valued "x = NULL is never true" logic is
+  // what keeps that safe: a dispatch with no matching execution span, or an execution
+  // span with no child LLM spans, produces NULL join columns all the way through rather
+  // than accidentally matching an unrelated row that also happens to have a null
+  // request id. The final WHERE model IS NOT NULL then drops exactly those unmatched
+  // rows rather than surfacing them as a spurious 'unknown' bucket at $0 -- an identifier
+  // with zero priced calls simply has no row here at all. LogService#mergeIdentifierUsageCost
+  // is what turns "no row" into a real costUsd = 0.0 / empty costByModel for that
+  // identifier, matching the same "omit zero, don't send an explicit 0" convention
+  // costByModel already documents. That distinction is deliberately tested: a dropped
+  // IDENTIFIER and "ran zero billed LLM calls" must not look identical to a caller.
+  //
+  // KNOWN LIMITATION: a subagent that itself dispatches a NESTED subagent only has its
+  // own direct LLM cost counted here -- the nested dispatch's LLM spans are
+  // grandchildren of this dispatch's execution span, not children, so this single-level
+  // join never reaches them. Not solved here: nested subagent dispatch is rare enough
+  // in practice that it is not worth the WITH RECURSIVE this design otherwise avoids.
+  @Query(value = """
+      WITH subagent_dispatches AS (
+        SELECT
+          attributes ->> :toolCallIdAttribute AS tool_use_id,
+          COALESCE(
+            NULLIF(attributes ->> :innerAttribute, ''),
+            NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
+            :defaultIdentifier)                                        AS identifier
+        FROM log_records
+        WHERE event_name = :eventName
+          AND attributes ->> :toolAttribute = :toolName
+          AND timestamp >= :start
+          AND timestamp <= :end
+      ),
+      priced_llm_calls AS (
+        SELECT
+          dispatches.identifier                          AS identifier,
+          priced_request.attributes ->> :modelAttribute   AS model,
+          (priced_request.attributes ->> :costAttribute)::numeric AS cost_usd
+        FROM subagent_dispatches dispatches
+        LEFT JOIN spans dispatch_execution
+          ON dispatch_execution.name = :toolExecutionSpanName
+          AND dispatch_execution.attributes ->> :toolCallIdAttribute = dispatches.tool_use_id
+        LEFT JOIN spans child_llm_span
+          ON child_llm_span.parent_span_id = dispatch_execution.span_id
+          AND child_llm_span.name = :llmRequestSpanName
+        LEFT JOIN log_records priced_request
+          ON priced_request.event_name = 'api_request'
+          AND priced_request.attributes ->> :requestIdAttribute = child_llm_span.attributes ->> :requestIdAttribute
+      )
+      SELECT
+        identifier                                   AS identifier,
+        model                                        AS model,
+        COALESCE(SUM(cost_usd), 0)::double precision AS cost_usd
+      FROM priced_llm_calls
+      WHERE model IS NOT NULL
+      GROUP BY identifier, model
+      ORDER BY identifier, cost_usd DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateSubagentCostByModelInRange(
+      @Param("eventName") String eventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("toolName") String toolName,
+      @Param("innerAttribute") String innerAttribute,
+      @Param("defaultIdentifier") String defaultIdentifier,
+      @Param("toolCallIdAttribute") String toolCallIdAttribute,
+      @Param("toolExecutionSpanName") String toolExecutionSpanName,
+      @Param("llmRequestSpanName") String llmRequestSpanName,
+      @Param("requestIdAttribute") String requestIdAttribute,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("costAttribute") String costAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // ---------------------------------------------------------------------------
+  // Cost page: work-category partition
+  //
+  // Every api_request row is assigned to exactly one of four categories, in
+  // precedence order -- this ordering IS the partition, since a request can
+  // legitimately carry both a subagent query_source AND a skill.name (a skill
+  // running inside a subagent), and the two cost queries below would otherwise
+  // double count it:
+  //   1. SUBAGENT  -- query_source starts with :subagentQuerySourcePrefix
+  //   2. SKILL     -- carries :skillAttribute (and is not already SUBAGENT)
+  //   3. MAIN_LOOP -- query_source is one of :mainLoopQuerySources
+  //   4. AUXILIARY -- everything else (compact, generate_session_title, ...)
+  //
+  // GROUPING SETS ((), (category), (category, bucket)) computes the page
+  // total, the four-way split, and the stacked trend in one scan, the same
+  // idiom MetricPointRepository#aggregateCostBreakdown uses for the counter
+  // side. category_grouped/bucket_grouped are Postgres's own GROUPING() bits
+  // (1 = rolled up), which the service reads to demultiplex the three row
+  // shapes rather than inferring row type from nullability.
+  @Query(value = """
+      SELECT
+        category,
+        bucket,
+        GROUPING(category)                                                AS category_grouped,
+        GROUPING(bucket)                                                   AS bucket_grouped,
+        COALESCE(SUM(cost_usd), 0)::double precision                       AS cost_usd,
+        COUNT(*)::bigint                                                   AS requests,
+        COALESCE(SUM(input_tokens), 0)::bigint                             AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::bigint                            AS output_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0)::bigint                    AS cache_creation_tokens,
+        COALESCE(SUM(cache_read_tokens), 0)::bigint                        AS cache_read_tokens
+      FROM (
+        SELECT
+          """ + WORK_CATEGORY_CASE_EXPRESSION + """
+                                                                             AS category,
+          date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+          (attributes ->> :costAttribute)::numeric                         AS cost_usd,
+          (attributes ->> 'input_tokens')::numeric                         AS input_tokens,
+          (attributes ->> 'output_tokens')::numeric                        AS output_tokens,
+          (attributes ->> 'cache_creation_tokens')::numeric                AS cache_creation_tokens,
+          (attributes ->> 'cache_read_tokens')::numeric                    AS cache_read_tokens
+        FROM log_records
+        WHERE event_name = :eventName
+          AND timestamp >= :start
+          AND timestamp <= :end
+      ) categorized
+      GROUP BY GROUPING SETS ((), (category), (category, bucket))
+      ORDER BY
+        CASE WHEN GROUPING(category) = 1 THEN 0 WHEN GROUPING(bucket) = 1 THEN 1 ELSE 2 END,
+        category,
+        bucket
+      """, nativeQuery = true)
+  List<Object[]> aggregateCostByWorkCategoryInRange(
+      @Param("eventName") String eventName,
+      @Param("querySourceAttribute") String querySourceAttribute,
+      @Param("subagentQuerySourcePrefix") String subagentQuerySourcePrefix,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("mainLoopQuerySources") List<String> mainLoopQuerySources,
+      @Param("costAttribute") String costAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // Equal-prior-window total, for the Cost page's delta-vs-prior KPI. The current-window
+  // total is NOT computed here -- CostService#breakdownInRange already gets it for free off
+  // aggregateCostByWorkCategoryInRange's GROUPING SETS () total row, so a second scan of the
+  // same current window would be pure duplicate work.
+  @Query(value = """
+      SELECT COALESCE(SUM((attributes ->> :costAttribute)::numeric), 0)::double precision AS prior_total
+      FROM log_records
+      WHERE event_name = :eventName
+        AND timestamp >= :priorStart
+        AND timestamp < :start
+      """, nativeQuery = true)
+  List<Object[]> aggregatePriorApiRequestCostTotalInRange(
+      @Param("eventName") String eventName,
+      @Param("costAttribute") String costAttribute,
+      @Param("priorStart") Instant priorStart,
+      @Param("start") Instant start);
+
+  // Cost drivers: model x effort grid. effort is absent on ~7% of api_request
+  // rows (see AGENTS.md), so it is left nullable here rather than defaulted --
+  // "not recorded" and "ran at some specific level" are different facts.
+  @Query(value = """
+      SELECT
+        COALESCE(NULLIF(attributes ->> :modelAttribute, ''), 'unknown')    AS model,
+        attributes ->> :effortAttribute                                    AS effort,
+        COALESCE(SUM((attributes ->> :costAttribute)::numeric), 0)::double precision AS cost_usd,
+        COUNT(*)::bigint                                                   AS requests,
+        COALESCE(SUM((attributes ->> 'input_tokens')::numeric), 0)::bigint AS input_tokens,
+        COALESCE(SUM((attributes ->> 'output_tokens')::numeric), 0)::bigint AS output_tokens,
+        COALESCE(SUM((attributes ->> 'cache_creation_tokens')::numeric), 0)::bigint AS cache_creation_tokens,
+        COALESCE(SUM((attributes ->> 'cache_read_tokens')::numeric), 0)::bigint AS cache_read_tokens
+      FROM log_records
+      WHERE event_name = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+      GROUP BY model, effort
+      ORDER BY cost_usd DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateCostByModelAndEffortInRange(
+      @Param("eventName") String eventName,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("effortAttribute") String effortAttribute,
+      @Param("costAttribute") String costAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end);
+
+  // Biggest line items: top sessions by spend in the window, log-side so this
+  // sums into the same total the rest of the Cost page reads from.
+  @Query(value = """
+      SELECT
+        attributes ->> 'session.id'                                        AS session_id,
+        COALESCE(SUM((attributes ->> :costAttribute)::numeric), 0)::double precision AS cost_usd,
+        COUNT(*)::bigint                                                   AS requests
+      FROM log_records
+      WHERE event_name = :eventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND attributes ->> 'session.id' IS NOT NULL
+      GROUP BY session_id
+      ORDER BY cost_usd DESC
+      LIMIT :sessionLimit
+      """, nativeQuery = true)
+  List<Object[]> aggregateTopCostSessionsInRange(
+      @Param("eventName") String eventName,
+      @Param("costAttribute") String costAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("sessionLimit") int sessionLimit);
+
+  // Per-session breakdown of the same four-way work-category partition
+  // aggregateCostByWorkCategoryInRange computes page-wide (identical precedence:
+  // SUBAGENT beats SKILL beats MAIN_LOOP beats AUXILIARY), narrowed to the
+  // biggest-line-items ranking's own session ids instead of the whole window --
+  // this is what lets the session-detail modal show a 4-segment cost bar per
+  // session without re-deriving the category logic a second way. No GROUPING
+  // SETS here: unlike the page-wide query there is no total row or trend bucket
+  // to compute, just one row per (session, category) that had at least one
+  // request, so a plain GROUP BY over the categorized subquery is enough. The
+  // subquery shape (materializing session_id/category as real output columns of
+  // a derived table, then grouping the outer query by those columns) sidesteps
+  // Postgres's inability to GROUP BY a repeated parameterized jsonb expression
+  // via its own SELECT-list alias -- see LogRecordRepository's class-level notes
+  // in AGENTS.md/backend/CLAUDE.md.
+  @Query(value = """
+      SELECT
+        session_id,
+        category,
+        COALESCE(SUM(cost_usd), 0)::double precision                     AS cost_usd
+      FROM (
+        SELECT
+          attributes ->> 'session.id'                                    AS session_id,
+          """ + WORK_CATEGORY_CASE_EXPRESSION + """
+                                                                            AS category,
+          (attributes ->> :costAttribute)::numeric                       AS cost_usd
+        FROM log_records
+        WHERE event_name = :eventName
+          AND timestamp >= :start
+          AND timestamp <= :end
+          AND attributes ->> 'session.id' IN :sessionIds
+      ) categorized
+      GROUP BY session_id, category
+      ORDER BY session_id, category
+      """, nativeQuery = true)
+  List<Object[]> aggregateCostByWorkCategoryForSessionsInRange(
+      @Param("querySourceAttribute") String querySourceAttribute,
+      @Param("subagentQuerySourcePrefix") String subagentQuerySourcePrefix,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("mainLoopQuerySources") List<String> mainLoopQuerySources,
+      @Param("costAttribute") String costAttribute,
+      @Param("eventName") String eventName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("sessionIds") Collection<String> sessionIds);
 
   // Per-tool success / failure split. success is stored as a JSON boolean;
   // ->>'success' returns
@@ -1552,24 +1904,102 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("promptAttribute") String promptAttribute,
       @Param("previewLength") int previewLength);
 
-  // Per-trace model spend for the given traces, straight off the trace_costs
-  // view (V14) — the summed cost_usd of the api_request logs stamped with each
-  // trace id. This is the SAME authoritative figure TraceSummary.totalCostUsd
-  // resolves to (the trace-list queries re-run the identical predicates via a
-  // LEFT JOIN LATERAL for pushdown rather than joining this view directly, but
-  // it's the same rows/grouping), which is the point: the Sessions prompt
-  // timeline reuses it so a turn's cost and the cost shown on the trace that
-  // turn links to are one number, not two estimates of one number -- though
-  // LogService#applyTraceCorrelatedCosts still has to bill each trace's number
-  // to only one turn when several turns share a trace. Traces with no
-  // correlated request log are simply absent from the result.
-  // Returns (trace_id, cost_usd).
+  // Per-trace model spend for the given traces, split into what happened
+  // while the trace's own claude_code.interaction root span was still open
+  // ("own") versus what landed after it closed ("background"). total_cost_usd
+  // is the SAME authoritative figure the trace_costs view (V14) and
+  // TraceSummary.totalCostUsd resolve to -- the Sessions prompt timeline
+  // reuses it so a turn's cost and the cost shown on the trace that turn
+  // links to are one number, not two estimates of one number -- though
+  // LogService#applyTraceCorrelatedActivity still has to bill each trace's
+  // number to only one turn when several turns share a trace.
+  //
+  // The split exists because a fire-and-forget subagent dispatch (an Agent
+  // tool call whose own span closes in milliseconds) can keep issuing
+  // api_request logs long after the turn that launched it -- verified on live
+  // data: 4.1% of traces in a 14-day window have request activity after their
+  // own root span closes, accounting for 22.6% of total spend in that window.
+  // Those requests are still correctly billed to this trace (same trace_id),
+  // but they did not happen while the dispatching turn was the active turn --
+  // background_cost_usd is exactly that later portion, letting a caller show
+  // "why this turn cost more than what happened while it was open" instead of
+  // silently folding it in or (the bug this replaces) losing it to whichever
+  // turn's prompt.id happened to be current when the background request fired.
+  //
+  // root_ends is computed once per trace (MAX defends against any anomalous
+  // multiple-root-like-span trace) rather than joined per log row. A trace
+  // with no matching root span (tool/model/mcp-rooted traces -- confirmed 86
+  // of 431 recent traces have none) leaves root_end null via the LEFT JOIN,
+  // so background_cost_usd safely reports 0 rather than mis-splitting on a
+  // missing boundary. Traces with no correlated request log at all are simply
+  // absent from the result, same as the view this replaces.
+  // Returns (trace_id, total_cost_usd, background_cost_usd).
   @Query(value = """
-      SELECT trace_id, cost_usd
-      FROM trace_costs
-      WHERE trace_id IN :traceIds
+      WITH\s""" + TRACE_ROOT_ENDS_CTE + """
+      SELECT
+        lr.trace_id,
+        SUM((lr.attributes ->> :costAttribute)::numeric) AS total_cost_usd,
+        SUM(CASE WHEN re.root_end IS NOT NULL AND lr.timestamp > re.root_end
+                 THEN (lr.attributes ->> :costAttribute)::numeric ELSE 0 END) AS background_cost_usd
+      FROM log_records lr
+      LEFT JOIN root_ends re ON re.trace_id = lr.trace_id
+      WHERE lr.event_name = :apiRequestEventName
+        AND lr.trace_id IN :traceIds
+        AND lr.attributes ->> :costAttribute ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+      GROUP BY lr.trace_id
       """, nativeQuery = true)
-  List<Object[]> findCostByTraceIds(@Param("traceIds") Collection<String> traceIds);
+  List<Object[]> findCostSplitByTraceIds(
+      @Param("traceIds") Collection<String> traceIds,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("costAttribute") String costAttribute,
+      @Param("rootSpanNamePattern") String rootSpanNamePattern);
+
+  // Per-trace, per-tool call counts for the given traces, split the same way
+  // findCostSplitByTraceIds splits cost -- own_count before the trace's root
+  // span closed, background_count after. Deliberately NOT MCP-aware (reads
+  // the raw tool_name attribute, no mcp_tool server-splitting), matching
+  // findToolEventsForSession's own documented choice: this is a per-turn/
+  // per-trace detail list, not an analysis surface.
+  //
+  // The tool_events CTE materializes "attributes ->> :toolAttribute" into a
+  // plain column BEFORE the outer GROUP BY, rather than grouping by the jsonb
+  // expression (or its SELECT-list alias) directly: Hibernate binds each
+  // occurrence of a repeated native-query named parameter to its own separate
+  // JDBC parameter, and Postgres's GROUP BY validity check compares parse-tree
+  // nodes by parameter identity, not by runtime value -- so two placeholders
+  // bound to the identical string are NOT recognized as the same grouping key
+  // and PREPARE fails with "column ... must appear in the GROUP BY clause",
+  // confirmed directly against Postgres even with a single occurrence grouped
+  // by its own alias. Once tool_name is a real column of the CTE, the outer
+  // GROUP BY needs no parameter-equivalence proof at all.
+  // Returns (trace_id, tool_name, own_count, background_count).
+  @Query(value = """
+      WITH\s""" + TRACE_ROOT_ENDS_CTE + """
+      ,
+      tool_events AS (
+        SELECT
+          lr.trace_id,
+          lr.attributes ->> :toolAttribute AS tool_name,
+          lr.timestamp
+        FROM log_records lr
+        WHERE lr.event_name = :toolEventName
+          AND lr.trace_id IN :traceIds
+          AND lr.attributes ->> :toolAttribute IS NOT NULL
+      )
+      SELECT
+        te.trace_id,
+        te.tool_name,
+        COUNT(*) FILTER (WHERE re.root_end IS NULL OR te.timestamp <= re.root_end)     AS own_count,
+        COUNT(*) FILTER (WHERE re.root_end IS NOT NULL AND te.timestamp > re.root_end) AS background_count
+      FROM tool_events te
+      LEFT JOIN root_ends re ON re.trace_id = te.trace_id
+      GROUP BY te.trace_id, te.tool_name
+      """, nativeQuery = true)
+  List<Object[]> findToolEventsSplitByTraceIds(
+      @Param("traceIds") Collection<String> traceIds,
+      @Param("toolEventName") String toolEventName,
+      @Param("toolAttribute") String toolAttribute,
+      @Param("rootSpanNamePattern") String rootSpanNamePattern);
 
   // Every tool_result event for one session, oldest first, feeding the prompt
   // timeline's per-turn "tools" rollup. Not aggregated here: the caller

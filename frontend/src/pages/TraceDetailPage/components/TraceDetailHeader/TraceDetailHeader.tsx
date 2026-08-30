@@ -30,6 +30,10 @@ interface Props {
   // spans and cost-bearing request logs arrive over separate OTLP endpoints,
   // so a client-side sum can land on a different number than the list.
   traceCostUsd: number | null;
+  // TraceRow.backgroundCostUsd — the portion of traceCostUsd billed after this
+  // trace's own root span closed (e.g. a detached subagent dispatch still
+  // running after the turn ended). 0 hides the Cost tile's background caption.
+  traceBackgroundCostUsd: number;
   // Aurora sync: TraceRow.firstUserPrompt (pending backend field) — see
   // TraceDetailHeaderView's doc comment.
   firstUserPrompt?: string | null;
@@ -61,6 +65,7 @@ const TraceDetailHeader = ({
   depthBySpanId,
   selfTimeNanosBySpanId,
   traceCostUsd,
+  traceBackgroundCostUsd,
   firstUserPrompt,
 }: Props) => {
   const aggregates = useMemo<HeaderAggregates>(() => {
@@ -178,6 +183,7 @@ const TraceDetailHeader = ({
       toolCallCount={aggregates.toolCallCount}
       maximumDepth={maximumDepth}
       totalCostUsd={traceCostUsd ?? 0}
+      backgroundCostUsd={traceBackgroundCostUsd}
       shownOperations={opBreakdown.shownOperations}
       opCount={opBreakdown.opCount}
       firstUserPrompt={firstUserPrompt}

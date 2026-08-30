@@ -7,12 +7,14 @@ declare module '@mui/material/styles' {
   interface Theme {
     custom: {
       progressTrack: string;
+      rowStripe: string;
       titleColor: string;
     };
   }
   interface ThemeOptions {
     custom?: {
       progressTrack?: string;
+      rowStripe?: string;
       titleColor?: string;
     };
   }
@@ -63,6 +65,7 @@ interface ThemeTokens {
   actionSelected: string;
   appBarShadow: string;
   progressTrack: string;
+  rowStripe: string;
   titleColor: string;
 }
 
@@ -102,6 +105,14 @@ const TOKENS: Record<ColorMode, ThemeTokens> = {
     actionSelected: alpha(auroraColors.violet, 0.13),
     appBarShadow: `0 1px 0 ${alpha(neutralColors.inkLight, 0.05)}`,
     progressTrack: alpha(neutralColors.inkLight, 0.08),
+    // Half of progressTrack's opacity — a table zebra stripe needs to read as a
+    // faint tint, not the same strength as a hover fill. Deliberately a separate
+    // token rather than `alpha(progressTrack, 0.5)` at the call site: alpha()
+    // overwrites a color's existing alpha channel instead of multiplying it, so
+    // re-wrapping an already-translucent token silently discards its opacity and
+    // substitutes the literal 0.5 (0.08 became 0.5 — a nearly opaque stripe, the
+    // bug that motivated adding this token).
+    rowStripe: alpha(neutralColors.inkLight, 0.04),
     // Deep indigo page-title color (matches the Aurora mockup — not pure ink).
     titleColor: neutralColors.titleLight,
   },
@@ -121,6 +132,7 @@ const TOKENS: Record<ColorMode, ThemeTokens> = {
     actionSelected: alpha(auroraColors.violetLight, 0.22),
     appBarShadow: `0 1px 0 ${alpha(neutralColors.white, 0.04)}`,
     progressTrack: alpha(neutralColors.white, 0.08),
+    rowStripe: alpha(neutralColors.white, 0.04),
     titleColor: neutralColors.titleDark,
   },
 };
@@ -141,6 +153,7 @@ export const createAppTheme = (mode: ColorMode = 'light'): Theme => {
     },
     custom: {
       progressTrack: tokens.progressTrack,
+      rowStripe: tokens.rowStripe,
       titleColor: tokens.titleColor,
     },
     shape: { borderRadius: 12 },
@@ -245,6 +258,29 @@ export const createAppTheme = (mode: ColorMode = 'light'): Theme => {
             backgroundColor: tokens.paperBg,
             border: `1px solid ${tokens.border}`,
             boxShadow: tokens.cardShadow,
+          },
+        },
+      },
+      // MUI's default Tooltip is a flat mid-gray (`rgba(97,97,97,.92)` in both modes),
+      // which reads as an unstyled overlay against the app's tinted paper surfaces —
+      // most visibly in dark mode, where it sits lighter than the card underneath it
+      // instead of blending in. Match it to the same solid surface + border + shadow
+      // MuiDialog uses, and repaint the arrow to the same solid color so it doesn't
+      // show the default gray poking out from behind the tooltip body.
+      MuiTooltip: {
+        styleOverrides: {
+          tooltip: {
+            backgroundColor: tokens.paperBg,
+            color: tokens.textPrimary,
+            border: `1px solid ${tokens.border}`,
+            boxShadow: tokens.cardShadow,
+            fontSize: 12,
+          },
+          arrow: {
+            color: tokens.paperBg,
+            '&::before': {
+              border: `1px solid ${tokens.border}`,
+            },
           },
         },
       },

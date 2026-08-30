@@ -28,28 +28,34 @@ by `packageManager` and resolved through Corepack; the stray `package-lock.json`
 
 ```sh
 # Backend (port 8080). spring-boot-docker-compose auto-starts Postgres from backend/docker-compose.yml.
-cd backend && ./mvnw spring-boot:run
+./backend/mvnw -f backend/pom.xml spring-boot:run
 
 # Backend tests (includes Testcontainers integration tests — Docker must be running).
-cd backend && ./mvnw verify
+# Runs for tens of seconds to low minutes — background it rather than blocking on it.
+./backend/mvnw -f backend/pom.xml verify
 
 # Executable jar (spring-boot:repackage is bound to package). `clean` matters: a
 # stale jar from an earlier version leaves two in target/, which the release
 # workflow's single-jar resolver rejects.
-cd backend && ./mvnw clean package -DskipTests
+./backend/mvnw -f backend/pom.xml clean package -DskipTests
 
 # Frontend dev (port 5173, /api and /v1 proxied to :8080).
-cd frontend && yarn install && yarn dev
+yarn --cwd frontend install && yarn --cwd frontend dev
 
 # Frontend production build / typecheck / lint.
-cd frontend && yarn build
-cd frontend && yarn typecheck
-cd frontend && yarn lint
+yarn --cwd frontend build
+yarn --cwd frontend typecheck
+yarn --cwd frontend lint
 
 # Frontend tests (Vitest; bare `yarn test` is watch mode).
-cd frontend && yarn test --run
-cd frontend && yarn test:coverage   # enforces the 80% thresholds in vite.config.js
+yarn --cwd frontend test --run
+yarn --cwd frontend test:coverage   # enforces the 80% thresholds in vite.config.js
 ```
+
+`-f backend/pom.xml` and `--cwd frontend` keep the invocation path-scoped instead of prefixing every
+command with `cd backend && …` / `cd frontend && …` — the prefix hides the real command from latency
+attribution in this project's own tuning report and can trigger an extra permission prompt on the `cd`
+itself.
 
 CI runs all of the above on every pull request, and releases are cut by manual dispatch from `main`
 with a semver bump — see `.github/workflows/pull-request.yml` and `.github/workflows/release.yml`.
@@ -69,6 +75,11 @@ the backend source tree.
   useful.
 - **Charts and tables are hand-built SVG/CSS** — no `@mui/x-charts` / `@mui/x-data-grid` /
   `@mui/x-tree-view`. Extend the existing bespoke components; don't add a visualization library.
+- **Prefer the dedicated tool over a Bash equivalent**: `Read` instead of `cat`, `Edit` instead of
+  `sed`, `Glob` instead of `find`, `Write` instead of `echo >` / heredocs. This project's own tuning
+  report has repeatedly flagged hundreds of `cat`/`sed`/`find`/`echo` calls per window — the dedicated
+  tools give better diffs, avoid shell-quoting mistakes, and don't hide the real command's latency
+  behind a pipeline.
 
 ## Configuration the agent should know
 

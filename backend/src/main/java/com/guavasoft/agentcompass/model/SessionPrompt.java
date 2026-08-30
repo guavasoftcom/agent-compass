@@ -66,7 +66,25 @@ public record SessionPrompt(
                 + "turn predating prompt-id stamping) and the values were bucketed from cumulative metric "
                 + "counters by timestamp interval instead — the older, approximate attribution. Clients should "
                 + "present INTERVAL figures as approximate and must not treat a 0 request count as zero spend.")
-        TurnAttribution attribution) {
+        TurnAttribution attribution,
+
+        @Schema(description = "Portion of costUsd billed to this turn's trace AFTER the trace's own "
+                + "claude_code.interaction root span closed -- e.g. a fire-and-forget subagent dispatch (an "
+                + "Agent tool call whose own span closes immediately) that kept issuing requests long after "
+                + "this turn ended and the next prompt was typed. costUsd already INCLUDES this amount (it is "
+                + "the turn's trace total, matching what GET /api/traces/{traceId}/summary reports for the "
+                + "same trace) -- this field exists so a reader can see why a turn cost more than what "
+                + "happened while it was the active turn, not to be summed on top of costUsd. Null when the "
+                + "turn has no trace, or its trace has no activity after the root span closed.",
+                example = "9.99", nullable = true)
+        Double backgroundCostUsd,
+
+        @Schema(description = "Tool calls attributed to this turn's trace but occurring AFTER the trace's own "
+                + "claude_code.interaction root span closed -- the background counterpart to "
+                + "backgroundCostUsd. The tools list above already includes these calls (it too is the "
+                + "turn's trace total); this is the subset that ran as background/detached work. Empty "
+                + "(never null) when none.")
+        List<SessionPromptToolCount> backgroundTools) {
 
     /** Where a turn's per-turn rollups came from. */
     @Schema(name = "SessionPrompt.TurnAttribution")
@@ -82,6 +100,7 @@ public record SessionPrompt(
      * model / costUsd / tokens / tools fields to their "nothing attributed" values.
      */
     public SessionPrompt(Instant timestamp, String prompt, String traceId) {
-        this(timestamp, prompt, traceId, null, null, null, List.of(), null, 0L, TurnAttribution.INTERVAL);
+        this(timestamp, prompt, traceId, null, null, null, List.of(), null, 0L, TurnAttribution.INTERVAL,
+                null, List.of());
     }
 }

@@ -73,7 +73,12 @@ SessionsPage/
         │                          SessionDetailDrawer's header. Also renders
         │                          TurnAttributionMarker — a muted "approx" marker on turns whose
         │                          figures were bucketed from cumulative counters; renders nothing
-        │                          on exact (api_request-derived) turns.
+        │                          on exact (api_request-derived) turns. Also renders
+        │                          BackgroundCostBadge (a warning-tinted "+$N background" chip next
+        │                          to the cost figure) and a second, muted ToolChips row — both gated
+        │                          on turn.backgroundCostUsd/.backgroundTools being non-empty — for
+        │                          spend/tool calls a turn's trace picked up after its own root span
+        │                          closed (see the background-split gotcha below).
         └── index.ts
 ```
 
@@ -148,10 +153,11 @@ Fetchers live in the shared `api/endpoints.ts` (not a page-local module) and use
 
 `fetchSessionPrompts` returns `SessionPromptRow[]` — full untruncated text, ascending by time,
 max 500 rows, **not window-scoped**, no query params beyond the path segment. The base three
-fields are `{ timestamp, prompt, traceId }`; four more are additive/optional and drive the
-timeline's richer per-turn cards — `model`, `costUsd`, `tokens` (a `SessionTokenBreakdown`), and
-`tools` (`{ name, count }[]`) — see [SESSIONS-BACKEND.md](SESSIONS-BACKEND.md) for the exact
-per-field semantics. `SessionPromptRow` and `SessionTokenBreakdown` are the single canonical
+fields are `{ timestamp, prompt, traceId }`; more are additive/optional and drive the
+timeline's richer per-turn cards — `model`, `costUsd`, `tokens` (a `SessionTokenBreakdown`),
+`tools` (`{ name, count }[]`), and `backgroundCostUsd` / `backgroundTools` (the post-root-span
+subset of `costUsd`/`tools` — see the background-split gotcha below) — see
+[SESSIONS-BACKEND.md](SESSIONS-BACKEND.md) for the exact per-field semantics. `SessionPromptRow` and `SessionTokenBreakdown` are the single canonical
 types (in `api/types.ts`) — `PromptTimelinePanel` imports them directly rather than declaring its
 own widening copies, so there is no cast anywhere in the data path from `fetchSessionPrompts` to
 the panel. It only fires while a session's drawer is open (`enabled` gate) and has no
@@ -289,7 +295,7 @@ trace link for those rows, not a disabled placeholder.
   `SessionsPageView.tsx`) with `minHeight: 420`. If you add or remove chrome above the table card,
   retune that constant or the table will over/under-fill the viewport.
 - **Per-turn figures come from two different pipelines, and the timeline says which.** Each turn
-  carries `attribution`: `REQUEST` means its model/cost/tokens are the exact per-call figures
+  carries `attribution`: `REQUEST` means its model/tokens are the exact per-call figures
   summed over that turn's own `api_request` logs (joined on `prompt.id`); `INTERVAL` means no such
   logs exist and the values were bucketed from cumulative counters by timestamp. The two are
   **different measurements, not two views of one number** — measured against live data they
@@ -298,6 +304,15 @@ trace link for those rows, not a disabled placeholder.
   exact is the expectation, so only the exception earns ink) and why **a session row's
   `tokenBreakdown` no longer equals the sum of its turns' `tokens`**: the row is a windowed
   counter roll-up, the turns are whole-session per-request sums. Don't "reconcile" them.
+  **`costUsd` is the one exception to "REQUEST means summed from this turn's own requests"**: when
+  the turn has a trace, `costUsd` is the turn's *trace* total (own + background — see the
+  background-split gotcha below), which can exceed the sum of just its own `prompt.id`-matched
+  requests. This isn't a third pipeline, it's the same trace-correlation the backend's `applyTraceCorrelatedActivity`
+  already used for `INTERVAL` turns, now also applied to `REQUEST` turns — a turn can dispatch a
+  detached subagent whose later requests get logged under a *different* turn's `prompt.id` even
+  though they share this turn's trace, and `prompt.id`-only joining silently missed that spend
+  before this was fixed. `model`/`tokens` are unaffected — they stay strictly `prompt.id`-scoped on
+  `REQUEST` turns, so don't expect them to reconcile against `costUsd`/`tools` either.
 - **There is no per-request drill-down here, deliberately.** An earlier revision put a clickable
   "N req" pill on each turn that opened a `TurnRequestTable` (time · model · effort · tokens ·
   cache read · cost · duration) inline, backed by a `sessionRequestsQuery` against
@@ -413,6 +428,40 @@ trace link for those rows, not a disabled placeholder.
   `gradients.auroraActionSoft` text the "Median cost" stat card uses once cost reaches the **live**
   P95 cost/session figure (threaded down as `hotCostThresholdUsd` from `SessionsPageView`'s
   `kpis.p95CostUsd` — never a hardcoded second copy of that number).
+- **The drawer header's cost figure carries a warning-tinted info icon** (`SessionDetailHeader`
+  in `SessionDetailDrawer.tsx`, `HEADER_COST_DRIFT_TOOLTIP`), because it's easy to add up the
+  timeline's per-turn costs below it and expect the sum to match. It won't, for two stacked
+  reasons documented in the tooltip and in the attribution bullet above: the header is the
+  whole-session counter total (turn figures are trace/request sums, a different pipeline), and a
+  trace shared by several turns bills its cost to only the earliest of them
+  (`LogService.applyTraceCorrelatedActivity`). This is the same
+  `StatCard.infoTooltipSeverity="warning"` pattern the Cost and Tokens pages use for their
+  analogous "Total spend" / "Total cost" KPIs, but built by hand here (a plain `Tooltip` +
+  `InfoOutlinedIcon` inside the `MetaItem`) since the header isn't a `StatCard`. `CostValue`
+  itself was left unchanged — the icon lives only in this one `MetaItem` usage, not inside
+  `CostValue`, since the grid's Cost column (the component's other caller) shows one figure per
+  row with no adjacent per-turn breakdown to disagree with. What this icon does *not* cover any
+  more: a turn's own cost disagreeing with the trace it links to — that was a real bug (REQUEST
+  attribution silently discarding trace correlation), now fixed, see the background-split gotcha
+  below.
+- **`backgroundCostUsd`/`backgroundTools` explain why a turn's trace can cost more than what
+  happened while the turn was on screen — they are not additional spend on top of `costUsd`/`tools`.**
+  A fire-and-forget subagent dispatch (an `Agent` tool call whose own span closes in milliseconds)
+  can keep issuing `api_request`/`tool_result` logs for minutes or hours after the turn that
+  launched it, well past the moment the next prompt was typed. `costUsd`/`tools` are already the
+  turn's full trace total including that background activity (matching what the trace detail page
+  reports for the same trace — see the attribution bullet above); `backgroundCostUsd`
+  (`SessionPromptRow`, nullable) and `backgroundTools` (same shape as `tools`, empty not null) are
+  the subset of that total billed/called *after* the trace's own `claude_code.interaction` root
+  span closed, computed backend-side by `LogRecordRepository.findCostSplitByTraceIds` /
+  `findToolEventsSplitByTraceIds`. `PromptTimelinePanel` renders both: `BackgroundCostBadge` (a
+  small warning-tinted `+$N background` chip, gated on `backgroundCostUsd` truthy, placed right
+  after the primary cost figure in the turn card's header) and a second `ToolChips` row rendered
+  with its new `muted` prop (dimmed to `text.disabled`, a leading "background:" label, no "No tool
+  calls" fallback — gated on `backgroundTools` being non-empty, so it renders nothing rather than
+  an empty muted row). Not a rare case worth ignoring: measured on the live database, 4.1% of
+  traces in a 14-day window have request activity after their own root span closes, and those
+  traces account for 22.6% of all spend in that window.
 - **A non-null turn prompt goes through `components/PromptSummaryText` first, before the
   `AttributeList` machinery below ever sees it.** A prompt that's really a `<task-notification>`
   envelope (the harness delivered it when a background subagent finished — see

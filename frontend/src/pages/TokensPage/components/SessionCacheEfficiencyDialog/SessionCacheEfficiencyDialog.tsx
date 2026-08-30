@@ -14,6 +14,8 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CloseIcon from '@mui/icons-material/Close';
 import { Link as RouterLink } from 'react-router-dom';
 import type { SessionCacheEfficiencyRow } from '../../../../api';
+import KpiTile from '../../../../components/KpiTile';
+import SegmentedBar from '../../../../components/SegmentedBar';
 import {
   cacheEfficiencyBand,
   formatCacheEfficiency,
@@ -41,34 +43,6 @@ export interface SessionCacheEfficiencyDialogProps {
 
 /** Opacity of the band color behind the header chip. */
 const BAND_CHIP_TINT = 0.16;
-
-/** Smallest visible slice of the token bar, so a tiny segment still reads. */
-const MINIMUM_SEGMENT_WIDTH = '2px';
-
-const KpiTile = ({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color?: string;
-}) => (
-  <Box>
-    <Box sx={{ typography: 'eyebrowSm', color: 'text.disabled' }}>{label}</Box>
-    <Box
-      sx={{
-        mt: 0.6,
-        fontFamily: fontFamilies.display,
-        fontWeight: 800,
-        fontSize: 24,
-        color: color ?? 'text.primary',
-      }}
-    >
-      {value}
-    </Box>
-  </Box>
-);
 
 interface DialogBodyProps {
   row: SessionCacheEfficiencyRow;
@@ -112,19 +86,6 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
       color: TOKEN_KIND_COLORS.output,
     },
   ];
-  // The bar shows the session's whole token mix, so its denominator is all four
-  // kinds — NOT the KPI tile's inputSideTokens. Read as its own sum rather than
-  // from row.totalTokens so a contract drift shows up as segments that don't
-  // fill the track instead of as overflow.
-  const segmentTotal = segments.reduce(
-    (running, segment) => running + segment.value,
-    0,
-  );
-  // A zero-value segment still gets a legend row (reading "0"), but is dropped
-  // before the bar chips: the MINIMUM_SEGMENT_WIDTH floor would otherwise paint
-  // a visible sliver for a value that isn't actually present.
-  const nonZeroSegments = segments.filter((segment) => segment.value > 0);
-
   return (
     <>
       <DialogTitle sx={{ pr: 6, pb: 2 }}>
@@ -198,60 +159,11 @@ const DialogBody = ({ row, onClose }: DialogBodyProps) => {
             <KpiTile label="Cost" value={USD_FORMATTER.format(row.costUsd)} />
           </Box>
 
-          <Box>
-            <Box
-              sx={{
-                display: 'flex',
-                height: 8,
-                borderRadius: radii.xs,
-                overflow: 'hidden',
-                bgcolor:
-                  theme.custom?.progressTrack ?? theme.palette.action.hover,
-              }}
-            >
-              {segmentTotal > 0 &&
-                nonZeroSegments.map((segment) => (
-                  <Box
-                    key={segment.label}
-                    sx={{
-                      height: '100%',
-                      minWidth: MINIMUM_SEGMENT_WIDTH,
-                      width: `${(segment.value / segmentTotal) * 100}%`,
-                      bgcolor: segment.color,
-                    }}
-                  />
-                ))}
-            </Box>
-            <Stack spacing={0.9} sx={{ mt: 1.25 }}>
-              {segments.map((segment) => (
-                <Box
-                  key={segment.label}
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    fontSize: 12.5,
-                  }}
-                >
-                  <Box
-                    sx={{
-                      width: 9,
-                      height: 9,
-                      borderRadius: '3px',
-                      flexShrink: 0,
-                      bgcolor: segment.color,
-                    }}
-                  />
-                  <Box sx={{ flex: 1, color: 'text.secondary' }}>
-                    {segment.label}
-                  </Box>
-                  <Box sx={{ fontFamily: fontFamilies.mono, fontWeight: 600 }}>
-                    {formatCompact(segment.value)}
-                  </Box>
-                </Box>
-              ))}
-            </Stack>
-          </Box>
+          <SegmentedBar
+            segments={segments}
+            formatValue={formatCompact}
+            trackColor={theme.custom?.progressTrack ?? theme.palette.action.hover}
+          />
 
           {/* Deep link, not a plain /sessions link: the Sessions page reads
               ?sessionId= and opens that row's prompt timeline on arrival. */}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Box, Drawer, Tooltip, alpha, useTheme } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type { SessionPromptRow, SessionSummaryRow } from '../../../../api';
 import {
   cacheEfficiencyBand,
@@ -13,7 +14,10 @@ import { cacheEfficiencyBandColor } from '../../../TokensPage/components/cacheEf
 import { neutralColors } from '../../../../theme/colors';
 import { fontFamilies } from '../../../../theme/typography';
 import { backdropGradient, radii } from '../../../../theme/theme';
-import PromptTimelinePanel, { CostValue, TokenBreakdownTooltip } from '../PromptTimelinePanel';
+import PromptTimelinePanel, {
+  CostValue,
+  TokenBreakdownTooltip,
+} from '../PromptTimelinePanel';
 import {
   formatRelativeTime,
   formatShortTimestamp,
@@ -25,6 +29,17 @@ import {
 // drawer easing, so the panel lands before the eye leaves the clicked row.
 const SLIDE_DURATION_MS = 260;
 const SLIDE_EASING = 'cubic-bezier(.22,.8,.24,1)';
+
+// Why the header's whole-session cost won't equal the sum of the turn costs shown
+// in the timeline below — same "two measurements, don't reconcile" situation as the
+// Cost vs. Tokens pages, but with a third wrinkle unique to this drawer (the
+// trace-correlated billing override). See this page's CLAUDE.md.
+const HEADER_COST_DRIFT_TOOLTIP =
+  'Whole-session lifetime cost, from the cumulative cost counter. Each turn below is ' +
+  'priced differently: exact when summed from its own api_request logs, an ' +
+  'approximate ("~") counter estimate otherwise, and a shared trace’s cost is ' +
+  'credited to only its earliest turn. The turn costs won’t sum to this total — ' +
+  'they’re measured differently, not a breakdown of it.';
 
 interface SessionDetailDrawerProps {
   // Null closes the drawer. The last non-null session stays rendered through
@@ -54,7 +69,10 @@ const MetaItem = ({
   title?: string;
 }) => {
   const item = (
-    <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+    <Box
+      component="span"
+      sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
+    >
       {children}
     </Box>
   );
@@ -81,7 +99,10 @@ const SessionDetailHeader = ({
 }) => {
   const theme = useTheme();
   const ratio = cacheEfficiencyRatio(session.tokenBreakdown);
-  const efficiencyColor = cacheEfficiencyBandColor(cacheEfficiencyBand(ratio), theme);
+  const efficiencyColor = cacheEfficiencyBandColor(
+    cacheEfficiencyBand(ratio),
+    theme,
+  );
 
   return (
     <Box
@@ -97,7 +118,15 @@ const SessionDetailHeader = ({
         borderColor: 'divider',
       }}
     >
-      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 0.5,
+        }}
+      >
         <Box
           sx={{
             fontFamily: fontFamilies.mono,
@@ -129,7 +158,15 @@ const SessionDetailHeader = ({
         >
           <MetaItem>{formatShortTimestamp(session.startTimestamp)}</MetaItem>
           <MetaItem>
-            <CostValue costUsd={session.costUsd} hotThresholdUsd={hotCostThresholdUsd} />
+            <CostValue
+              costUsd={session.costUsd}
+              hotThresholdUsd={hotCostThresholdUsd}
+            />
+            <Tooltip title={HEADER_COST_DRIFT_TOOLTIP} arrow>
+              <InfoOutlinedIcon
+                sx={{ fontSize: 13, color: 'warning.main', cursor: 'help' }}
+              />
+            </Tooltip>
           </MetaItem>
           <MetaItem title={formatTimestamp(session.endTimestamp)}>
             {`active ${formatRelativeTime(session.endTimestamp)}`}
@@ -150,7 +187,10 @@ const SessionDetailHeader = ({
             <Box component="span" sx={{ color: (t) => t.palette.divider }}>
               ·
             </Box>
-            <Box component="span" sx={{ color: efficiencyColor, fontWeight: 600 }}>
+            <Box
+              component="span"
+              sx={{ color: efficiencyColor, fontWeight: 600 }}
+            >
               {formatCacheEfficiency(ratio)}
             </Box>
             cache
@@ -214,7 +254,9 @@ const SessionDetailDrawer = ({
   // pattern for previous-render information), compared by session id rather
   // than object identity: the parent resolves a fresh row object out of the
   // query result on every render.
-  const [lastSession, setLastSession] = useState<SessionSummaryRow | null>(null);
+  const [lastSession, setLastSession] = useState<SessionSummaryRow | null>(
+    null,
+  );
   if (session != null && session.sessionId !== lastSession?.sessionId) {
     setLastSession(session);
   }
@@ -256,12 +298,16 @@ const SessionDetailDrawer = ({
         },
         backdrop: {
           sx: {
-            bgcolor: (t) => alpha(neutralColors.shadowDeep, t.palette.mode === 'dark' ? 0.6 : 0.45),
+            bgcolor: (t) =>
+              alpha(
+                neutralColors.shadowDeep,
+                t.palette.mode === 'dark' ? 0.6 : 0.45,
+              ),
           },
         },
         paper: {
           sx: {
-            width: 560,
+            width: 600,
             maxWidth: '92vw',
             display: 'flex',
             flexDirection: 'column',
@@ -275,7 +321,9 @@ const SessionDetailDrawer = ({
             backgroundRepeat: 'no-repeat',
             boxShadow: (t) =>
               `-28px 0 60px ${alpha(
-                t.palette.mode === 'dark' ? neutralColors.black : neutralColors.shadowIndigo,
+                t.palette.mode === 'dark'
+                  ? neutralColors.black
+                  : neutralColors.shadowIndigo,
                 t.palette.mode === 'dark' ? 0.5 : 0.3,
               )}`,
           },

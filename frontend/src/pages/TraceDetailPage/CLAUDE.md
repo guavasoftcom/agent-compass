@@ -363,9 +363,11 @@ All three queries are enabled only when `traceId` is truthy (`enabled: Boolean(t
 None of them poll — this page has no `WindowSelection`, no auto-refresh, and no
 `refetchInterval`. The logs query is intentionally eager (not gated on a span being selected)
 so the drawer's Logs section has data the moment the user first selects a span. The summary query
-feeds two things: the header's Prompt row (`firstUserPrompt`) and the header's Cost KPI
-(`traceCostUsd`, from `TraceRow.totalCostUsd`) — see Gotchas and the Cost section below. Every
-other header figure (tokens, span/tool counts, depth) stays derived from the spans query.
+feeds three things: the header's Prompt row (`firstUserPrompt`), the header's Cost KPI
+(`traceCostUsd`, from `TraceRow.totalCostUsd`), and that same tile's background-cost tooltip
+(`traceBackgroundCostUsd`, from `TraceRow.backgroundCostUsd`) — see Gotchas and the Cost section
+below. Every other header figure (tokens, span/tool counts, depth) stays derived from the spans
+query.
 
 `TraceSummaryInline` in `TracesPage` uses `['trace-inline-spans', traceId]` (a different key)
 for the same spans endpoint — the two caches are separate.
@@ -419,6 +421,23 @@ the trace total but has no span to attribute it to. `costOfSpan` is the per-span
 breakdown figure (its own read of `SpanRow.costUsd`, filled from the sibling `span_costs` view) —
 it's just not the source of the trace-level KPI. These are real billed amounts, so they carry no
 "~"/"est." qualifier.
+
+**`TraceRow.backgroundCostUsd`** (also from the `trace-summary` query, threaded as
+`traceBackgroundCostUsd` through the same `TraceDetailPage` → `TraceDetailPageView` →
+`TraceDetailHeader` → `TraceDetailHeaderView` chain) is the portion of `totalCostUsd` billed
+*after* this trace's own `claude_code.interaction` root span closed — e.g. a fire-and-forget
+`Agent` tool dispatch (its own span closes in milliseconds) that kept issuing requests long after
+the turn that launched it ended. `totalCostUsd` already includes it; the Cost KPI tile shows a
+small warning-tinted `InfoOutlinedIcon` + `Tooltip` (only when `backgroundCostUsd > 0`) explaining
+the split, rather than a second tile. It's populated by a *second*, small query in
+`TraceExplorerService.traceSummary` — `LogRecordRepository.findCostSplitByTraceIds` called with a
+single-element trace id list — not a new column on `SpanRepository.traceSummaryById`: that
+query's row mapper (`toTraceSummary`) is shared by 20 other list/sort/histogram queries with an
+identical column order, so adding a column there for a field only this single-trace endpoint
+needs would mean touching all of them. This mirrors the Sessions prompt timeline's own
+`backgroundCostUsd`/`backgroundTools` fields (`SessionsPage/SESSIONS-BACKEND.md`'s "Background
+split" section) — same backend query, same underlying concept, surfaced on both pages that show a
+trace's cost.
 
 **Both per-span displays resolve through `costOfSelectedSpan(span, logs)`** — the waterfall row's
 `SpanCostBadge` chip, and the drawer's meta grid `cost` row (amber bold, after duration; the
@@ -653,8 +672,9 @@ so the edge tracks the cursor 1:1.
   the prompt from the optional `prompt` prop, threaded up as `firstUserPrompt` through
   `TraceDetailHeaderView` / `TraceDetailHeader` / `TraceDetailPageView` from a **third** page
   query, `['trace-summary', traceId]` → `fetchTraceSummaryOrNull` → `GET /api/traces/{id}/summary`.
-  The same query's `totalCostUsd` field feeds `traceCostUsd`, the Cost KPI's only source (see the
-  Cost section) — don't re-derive it from the spans query. That endpoint exists because the prompt
+  The same query's `totalCostUsd` field feeds `traceCostUsd`, the Cost KPI's only source, and its
+  `backgroundCostUsd` field feeds the tile's background-cost tooltip (see the Cost section) —
+  don't re-derive either from the spans query. That endpoint exists because the prompt
   is a trace-level field and the spans endpoint returns a bare array that can't carry one; the
   fetcher swallows its 404 to `null` so an unknown trace
   id is the waterfall query's error to report, not this one's. Every other header tile — tokens,

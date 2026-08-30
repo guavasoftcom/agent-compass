@@ -187,19 +187,28 @@ timeline stays current.
   null (chip omitted).
 - **`costUsd`** *(NEW)* — cost attributed to this turn. Raw number; the UI formats `$0.00`. May
   be null (cost omitted). When the turn carries a `traceId`, this is that trace's own cost —
-  the summed `cost_usd` of the `api_request` logs stamped with the trace id (the `trace_costs`
-  view, `V14`), which is exactly what the Traces pages show for the same trace, so the two
-  surfaces never disagree — **for the one turn the backend bills it to.** Several turns in a row
-  can share a trace (e.g. a bare slash command immediately followed by its real prompt before
-  Claude Code closes the interaction span); the backend attributes the trace's cost to the
-  earliest of those turns only, and every later turn sharing the same `traceId` renders `null`
-  here rather than repeating the figure — so summing `costUsd` down the timeline still equals the
-  session's real spend instead of double-counting a shared trace. Turns with no trace (or whose
-  requests predate trace-id correlation) keep the older attribution: the `claude_code.cost.usage`
-  points whose timestamp falls inside the turn's interval. The difference from the trace-id path
-  is only in *bucketing* — both count the same requests — but a request completing after the next
-  prompt was typed gets billed to the wrong turn under time bucketing, which is why the trace id
-  wins when it exists.
+  the summed `cost_usd` of the `api_request` logs stamped with the trace id, which is exactly
+  what the Traces pages show for the same trace, so the two surfaces never disagree — **for the
+  one turn the backend bills it to.** Several turns in a row can share a trace (e.g. a bare slash
+  command immediately followed by its real prompt before Claude Code closes the interaction
+  span); the backend attributes the trace's cost to the earliest of those turns only, and every
+  later turn sharing the same `traceId` renders `null` here rather than repeating the figure — so
+  summing `costUsd` down the timeline still equals the session's real spend instead of
+  double-counting a shared trace. Turns with no trace (or whose requests predate trace-id
+  correlation) keep the older attribution: the `claude_code.cost.usage` points whose timestamp
+  falls inside the turn's interval.
+  >
+  > **This trace-id win applies regardless of `attribution`.** An earlier revision of this
+  > backend only consulted trace correlation for `INTERVAL` turns — a `REQUEST` turn (one with
+  > its own `prompt.id`-matched `api_request` logs) used the sum of just those logs instead,
+  > silently dropping the trace-correlated figure. That was a real bug, not a documentation gap:
+  > a turn that dispatches a fire-and-forget subagent (an `Agent` tool call whose own span closes
+  > in milliseconds) can have that subagent keep issuing requests stamped with a *different*
+  > turn's `prompt.id` once the next prompt is typed, even though they share this turn's
+  > `traceId` — so the `prompt.id`-only sum undercounted the turn and could disagree with the
+  > trace detail page by an order of magnitude. Fixed: trace correlation now wins over
+  > `prompt.id` joining whenever the turn has a trace, on every `attribution` value. See
+  > "Background split" below for the follow-on field this fix made possible.
 - **`tokens`** *(NEW)* — the turn's token usage split by kind:
   `{ input, output, cacheCreation, cacheRead }` (map `cache_read`→`cacheRead`,
   `cache_creation`→`cacheCreation`), summed from the turn's `claude_code.token.usage` points
@@ -213,7 +222,10 @@ timeline stays current.
   (count = invocations of that tool in the turn), desc by count. Derive from the turn's
   `tool_result` / tool-decision events (attribute `tool_name`) grouped within the interaction.
   Empty array / null → the panel shows "No tool calls". The UI shows the first 5 + a `+N`
-  overflow chip.
+  overflow chip. When the turn carries a `traceId`, this is the trace's full tool-call set (same
+  trace-id correlation `costUsd` uses, not pure interval bucketing) — a detached subagent's tool
+  calls stay with the turn that dispatched it rather than splitting across whichever turn's time
+  window each call happened to land in.
 
 > **`model` / `costUsd` / `tokens` / `tools` are additive and optional.** The page reads them
 > as optional fields directly on the canonical `SessionPromptRow` type (`api/types.ts`) and
@@ -249,6 +261,30 @@ the sum of its turns' `tokens`** once any turn reports `REQUEST`. The row is a w
 counter roll-up; the turns are whole-session per-request sums. Both are correct for what they
 measure.
 
+### Background split (`backgroundCostUsd` / `backgroundTools`) — SHIPPED
+
+`costUsd` and `tools` are a turn's *trace* total once the turn has a `traceId` (see the
+`costUsd` field note above) — including any fire-and-forget subagent work that trace picked up
+after the turn itself finished. That can make a turn look surprisingly expensive with nothing in
+the prompt explaining why, so the backend also reports the post-root-span portion separately:
+
+- **`backgroundCostUsd`** — the slice of `costUsd` billed *after* the trace's own
+  `claude_code.interaction` root span closed. `costUsd` already includes this amount; it is not
+  additional spend. Null when the turn has no trace, or the trace has no activity after its root
+  span closed.
+- **`backgroundTools`** — same shape as `tools`, the slice of tool calls that ran after the root
+  span closed. Empty (never null) when none.
+
+The root span closing is a materially different boundary than "the next prompt started": Claude
+Code's `Agent` tool dispatch is fire-and-forget — the dispatching span closes in milliseconds,
+well before the subagent's own work is done — so a turn's root span can close seconds into a
+turn that then keeps accumulating background cost/tool calls for minutes or hours. Measured on
+the live database: 4.1% of traces in a 14-day window have request activity after their own root
+span closes, and those traces account for 22.6% of all spend in that window — not a rare edge
+case worth ignoring. The UI renders both as secondary, muted signals next to the primary
+`costUsd`/`tools` figures (`BackgroundCostBadge`, a muted second `ToolChips` row) rather than
+folding them into a separate KPI.
+
 ---
 
 ## `GET /api/sessions/{id}/requests` — NEW endpoint (per-request drill-down)
@@ -276,8 +312,14 @@ is retained for potential future use; it has no frontend consumer today.
 ]
 ```
 
-Grouping these rows by `promptId` and summing reproduces the owning turn's `tokens` exactly and
-its `costUsd` to within floating-point rounding (Postgres sums one side, the JVM the other).
+Grouping these rows by `promptId` and summing reproduces the owning turn's `tokens` exactly. It
+reproduces the turn's `costUsd` **only when the turn has no background activity** — these rows
+are strictly `promptId`-scoped (unaffected by trace correlation), while a turn's `costUsd` is its
+trace total, which can exceed the `promptId`-grouped sum by exactly `backgroundCostUsd` (a
+detached subagent's later requests are logged under whichever turn's `prompt.id` was current at
+the time, so they may not even appear in *this* turn's `promptId`-filtered rows at all). When
+`backgroundCostUsd` is null, the two do reconcile to within floating-point rounding (Postgres
+sums one side, the JVM the other).
 
 > **An empty array means "no per-request detail", never "no spend".** Sessions recorded without
 > event logging, or by an older CLI, have no `api_request` logs at all but still carry
@@ -358,6 +400,8 @@ export interface SessionPromptRow {
     cacheRead: number;
   } | null;
   tools?: { name: string; count: number }[] | null; // NEW
+  backgroundCostUsd?: number | null;                // NEW — see "Background split" below
+  backgroundTools?: { name: string; count: number }[] | null; // NEW
 }
 
 export interface SessionKpis {

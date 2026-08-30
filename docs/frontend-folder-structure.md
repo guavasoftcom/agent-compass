@@ -81,6 +81,9 @@ frontend/src/
     GhostButton/
       GhostButton.tsx
       index.ts
+    KpiTile/
+      KpiTile.tsx                  // label-over-value tile for a dialog's KPI strip (Cost + Tokens dialogs)
+      index.ts
     LineSparkline/
       LineSparkline.tsx            // shared area+line sparkline (Sessions + Metrics KPI strips)
       index.ts
@@ -100,6 +103,9 @@ frontend/src/
     SectionLayout/
       SectionLayout.tsx
       SectionLayoutView.tsx
+      index.ts
+    SegmentedBar/
+      SegmentedBar.tsx              // proportional bar + dot legend (Cost + Tokens dialogs)
       index.ts
     SegmentedToggle/
       SegmentedToggle.tsx
@@ -122,6 +128,26 @@ frontend/src/
       WindowSelectorView.tsx
       index.ts
   pages/                           // every page folder has its own CLAUDE.md (page files + data flow + gotchas)
+    CostPage/
+      CLAUDE.md
+      CostPage.tsx                 // container
+      CostPageView.tsx             // presentational
+      costDerivations.ts           // + costDerivations.test.ts
+      costTableStyles.ts
+      index.ts
+      components/
+        CostDriversCard/
+          CostDriversCard.tsx      // (model, effort) cost-drivers grid
+          index.ts
+        MoneyMapCard/
+          MoneyMapCard.tsx         // work-category partition (main loop / subagent / skill / auxiliary)
+          index.ts
+        SessionCostDialog/
+          SessionCostDialog.tsx    // per-session cost drill-down
+          index.ts
+        TopSessionsCard/
+          TopSessionsCard.tsx      // top sessions by spend
+          index.ts
     LogsPage/
       CLAUDE.md
       LogsPage.tsx                 // container

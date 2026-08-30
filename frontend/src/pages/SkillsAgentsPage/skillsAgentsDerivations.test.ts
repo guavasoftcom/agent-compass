@@ -14,16 +14,58 @@ const HAIKU = 'claude-haiku-4-5-20251001';
 const MYSTERY = 'claude-mystery-9';
 
 const skillRows: IdentifierUsageRow[] = [
-  { tool: 'sync-docs', calls: 75, byModel: { [SONNET]: 40, [OPUS]: 28, [HAIKU]: 7 } },
-  { tool: 'ship', calls: 49, byModel: { [HAIKU]: 49 } },
-  { tool: 'claude-api', calls: 13, byModel: { [OPUS]: 13 } },
-  { tool: 'artifact-design', calls: 9, byModel: { [OPUS]: 9 } },
+  {
+    tool: 'sync-docs',
+    calls: 75,
+    byModel: { [SONNET]: 40, [OPUS]: 28, [HAIKU]: 7 },
+    costUsd: 12.5,
+    costByModel: { [SONNET]: 8, [OPUS]: 4, [HAIKU]: 0.5 },
+  },
+  {
+    tool: 'ship',
+    calls: 49,
+    byModel: { [HAIKU]: 49 },
+    costUsd: 1.25,
+    costByModel: { [HAIKU]: 1.25 },
+  },
+  {
+    tool: 'claude-api',
+    calls: 13,
+    byModel: { [OPUS]: 13 },
+    costUsd: 6,
+    costByModel: { [OPUS]: 6 },
+  },
+  {
+    tool: 'artifact-design',
+    calls: 9,
+    byModel: { [OPUS]: 9 },
+    costUsd: 3,
+    costByModel: { [OPUS]: 3 },
+  },
 ];
 
 const subagentRows: IdentifierUsageRow[] = [
-  { tool: 'claude-code-guide', calls: 4, byModel: { [OPUS]: 1, [HAIKU]: 3 } },
-  { tool: 'Explore', calls: 4, byModel: { [SONNET]: 2, [HAIKU]: 2 } },
-  { tool: 'unknown', calls: 1, byModel: { [SONNET]: 1 } },
+  {
+    tool: 'claude-code-guide',
+    calls: 4,
+    byModel: { [OPUS]: 1, [HAIKU]: 3 },
+    costUsd: 2,
+    costByModel: { [OPUS]: 1.5, [HAIKU]: 0.5 },
+  },
+  {
+    tool: 'Explore',
+    calls: 4,
+    byModel: { [SONNET]: 2, [HAIKU]: 2 },
+    costUsd: 1,
+    costByModel: { [SONNET]: 0.75, [HAIKU]: 0.25 },
+  },
+  {
+    tool: 'unknown',
+    calls: 1,
+    byModel: { [SONNET]: 1 },
+    costUsd: 0,
+    costByModel: {},
+  },
 ];
 
 describe('withShare', () => {
@@ -36,10 +78,27 @@ describe('withShare', () => {
   });
 
   it('reports zero share instead of dividing by zero on an empty window', () => {
-    const { rows, total } = withShare([{ tool: 'ship', calls: 0, byModel: {} }]);
+    const { rows, total } = withShare([
+      { tool: 'ship', calls: 0, byModel: {}, costUsd: 0, costByModel: {} },
+    ]);
 
     expect(total).toBe(0);
     expect(rows[0].share).toBe(0);
+  });
+
+  it('sums costUsd across rows independently of the calls total', () => {
+    const { costTotal } = withShare(skillRows);
+
+    expect(costTotal).toBeCloseTo(12.5 + 1.25 + 6 + 3);
+  });
+
+  it('shares stay calls-based regardless of costUsd — "Top skill" never reorders under Cost', () => {
+    // "ship" has fewer calls than "sync-docs" but nowhere near its cost share;
+    // share() must still rank/report by calls, not cost.
+    const { rows } = withShare(skillRows);
+    const ship = rows.find((row) => row.tool === 'ship');
+
+    expect(ship?.share).toBeCloseTo((49 / 146) * 100);
   });
 });
 
@@ -54,7 +113,13 @@ describe('buildModelColorIndexes', () => {
 
   it('places an unrecognized model family after the known trio, ordered by call volume', () => {
     const withMystery: IdentifierUsageRow[] = [
-      { tool: 'ship', calls: 5, byModel: { [MYSTERY]: 5, [SONNET]: 1 } },
+      {
+        tool: 'ship',
+        calls: 5,
+        byModel: { [MYSTERY]: 5, [SONNET]: 1 },
+        costUsd: 0.5,
+        costByModel: { [MYSTERY]: 0.4, [SONNET]: 0.1 },
+      },
     ];
 
     const indexes = buildModelColorIndexes(withMystery);
@@ -106,9 +171,17 @@ describe('buildModelFirstBlocks', () => {
   });
 
   it('renders an empty-rows block (not an omitted block) for a model with zero calls in this row set', () => {
-    const onlyOpus: IdentifierUsageRow[] = [{ tool: 'ship', calls: 4, byModel: { [OPUS]: 4 } }];
+    const onlyOpus: IdentifierUsageRow[] = [
+      { tool: 'ship', calls: 4, byModel: { [OPUS]: 4 }, costUsd: 2, costByModel: { [OPUS]: 2 } },
+    ];
     const indexes = buildModelColorIndexes(onlyOpus, [
-      { tool: 'other', calls: 1, byModel: { [SONNET]: 1, [HAIKU]: 1 } },
+      {
+        tool: 'other',
+        calls: 1,
+        byModel: { [SONNET]: 1, [HAIKU]: 1 },
+        costUsd: 0.2,
+        costByModel: { [SONNET]: 0.1, [HAIKU]: 0.1 },
+      },
     ]);
 
     const blocks = buildModelFirstBlocks(onlyOpus, indexes);

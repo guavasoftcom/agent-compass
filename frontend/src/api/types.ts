@@ -15,11 +15,21 @@ export interface ToolCallRow {
  * that made the call — values sum to `calls`, and models with no calls are
  * omitted rather than sent as `0`. Keys are the same model ids used by the
  * Token Usage page's `byModel` rows.
+ *
+ * `costUsd`/`costByModel` are a separately computed dollar figure, not a
+ * derivative of `calls`/`byModel` — they intentionally do not reconcile the
+ * same way (skill cost sums every turn a skill's run made, including ones
+ * inside a subagent it spawned, while `calls` counts invocations and drops
+ * those turns; see the Skills & Subagents page CLAUDE.md). `costByModel`
+ * follows the same "omit models with $0, never send an explicit 0" rule as
+ * `byModel`.
  */
 export interface IdentifierUsageRow {
   tool: string;
   calls: number;
   byModel: Record<string, number>;
+  costUsd: number;
+  costByModel: Record<string, number>;
 }
 
 /**
@@ -75,6 +85,12 @@ export interface TraceRow {
   // issued no model request and when its requests predate trace-id correlation;
   // both render as "—".
   totalCostUsd: number;
+  // Portion of totalCostUsd billed AFTER this trace's own claude_code.interaction
+  // root span closed — e.g. a fire-and-forget subagent dispatch that kept issuing
+  // requests long after the turn that launched it ended. totalCostUsd already
+  // includes this amount. 0 when the trace has no root span, or no activity after
+  // it closed.
+  backgroundCostUsd?: number;
   // The user prompt that initiated this trace, whitespace-collapsed and truncated
   // to 200 chars — mirrors SessionSummaryRow.firstUserPrompt. Null when the trace
   // is not rooted in a conversational turn (tool / model / mcp / compaction-rooted
@@ -359,6 +375,26 @@ export interface SessionPromptRow {
    * cache-read-heavy sessions. Never add or compare them across turns.
    */
   attribution?: TurnAttribution;
+  /**
+   * Portion of `costUsd` billed to this turn's trace AFTER the trace's own
+   * claude_code.interaction root span closed — e.g. a fire-and-forget subagent
+   * dispatch (an Agent tool call whose own span closes immediately) that kept
+   * issuing requests long after this turn ended and the next prompt was typed.
+   * `costUsd` already includes this amount (it is the turn's trace total,
+   * matching what the trace detail page reports for the same trace) — this
+   * field explains why a turn cost more than what happened while it was
+   * active, not an amount to add on top. Null when the turn has no trace, or
+   * its trace has no activity after the root span closed.
+   */
+  backgroundCostUsd?: number | null;
+  /**
+   * Tool calls attributed to this turn's trace but occurring AFTER the trace's
+   * root span closed — the background counterpart to `backgroundCostUsd`. The
+   * `tools` list above already includes these calls (it too is the turn's
+   * trace total); this is the subset that ran as background/detached work.
+   * Empty/null when none.
+   */
+  backgroundTools?: { name: string; count: number }[] | null;
 }
 
 export type TurnAttribution = 'REQUEST' | 'INTERVAL';
@@ -387,6 +423,128 @@ export interface ToolDenialRow {
   tool: string;
   source: string;
   count: number;
+}
+
+/** MAIN_LOOP, SUBAGENT, SKILL, or AUXILIARY — see CostCategoryShare. */
+export type CostCategory = 'MAIN_LOOP' | 'SUBAGENT' | 'SKILL' | 'AUXILIARY';
+
+/**
+ * One named identifier's share of its parent `CostCategoryShare`'s drilldown (a skill or
+ * subagent identifier). `share` is percent of the category's `identifiedCostUsd`, not of the
+ * page total.
+ */
+export interface CostIdentifierShare {
+  identifier: string;
+  costUsd: number;
+  share: number;
+}
+
+/**
+ * One slice of the Cost page's work-category money map (`GET /api/cost/breakdown`). Every
+ * `api_request` row in the window belongs to exactly one category — SUBAGENT beats SKILL beats
+ * MAIN_LOOP beats AUXILIARY, so a request tagged as both a subagent call and a skill invocation
+ * (a skill running inside a subagent) is credited to SUBAGENT only. `costUsd` across all
+ * categories always sums exactly to `CostBreakdown.totalCostUsd`.
+ *
+ * `drilldown`/`identifiedCostUsd` are populated only for SUBAGENT and SKILL (resolved by the
+ * separate span-correlated / skill-tagged cost queries the Skills & Subagents page also uses).
+ * `identifiedCostUsd` — the sum of `drilldown`'s own `costUsd` — can be LESS than this row's
+ * `costUsd`: a subagent dispatch with no matching execution span, or nested inside another
+ * subagent's own dispatch, still counts toward the category total but has no resolvable
+ * identifier. Never force these to reconcile — render the drilldown as "of which, identified".
+ */
+export interface CostCategoryShare {
+  category: CostCategory;
+  costUsd: number;
+  requests: number;
+  share: number;
+  drilldown: CostIdentifierShare[];
+  identifiedCostUsd: number | null;
+}
+
+/**
+ * One bucket of the Cost page's stacked spend-over-time chart. `costByCategory` keys are
+ * `CostCategory` values; a category with zero spend in this bucket is omitted rather than sent
+ * as `0` — fill missing categories with 0 when building chart series.
+ */
+export interface CostTrendPoint {
+  timestamp: string;
+  costByCategory: Partial<Record<CostCategory, number>>;
+}
+
+/**
+ * One (model, effort) cell of the Cost page's cost-drivers grid, plus the token composition
+ * behind its spend. `effort` is `null` when NOT RECORDED (~7% of `api_request` rows carry no
+ * effort attribute) — never render `null` as a default level.
+ */
+export interface CostModelEffortCell {
+  model: string;
+  effort: string | null;
+  costUsd: number;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+/**
+ * One session in the Cost page's biggest-line-items ranking ("Most expensive sessions"),
+ * sorted by spend descending. The four `*CostUsd` fields are the same work-category
+ * partition as `CostCategoryShare`, scoped to this one session — they always sum exactly
+ * to `costUsd` (same SUBAGENT-beats-SKILL-beats-MAIN_LOOP-beats-AUXILIARY precedence).
+ */
+export interface CostSessionShare {
+  sessionId: string;
+  costUsd: number;
+  requests: number;
+  /**
+   * Session's first meaningful user prompt, whitespace-collapsed and truncated
+   * server-side, matching `SessionSummaryRow.firstUserPrompt`. Null when prompt
+   * capture was disabled (OTEL_LOG_USER_PROMPTS) or the session has no
+   * user-authored prompt.
+   */
+  firstUserPrompt: string | null;
+  /** This session's share of `CostCategoryShare` MAIN_LOOP. */
+  mainLoopCostUsd: number;
+  /** This session's share of `CostCategoryShare` SUBAGENT. */
+  subagentCostUsd: number;
+  /** This session's share of `CostCategoryShare` SKILL. */
+  skillCostUsd: number;
+  /** This session's share of `CostCategoryShare` AUXILIARY. */
+  auxiliaryCostUsd: number;
+}
+
+/**
+ * Full response for the Cost page (`GET /api/cost/breakdown`). Measured exclusively from
+ * `api_request` log records' exact per-call `cost_usd` — never the `claude_code.cost.usage`
+ * cumulative counter that backs the Tokens and Sessions pages' cost KPIs. The two pipelines do
+ * not reconcile (see `AGENTS.md`'s two-pipelines note): `totalCostUsd` here reads a few percent
+ * below the counter-derived totals shown elsewhere for the same window, and that gap is not a
+ * bug in either number. Chosen because it's the only side where the dollars and the
+ * skill/subagent/model/effort tags sit on the same row, which is what lets every category and
+ * every cell below sum exactly to `totalCostUsd`.
+ */
+export interface CostBreakdown {
+  totalCostUsd: number;
+  priorCostUsd: number;
+  deltaPct: number;
+  burnRatePerHour: number;
+  projected30dUsd: number;
+  totalRequests: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+  /** The work-category partition, sorted by cost descending. */
+  categories: CostCategoryShare[];
+  /** Stacked spend-over-time trend, one point per bucket, oldest first. */
+  trend: CostTrendPoint[];
+  /** Cost drivers grid, sorted by cost descending. */
+  modelEffort: CostModelEffortCell[];
+  /** Biggest line items: top sessions by spend, sorted descending. */
+  topSessions: CostSessionShare[];
+  bucketSeconds: number;
 }
 
 export interface HookExecutionRow {

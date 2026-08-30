@@ -111,9 +111,11 @@ public class TuningPropertyCatalog {
                   "event.name emitted when a hook batch finishes, carrying its outcome counters",
                   SEVERITY_FUNCTION,
                   TuningProperties::getHookExecutionEventName),
-              CatalogEntry.plain("toolCallIdAttribute",
+              CatalogEntry.mirrored("toolCallIdAttribute",
                   "Key shared by tool logs and the tool-execution span, used to re-point logs from "
-                      + "the interaction root onto the exact span",
+                      + "the interaction root onto the exact span. Also the key of the partial "
+                      + "index idx_spans_tool_execution_call_id (V20).",
+                  List.of("V20"),
                   TuningProperties::getToolCallIdAttribute))),
 
       new CatalogGroup(
@@ -126,9 +128,11 @@ public class TuningPropertyCatalog {
               CatalogEntry.plain("toolSpanName",
                   "Span name wrapping a single tool invocation",
                   TuningProperties::getToolSpanName),
-              CatalogEntry.plain("toolExecutionSpanName",
+              CatalogEntry.mirrored("toolExecutionSpanName",
                   "Leaf span timing one tool execution — the correlation target, distinct from the "
-                      + "wrapper span it shares a tool-call id with",
+                      + "wrapper span it shares a tool-call id with. Also the predicate of the "
+                      + "partial index idx_spans_tool_execution_call_id (V20).",
+                  List.of("V20"),
                   TuningProperties::getToolExecutionSpanName),
               CatalogEntry.mirrored("llmRequestSpanName",
                   "Leaf span timing one LLM request. The span_efforts view restricts its correlation "
@@ -180,6 +184,24 @@ public class TuningPropertyCatalog {
                   "Present only on turns from inside a subagent run. Its absence marks a main-loop "
                       + "turn; the value itself is not a usable agent identifier.",
                   TuningProperties::getAgentNameAttribute))),
+
+      new CatalogGroup(
+          "Cost breakdown",
+          "Partitions api_request spend into work categories for the Cost page. Not SQL-mirrored: "
+              + "the category query is already gated by the indexed event_name column.",
+          List.of(
+              CatalogEntry.plain("querySourceAttribute",
+                  "Attribute naming how a request was issued (sdk, agent:*, compact, ...). Distinct "
+                      + "vocabulary from the query_source attribute on the cost counter — the two "
+                      + "pipelines label the same traffic differently.",
+                  TuningProperties::getQuerySourceAttribute),
+              CatalogEntry.plain("subagentQuerySourcePrefix",
+                  "Prefix marking a subagent-issued request on querySourceAttribute",
+                  TuningProperties::getSubagentQuerySourcePrefix),
+              CatalogEntry.plain("mainLoopQuerySources",
+                  "querySourceAttribute values classified as ordinary main-loop requests; anything "
+                      + "else not carrying the subagent prefix is auxiliary",
+                  TuningProperties::getMainLoopQuerySources))),
 
       new CatalogGroup(
           "Sessions & prompts",

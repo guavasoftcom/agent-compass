@@ -8,6 +8,10 @@ export interface TokenSummaryCard {
   sub?: ReactNode;
   /** Paint the value with the Aurora violet→pink gradient. */
   accent?: boolean;
+  /** Forwarded to `StatCard`'s `infoTooltip` — an inline info-icon caveat next to the label. */
+  infoTooltip?: ReactNode;
+  /** Forwarded to `StatCard`'s `infoTooltipSeverity`. */
+  infoTooltipSeverity?: 'info' | 'warning';
 }
 
 export interface TokenSummaryCardsProps {
@@ -35,6 +39,8 @@ const TokenSummaryCards = ({ cards }: TokenSummaryCardsProps) => {
           value={card.value}
           sub={card.sub}
           accent={card.accent}
+          infoTooltip={card.infoTooltip}
+          infoTooltipSeverity={card.infoTooltipSeverity}
           displayFont
         />
       ))}

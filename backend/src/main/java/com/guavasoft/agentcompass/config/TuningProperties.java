@@ -257,6 +257,40 @@ public class TuningProperties {
   private String modelAttribute = "model";
 
   /**
+   * Attribute key on an {@link #apiRequestEventName} log record naming how the
+   * request was issued (e.g. {@code sdk}, {@code agent:builtin:Explore},
+   * {@code compact}, {@code generate_session_title}). Drives the Cost page's
+   * work-category partition: a request whose value starts with
+   * {@link #subagentQuerySourcePrefix} is a subagent call, one whose value is
+   * in {@link #mainLoopQuerySources} is a main-loop call, and everything else
+   * (skill-tagged aside) is auxiliary. Distinct vocabulary from the
+   * {@code query_source} attribute on {@link #costUsageMetric} — the two
+   * pipelines label the same traffic differently (counters emit {@code main} /
+   * {@code auxiliary} / {@code subagent}), so this property is deliberately
+   * read only against {@link #apiRequestEventName} logs, never the counter.
+   */
+  private String querySourceAttribute = "query_source";
+
+  /**
+   * Prefix (including the separator) that {@link #querySourceAttribute}
+   * carries on every subagent-issued request (e.g. {@code agent:custom},
+   * {@code agent:builtin:Explore}). Matched with SQL {@code starts_with()},
+   * not {@code LIKE} — same reasoning as {@link #mcpSpanToolPrefix}: an
+   * overridden prefix containing {@code _} or {@code %} would otherwise be
+   * interpreted as a wildcard rather than a literal character.
+   */
+  private String subagentQuerySourcePrefix = "agent:";
+
+  /**
+   * {@link #querySourceAttribute} values that mark an ordinary main-loop
+   * request. A request outside this list and not carrying the
+   * {@link #subagentQuerySourcePrefix} is bucketed as auxiliary (compaction,
+   * session-title generation, web-fetch apply, etc.) on the Cost page's
+   * work-category breakdown.
+   */
+  private List<String> mainLoopQuerySources = List.of("sdk", "repl_main_thread");
+
+  /**
    * Attribute key present on {@link #apiRequestEventName} log records emitted
    * from inside a subagent run. Its absence is what marks a main-loop turn,
    * which is how the subagent-usage aggregation finds the turn that dispatched
