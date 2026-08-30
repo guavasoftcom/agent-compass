@@ -196,6 +196,7 @@ tuning.tool-attribute=tool_name
 
 All under `/api`, consumed by the React dashboard. Most accept a time window as either `?minutes=` or `?startTimestamp=&endTimestamp=` — see the Swagger UI for full parameter lists.
 
+- `GET /api/cost/breakdown` — total spend, delta vs. the equal prior window, burn rate, 30-day projection, a work-category partition (main loop / subagent / skill / auxiliary), a stacked spend-over-time trend, a (model, effort) cost-drivers grid, and the top sessions by spend. Measured exclusively from `api_request` log records — see the "Token and cost figures come from two pipelines" section below for why this differs from the counter-derived cost KPIs on Tokens and Sessions.
 - `GET /api/logs` — log records, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/logs/histogram` (severity histogram), `/api/logs/facets` (filter-rail counts), and `/api/logs/attributes` / `/attribute-keys` / `/attribute-values` autocomplete.
 - `GET /api/metrics` — raw metric points, offset-paged (`page`/`size`, size clamped to 500, `totalCount` in the body); plus `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
 - `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `context-footprint`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`. `skill-usage` and `subagent-usage` rows carry a `byModel` split of their call count. `context-footprint` ranks tools by the total bytes their results pushed into the context window; its `estimatedTokens` is `bytes / 4`, an estimate for ranking only, never billed spend.
@@ -216,6 +217,7 @@ Sections: failures by root cause, path near-misses, redundant file reads, edit f
 
 ## Frontend pages
 
+- **Cost** — where spend went: work-category partition (main loop / subagent / skill / auxiliary), spend over time, a (model, effort) cost-drivers grid, and the top sessions by spend, each with a drill-down dialog.
 - **Tool Usage** — tabbed section: call mix and latency, reliability (failure rates, denials, repeats), skills & subagents.
 - **Token Usage** — token composition, per-model breakdown, and cost.
 - **Sessions** — session list with summary KPIs, per-session token usage, cache efficiency, and a first-prompt preview per row; clicking a row opens a detail drawer with its per-turn prompt timeline (model, cost, token breakdown, tool calls).
