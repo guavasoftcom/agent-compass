@@ -419,7 +419,10 @@ public class LogService {
         resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
     Map<Integer, Double> backgroundCostByTurn = new HashMap<>();
     Map<Integer, List<SessionPromptToolCount>> backgroundToolsByTurn = new HashMap<>();
-    applyTraceCorrelatedActivity(promptRows, costByTurn, toolsByTurn, backgroundCostByTurn, backgroundToolsByTurn);
+    Map<Integer, SessionTokenBreakdown> traceTokensByTurn = new HashMap<>();
+    Map<Integer, String> traceModelByTurn = new HashMap<>();
+    applyTraceCorrelatedActivity(promptRows, costByTurn, toolsByTurn, backgroundCostByTurn, backgroundToolsByTurn,
+        traceTokensByTurn, traceModelByTurn);
     Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
@@ -436,14 +439,14 @@ public class LogService {
               (Instant) row[0],
               (String) row[1],
               (String) row[2],
-              requestRollup.model(),
+              traceModelByTurn.getOrDefault(turnIndex, requestRollup.model()),
               // Prefer the turn's trace-correlated total (when its trace has one) over
               // the turn's own prompt-id-scoped request sum -- a fire-and-forget
               // subagent this turn dispatched can keep issuing requests stamped with a
               // LATER turn's prompt id, so the prompt-id-scoped sum alone
               // undercounts. See applyTraceCorrelatedActivity.
               costByTurn.getOrDefault(turnIndex, requestRollup.costUsd()),
-              requestRollup.tokens(),
+              traceTokensByTurn.getOrDefault(turnIndex, requestRollup.tokens()),
               toolsByTurn.getOrDefault(turnIndex, List.of()),
               promptId,
               requestRollup.requestCount(),
@@ -454,9 +457,9 @@ public class LogService {
               (Instant) row[0],
               (String) row[1],
               (String) row[2],
-              turnTokenRollup.modelByTurn().get(turnIndex),
+              traceModelByTurn.getOrDefault(turnIndex, turnTokenRollup.modelByTurn().get(turnIndex)),
               costByTurn.get(turnIndex),
-              turnTokenRollup.tokensByTurn().get(turnIndex),
+              traceTokensByTurn.getOrDefault(turnIndex, turnTokenRollup.tokensByTurn().get(turnIndex)),
               toolsByTurn.getOrDefault(turnIndex, List.of()),
               promptId,
               0L,
@@ -568,11 +571,13 @@ public class LogService {
   private static final int PROMPT_ROW_TRACE_ID = 2;
   private static final int PROMPT_ROW_PROMPT_ID = 3;
 
-  // Overrides the metric-bucketed per-turn cost AND the wall-clock-bucketed
-  // per-turn tool list with the turn trace's own correlated activity, wherever
-  // the turn has a trace id. Also fills the two background-* out maps with
-  // whatever portion of that activity landed after the trace's own root span
-  // closed -- see findCostSplitByTraceIds/findToolEventsSplitByTraceIds.
+  // Overrides the metric-bucketed per-turn cost, the wall-clock-bucketed
+  // per-turn tool list, AND the prompt-id-scoped per-turn token total and model
+  // with the turn trace's own correlated activity, wherever the turn has a
+  // trace id. Also fills the two background-* out maps with whatever portion of
+  // that activity landed after the trace's own root span closed -- see
+  // findCostSplitByTraceIds/findToolEventsSplitByTraceIds/findTokenSplitByTraceIds/
+  // findModelSplitByTraceIds.
   //
   // COST: resolveCostPerTurn (interval bucketing) and the caller's REQUEST-
   // attribution branch (prompt-id joining) both bucket a request by WHEN it
@@ -611,15 +616,27 @@ public class LogService {
   // interval bucketing gave them -- the shared-trace case is rare and
   // unrelated to the detached-subagent bug this method fixes.
   //
+  // TOKENS and MODEL: aggregateApiRequestTurnsForSession (the REQUEST branch's
+  // own rollup) and resolveModelAndTokensPerTurn (the INTERVAL branch's) have
+  // the identical disagreement COST does, for the identical reason -- the
+  // former groups by prompt id, the latter buckets by wall-clock window, and
+  // neither is the trace id. Overridden the same "first turn of the trace
+  // only" way tools are (not the "explicitly cleared" way cost is): a present
+  // trace with a token/model split is authoritative, and later turns sharing
+  // that trace keep whatever their own rollup already gave them.
+  //
   // Turns predating trace correlation (no trace id) keep the metric-bucketed
-  // cost and wall-clock-bucketed tools: there is no trace to contradict, so
-  // the existing behaviour is left alone rather than zeroed.
+  // cost, wall-clock-bucketed tools, and prompt-id-scoped tokens/model: there
+  // is no trace to contradict, so the existing behaviour is left alone rather
+  // than zeroed.
   private void applyTraceCorrelatedActivity(
       List<Object[]> promptRows,
       Map<Integer, Double> costByTurn,
       Map<Integer, List<SessionPromptToolCount>> toolsByTurn,
       Map<Integer, Double> backgroundCostByTurn,
-      Map<Integer, List<SessionPromptToolCount>> backgroundToolsByTurn) {
+      Map<Integer, List<SessionPromptToolCount>> backgroundToolsByTurn,
+      Map<Integer, SessionTokenBreakdown> tokensByTurn,
+      Map<Integer, String> modelByTurn) {
     List<String> traceIds = promptRows.stream()
         .map(row -> (String) row[PROMPT_ROW_TRACE_ID])
         .filter(Objects::nonNull)
@@ -653,6 +670,24 @@ public class LogService {
       toolSplitByTraceId
           .computeIfAbsent(traceId, key -> new HashMap<>())
           .put(toolName, new long[] {ownCount, backgroundCount});
+    }
+
+    Map<String, SessionTokenBreakdown> tokenTotalByTraceId = new HashMap<>();
+    for (Object[] row : logRecordRepository.findTokenSplitByTraceIds(
+        traceIds, tuningProperties.getApiRequestEventName())) {
+      tokenTotalByTraceId.put((String) row[0], new SessionTokenBreakdown(
+          ((Number) row[1]).longValue(),
+          ((Number) row[2]).longValue(),
+          ((Number) row[3]).longValue(),
+          ((Number) row[4]).longValue()));
+    }
+
+    Map<String, String> modelByTraceId = new HashMap<>();
+    for (Object[] row : logRecordRepository.findModelSplitByTraceIds(
+        traceIds, tuningProperties.getApiRequestEventName(), tuningProperties.getModelAttribute())) {
+      if (row[1] != null) {
+        modelByTraceId.put((String) row[0], (String) row[1]);
+      }
     }
 
     Set<String> traceIdsAlreadySeen = new HashSet<>();
@@ -701,6 +736,19 @@ public class LogService {
       List<SessionPromptToolCount> backgroundTools = toolCountsFromSplit(toolSplit, /* includeOwn= */ false);
       if (!backgroundTools.isEmpty()) {
         backgroundToolsByTurn.put(turnIndex, backgroundTools);
+      }
+
+      // Same "first turn of the trace, not reprocessed on later shared turns" scope as
+      // tools above, for the same reason -- see the TOOLS section of this method's
+      // top comment.
+      SessionTokenBreakdown tokenTotal = tokenTotalByTraceId.get(traceId);
+      if (tokenTotal != null) {
+        tokensByTurn.put(turnIndex, tokenTotal);
+      }
+
+      String model = modelByTraceId.get(traceId);
+      if (model != null) {
+        modelByTurn.put(turnIndex, model);
       }
     }
   }

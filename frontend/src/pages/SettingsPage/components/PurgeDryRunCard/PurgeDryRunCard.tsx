@@ -29,15 +29,15 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import GhostButton from '../../../components/GhostButton';
-import SegmentedToggle from '../../../components/SegmentedToggle';
+import GhostButton from '../../../../components/GhostButton';
+import SegmentedToggle from '../../../../components/SegmentedToggle';
 import {
   formatBytes,
   formatCompact,
   formatTimestamp,
-} from '../../../lib/format';
-import PurgeConfirmDialog from './PurgeConfirmDialog';
-import type { PurgePreview, PurgeResult } from '../settingsTypes';
+} from '../../../../lib/format';
+import PurgeConfirmDialog from '../PurgeConfirmDialog';
+import type { PurgePreview, PurgeResult } from '../../settingsTypes';
 
 export interface PurgeDryRunCardProps {
   purgePreview: PurgePreview | null;

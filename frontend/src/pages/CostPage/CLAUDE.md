@@ -31,6 +31,7 @@ CostPage/
 │                               emptyBreakdown fallback, selectedSession (dialog state)
 ├── CostPageView.tsx            view — tab-driven KPI strips, PillTabs strip, trend chart wiring,
 │                               donuts (Skill/Subagent/Model mix); no queries, no context
+├── CostPageView.test.tsx       vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── costDerivations.ts          pure derivations (CATEGORY_ORDER/LABELS, categoryColorIndex,
 │                               inFixedCategoryOrder, buildTrendSeries, buildModelMix)
 ├── costDerivations.test.ts     vitest coverage for the above

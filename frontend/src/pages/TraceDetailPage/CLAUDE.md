@@ -37,6 +37,7 @@ TraceDetailPage.tsx          container — useParams, two useQuery calls, five u
 TraceDetailPageView.tsx      view — owns all UI state (collapsed set, selected span,
                              zoom ZoomView), derives visible row list per-render,
                              computes bar geometry, and composes all sub-components
+TraceDetailPageView.test.tsx vitest coverage for the view (renderWithProviders, prop fixtures)
 ```
 
 The view renders four sub-components inline (no further drilling):
@@ -116,6 +117,8 @@ TraceDetailPage/
     │   │                             IdentityPill (session + trace) right after the h1, + SummaryStrip,
     │   │                             whose KPI tiles are Cost/Duration/Spans/Tool calls/Depth/Errors
     │   │                             (Cost leads, gradient-emphasized)
+    │   ├── TraceDetailHeaderView.test.tsx  vitest coverage for the view (renderWithProviders,
+    │   │                             prop fixtures)
     │   ├── IdentityPill.tsx           breadcrumb-row identity pill: one bordered/rounded container, two
     │   │                             segments sharing it (no gap, a 1px divider between). Both segments
     │   │                             are plain, uncopyable text — eyebrow label + mono value (`title`
@@ -145,6 +148,8 @@ TraceDetailPage/
     │   │                             SpanInspectorDrawer uses — see SwitchTraceModalRow) so a long
     │   │                             ordinary prompt can be opened full-size rather than only ever
     │   │                             showing as a clipped line
+    │   ├── SwitchTraceModalView.test.tsx  vitest coverage for the view (renderWithProviders,
+    │   │                             prop fixtures)
     │   ├── SwitchTraceModalRow.tsx    one row: 5-column grid — time / prompt / cost / tokens / flag —
     │   │                             newest (current) at the bottom, the order the endpoint already
     │   │                             returns. The current row (matching the page's own traceId) gets the

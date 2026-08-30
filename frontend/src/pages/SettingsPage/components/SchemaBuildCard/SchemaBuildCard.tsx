@@ -15,8 +15,8 @@ see <https://www.gnu.org/licenses/>.
 */
 import type { ReactNode } from 'react';
 import { alpha, Box, Paper, Tooltip, Typography } from '@mui/material';
-import { formatRelativeTime, formatTimestamp } from '../../../lib/format';
-import type { SystemBuild } from '../settingsTypes';
+import { formatRelativeTime, formatTimestamp } from '../../../../lib/format';
+import type { SystemBuild } from '../../settingsTypes';
 
 export interface SchemaBuildCardProps {
   systemBuild: SystemBuild | null;

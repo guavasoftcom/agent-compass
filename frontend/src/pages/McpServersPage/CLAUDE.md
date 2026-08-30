@@ -30,6 +30,7 @@ McpServersPage/
 │                              rolls the per-tool rows up per server, derives KPIs + colors
 ├── McpServersPageView.tsx    view — StatCard strip + DonutCard + ServerRankingCard
 │                              (BreakdownList) + McpToolDetailTable; no queries, no context
+├── McpServersPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── mcpDerivations.ts         pure derivations (rollupByServer, withShare,
 │                              buildServerColorIndexes)
 ├── mcpDerivations.test.ts    vitest coverage for the above

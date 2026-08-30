@@ -20,8 +20,8 @@ import StatCard from '../../components/StatCard';
 import DonutCard from '../../components/DonutCard';
 import { colorForIndex } from '../../theme/theme';
 import type { HookExecutionRow, ToolDenialRow } from '../../api';
-import ToolDenialsCard from './ToolDenialsCard';
-import HookExecutionsCard from './HookExecutionsCard';
+import ToolDenialsCard from './components/ToolDenialsCard';
+import HookExecutionsCard from './components/HookExecutionsCard';
 
 export interface PermissionDenialsPageViewProps {
   denialRows: ToolDenialRow[];

@@ -16,14 +16,14 @@ see <https://www.gnu.org/licenses/>.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { alpha, Box, ButtonBase, Paper, Stack, Tooltip, Typography, useTheme } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import SearchInput from '../../../components/SearchInput';
-import { fontFamilies } from '../../../theme/typography';
+import SearchInput from '../../../../components/SearchInput';
+import { fontFamilies } from '../../../../theme/typography';
 import {
   filterConfigurationGroups,
   sqlMirroringExplanation,
   sqlMirroringLabel,
-} from '../settingsDerivations';
-import type { ConfigurationEntry, EffectiveConfiguration, SqlMirroring } from '../settingsTypes';
+} from '../../settingsDerivations';
+import type { ConfigurationEntry, EffectiveConfiguration, SqlMirroring } from '../../settingsTypes';
 
 export interface EffectiveConfigurationCardProps {
   configuration: EffectiveConfiguration | null;

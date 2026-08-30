@@ -26,18 +26,19 @@ measured query plans and timings that shaped the SQL — read it before changing
 ## Files
 
 ```
-SettingsPage.tsx                          container: 5 useQuery, retentionDays state, refetch-all
-SettingsPageView.tsx                      view: PageLayout + KPI strip + 5 sections
-settingsApi.ts                            fetchers over the shared api/http getJson
-settingsTypes.ts                          interfaces mirroring the Java records
-settingsDerivations.ts                    pure helpers (freshness, shares, spans, config filter)
-settingsDerivations.test.ts               24 cases over those helpers
-components/StorageBreakdownCard.tsx       ranked share list + exact heap/index/TOAST table
-components/IngestHealthCard.tsx           per-signal freshness chip + volume windows
-components/SchemaBuildCard.tsx            version strip + scrollable flyway_schema_history table
-components/EffectiveConfigurationCard.tsx searchable tuning.* list with the SQL-mirroring chip
-components/PurgeDryRunCard.tsx            retention estimate, caveats, copyable SQL, purge button
-components/PurgeConfirmDialog.tsx         type-to-confirm dialog gating the purge
+SettingsPage.tsx                                   container: 5 useQuery, retentionDays state, refetch-all
+SettingsPageView.tsx                               view: PageLayout + KPI strip + 5 sections
+SettingsPageView.test.tsx                          vitest coverage for the view (renderWithProviders, prop fixtures)
+settingsApi.ts                                     fetchers over the shared api/http getJson
+settingsTypes.ts                                   interfaces mirroring the Java records
+settingsDerivations.ts                             pure helpers (freshness, shares, spans, config filter)
+settingsDerivations.test.ts                        24 cases over those helpers
+components/StorageBreakdownCard/                   ranked share list + exact heap/index/TOAST table
+components/IngestHealthCard/                       per-signal freshness chip + volume windows
+components/SchemaBuildCard/                        version strip + scrollable flyway_schema_history table
+components/EffectiveConfigurationCard/             searchable tuning.* list with the SQL-mirroring chip
+components/PurgeDryRunCard/                        retention estimate, caveats, copyable SQL, purge button
+components/PurgeConfirmDialog/                     type-to-confirm dialog gating the purge
 index.ts
 ```
 

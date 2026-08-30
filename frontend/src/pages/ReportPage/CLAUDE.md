@@ -26,6 +26,7 @@ self-tuning. Backend counterpart: `ReportController` → `ReportService`
 ReportPage/
 ├── ReportPage.tsx      container — window context, report query, copy handler
 ├── ReportPageView.tsx  view — PageLayout + monospace pre block
+├── ReportPageView.test.tsx  vitest coverage for the view (renderWithProviders, prop fixtures)
 └── index.ts
 ```
 

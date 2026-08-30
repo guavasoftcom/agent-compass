@@ -38,7 +38,7 @@ export interface TracesExplorerContextValue extends TracesExplorer {
   isPolling: boolean;
 }
 
-const TracesExplorerContext = createContext<TracesExplorerContextValue | null>(null);
+export const TracesExplorerContext = createContext<TracesExplorerContextValue | null>(null);
 
 export const useTracesExplorerContext = (): TracesExplorerContextValue => {
   const value = useContext(TracesExplorerContext);

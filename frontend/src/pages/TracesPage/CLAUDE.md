@@ -77,6 +77,10 @@ new fields flow through automatically), then consume via context where needed.
 TracesPage/
 ├── TracesPage.tsx            container (provider wrapper only)
 ├── TracesPageView.tsx        view — context in, layout out, no props
+├── TracesPageView.test.tsx   vitest coverage for the view — renders inside a
+│                             TracesExplorerContext.Provider fixture value rather than props,
+│                             since this view is the documented context-pattern exception
+│                             (takes zero props, reads useTracesExplorerContext())
 ├── TracesExplorerContext.tsx provider + useTracesExplorerContext(); window resolve + reload poll
 ├── useTracesExplorer.ts      the behavior hook (returns TracesExplorer)
 ├── tracesApi.ts              the 5 fetch* functions + USE_SAMPLE_DATA; re-exports traceTypes +
@@ -102,14 +106,26 @@ TracesPage/
 ├── components/            each folder = X.tsx (container) + XView.tsx (view) + index.ts, except
 │   │                      the two pure leaves which are single-file views
 │   ├── TraceHistogram/       throughput bars + p95 polyline + legend + bar-zoom (context, no fetch)
+│   │   └── TraceHistogramView.test.tsx  vitest coverage for the view (renderWithProviders,
+│   │                         prop fixtures)
 │   ├── TraceFacetRail/       search box + status/operation/service/duration/session facets (context)
 │   ├── TraceStream/          cursor-paged infinite scroll-back (context)
+│   │   └── TraceStreamView.test.tsx     vitest coverage for the view (renderWithProviders,
+│   │                         prop fixtures)
 │   ├── TraceTable/           offset-paged table + shared TablePager footer (context)
+│   │   └── TraceTableView.test.tsx      vitest coverage for the view (renderWithProviders,
+│   │                         prop fixtures)
 │   ├── TraceFilterChips/     active zoom + filter chips + "Clear all" (context)
+│   │   └── TraceFilterChipsView.test.tsx  vitest coverage for the view (renderWithProviders,
+│   │                         prop fixtures)
 │   ├── TraceViewToggle/      Stream|Table toggle — thin wrapper over shared StreamTableToggle
 │   ├── TraceTailToggle/      live-tail pill (pure prop-driven leaf, single file)
 │   ├── TraceSortDropdown/    sort menu (container owns open state; prop-driven leaf)
+│   │   └── TraceSortDropdownView.test.tsx  vitest coverage for the view (renderWithProviders,
+│   │                         prop fixtures)
 │   ├── TraceSummaryInline/   expanded-row span summary; container owns query (prop: trace)
+│   │   └── TraceSummaryInlineView.test.tsx  vitest coverage for the view (renderWithProviders,
+│   │                         prop fixtures)
 │   └── traceColors.ts        service → color (also imported by TraceDetailPage)
 └── index.ts
 ```

@@ -26,14 +26,14 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { fontFamilies } from '../../../theme/typography';
+import { fontFamilies } from '../../../../theme/typography';
 import {
   formatCompact,
   formatRelativeTime,
   formatTimestamp,
-} from '../../../lib/format';
-import { ingestFreshness, type IngestFreshness } from '../settingsDerivations';
-import type { IngestHealth } from '../settingsTypes';
+} from '../../../../lib/format';
+import { ingestFreshness, type IngestFreshness } from '../../settingsDerivations';
+import type { IngestHealth } from '../../settingsTypes';
 
 export interface IngestHealthCardProps {
   ingestHealth: IngestHealth | null;

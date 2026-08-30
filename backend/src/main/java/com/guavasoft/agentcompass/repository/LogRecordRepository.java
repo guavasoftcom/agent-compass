@@ -2016,6 +2016,64 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("rootSpanNamePattern") String rootSpanNamePattern);
 
+  // Per-trace token totals for the given traces -- the token counterpart to
+  // findCostSplitByTraceIds, fixing the same detached-subagent misattribution for
+  // tokens instead of cost. aggregateApiRequestTurnsForSession groups purely by
+  // prompt.id, so a fire-and-forget subagent's background api_request logs (which
+  // keep the trace_id of the trace that dispatched them, but land under whichever
+  // LATER turn's prompt.id happened to be current when they were logged) get
+  // summed wholesale into that later turn's token figure instead of the trace
+  // that actually issued them -- observed on live data inflating a turn's tokens
+  // by an order of magnitude versus GET /api/traces/{traceId}/summary for the
+  // same trace. Grouping by trace_id instead removes the misattribution the same
+  // way findCostSplitByTraceIds already does for cost.
+  //
+  // No own/background split here (unlike cost and tools): SessionPrompt carries a
+  // single tokens field with no backgroundTokens counterpart to fill, so the full
+  // per-trace total is all a caller needs.
+  // Returns (trace_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens).
+  @Query(value = """
+      SELECT
+        lr.trace_id,
+        COALESCE(SUM((lr.attributes ->> 'input_tokens')::numeric), 0)::bigint AS input_tokens,
+        COALESCE(SUM((lr.attributes ->> 'output_tokens')::numeric), 0)::bigint AS output_tokens,
+        COALESCE(SUM((lr.attributes ->> 'cache_creation_tokens')::numeric), 0)::bigint AS cache_creation_tokens,
+        COALESCE(SUM((lr.attributes ->> 'cache_read_tokens')::numeric), 0)::bigint AS cache_read_tokens
+      FROM log_records lr
+      WHERE lr.event_name = :apiRequestEventName
+        AND lr.trace_id IN :traceIds
+      GROUP BY lr.trace_id
+      """, nativeQuery = true)
+  List<Object[]> findTokenSplitByTraceIds(
+      @Param("traceIds") Collection<String> traceIds,
+      @Param("apiRequestEventName") String apiRequestEventName);
+
+  // Per-trace dominant model for the given traces -- the model counterpart to
+  // findTokenSplitByTraceIds/findCostSplitByTraceIds, fixing the same
+  // detached-subagent misattribution for model instead of tokens/cost.
+  // aggregateApiRequestTurnsForSession's mode() is grouped purely by prompt.id, so
+  // a fire-and-forget subagent's background api_request logs (which keep the
+  // trace_id of the trace that dispatched them, but land under whichever LATER
+  // turn's prompt.id happened to be current when they were logged) can shift
+  // which model that later turn reports, disagreeing with the model
+  // GET /api/traces/{traceId}/summary derives from the same trace's own spans.
+  // Grouping mode() by trace_id instead removes the misattribution the same way
+  // findTokenSplitByTraceIds already does for tokens.
+  // Returns (trace_id, model).
+  @Query(value = """
+      SELECT
+        lr.trace_id,
+        mode() WITHIN GROUP (ORDER BY lr.attributes ->> :modelAttribute) AS model
+      FROM log_records lr
+      WHERE lr.event_name = :apiRequestEventName
+        AND lr.trace_id IN :traceIds
+      GROUP BY lr.trace_id
+      """, nativeQuery = true)
+  List<Object[]> findModelSplitByTraceIds(
+      @Param("traceIds") Collection<String> traceIds,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("modelAttribute") String modelAttribute);
+
   // Every tool_result event for one session, oldest first, feeding the prompt
   // timeline's per-turn "tools" rollup. Not aggregated here: the caller
   // (LogService) buckets each row into its owning turn by comparing this
