@@ -1377,6 +1377,77 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom);
 
+  // Combines aggregateCostCurrentAndPriorTotals, aggregateTotalTokensCurrentAndPrior,
+  // and aggregateTokenTypeCurrentAndPriorTotals (three round trips) into ONE. The three
+  // legs filter on different metric_name values with different extra predicates (cost
+  // additionally requires session_id IS NOT NULL AND value_double IS NOT NULL; the token
+  // legs carry neither), so a single FILTER-based scan of one metric_name set can't
+  // express all three -- UNION ALL keeps each leg's WHERE clause exact while still
+  // costing one round trip instead of three. A row_type discriminator ('cost' /
+  // 'token_total' / 'token_type') tells the service which leg produced a row, the same
+  // idiom aggregateSessionCountAndDurationCurrentAndPrior's period column already uses;
+  // token_type is NULL on the 'cost' and 'token_total' legs, populated only on
+  // 'token_type' rows (mirroring aggregateTokenTypeCurrentAndPriorTotals's own token_type
+  // column, including a possible NULL for points whose attributes lack the type key).
+  //
+  // Every leg keeps the exact predicate and half-open current/prior FILTER shape of the
+  // query it replaces, so output is row-for-row equivalent (up to which query produced
+  // each number) to calling the three original methods -- current_total/prior_total are
+  // cast to double precision on every leg (not bigint on the token legs) purely so
+  // UNION ALL's legs agree on a type; the service already reads every current/prior total
+  // in this class through the same doubleAt helper.
+  @Query(value = """
+      SELECT
+        'cost'       AS row_type,
+        NULL         AS token_type,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::double precision
+          AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::double precision
+          AS prior_total
+      FROM metric_points
+      WHERE metric_name = :costMetric
+        AND session_id IS NOT NULL
+        AND value_double IS NOT NULL
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+
+      UNION ALL
+
+      SELECT
+        'token_total' AS row_type,
+        NULL          AS token_type,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::double precision
+          AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::double precision
+          AS prior_total
+      FROM metric_points
+      WHERE metric_name = :tokenMetric
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+
+      UNION ALL
+
+      SELECT
+        'token_type' AS row_type,
+        attributes ->> :tokenTypeAttribute AS token_type,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::double precision
+          AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :priorFrom AND timestamp < :from), 0)::double precision
+          AS prior_total
+      FROM metric_points
+      WHERE metric_name = :tokenMetric
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+      GROUP BY token_type
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricsTotalsCombined(
+      @Param("costMetric") String costMetric,
+      @Param("tokenMetric") String tokenMetric,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom);
+
   // Session count (sessions) and average whole-session wall-clock duration
   // (avg_duration_min) for the current and prior period, in one scan.
   //
@@ -1551,5 +1622,190 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("activeTimeMetric") String activeTimeMetric,
       @Param("start") Instant start,
       @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // ---------------------------------------------------------------------------
+  // Consolidated trend sparklines (both periods, one round trip)
+  // ---------------------------------------------------------------------------
+  //
+  // The pair below replace FOUR of TrendService's eight metric_points sparkline
+  // calls -- aggregateCostAndTokenTrend(priorFrom, from) / (from, to) and
+  // aggregateSessionCountAndDurationTrend(priorFrom, from) / (from, to) -- with
+  // ONE call each, by computing both the current and prior period's buckets in
+  // the same scan instead of calling the single-period query twice with a
+  // different bucket origin. A "period" discriminator column (CASE on
+  // timestamp, exactly the current = [:from, :to] / prior = [:priorFrom, :from)
+  // half-open split every current/prior query in this class already uses)
+  // replaces the two separate calls; the service reads 'current' rows into its
+  // "after" arrays and 'prior' rows into "before", the same split
+  // aggregateSessionCountAndDurationCurrentAndPrior's period column already
+  // drives.
+  //
+  // Each period buckets against its OWN origin (:from for current, :priorFrom
+  // for prior) so bucket 0 always starts at that period's own lower bound,
+  // matching what two separate date_bin(..., :start) calls with different
+  // :start values already produced -- the CASE on bucket origin picks :from or
+  // :priorFrom per row before handing it to date_bin, rather than binning both
+  // periods against one shared origin.
+
+  // Cost, token, and session (count + whole-session avg duration) sparklines
+  // for both periods in one scan. cost_token_bucketed mirrors
+  // aggregateCostAndTokenTrend's FILTER-based per-bucket sums; session_window /
+  // session_span / session_bucketed mirror aggregateSessionCountAndDurationTrend's
+  // CTE chain verbatim (same value_delta IS DISTINCT FROM 0 membership test
+  // against the exporter's zero-delta re-exports, same unbounded whole-session
+  // first_seen/last_seen join back to metric_points -- see that query's Javadoc
+  // and the exporter note in backend/CLAUDE.md). The two families are computed
+  // as separate per-(period, bucket_index) CTEs and combined with a FULL OUTER
+  // JOIN because a bucket can carry cost/token activity with no session
+  // increment or vice versa; COALESCE keeps every combination at zero rather
+  // than dropping the bucket.
+  //
+  // Row shape: (period, bucket_index, cost_total, token_total, session_count,
+  // avg_duration_seconds). A bucket absent from both source CTEs never appears
+  // (same sparse-rows contract as every other bucketed query here) -- the
+  // service zero-fills a dense SPARKLINE_POINTS-length array exactly as it does
+  // today.
+  @Query(value = """
+      WITH cost_token_bucketed AS (
+        SELECT
+          period,
+          bucket_index,
+          COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :costMetric), 0)::double precision AS cost_total,
+          COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :tokenMetric), 0)::bigint           AS token_total
+        FROM (
+          SELECT
+            CASE WHEN timestamp >= :from AND timestamp <= :to THEN 'current'
+                 WHEN timestamp >= :priorFrom AND timestamp < :from THEN 'prior' END AS period,
+            FLOOR(EXTRACT(EPOCH FROM (
+                date_bin(make_interval(secs => :bucketSeconds), timestamp,
+                  CASE WHEN timestamp >= :from THEN CAST(:from AS timestamptz) ELSE CAST(:priorFrom AS timestamptz) END)
+                - CASE WHEN timestamp >= :from THEN CAST(:from AS timestamptz) ELSE CAST(:priorFrom AS timestamptz) END))
+              / :bucketSeconds)::int AS bucket_index,
+            metric_name,
+            value_delta
+          FROM metric_points
+          WHERE metric_name IN (:costMetric, :tokenMetric)
+            AND timestamp >= :priorFrom
+            AND timestamp <= :to
+        ) AS labelled_rows
+        WHERE period IS NOT NULL
+        GROUP BY period, bucket_index
+      ),
+      session_windowed_points AS (
+        SELECT
+          session_id,
+          timestamp,
+          start_timestamp,
+          value_delta,
+          CASE WHEN timestamp >= :from AND timestamp <= :to THEN 'current'
+               WHEN timestamp >= :priorFrom AND timestamp < :from THEN 'prior' END AS period,
+          FLOOR(EXTRACT(EPOCH FROM (
+              date_bin(make_interval(secs => :bucketSeconds), timestamp,
+                CASE WHEN timestamp >= :from THEN CAST(:from AS timestamptz) ELSE CAST(:priorFrom AS timestamptz) END)
+              - CASE WHEN timestamp >= :from THEN CAST(:from AS timestamptz) ELSE CAST(:priorFrom AS timestamptz) END))
+            / :bucketSeconds)::int AS bucket_index
+        FROM metric_points
+        WHERE metric_name IN (:costMetric, :activeTimeMetric)
+          AND session_id IS NOT NULL
+          AND timestamp >= :priorFrom
+          AND timestamp <= :to
+      ),
+      session_window AS (
+        SELECT session_id, period, bucket_index
+        FROM session_windowed_points
+        WHERE period IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
+        GROUP BY session_id, period, bucket_index
+      ),
+      session_span AS (
+        SELECT
+          w.session_id,
+          w.period,
+          w.bucket_index,
+          MIN(COALESCE(p.start_timestamp, p.timestamp))                    AS first_seen,
+          MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
+        FROM session_window w
+        JOIN metric_points p ON p.session_id = w.session_id
+        WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
+        GROUP BY w.session_id, w.period, w.bucket_index
+      ),
+      session_bucketed AS (
+        SELECT
+          period,
+          bucket_index,
+          COUNT(*)::bigint AS session_count,
+          COALESCE(AVG(EXTRACT(EPOCH FROM (last_seen - first_seen))), 0)::double precision AS avg_duration_seconds
+        FROM session_span
+        GROUP BY period, bucket_index
+      )
+      SELECT
+        COALESCE(c.period, s.period)             AS period,
+        COALESCE(c.bucket_index, s.bucket_index) AS bucket_index,
+        COALESCE(c.cost_total, 0)::double precision           AS cost_total,
+        COALESCE(c.token_total, 0)::bigint                    AS token_total,
+        COALESCE(s.session_count, 0)::bigint                  AS session_count,
+        COALESCE(s.avg_duration_seconds, 0)::double precision AS avg_duration_seconds
+      FROM cost_token_bucketed c
+      FULL OUTER JOIN session_bucketed s
+        ON s.period = c.period AND s.bucket_index = c.bucket_index
+      ORDER BY period, bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricsSparklinesCombined(
+      @Param("costMetric") String costMetric,
+      @Param("tokenMetric") String tokenMetric,
+      @Param("activeTimeMetric") String activeTimeMetric,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom,
+      @Param("bucketSeconds") long bucketSeconds);
+
+  // Per-token-type sparkline (cache_read_ratio_pct's three components) for both
+  // periods in one scan, replacing the remaining two aggregateTokenTypeTrend
+  // calls (priorFrom/from and from/to) the same way
+  // aggregateMetricsSparklinesCombined replaces the cost/token/session pair --
+  // one CTE materializes (period, bucket_index) per row via the same CASE/
+  // date_bin-per-own-origin shape, then the outer SELECT groups by those real
+  // columns rather than recomputing the expression (see backend/CLAUDE.md on
+  // why a repeated parameterized expression must not be regrouped directly).
+  //
+  // Row shape: (period, bucket_index, token_type, total). A (period,
+  // bucket_index, token_type) triple with no matching rows is simply absent,
+  // same sparse contract as aggregateTokenTypeTrend; the service still derives
+  // cacheReadRatioPct per bucket from the three token types it cares about and
+  // zero-fills the rest.
+  @Query(value = """
+      WITH token_type_rows AS (
+        SELECT
+          CASE WHEN timestamp >= :from AND timestamp <= :to THEN 'current'
+               WHEN timestamp >= :priorFrom AND timestamp < :from THEN 'prior' END AS period,
+          FLOOR(EXTRACT(EPOCH FROM (
+              date_bin(make_interval(secs => :bucketSeconds), timestamp,
+                CASE WHEN timestamp >= :from THEN CAST(:from AS timestamptz) ELSE CAST(:priorFrom AS timestamptz) END)
+              - CASE WHEN timestamp >= :from THEN CAST(:from AS timestamptz) ELSE CAST(:priorFrom AS timestamptz) END))
+            / :bucketSeconds)::int AS bucket_index,
+          attributes ->> :tokenTypeAttribute AS token_type,
+          value_delta
+        FROM metric_points
+        WHERE metric_name = :tokenMetric
+          AND timestamp >= :priorFrom
+          AND timestamp <= :to
+      )
+      SELECT
+        period,
+        bucket_index,
+        token_type,
+        COALESCE(SUM(value_delta), 0)::bigint AS total
+      FROM token_type_rows
+      WHERE period IS NOT NULL
+      GROUP BY period, bucket_index, token_type
+      ORDER BY period, bucket_index
+      """, nativeQuery = true)
+  List<Object[]> aggregateTokenTypeSparklinesCombined(
+      @Param("tokenMetric") String tokenMetric,
+      @Param("tokenTypeAttribute") String tokenTypeAttribute,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("priorFrom") Instant priorFrom,
       @Param("bucketSeconds") long bucketSeconds);
 }

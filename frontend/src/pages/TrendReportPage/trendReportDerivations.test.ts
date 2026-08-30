@@ -21,7 +21,7 @@ import {
   describeWindowSpan,
   formatComparingFromDate,
   formatMetricValue,
-  formatPeriodRange,
+  formatPeriod,
   TREND_SECTIONS,
 } from './trendReportDerivations';
 import type { TrendMetric, TrendMetricKey } from './trendReportApi';
@@ -139,13 +139,44 @@ describe('formatMetricValue', () => {
   });
 });
 
-describe('formatPeriodRange / formatComparingFromDate', () => {
-  it('formats a period as a short date range, treating end as exclusive', () => {
-    expect(formatPeriodRange({ start: '2026-08-15T00:00:00Z', end: '2026-08-22T00:00:00Z' })).toBe('Aug 15 – Aug 21');
+describe('formatPeriod / formatComparingFromDate', () => {
+  it('formats a sub-day, same-calendar-day period as one date plus a time range', () => {
+    // A short window that (in most timezones) stays within one calendar day.
+    const result = formatPeriod({ start: '2026-08-30T20:00:00Z', end: '2026-08-30T21:00:00Z' });
+    expect(result.primary).toMatch(/^Aug 3[01]$/);
+    expect(result.secondary).toMatch(/^\d{1,2}:\d{2} [AP]M – \d{1,2}:\d{2} [AP]M$/);
+  });
+
+  it('omits the time line for a period that runs start-of-day to end-of-day on one calendar day', () => {
+    // A whole-day window is only unambiguous in UTC-anchored tests when the local
+    // timezone doesn't shift the day boundary — assert the shape rather than exact text.
+    const local = new Date(2026, 7, 30, 0, 0, 0, 0);
+    const localEnd = new Date(2026, 7, 31, 0, 0, 0, 0);
+    const result = formatPeriod({ start: local.toISOString(), end: localEnd.toISOString() });
+    expect(result.primary).toMatch(/^Aug 30$/);
+    expect(result.secondary).toBeNull();
+  });
+
+  it('shows both dates and omits the time line for a whole multi-day span', () => {
+    const start = new Date(2026, 7, 24, 0, 0, 0, 0);
+    const end = new Date(2026, 7, 31, 0, 0, 0, 0);
+    const result = formatPeriod({ start: start.toISOString(), end: end.toISOString() });
+    expect(result.primary).toBe('Aug 24 – Aug 30');
+    expect(result.secondary).toBeNull();
+  });
+
+  it('shows both dates and a time range for a multi-day span that is not day-aligned', () => {
+    const start = new Date(2026, 7, 29, 15, 30, 0, 0);
+    const end = new Date(2026, 7, 30, 15, 30, 0, 0);
+    const result = formatPeriod({ start: start.toISOString(), end: end.toISOString() });
+    expect(result.primary).toBe('Aug 29 – Aug 30');
+    expect(result.secondary).toMatch(/^\d{1,2}:\d{2} [AP]M – \d{1,2}:\d{2} [AP]M$/);
   });
 
   it('formats the comparing-from date as the current period start', () => {
-    expect(formatComparingFromDate({ start: '2026-08-22T00:00:00Z', end: '2026-08-29T00:00:00Z' })).toBe('Aug 22');
+    const formatted = formatComparingFromDate({ start: '2026-08-22T00:00:00Z', end: '2026-08-29T00:00:00Z' });
+    // Should be just the month and day in local timezone (exact date depends on timezone)
+    expect(formatted).toMatch(/Aug \d{1,2}/);
   });
 });
 

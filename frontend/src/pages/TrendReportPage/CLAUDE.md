@@ -31,11 +31,13 @@ TrendReportPage/
 │                              refetchInterval wiring (mirrors MetricsPage.tsx)
 ├── TrendReportPageView.tsx    view — period bar, section headers + metric rows, summary strip;
 │                              no queries, no context
-├── trendReportApi.ts          TrendPeriod/TrendMetric/TrendReport types + fetchTrendReport();
-│                              page-local getJSON helper (mirrors MetricsPage/metricsApi.ts)
+├── trendReportApi.ts          TrendPeriod/TrendMetric/TrendReport types + fetchTrendReport()/
+│                              resolveTrendReportSelection(); page-local getJSON helper
+│                              (mirrors MetricsPage/metricsApi.ts)
+├── trendReportApi.test.ts     vitest coverage for resolveTrendReportSelection's day-snapping
 ├── trendReportDerivations.ts  pure derivations: TREND_SECTIONS, METRIC_LABELS,
 │                              formatMetricValue, computeDelta, computeBeforeSharePct,
-│                              formatPeriodRange/formatComparingFromDate, describeWindowSpan,
+│                              formatPeriod/formatComparingFromDate, describeWindowSpan,
 │                              buildSummaryCallouts
 ├── trendReportDerivations.test.ts   vitest coverage for the above
 ├── components/
@@ -74,8 +76,23 @@ TrendReportPage/
 | `useQuery` | `['trend-report', selectionKey]` | `fetchTrendReport(selection)` → `GET /api/trends?…` |
 
 `selectionKey` follows the same `preset:<minutes>` / `custom:<start>:<end>` pattern as every other
-page. `MetricRow` and `SectionHeader` never fetch — the view derives every row's props from the
-single `report.metrics` bundle.
+page (computed from the *raw* selection, not the day-snapped one below — see the gotcha). `MetricRow`
+and `SectionHeader` never fetch — the view derives every row's props from the single
+`report.metrics` bundle.
+
+- **Windows over 24 hours are snapped to whole calendar days before the request is sent.**
+  `trendReportApi.ts`'s `resolveTrendReportSelection` runs inside `fetchTrendReport`, ahead of
+  `windowQueryParams`: a preset or custom selection spanning more than 24 hours is converted to an
+  explicit `custom` selection whose `startTimestamp`/`endTimestamp` land on 00:00:00.000 / 23:59:59.999
+  of their calendar day, in the **browser's local timezone** (this app runs on the operator's own
+  workstation, not a server whose timezone the browser can't assume). "Last 7 days" therefore
+  becomes the last 7 full calendar days ending today, not "7×24h before this exact instant" — a
+  window like Aug 24 00:00–Aug 30 23:59:59.999 reads unambiguously as seven whole days, and the
+  backend's 7-point sparkline buckets land on clean day boundaries instead of splitting a day
+  mid-afternoon. A window of 24 hours or less is left as an exact rolling instant (day-snapping a
+  1-hour comparison would blow it up into an all-day one) — this is also why `total_cost`'s "1 hour
+  vs. the previous hour" case from earlier in this page's history still shows real hour-level
+  before/after values rather than two overlapping all-day totals.
 
 ## Data flow and semantics
 
@@ -143,7 +160,26 @@ single `report.metrics` bundle.
 - **The "Comparing from" pill and both period-bar date ranges only render once `report` has
   loaded** — before the first successful fetch they show `null`/`—` rather than a guessed date,
   since the page has no window-derived date math of its own; `formatComparingFromDate`/
-  `formatPeriodRange` both read off the server's own `current`/`previous` timestamps.
+  `formatPeriod` both read off the server's own `current`/`previous` timestamps, which already
+  reflect whatever `resolveTrendReportSelection` sent (day-snapped or exact, per the note above).
+- **Each period-bar date renders as two lines, not one string.** `formatPeriod` returns
+  `{ primary, secondary }` — `primary` is the date (`"Aug 30"`, or `"Aug 24 – Aug 30"` when the
+  period spans more than one calendar day) and `secondary` is the time-of-day range
+  (`"3:00 – 3:59 PM"`), rendered smaller and muted directly under `primary`, or omitted entirely
+  when the period runs exactly start-of-day to end-of-day (a time range would just read
+  "12:00 AM – 11:59 PM" on every row). This replaced an earlier single-string format that visibly
+  broke on a multi-day period: formatting the end boundary alone and splicing off its date left a
+  7-day comparison reading as `"Aug 24, 12:00 AM–11:59 PM"` — syntactically a single day, with the
+  other six silently dropped. Don't collapse this back into one string without re-solving that
+  case: a multi-day, non-day-aligned span needs `"Aug 29 – Aug 30"` as `primary`, not one end's
+  date awkwardly fused to the other's time.
+- **`TrendReportPage.tsx`'s `selectionKey` is built from the raw selection, not the day-snapped
+  one `fetchTrendReport` actually requests.** A `preset:10080` key stays stable all day even though
+  the day-snapped request window it resolves to shifts forward at local midnight — relying on
+  `staleTime`/the 60s auto-refresh poll to eventually pick up the new day rather than an
+  immediate cache-key change. If a "Last 7 days" comparison ever needs to flip to the new day the
+  instant it turns, key on `resolveTrendReportSelection(selection)`'s resolved bounds instead of
+  the raw preset.
 - **The initial load (`isLoading && !report`) renders full skeleton content, not a spinner/text
   placeholder.** `TrendReportPageView`'s `showSkeleton` flag drives: a pill-shaped `Skeleton` for
   the "Comparing from" chip, `Skeleton` text in place of both period-bar date labels, the *real*

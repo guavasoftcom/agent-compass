@@ -24,35 +24,43 @@ export interface WindowSelectorProps {
   windows?: readonly WindowOption[];
 }
 
+const pad = (n: number): string => String(n).padStart(2, '0');
+
 const formatRangeBoundary = (isoString: string): string => {
   const date = new Date(isoString);
-  return date.toLocaleString(undefined, {
+  return date.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
   });
 };
 
-// `<input type="datetime-local">` consumes/emits "YYYY-MM-DDTHH:mm" in local time, but the
-// API speaks UTC ISO-8601. These two helpers bridge the gap so the user types in their
-// local clock while we store / send absolute timestamps.
-const isoToLocalInput = (isoString: string): string => {
+// The calendar's day cells emit/consume plain "YYYY-MM-DD" local-date strings — no
+// time-of-day input, so every custom range is a whole number of calendar days. These
+// helpers bridge that to the API's UTC ISO-8601 instants: a picked day always expands
+// to 00:00:00.000 (start) or 23:59:59.999 (end) of that day in the browser's local
+// timezone, since this app runs on the operator's own workstation.
+const isoToLocalDateInput = (isoString: string): string => {
   const date = new Date(isoString);
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 };
 
-const localInputToIso = (localValue: string): string | null => {
+const parseLocalDateInput = (localValue: string): Date | null => {
   if (!localValue) {
     return null;
   }
-  const parsed = new Date(localValue);
-  if (Number.isNaN(parsed.getTime())) {
+  const [year, month, day] = localValue.split('-').map(Number);
+  if (!year || !month || !day) {
     return null;
   }
-  return parsed.toISOString();
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
 };
+
+const startOfDayIso = (date: Date): string =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).toISOString();
+
+const endOfDayIso = (date: Date): string =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999).toISOString();
 
 const WindowSelector = ({
   selection,
@@ -61,22 +69,20 @@ const WindowSelector = ({
 }: WindowSelectorProps) => {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
-  // Local-time strings the datetime-local inputs bind to. Seeded once from the active
-  // custom range, or a sensible default (last 24h) when the user is currently on a preset.
-  // Lazy useState init keeps the impure `new Date()` out of the render path.
+  // "YYYY-MM-DD" local-date strings the calendar's day cells bind to. Seeded once from
+  // the active custom range's start/end days, or today when the user is currently on a
+  // preset. Lazy useState init keeps the impure `new Date()` out of the render path.
   const [startInput, setStartInput] = useState<string>(() => {
     if (selection.kind === 'custom') {
-      return isoToLocalInput(selection.startTimestamp);
+      return isoToLocalDateInput(selection.startTimestamp);
     }
-    return isoToLocalInput(
-      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    );
+    return isoToLocalDateInput(new Date().toISOString());
   });
   const [endInput, setEndInput] = useState<string>(() => {
     if (selection.kind === 'custom') {
-      return isoToLocalInput(selection.endTimestamp);
+      return isoToLocalDateInput(selection.endTimestamp);
     }
-    return isoToLocalInput(new Date().toISOString());
+    return isoToLocalDateInput(new Date().toISOString());
   });
 
   const isCustomActive = selection.kind === 'custom';
@@ -91,28 +97,31 @@ const WindowSelector = ({
       : (customSummary ?? 'Custom range');
 
   const handleApplyCustomRange = () => {
-    const startIso = localInputToIso(startInput);
-    const endIso = localInputToIso(endInput);
-    if (!startIso || !endIso) {
+    const startDate = parseLocalDateInput(startInput);
+    const endDate = parseLocalDateInput(endInput);
+    if (!startDate || !endDate) {
       return;
     }
     onSelectionChange({
       kind: 'custom',
-      startTimestamp: startIso,
-      endTimestamp: endIso,
+      startTimestamp: startOfDayIso(startDate),
+      endTimestamp: endOfDayIso(endDate),
     });
     setAnchor(null);
   };
 
+  const startDate = parseLocalDateInput(startInput);
+  const endDate = parseLocalDateInput(endInput);
+
   const rangeTooLarge =
-    !!startInput &&
-    !!endInput &&
-    new Date(endInput).getTime() - new Date(startInput).getTime() > MAX_WINDOW_SPAN_MS;
+    !!startDate &&
+    !!endDate &&
+    new Date(endOfDayIso(endDate)).getTime() - new Date(startOfDayIso(startDate)).getTime() > MAX_WINDOW_SPAN_MS;
 
   const customApplyDisabled =
-    !startInput ||
-    !endInput ||
-    new Date(startInput).getTime() >= new Date(endInput).getTime() ||
+    !startDate ||
+    !endDate ||
+    startDate.getTime() > endDate.getTime() ||
     rangeTooLarge;
 
   return (

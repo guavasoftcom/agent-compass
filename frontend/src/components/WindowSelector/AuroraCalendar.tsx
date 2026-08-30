@@ -25,10 +25,10 @@ import { radii } from '../../theme/theme';
  * Self-contained Aurora range calendar — no @mui/x-date-pickers dependency and no
  * native browser popup, so it can be fully themed in light and dark.
  *
- * Works against the existing datetime-local string contract used by WindowSelector:
- * values look like "YYYY-MM-DDTHH:mm". The calendar edits the date portion of each
- * bound and preserves the time-of-day (defaulting to 00:00 for start, 23:59 for end).
- * A pair of native <input type="time"> fields (theme-styled) handles the time.
+ * Whole days only — no time-of-day input. `startInput`/`endInput` are plain
+ * "YYYY-MM-DD" local-date strings; `WindowSelector` expands the picked days to
+ * 00:00:00.000 (start) / 23:59:59.999 (end) of that calendar day when applying
+ * the range.
  */
 
 const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -39,22 +39,18 @@ const MONTHS = [
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
-const toLocal = (d: Date): string =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`;
+const toLocalDateString = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 const parse = (value: string): Date | null => {
   if (!value) {
     return null;
   }
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
-};
-
-const timePart = (value: string): string => {
-  const d = parse(value);
-  return d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
 };
 
 // Strip time → midnight, for date-only comparisons.
@@ -122,10 +118,7 @@ const AuroraCalendar = ({
 
     // Start a fresh range when nothing is set, or when a full range already exists.
     if (!startExists || (startExists && endExists)) {
-      const time = timePart(startInput) || '00:00';
-      const [h, m] = time.split(':').map(Number);
-      const next = new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, m);
-      onStartInputChange(toLocal(next));
+      onStartInputChange(toLocalDateString(date));
       onEndInputChange('');
       return;
     }
@@ -133,32 +126,10 @@ const AuroraCalendar = ({
     // Start set, no end yet.
     if (startKey != null && key < startKey) {
       // Clicked before the start → move the start.
-      const time = timePart(startInput) || '00:00';
-      const [h, m] = time.split(':').map(Number);
-      onStartInputChange(
-        toLocal(new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, m)),
-      );
+      onStartInputChange(toLocalDateString(date));
       return;
     }
-    const time = timePart(endInput) || '23:59';
-    const [h, m] = time.split(':').map(Number);
-    onEndInputChange(
-      toLocal(new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, m)),
-    );
-  };
-
-  const handleTimeChange = (which: 'start' | 'end', time: string) => {
-    if (!time) {
-      return;
-    }
-    const [h, m] = time.split(':').map(Number);
-    if (which === 'start' && start) {
-      const next = new Date(start.getFullYear(), start.getMonth(), start.getDate(), h, m);
-      onStartInputChange(toLocal(next));
-    } else if (which === 'end' && end) {
-      const next = new Date(end.getFullYear(), end.getMonth(), end.getDate(), h, m);
-      onEndInputChange(toLocal(next));
-    }
+    onEndInputChange(toLocalDateString(date));
   };
 
   return (
@@ -285,73 +256,6 @@ const AuroraCalendar = ({
           );
         })}
       </Box>
-
-      <Stack direction="row" spacing={1.25} sx={{ mt: 1.75 }}>
-        <Box sx={{ flex: 1 }}>
-          <Typography
-            sx={{ fontSize: 11, fontWeight: 600, color: 'text.secondary', mb: 0.5 }}
-          >
-            Start time
-          </Typography>
-          <Box
-            component="input"
-            type="time"
-            value={timePart(startInput)}
-            onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-              handleTimeChange('start', event.target.value)
-            }
-            disabled={!start}
-            sx={(t) => ({
-              width: '100%',
-              height: 38,
-              px: 1.25,
-              borderRadius: radii.sm,
-              border: `1px solid ${t.palette.divider}`,
-              bgcolor:
-                t.palette.mode === 'dark'
-                  ? alpha(neutralColors.white, 0.04)
-                  : alpha(neutralColors.inkLight, 0.04),
-              color: 'text.primary',
-              colorScheme: t.palette.mode,
-              fontFamily: 'inherit',
-              fontSize: 13,
-              '&:focus': { outline: 'none', borderColor: 'primary.main' },
-            })}
-          />
-        </Box>
-        <Box sx={{ flex: 1 }}>
-          <Typography
-            sx={{ fontSize: 11, fontWeight: 600, color: 'text.secondary', mb: 0.5 }}
-          >
-            End time
-          </Typography>
-          <Box
-            component="input"
-            type="time"
-            value={timePart(endInput)}
-            onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-              handleTimeChange('end', event.target.value)
-            }
-            disabled={!end}
-            sx={(t) => ({
-              width: '100%',
-              height: 38,
-              px: 1.25,
-              borderRadius: radii.sm,
-              border: `1px solid ${t.palette.divider}`,
-              bgcolor:
-                t.palette.mode === 'dark'
-                  ? alpha(neutralColors.white, 0.04)
-                  : alpha(neutralColors.inkLight, 0.04),
-              color: 'text.primary',
-              colorScheme: t.palette.mode,
-              fontFamily: 'inherit',
-              fontSize: 13,
-              '&:focus': { outline: 'none', borderColor: 'primary.main' },
-            })}
-          />
-        </Box>
-      </Stack>
     </Box>
   );
 };

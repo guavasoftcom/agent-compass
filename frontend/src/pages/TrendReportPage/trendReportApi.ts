@@ -26,6 +26,7 @@ see <https://www.gnu.org/licenses/>.
 
 import { windowQueryParams } from '../../api/http';
 import type { WindowSelection } from '../../api';
+import { MS_PER_DAY, MS_PER_MINUTE } from '../../lib/constants';
 
 export interface TrendPeriod {
   start: string;
@@ -76,8 +77,51 @@ const getJSON = async <T>(url: string): Promise<T> => {
   return (await res.json()) as T;
 };
 
+const startOfLocalDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+
+const endOfLocalDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+
+/**
+ * Trend Report compares the selected window against the immediately preceding window
+ * of equal length. Beyond 24 hours that comparison reads better as whole calendar days
+ * (in the browser's local timezone, since this app runs on the operator's own
+ * workstation) than as an exact rolling instant — "Last 7 days" becomes the last 7
+ * full calendar days rather than "7×24h before this exact second", so both the
+ * before/after period labels and the 7-point sparklines land on clean day boundaries
+ * instead of splitting a day mid-afternoon. A window of 24 hours or less is left as an
+ * exact rolling instant, since day-snapping a 1-hour comparison would blow it up into
+ * an all-day one. Custom ranges longer than a day are day-snapped the same way, though
+ * `WindowSelector`'s calendar (date-only, no time-of-day input) already produces
+ * whole-day ranges — this is a defensive no-op for that case, not the primary path.
+ */
+export const resolveTrendReportSelection = (selection: WindowSelection): WindowSelection => {
+  if (selection.kind === 'preset') {
+    const spanMs = selection.minutes * MS_PER_MINUTE;
+    if (spanMs <= MS_PER_DAY) {
+      return selection;
+    }
+    const wholeDays = Math.round(spanMs / MS_PER_DAY);
+    const end = endOfLocalDay(new Date());
+    const start = startOfLocalDay(new Date(end.getTime() - (wholeDays - 1) * MS_PER_DAY));
+    return { kind: 'custom', startTimestamp: start.toISOString(), endTimestamp: end.toISOString() };
+  }
+
+  const start = new Date(selection.startTimestamp);
+  const end = new Date(selection.endTimestamp);
+  if (end.getTime() - start.getTime() <= MS_PER_DAY) {
+    return selection;
+  }
+  return {
+    kind: 'custom',
+    startTimestamp: startOfLocalDay(start).toISOString(),
+    endTimestamp: endOfLocalDay(end).toISOString(),
+  };
+};
+
 /** GET /api/trends — before/after metric bundle for the selected window. */
 export const fetchTrendReport = (selection: WindowSelection): Promise<TrendReport> => {
-  const params = windowQueryParams(selection);
+  const params = windowQueryParams(resolveTrendReportSelection(selection));
   return getJSON<TrendReport>(`/api/trends?${params.toString()}`);
 };

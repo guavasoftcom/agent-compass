@@ -48,7 +48,8 @@ import {
   describeWindowSpan,
   formatComparingFromDate,
   formatMetricValue,
-  formatPeriodRange,
+  formatPeriod,
+  type FormattedPeriod,
   type TrendSectionKey,
 } from './trendReportDerivations';
 
@@ -166,8 +167,8 @@ const TrendReportPageView = ({
   const comparingFromDate = report
     ? formatComparingFromDate(report.current)
     : null;
-  const beforeRangeLabel = report ? formatPeriodRange(report.previous) : '—';
-  const afterRangeLabel = report ? formatPeriodRange(report.current) : '—';
+  const beforePeriod: FormattedPeriod = report ? formatPeriod(report.previous) : { primary: '—', secondary: null };
+  const afterPeriod: FormattedPeriod = report ? formatPeriod(report.current) : { primary: '—', secondary: null };
   const summaryCallouts = report ? buildSummaryCallouts(report.metrics) : [];
 
   return (
@@ -259,18 +260,36 @@ const TrendReportPageView = ({
                 Before
               </Typography>
               {showSkeleton ? (
-                <Skeleton variant="text" width={110} height={22} sx={{ ml: 'auto', mt: 0.4 }} />
+                <>
+                  <Skeleton variant="text" width={110} height={22} sx={{ ml: 'auto', mt: 0.4 }} />
+                  <Skeleton variant="text" width={84} height={16} sx={{ ml: 'auto' }} />
+                </>
               ) : (
-                <Typography
-                  sx={{
-                    fontFamily: fontFamilies.display,
-                    fontWeight: 700,
-                    fontSize: 15,
-                    mt: 0.4,
-                  }}
-                >
-                  {beforeRangeLabel}
-                </Typography>
+                <>
+                  <Typography
+                    sx={{
+                      fontFamily: fontFamilies.display,
+                      fontWeight: 700,
+                      fontSize: 15,
+                      mt: 0.4,
+                    }}
+                  >
+                    {beforePeriod.primary}
+                  </Typography>
+                  {beforePeriod.secondary && (
+                    <Typography
+                      sx={{
+                        fontFamily: fontFamilies.display,
+                        fontWeight: 500,
+                        fontSize: 12.5,
+                        color: 'text.secondary',
+                        mt: 0.15,
+                      }}
+                    >
+                      {beforePeriod.secondary}
+                    </Typography>
+                  )}
+                </>
               )}
             </Box>
             <Box
@@ -325,19 +344,37 @@ const TrendReportPageView = ({
                 After
               </Typography>
               {showSkeleton ? (
-                <Skeleton variant="text" width={110} height={22} sx={{ mt: 0.4 }} />
+                <>
+                  <Skeleton variant="text" width={110} height={22} sx={{ mt: 0.4 }} />
+                  <Skeleton variant="text" width={84} height={16} />
+                </>
               ) : (
-                <Typography
-                  sx={{
-                    fontFamily: fontFamilies.display,
-                    fontWeight: 700,
-                    fontSize: 15,
-                    mt: 0.4,
-                    color: 'primary.main',
-                  }}
-                >
-                  {afterRangeLabel}
-                </Typography>
+                <>
+                  <Typography
+                    sx={{
+                      fontFamily: fontFamilies.display,
+                      fontWeight: 700,
+                      fontSize: 15,
+                      mt: 0.4,
+                      color: 'primary.main',
+                    }}
+                  >
+                    {afterPeriod.primary}
+                  </Typography>
+                  {afterPeriod.secondary && (
+                    <Typography
+                      sx={{
+                        fontFamily: fontFamilies.display,
+                        fontWeight: 500,
+                        fontSize: 12.5,
+                        color: 'text.secondary',
+                        mt: 0.15,
+                      }}
+                    >
+                      {afterPeriod.secondary}
+                    </Typography>
+                  )}
+                </>
               )}
             </Box>
           </Box>
