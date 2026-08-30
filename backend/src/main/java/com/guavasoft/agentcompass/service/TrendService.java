@@ -32,13 +32,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Backs {@code GET /api/trends}: a before/after diff comparing the selected window
- * (current) against the immediately preceding period of equal length (previous),
- * across 11 metrics in 4 groups. Cost and token metrics read exclusively from the
+ * Backs the four {@code GET /api/trends/*} section endpoints: a before/after diff
+ * comparing the selected window (current) against the immediately preceding period
+ * of equal length (previous). Cost and token metrics read exclusively from the
  * {@code metric_points} cumulative-counter pipeline ({@code SUM(value_delta)});
  * reliability and activity metrics read exclusively from {@code log_records}'s
  * {@code tool_result} rows -- the two pipelines are never mixed within one
  * comparison (see backend/CLAUDE.md's two-pipelines note).
+ *
+ * <p>Each section builder runs its own independent set of repository calls rather
+ * than sharing one combined query: {@link #querySessionTotals} and
+ * {@link #queryMetricsSparklinesCombined} are each called from three of the four
+ * builders (Cost, Token efficiency, Activity all need session data), which is
+ * deliberate duplication -- the point of the per-section split is that each HTTP
+ * endpoint does its own database round trips, so the slowest section (Reliability)
+ * no longer blocks the other three.
  *
  * <p>Kept as its own service rather than folded into {@link MetricService} /
  * {@link LogService} because it aggregates across both of their repositories to
@@ -85,70 +93,92 @@ public class TrendService {
   private final LogRecordRepository logRecordRepository;
   private final TuningProperties tuningProperties;
 
-  public TrendsResponse trends(int minutes) {
+  public TrendsResponse costTrends(int minutes) {
+    return buildCostTrends(buildContextForMinutes(minutes));
+  }
+
+  public TrendsResponse costTrendsInRange(Instant start, Instant end) {
+    return buildCostTrends(buildContext(start, end));
+  }
+
+  public TrendsResponse tokenEfficiencyTrends(int minutes) {
+    return buildTokenEfficiencyTrends(buildContextForMinutes(minutes));
+  }
+
+  public TrendsResponse tokenEfficiencyTrendsInRange(Instant start, Instant end) {
+    return buildTokenEfficiencyTrends(buildContext(start, end));
+  }
+
+  public TrendsResponse reliabilityTrends(int minutes) {
+    return buildReliabilityTrends(buildContextForMinutes(minutes));
+  }
+
+  public TrendsResponse reliabilityTrendsInRange(Instant start, Instant end) {
+    return buildReliabilityTrends(buildContext(start, end));
+  }
+
+  public TrendsResponse activityTrends(int minutes) {
+    return buildActivityTrends(buildContextForMinutes(minutes));
+  }
+
+  public TrendsResponse activityTrendsInRange(Instant start, Instant end) {
+    return buildActivityTrends(buildContext(start, end));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared window/property context
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The from/to/priorFrom window math plus the {@link TuningProperties} reads every
+   * section builder needs, computed once per request rather than once per section.
+   */
+  private record TrendsContext(
+      Instant from, Instant to, Instant priorFrom, long bucketSeconds,
+      String costMetric, String tokenMetric, String activeTimeMetric,
+      String tokenTypeAttribute, String toolEventName, String successAttribute) {}
+
+  private TrendsContext buildContextForMinutes(int minutes) {
     Instant to = Instant.now();
     Instant from = to.minus(Duration.ofMinutes(minutes));
-    return buildTrends(from, to);
+    return buildContext(from, to);
   }
 
-  public TrendsResponse trendsInRange(Instant start, Instant end) {
-    return buildTrends(start, end);
-  }
-
-  private TrendsResponse buildTrends(Instant from, Instant to) {
+  private TrendsContext buildContext(Instant from, Instant to) {
     Duration windowDuration = Duration.between(from, to);
     Instant priorFrom = from.minus(windowDuration);
     long windowSeconds = Math.max(1L, windowDuration.getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / SPARKLINE_POINTS);
 
-    String costMetric = tuningProperties.getCostUsageMetric();
-    String tokenMetric = tuningProperties.getTokenUsageMetric();
-    String activeTimeMetric = tuningProperties.getActiveTimeMetric();
-    String tokenTypeAttribute = tuningProperties.getTokenTypeAttribute();
-    String toolEventName = tuningProperties.getToolEventName();
-    String successAttribute = tuningProperties.getSuccessAttribute();
+    return new TrendsContext(
+        from, to, priorFrom, bucketSeconds,
+        tuningProperties.getCostUsageMetric(),
+        tuningProperties.getTokenUsageMetric(),
+        tuningProperties.getActiveTimeMetric(),
+        tuningProperties.getTokenTypeAttribute(),
+        tuningProperties.getToolEventName(),
+        tuningProperties.getSuccessAttribute());
+  }
 
-    CombinedTotals combinedTotals =
-        queryMetricsTotalsCombined(costMetric, tokenMetric, tokenTypeAttribute, from, to, priorFrom);
+  // ---------------------------------------------------------------------------
+  // Section builders
+  // ---------------------------------------------------------------------------
+
+  private TrendsResponse buildCostTrends(TrendsContext context) {
+    CombinedTotals combinedTotals = queryMetricsTotalsCombined(
+        context.costMetric(), context.tokenMetric(), context.tokenTypeAttribute(),
+        context.from(), context.to(), context.priorFrom());
     CostAndTokenTotals costAndTokenTotals = combinedTotals.costAndTokenTotals();
-    CacheReadRatioTotals cacheReadRatioTotals = combinedTotals.cacheReadRatioTotals();
-    SessionTotals sessionTotals =
-        querySessionTotals(costMetric, activeTimeMetric, from, to, priorFrom);
-    ToolFailureTotals toolFailureTotals =
-        queryToolFailureTotals(toolEventName, successAttribute, from, to, priorFrom);
-    long sessionFailuresBefore;
-    long sessionFailuresAfter;
-    Object[] sessionFailureRow = firstRow(logRecordRepository.aggregateSessionFailuresCurrentAndPrior(
-        toolEventName, successAttribute, from, to, priorFrom));
-    if (sessionFailureRow == null) {
-      sessionFailuresBefore = 0L;
-      sessionFailuresAfter = 0L;
-    } else {
-      sessionFailuresAfter = longAt(sessionFailureRow, 0);
-      sessionFailuresBefore = longAt(sessionFailureRow, 1);
-    }
+    SessionTotals sessionTotals = querySessionTotals(
+        context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.priorFrom());
 
-    // Sparklines: one consolidated call per query family (both periods at
-    // once), bucketed to the same fixed 7-point width on both sides (the two
-    // windows are equal length).
     CombinedMetricsSparklines combinedMetricsSparklines = queryMetricsSparklinesCombined(
-        costMetric, tokenMetric, activeTimeMetric, from, to, priorFrom, bucketSeconds);
+        context.costMetric(), context.tokenMetric(), context.activeTimeMetric(),
+        context.from(), context.to(), context.priorFrom(), context.bucketSeconds());
     BucketSeries beforeCostAndTokens = combinedMetricsSparklines.before();
     BucketSeries afterCostAndTokens = combinedMetricsSparklines.after();
     SessionBucketSeries beforeSessions = combinedMetricsSparklines.beforeSessions();
     SessionBucketSeries afterSessions = combinedMetricsSparklines.afterSessions();
-    CombinedCacheReadRatio combinedCacheReadRatio =
-        queryCacheReadRatioTrendCombined(tokenMetric, tokenTypeAttribute, from, to, priorFrom, bucketSeconds);
-    double[] beforeCacheReadRatio = combinedCacheReadRatio.before();
-    double[] afterCacheReadRatio = combinedCacheReadRatio.after();
-    ToolFailureBucketSeries beforeToolFailures =
-        queryToolFailureTrend(toolEventName, successAttribute, priorFrom, from, bucketSeconds);
-    ToolFailureBucketSeries afterToolFailures =
-        queryToolFailureTrend(toolEventName, successAttribute, from, to, bucketSeconds);
-    double[] beforeSessionFailures = queryLongBucketSeries(
-        logRecordRepository.aggregateSessionFailuresTrend(toolEventName, successAttribute, priorFrom, from, bucketSeconds));
-    double[] afterSessionFailures = queryLongBucketSeries(
-        logRecordRepository.aggregateSessionFailuresTrend(toolEventName, successAttribute, from, to, bucketSeconds));
 
     Map<String, TrendsResponse.MetricTrend> metrics = new LinkedHashMap<>();
 
@@ -169,6 +199,36 @@ public class TrendService {
         toBoxedList(blendedRateSeries(beforeCostAndTokens)), toBoxedList(blendedRateSeries(afterCostAndTokens)),
         DIRECTION_DOWN));
 
+    return new TrendsResponse(
+        new TrendsResponse.Window(context.from(), context.to()),
+        new TrendsResponse.Window(context.priorFrom(), context.from()),
+        metrics);
+  }
+
+  private TrendsResponse buildTokenEfficiencyTrends(TrendsContext context) {
+    CombinedTotals combinedTotals = queryMetricsTotalsCombined(
+        context.costMetric(), context.tokenMetric(), context.tokenTypeAttribute(),
+        context.from(), context.to(), context.priorFrom());
+    CostAndTokenTotals costAndTokenTotals = combinedTotals.costAndTokenTotals();
+    CacheReadRatioTotals cacheReadRatioTotals = combinedTotals.cacheReadRatioTotals();
+    SessionTotals sessionTotals = querySessionTotals(
+        context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.priorFrom());
+
+    CombinedMetricsSparklines combinedMetricsSparklines = queryMetricsSparklinesCombined(
+        context.costMetric(), context.tokenMetric(), context.activeTimeMetric(),
+        context.from(), context.to(), context.priorFrom(), context.bucketSeconds());
+    BucketSeries beforeCostAndTokens = combinedMetricsSparklines.before();
+    BucketSeries afterCostAndTokens = combinedMetricsSparklines.after();
+    SessionBucketSeries beforeSessions = combinedMetricsSparklines.beforeSessions();
+    SessionBucketSeries afterSessions = combinedMetricsSparklines.afterSessions();
+    CombinedCacheReadRatio combinedCacheReadRatio = queryCacheReadRatioTrendCombined(
+        context.tokenMetric(), context.tokenTypeAttribute(),
+        context.from(), context.to(), context.priorFrom(), context.bucketSeconds());
+    double[] beforeCacheReadRatio = combinedCacheReadRatio.before();
+    double[] afterCacheReadRatio = combinedCacheReadRatio.after();
+
+    Map<String, TrendsResponse.MetricTrend> metrics = new LinkedHashMap<>();
+
     metrics.put(METRIC_CACHE_READ_RATIO_PCT, new TrendsResponse.MetricTrend(
         cacheReadRatioTotals.ratioPctBefore(), cacheReadRatioTotals.ratioPctAfter(),
         toBoxedList(beforeCacheReadRatio), toBoxedList(afterCacheReadRatio), DIRECTION_UP));
@@ -184,6 +244,38 @@ public class TrendService {
         toBoxedList(divideBucketArrays(afterCostAndTokens.tokens(), afterSessions.sessionCounts())),
         DIRECTION_DOWN));
 
+    return new TrendsResponse(
+        new TrendsResponse.Window(context.from(), context.to()),
+        new TrendsResponse.Window(context.priorFrom(), context.from()),
+        metrics);
+  }
+
+  private TrendsResponse buildReliabilityTrends(TrendsContext context) {
+    ToolFailureTotals toolFailureTotals = queryToolFailureTotals(
+        context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.priorFrom());
+    long sessionFailuresBefore;
+    long sessionFailuresAfter;
+    Object[] sessionFailureRow = firstRow(logRecordRepository.aggregateSessionFailuresCurrentAndPrior(
+        context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.priorFrom()));
+    if (sessionFailureRow == null) {
+      sessionFailuresBefore = 0L;
+      sessionFailuresAfter = 0L;
+    } else {
+      sessionFailuresAfter = longAt(sessionFailureRow, 0);
+      sessionFailuresBefore = longAt(sessionFailureRow, 1);
+    }
+
+    ToolFailureBucketSeries beforeToolFailures = queryToolFailureTrend(
+        context.toolEventName(), context.successAttribute(), context.priorFrom(), context.from(), context.bucketSeconds());
+    ToolFailureBucketSeries afterToolFailures = queryToolFailureTrend(
+        context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.bucketSeconds());
+    double[] beforeSessionFailures = queryLongBucketSeries(logRecordRepository.aggregateSessionFailuresTrend(
+        context.toolEventName(), context.successAttribute(), context.priorFrom(), context.from(), context.bucketSeconds()));
+    double[] afterSessionFailures = queryLongBucketSeries(logRecordRepository.aggregateSessionFailuresTrend(
+        context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.bucketSeconds()));
+
+    Map<String, TrendsResponse.MetricTrend> metrics = new LinkedHashMap<>();
+
     metrics.put(METRIC_TOOL_ERRORS, new TrendsResponse.MetricTrend(
         toolFailureTotals.failuresBefore(), toolFailureTotals.failuresAfter(),
         toBoxedList(beforeToolFailures.failures()), toBoxedList(afterToolFailures.failures()), DIRECTION_DOWN));
@@ -197,6 +289,23 @@ public class TrendService {
         (double) sessionFailuresBefore, (double) sessionFailuresAfter,
         toBoxedList(beforeSessionFailures), toBoxedList(afterSessionFailures), DIRECTION_DOWN));
 
+    return new TrendsResponse(
+        new TrendsResponse.Window(context.from(), context.to()),
+        new TrendsResponse.Window(context.priorFrom(), context.from()),
+        metrics);
+  }
+
+  private TrendsResponse buildActivityTrends(TrendsContext context) {
+    SessionTotals sessionTotals = querySessionTotals(
+        context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.priorFrom());
+
+    SessionBucketSeries beforeSessions = querySessionBucketSeries(
+        context.costMetric(), context.activeTimeMetric(), context.priorFrom(), context.from(), context.bucketSeconds());
+    SessionBucketSeries afterSessions = querySessionBucketSeries(
+        context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.bucketSeconds());
+
+    Map<String, TrendsResponse.MetricTrend> metrics = new LinkedHashMap<>();
+
     metrics.put(METRIC_SESSIONS, new TrendsResponse.MetricTrend(
         sessionTotals.sessionsBefore(), sessionTotals.sessionsAfter(),
         toBoxedList(beforeSessions.sessionCounts()), toBoxedList(afterSessions.sessionCounts()), DIRECTION_UP));
@@ -209,8 +318,8 @@ public class TrendService {
         DIRECTION_DOWN));
 
     return new TrendsResponse(
-        new TrendsResponse.Window(from, to),
-        new TrendsResponse.Window(priorFrom, from),
+        new TrendsResponse.Window(context.from(), context.to()),
+        new TrendsResponse.Window(context.priorFrom(), context.from()),
         metrics);
   }
 
@@ -455,6 +564,26 @@ public class TrendService {
       failures[bucketIndex] = doubleAt(row, 2);
     }
     return new ToolFailureBucketSeries(totalCalls, failures);
+  }
+
+  // Single-period counterpart to queryMetricsSparklinesCombined's session half,
+  // for callers (buildActivityTrends) that need only the session bucket series
+  // and not the cost/token scan the combined query also pays for.
+  private SessionBucketSeries querySessionBucketSeries(
+      String costMetric, String activeTimeMetric, Instant start, Instant end, long bucketSeconds) {
+    List<Object[]> rows =
+        metricPointRepository.aggregateSessionCountAndDurationTrend(costMetric, activeTimeMetric, start, end, bucketSeconds);
+    double[] sessionCounts = new double[SPARKLINE_POINTS];
+    double[] avgDurationSeconds = new double[SPARKLINE_POINTS];
+    for (Object[] row : rows) {
+      int bucketIndex = intAt(row, 0);
+      if (bucketIndex < 0 || bucketIndex >= SPARKLINE_POINTS) {
+        continue;
+      }
+      sessionCounts[bucketIndex] = doubleAt(row, 1);
+      avgDurationSeconds[bucketIndex] = doubleAt(row, 2);
+    }
+    return new SessionBucketSeries(sessionCounts, avgDurationSeconds);
   }
 
   private double[] queryLongBucketSeries(List<Object[]> rows) {

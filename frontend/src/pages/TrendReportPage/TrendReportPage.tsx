@@ -13,16 +13,21 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import { AUTO_REFRESH_INTERVAL_MS, WINDOWS } from '../../lib/constants';
 import { useWindowContext } from '../../lib/windowContext';
 import TrendReportPageView from './TrendReportPageView';
-import { fetchTrendReport } from './trendReportApi';
+import { fetchTrendSection } from './trendReportApi';
+import { TREND_SECTIONS, type TrendSectionKey } from './trendReportDerivations';
+import type { TrendSectionState } from './TrendReportPageView';
 
 /**
  * Trend Report page container — sources the shared window selection/auto-refresh state and
- * runs the single `GET /api/trends` query. Mirrors `MetricsPage`'s wiring: the window/auto-refresh
- * pattern, no page-local state beyond what `useWindowContext` already provides.
+ * runs one independent query per section (Cost, Token efficiency, Reliability, Activity) via
+ * `useQueries`, so a slow or failed section never blocks its siblings from rendering. Mirrors
+ * `MetricsPage`'s window/auto-refresh wiring otherwise. `TREND_SECTIONS` is a compile-time
+ * constant of fixed length 4, so mapping it into `useQueries`' array doesn't violate
+ * rules-of-hooks.
  */
 export default function TrendReportPage() {
   const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
@@ -35,26 +40,43 @@ export default function TrendReportPage() {
   const refetchInterval: number | false =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
-  const trendReportQuery = useQuery({
-    queryKey: ['trend-report', selectionKey],
-    queryFn: () => fetchTrendReport(selection),
-    refetchInterval,
+  const sectionQueries = useQueries({
+    queries: TREND_SECTIONS.map((section) => ({
+      queryKey: ['trend-report', section.key, selectionKey],
+      queryFn: () => fetchTrendSection(section.key, selection),
+      refetchInterval,
+    })),
   });
 
-  const isPolling = autoRefresh && selection.kind === 'preset' && trendReportQuery.isFetching;
+  const sections = {} as Record<TrendSectionKey, TrendSectionState>;
+  TREND_SECTIONS.forEach((section, index) => {
+    const query = sectionQueries[index];
+    sections[section.key] = {
+      data: query.data,
+      isLoading: query.isLoading,
+      error: query.error as Error | null,
+    };
+  });
+
+  const isPolling =
+    autoRefresh && selection.kind === 'preset' && sectionQueries.some((query) => query.isFetching);
+
+  const handleReload = () => {
+    sectionQueries.forEach((query) => {
+      query.refetch();
+    });
+  };
 
   return (
     <TrendReportPageView
       selection={selection}
       onSelectionChange={setSelection}
       windows={WINDOWS}
-      onReload={() => trendReportQuery.refetch()}
+      onReload={handleReload}
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}
       isPolling={isPolling}
-      report={trendReportQuery.data}
-      isLoading={trendReportQuery.isLoading}
-      error={trendReportQuery.error as Error | null}
+      sections={sections}
     />
   );
 }

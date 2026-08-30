@@ -15,18 +15,22 @@ see <https://www.gnu.org/licenses/>.
 */
 // Trend Report page — network layer.
 //
-// One call: GET /api/trends returns a before/after comparison bundle — the
-// selected window ("current") against the immediately preceding window of
-// equal length ("previous") — for an eleven-metric bundle spanning cost,
-// token efficiency, reliability, and activity. See
-// design_handoff_trend_report/BACKEND_API.md for the original proposal;
-// the shape below is the contract this page was built against (camelCase
-// fields, `directionIsGoodWhen` per metric rather than a hardcoded
-// good-direction table on the frontend).
+// Four calls, one per section: GET /api/trends/cost, /api/trends/token-efficiency,
+// /api/trends/reliability, and /api/trends/activity each return a before/after
+// comparison bundle — the selected window ("current") against the immediately
+// preceding window of equal length ("previous") — populated with just that
+// section's slice of the eleven-metric contract. Every response shares the same
+// `TrendReport` shape (`current`/`previous`/`metrics`), so a section's fetch is
+// indistinguishable from the others except for which metric keys land in
+// `metrics`. See design_handoff_trend_report/BACKEND_API.md for the original
+// single-endpoint proposal; the shape below is the contract this page was built
+// against (camelCase fields, `directionIsGoodWhen` per metric rather than a
+// hardcoded good-direction table on the frontend).
 
 import { windowQueryParams } from '../../api/http';
 import type { WindowSelection } from '../../api';
 import { MS_PER_DAY, MS_PER_MINUTE } from '../../lib/constants';
+import type { TrendSectionKey } from './trendReportDerivations';
 
 export interface TrendPeriod {
   start: string;
@@ -120,8 +124,18 @@ export const resolveTrendReportSelection = (selection: WindowSelection): WindowS
   };
 };
 
-/** GET /api/trends — before/after metric bundle for the selected window. */
-export const fetchTrendReport = (selection: WindowSelection): Promise<TrendReport> => {
+const TREND_SECTION_ENDPOINTS: Record<TrendSectionKey, string> = {
+  cost: '/api/trends/cost',
+  tokenEfficiency: '/api/trends/token-efficiency',
+  reliability: '/api/trends/reliability',
+  activity: '/api/trends/activity',
+};
+
+/** GET /api/trends/{section} — before/after metric bundle for one section of the selected window. */
+export const fetchTrendSection = (
+  sectionKey: TrendSectionKey,
+  selection: WindowSelection,
+): Promise<TrendReport> => {
   const params = windowQueryParams(resolveTrendReportSelection(selection));
-  return getJSON<TrendReport>(`/api/trends?${params.toString()}`);
+  return getJSON<TrendReport>(`${TREND_SECTION_ENDPOINTS[sectionKey]}?${params.toString()}`);
 };

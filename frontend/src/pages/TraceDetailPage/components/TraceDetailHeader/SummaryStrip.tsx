@@ -35,6 +35,10 @@ import {
   type TokenBreakdown,
 } from '../../../TracesPage/tokenBreakdown';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
+import {
+  loadOverviewCollapsed,
+  persistOverviewCollapsed,
+} from '../../summaryStripVisibility';
 
 export interface SummaryItem {
   /** Uppercase label shown above the value. */
@@ -664,8 +668,9 @@ export interface SummaryStripProps {
 // de-emphasized meta footer. Each tile value is ellipsis-truncated and only
 // shows a tooltip when it overflows. Collapsing hides everything but the
 // header — a one-line caption stands in and the recovered vertical space goes
-// to the span waterfall below — the panel always starts expanded and the
-// choice does not persist across navigation.
+// to the span waterfall below. The collapsed state is a display preference
+// persisted to localStorage (summaryStripVisibility.ts, same idiom as
+// chipVisibility.ts), so it survives navigating between traces and reloads.
 const SummaryStrip = ({
   items,
   prompt,
@@ -684,10 +689,14 @@ const SummaryStrip = ({
   toolCallCount,
   errorCount,
 }: SummaryStripProps) => {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(loadOverviewCollapsed);
 
   const toggleCollapsed = () => {
-    setCollapsed((previous) => !previous);
+    setCollapsed((previous) => {
+      const next = !previous;
+      persistOverviewCollapsed(next);
+      return next;
+    });
   };
 
   return (

@@ -105,7 +105,7 @@ class TrendsQueryIntegrationTest {
     saveCost("session-A", "opus", 12.0, from.plusSeconds(300));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse response = trendService.trendsInRange(from, to);
+    TrendsResponse response = trendService.costTrendsInRange(from, to);
     TrendsResponse.MetricTrend costPerSession = response.metrics().get("cost_per_session");
 
     assertThat(costPerSession.before()).isZero();
@@ -131,34 +131,47 @@ class TrendsQueryIntegrationTest {
     // Prior window: no failures.
     saveToolResult("session-C", priorFrom.plusSeconds(400), true);
 
-    TrendsResponse response = trendService.trendsInRange(from, to);
+    TrendsResponse costResponse = trendService.costTrendsInRange(from, to);
 
-    assertThat(response.current().start()).isEqualTo(from);
-    assertThat(response.current().end()).isEqualTo(to);
-    assertThat(response.previous().start()).isEqualTo(priorFrom);
-    assertThat(response.previous().end()).isEqualTo(from);
+    assertThat(costResponse.current().start()).isEqualTo(from);
+    assertThat(costResponse.current().end()).isEqualTo(to);
+    assertThat(costResponse.previous().start()).isEqualTo(priorFrom);
+    assertThat(costResponse.previous().end()).isEqualTo(from);
 
-    assertThat(response.metrics()).containsOnlyKeys(
-        "total_cost", "cost_per_session", "blended_rate_per_1m", "cache_read_ratio_pct",
-        "tokens_total", "tokens_per_session", "tool_errors", "error_rate_pct",
-        "session_failures", "sessions", "avg_duration_min");
+    assertThat(costResponse.metrics()).containsOnlyKeys("total_cost", "cost_per_session", "blended_rate_per_1m");
 
-    TrendsResponse.MetricTrend totalCost = response.metrics().get("total_cost");
+    TrendsResponse.MetricTrend totalCost = costResponse.metrics().get("total_cost");
     assertThat(totalCost.after()).isEqualTo(18.0);
     assertThat(totalCost.before()).isEqualTo(4.0);
     assertThat(totalCost.beforeSeries()).hasSize(7);
     assertThat(totalCost.afterSeries()).hasSize(7);
     assertThat(totalCost.directionIsGoodWhen()).isEqualTo("down");
 
-    TrendsResponse.MetricTrend sessionFailures = response.metrics().get("session_failures");
+    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to);
+
+    assertThat(reliabilityResponse.metrics()).containsOnlyKeys("tool_errors", "error_rate_pct", "session_failures");
+
+    TrendsResponse.MetricTrend sessionFailures = reliabilityResponse.metrics().get("session_failures");
     assertThat(sessionFailures.after()).isEqualTo(1.0);
     assertThat(sessionFailures.before()).isZero();
 
-    TrendsResponse.MetricTrend sessions = response.metrics().get("sessions");
+    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to);
+
+    assertThat(activityResponse.metrics()).containsOnlyKeys("sessions", "avg_duration_min");
+
+    TrendsResponse.MetricTrend sessions = activityResponse.metrics().get("sessions");
     assertThat(sessions.after()).isEqualTo(2.0);
     assertThat(sessions.before()).isEqualTo(1.0);
 
-    for (TrendsResponse.MetricTrend metricTrend : response.metrics().values()) {
+    for (TrendsResponse.MetricTrend metricTrend : costResponse.metrics().values()) {
+      assertThat(metricTrend.beforeSeries()).hasSize(7);
+      assertThat(metricTrend.afterSeries()).hasSize(7);
+    }
+    for (TrendsResponse.MetricTrend metricTrend : reliabilityResponse.metrics().values()) {
+      assertThat(metricTrend.beforeSeries()).hasSize(7);
+      assertThat(metricTrend.afterSeries()).hasSize(7);
+    }
+    for (TrendsResponse.MetricTrend metricTrend : activityResponse.metrics().values()) {
       assertThat(metricTrend.beforeSeries()).hasSize(7);
       assertThat(metricTrend.afterSeries()).hasSize(7);
     }
