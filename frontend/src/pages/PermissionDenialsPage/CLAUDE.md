@@ -29,9 +29,10 @@ PermissionDenialsPage/
 │                                  derives KPI values, passes flat props to the view
 ├── PermissionDenialsPageView.tsx  view — KPI strip + tool-breakdown grid + hook table;
 │                                  derives donut slices + tooltip from denialRows in a useMemo
-├── ToolDenialsCard.tsx            "Denials by tool & source" — stacked bars per tool broken
-│                                  down by denial source, with a legend per tool block
-├── HookExecutionsCard.tsx         "Hook execution outcomes" — MUI Table with total/OK/
+├── components/
+│   ├── ToolDenialsCard/           "Denials by tool & source" — stacked bars per tool broken
+│   │                              down by denial source, with a legend per tool block
+│   └── HookExecutionsCard/        "Hook execution outcomes" — MUI Table with total/OK/
 │                                  blocking/non-blocking columns; blocking errors shown as a
 │                                  red chip, zero as muted text
 └── index.ts                       re-exports container default

@@ -29,15 +29,15 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { fontFamilies } from '../../../theme/typography';
-import { colorForIndex } from '../../../theme/theme';
+import { fontFamilies } from '../../../../theme/typography';
+import { colorForIndex } from '../../../../theme/theme';
 import {
   formatBytes,
   formatCompact,
   formatTimestamp,
-} from '../../../lib/format';
-import { PURGE_CONFIRMATION_PHRASE } from '../settingsApi';
-import type { PurgePreview } from '../settingsTypes';
+} from '../../../../lib/format';
+import { PURGE_CONFIRMATION_PHRASE } from '../../settingsApi';
+import type { PurgePreview } from '../../settingsTypes';
 
 const WarningTriangleIcon = () => (
   <svg

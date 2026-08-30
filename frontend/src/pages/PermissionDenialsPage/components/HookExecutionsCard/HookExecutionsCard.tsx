@@ -25,8 +25,8 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import type { HookExecutionRow } from '../../api';
-import { fontFamilies } from '../../theme/typography';
+import type { HookExecutionRow } from '../../../../api';
+import { fontFamilies } from '../../../../theme/typography';
 
 export interface HookExecutionsCardProps {
   hookRows: HookExecutionRow[];

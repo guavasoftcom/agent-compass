@@ -15,11 +15,11 @@ see <https://www.gnu.org/licenses/>.
 */
 import { useMemo } from 'react';
 import { Box, Paper, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
-import BreakdownList from '../../../components/BreakdownList';
-import { fontFamilies } from '../../../theme/typography';
-import { formatBytes, formatCompact, formatRelativeTime } from '../../../lib/format';
-import { retentionSpanDays, storageSharePercent } from '../settingsDerivations';
-import type { StorageOverview } from '../settingsTypes';
+import BreakdownList from '../../../../components/BreakdownList';
+import { fontFamilies } from '../../../../theme/typography';
+import { formatBytes, formatCompact, formatRelativeTime } from '../../../../lib/format';
+import { retentionSpanDays, storageSharePercent } from '../../settingsDerivations';
+import type { StorageOverview } from '../../settingsTypes';
 
 export interface StorageBreakdownCardProps {
   storage: StorageOverview | null;

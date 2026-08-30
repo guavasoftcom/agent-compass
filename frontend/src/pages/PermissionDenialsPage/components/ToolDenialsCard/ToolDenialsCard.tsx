@@ -15,9 +15,9 @@ see <https://www.gnu.org/licenses/>.
 */
 import { useMemo } from 'react';
 import { Box, Paper, Typography, useTheme } from '@mui/material';
-import { colorForIndex } from '../../theme/theme';
-import type { ToolDenialRow } from '../../api';
-import { fontFamilies } from '../../theme/typography';
+import { colorForIndex } from '../../../../theme/theme';
+import type { ToolDenialRow } from '../../../../api';
+import { fontFamilies } from '../../../../theme/typography';
 
 export interface ToolDenialsCardProps {
   denialRows: ToolDenialRow[];
