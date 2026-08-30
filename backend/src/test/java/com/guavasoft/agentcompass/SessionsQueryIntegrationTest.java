@@ -671,6 +671,86 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void promptsForSessionUsesTraceTotalTokensEvenWhenTheTurnHasItsOwnRequestAttributedTokens() {
+    // Token counterpart of promptsForSessionUsesTraceTotalCostEvenWhenTheTurnHasItsOwnRequestAttributedCost:
+    // turn 0 dispatches a fire-and-forget subagent that keeps issuing requests
+    // stamped with turn 1's prompt.id (even though they share turn 0's trace_id)
+    // well after turn 1's own prompt was typed. Before findTokenSplitByTraceIds,
+    // aggregateApiRequestTurnsForSession's prompt-id-only grouping folded those
+    // background requests into turn 1's token total instead of turn 0's, which
+    // is exactly the Sessions-drawer-vs-trace-detail discrepancy this guards.
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(300);
+    String turnZeroPromptId = "y-prompt-0";
+    String turnOnePromptId = "y-prompt-1";
+
+    saveUserPrompt("Y", "Refactor the widget", turnZeroStart, TRACE_TURN_ZERO, turnZeroPromptId);
+    saveUserPrompt("Y", "Ship it", turnOneStart, TRACE_TURN_ONE, turnOnePromptId);
+
+    // Turn 0's own request.
+    saveApiRequest("Y", TRACE_TURN_ZERO, turnZeroPromptId, 0.0, 100L, 50L, 0L, 1_000L, turnZeroStart.plusSeconds(30));
+    // The detached subagent's request: turn 0's trace, but turn 1's prompt id --
+    // logged well after turn 1 started, carrying the bulk of the tokens.
+    saveApiRequest(
+        "Y", TRACE_TURN_ZERO, turnOnePromptId, 0.0, 200L, 100L, 0L, 2_000_000L, turnOneStart.plusSeconds(30));
+    // Turn 1's own real request.
+    saveApiRequest("Y", TRACE_TURN_ONE, turnOnePromptId, 0.0, 10L, 5L, 0L, 500L, turnOneStart.plusSeconds(35));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("Y");
+
+    assertThat(prompts).hasSize(2);
+    SessionPrompt turnZero = prompts.get(0);
+    assertThat(turnZero.attribution()).isEqualTo(SessionPrompt.TurnAttribution.REQUEST);
+    // Trace total (turn 0's own request + the detached subagent's), NOT the
+    // turn's own prompt-id-scoped sum -- the bug this test guards against.
+    assertThat(turnZero.tokens()).isEqualTo(new SessionTokenBreakdown(300L, 150L, 0L, 2_001_000L));
+
+    SessionPrompt turnOne = prompts.get(1);
+    assertThat(turnOne.attribution()).isEqualTo(SessionPrompt.TurnAttribution.REQUEST);
+    // Trace total for turn 1's OWN trace, NOT the prompt-id-scoped sum (which
+    // would over-count by including the detached subagent's misattributed
+    // request landing at 2,000,000 cache-read tokens).
+    assertThat(turnOne.tokens()).isEqualTo(new SessionTokenBreakdown(10L, 5L, 0L, 500L));
+  }
+
+  @Test
+  void promptsForSessionUsesTraceModelEvenWhenPromptIdScopedModeWouldPickADifferentModel() {
+    // Model counterpart of the cost/token detached-subagent bug: turn 0 dispatches
+    // a fire-and-forget subagent that keeps issuing requests stamped with turn 1's
+    // prompt.id (even though they share turn 0's trace_id), both served by opus.
+    // Grouping mode() by prompt.id alone (the pre-fix behaviour) then lets those
+    // two opus requests outvote turn 1's own single sonnet request 2-to-1, so
+    // turn 1 would report "opus" even though turn 1's OWN trace was served
+    // entirely by sonnet.
+    Instant turnZeroStart = Instant.now().minus(30, ChronoUnit.MINUTES);
+    Instant turnOneStart = turnZeroStart.plusSeconds(300);
+    String turnZeroPromptId = "z-prompt-0";
+    String turnOnePromptId = "z-prompt-1";
+
+    saveUserPrompt("Z", "Refactor the widget", turnZeroStart, TRACE_TURN_ZERO, turnZeroPromptId);
+    saveUserPrompt("Z", "Ship it", turnOneStart, TRACE_TURN_ONE, turnOnePromptId);
+
+    // Turn 0's own request.
+    saveApiRequest("Z", TRACE_TURN_ZERO, turnZeroPromptId, "claude-opus-4-5", 0.0, turnZeroStart.plusSeconds(30));
+    // The detached subagent's requests: turn 0's trace, but turn 1's prompt id --
+    // logged well after turn 1 started, outnumbering turn 1's own request.
+    saveApiRequest("Z", TRACE_TURN_ZERO, turnOnePromptId, "claude-opus-4-5", 0.0, turnOneStart.plusSeconds(30));
+    saveApiRequest("Z", TRACE_TURN_ZERO, turnOnePromptId, "claude-opus-4-5", 0.0, turnOneStart.plusSeconds(31));
+    // Turn 1's own real request.
+    saveApiRequest("Z", TRACE_TURN_ONE, turnOnePromptId, "claude-sonnet-4-5", 0.0, turnOneStart.plusSeconds(35));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("Z");
+
+    assertThat(prompts).hasSize(2);
+    SessionPrompt turnOne = prompts.get(1);
+    assertThat(turnOne.attribution()).isEqualTo(SessionPrompt.TurnAttribution.REQUEST);
+    // Turn 1's OWN trace was served entirely by sonnet -- NOT "opus", which
+    // prompt-id-scoped mode() would pick since it outnumbers sonnet 2-to-1 once
+    // the detached subagent's misattributed requests are included.
+    assertThat(turnOne.model()).isEqualTo("claude-sonnet-4-5");
+  }
+
+  @Test
   void promptsForSessionCorrelatesToolCallsByTraceRatherThanTimeWindow() {
     // Mirrors the cost bug for tool calls: a detached subagent's tool_result
     // events fire after the next turn started, so wall-clock bucketing alone
@@ -888,6 +968,54 @@ class SessionsQueryIntegrationTest {
         "session.id", sessionId,
         PROMPT_ID_ATTRIBUTE, promptId,
         "cost_usd", String.valueOf(costUsd)));
+    logRecordRepository.save(entity);
+  }
+
+  /**
+   * Same as {@link #saveApiRequest(String, String, String, double, Instant)} but also stamps a
+   * model -- needed to reproduce the model counterpart of the detached-subagent bug
+   * (findModelSplitByTraceIds).
+   */
+  private void saveApiRequest(
+      String sessionId, String traceId, String promptId, String model, double costUsd, Instant timestamp) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setSpanId(traceId.substring(0, 16));
+    entity.setAttributes(Map.of(
+        "event.name", API_REQUEST_EVENT_NAME,
+        "session.id", sessionId,
+        PROMPT_ID_ATTRIBUTE, promptId,
+        "model", model,
+        "cost_usd", String.valueOf(costUsd)));
+    logRecordRepository.save(entity);
+  }
+
+  /**
+   * Same as {@link #saveApiRequest(String, String, String, double, Instant)} but also stamps the
+   * four token counts -- needed to reproduce the token counterpart of the detached-subagent bug
+   * (findTokenSplitByTraceIds).
+   */
+  private void saveApiRequest(
+      String sessionId, String traceId, String promptId, double costUsd,
+      long inputTokens, long outputTokens, long cacheCreationTokens, long cacheReadTokens, Instant timestamp) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setSpanId(traceId.substring(0, 16));
+    entity.setAttributes(Map.of(
+        "event.name", API_REQUEST_EVENT_NAME,
+        "session.id", sessionId,
+        PROMPT_ID_ATTRIBUTE, promptId,
+        "cost_usd", String.valueOf(costUsd),
+        "input_tokens", String.valueOf(inputTokens),
+        "output_tokens", String.valueOf(outputTokens),
+        "cache_creation_tokens", String.valueOf(cacheCreationTokens),
+        "cache_read_tokens", String.valueOf(cacheReadTokens)));
     logRecordRepository.save(entity);
   }
 
