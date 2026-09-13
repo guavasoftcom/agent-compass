@@ -51,6 +51,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setupTests.ts"],
+    pool: "forks",
+    isolate: false,
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
