@@ -28,16 +28,25 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.guavasoft.agentcompass.model.EffectiveConfiguration;
+import com.guavasoft.agentcompass.model.EffectiveOllamaSettings;
 import com.guavasoft.agentcompass.model.IngestHealth;
+import com.guavasoft.agentcompass.model.OllamaConnectionProbe;
+import com.guavasoft.agentcompass.model.OllamaConnectionTestResult;
+import com.guavasoft.agentcompass.model.OllamaModelListResult;
+import com.guavasoft.agentcompass.model.OllamaSettingsRequest;
 import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.StorageOverview;
 import com.guavasoft.agentcompass.model.SystemBuild;
+import com.guavasoft.agentcompass.service.OllamaSettingsService;
 import com.guavasoft.agentcompass.service.SystemService;
 
 /**
@@ -72,6 +81,7 @@ public class SystemController {
   private static final int MAXIMUM_RETENTION_DAYS = 3650;
 
   private final SystemService systemService;
+  private final OllamaSettingsService ollamaSettingsService;
 
   @GetMapping("/storage")
   @Operation(
@@ -186,5 +196,71 @@ public class SystemController {
                   required = true, example = "PURGE")
           @RequestParam String confirmation) {
     return systemService.purge(days, confirmation);
+  }
+
+  @GetMapping("/ollama-settings")
+  @Operation(
+          summary = "Effective Ollama connection settings for the 'Analyze trace' feature",
+          description = "baseUrl/model are each independently either a stored Settings-page override "
+                  + "or the ollama.base-url/ollama.model application.yml default. 'overridden' is true "
+                  + "when at least one field is a stored override.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "Effective Ollama settings",
+          content = @Content(schema = @Schema(implementation = EffectiveOllamaSettings.class))))
+  public EffectiveOllamaSettings ollamaSettings() {
+    return ollamaSettingsService.effectiveSettings();
+  }
+
+  @PutMapping("/ollama-settings")
+  @Operation(
+          summary = "Set (or clear) the Ollama connection override",
+          description = "Upserts the singleton ollama_settings row. A null or blank baseUrl/model clears "
+                  + "that field's override back to the application.yml default rather than storing an "
+                  + "empty string; a null enabled clears its own override back to ollama.enabled. All "
+                  + "three fields clear independently. Takes effect on the very next 'Analyze trace' call "
+                  + "— OllamaClient/TraceAnalysisService resolve the effective settings per request, not "
+                  + "once at startup.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "The updated effective settings",
+          content = @Content(schema = @Schema(implementation = EffectiveOllamaSettings.class))))
+  public EffectiveOllamaSettings updateOllamaSettings(
+          @RequestBody OllamaSettingsRequest request) {
+    return ollamaSettingsService.updateSettings(request.baseUrl(), request.model(), request.enabled());
+  }
+
+  @PostMapping("/ollama/test-connection")
+  @Operation(
+          summary = "Ping Ollama without running inference",
+          description = "Calls GET /api/tags (lists installed models) rather than /api/generate, so "
+                  + "this is fast and cheap regardless of ollama.read-timeout. A null/blank baseUrl in "
+                  + "the request body means 'test the currently effective value' rather than 'use no "
+                  + "base URL' — this lets the Settings page test an unsaved form value before Save, or "
+                  + "omit the body entirely to test what is already saved. Always returns 200: a failed "
+                  + "connection is a normal outcome for this check, reported as success=false, not a "
+                  + "503 — unlike POST /api/traces/{traceId}/analysis, which does 503 on the same "
+                  + "underlying failure because there the caller asked for a real analysis, not a probe.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "Always 200 — see success/message",
+          content = @Content(schema = @Schema(implementation = OllamaConnectionTestResult.class))))
+  public OllamaConnectionTestResult testOllamaConnection(
+          @RequestBody(required = false) OllamaConnectionProbe probe) {
+    OllamaConnectionProbe effectiveProbe = OllamaConnectionProbe.orEmpty(probe);
+    return ollamaSettingsService.testConnection(effectiveProbe.baseUrl(), effectiveProbe.model());
+  }
+
+  @PostMapping("/ollama/models")
+  @Operation(
+          summary = "List models installed on Ollama",
+          description = "Calls GET /api/tags to list installed models, so this is fast and cheap "
+                  + "regardless of ollama.read-timeout — no inference runs. A null/blank baseUrl in "
+                  + "the request body means 'list models for the currently effective base URL' rather "
+                  + "than 'use no base URL' — this lets the Settings page populate the model dropdown "
+                  + "for an unsaved form value before Save, or omit the body entirely to list models "
+                  + "for what is already saved. Always returns 200: a failed connection is a normal "
+                  + "outcome for this check, reported as success=false with an empty models list, not "
+                  + "a 503.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "Always 200 — see success/message",
+          content = @Content(schema = @Schema(implementation = OllamaModelListResult.class))))
+  public OllamaModelListResult listOllamaModels(
+          @RequestBody(required = false) OllamaConnectionProbe probe) {
+    OllamaConnectionProbe effectiveProbe = OllamaConnectionProbe.orEmpty(probe);
+    return ollamaSettingsService.listModels(effectiveProbe.baseUrl());
   }
 }

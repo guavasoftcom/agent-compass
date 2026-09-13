@@ -69,6 +69,7 @@ public class SystemService {
   private static final String LOG_RECORDS_TABLE = "log_records";
   private static final String METRIC_POINTS_TABLE = "metric_points";
   private static final String SPANS_TABLE = "spans";
+  private static final String TRACE_ANALYSES_TABLE = "trace_analyses";
 
   private static final String DEVELOPMENT_VERSION = "dev";
   private static final String JAVA_VENDOR_PROPERTY = "java.vendor";
@@ -105,6 +106,14 @@ public class SystemService {
   private static final String RECLAIM_SPACE_SQL = "VACUUM FULL log_records, metric_points, spans;";
 
   /**
+   * Mirror of {@code SystemRepository#purgeTraceAnalyses} for rendered SQL. Unconditional and
+   * cutoff-free on purpose — see that method's javadoc for why a FK cannot express this cleanup and
+   * why the delete must run immediately after the spans delete rather than on its own predicate.
+   */
+  private static final String TRACE_ANALYSES_DELETE_STATEMENT =
+      "DELETE FROM trace_analyses WHERE trace_id NOT IN (SELECT DISTINCT trace_id FROM spans);";
+
+  /**
    * Mirror of {@code SystemRepository#DORMANT_SESSION_IDS_SUBQUERY} for rendered SQL, with the
    * {@code :cutoff} bind parameter replaced by a literal — every consumer of a rendered statement
    * (the per-table {@code statement} field, the combined script) formats this once with the same
@@ -119,31 +128,47 @@ public class SystemService {
          WHERE session_id IS NOT NULL
          GROUP BY session_id
          UNION ALL
-         SELECT attributes ->> 'session.id', max(timestamp)
+         SELECT session_id, max(timestamp)
          FROM log_records
-         WHERE jsonb_exists(attributes, 'session.id')
-         GROUP BY 1
+         WHERE session_id IS NOT NULL
+         GROUP BY session_id
          UNION ALL
          SELECT attributes ->> 'session.id', max(start_timestamp)
          FROM spans
-         WHERE jsonb_exists(attributes, 'session.id')
+         WHERE attributes ->> 'session.id' IS NOT NULL
          GROUP BY 1
        ) AS sessionActivity
        GROUP BY session_id
        HAVING max(last_seen) < TIMESTAMPTZ '%1$s')""";
 
   /**
+   * How a table names its session id in the rendered SQL. {@code log_records} (V30) and
+   * {@code metric_points} (V18) carry a stored generated column; {@code spans} has none and reads
+   * the jsonb key — see {@code SystemRepository#DORMANT_SESSION_IDS_SUBQUERY} for why only the log
+   * table was worth a rewrite (its leg measured 10937 ms against the span leg's 193 ms).
+   */
+  private static final String SESSION_ID_COLUMN_EXPRESSION = "candidate.session_id";
+
+  private static final String SESSION_ID_JSONB_EXPRESSION = "candidate.attributes ->> 'session.id'";
+
+  /**
    * Mirror of {@code SystemRepository#purgeLogRecords}/{@code #purgeSpans} for the per-table
    * {@code statement} field: delete a dormant session's rows from this table, plus any sessionless
    * row past the cutoff. {@code %1$s} table name, {@code %2$s} the resolved dormant-sessions
-   * subquery, {@code %3$s} the timestamp column, {@code %4$s} the cutoff.
+   * subquery, {@code %3$s} the timestamp column, {@code %4$s} the cutoff, {@code %5$s} how this
+   * table names its session id.
+   *
+   * <p>The sessionless branch tests the session id for NULL rather than asking
+   * {@code NOT jsonb_exists(...)}. The two differ only for a key present with a JSON null value,
+   * which the old form left unpurgeable at any cutoff; 0 such rows exist on either table. Kept in
+   * lockstep with the repository query — this text is what an operator pastes into psql.
    */
   private static final String SESSION_GATED_DELETE_FORMAT = """
       DELETE FROM %1$s AS candidate
       WHERE candidate.%3$s < TIMESTAMPTZ '%4$s'
-        AND ((jsonb_exists(candidate.attributes, 'session.id')
-                AND candidate.attributes ->> 'session.id' IN %2$s)
-          OR NOT jsonb_exists(candidate.attributes, 'session.id'));""";
+        AND ((%5$s IS NOT NULL
+                AND %5$s IN %2$s)
+          OR %5$s IS NULL);""";
 
   /**
    * Mirror of {@code SystemRepository#purgeMetricPoints}. {@code %1$s} the resolved dormant-sessions
@@ -187,14 +212,14 @@ public class SystemService {
         WHERE session_id IS NOT NULL
         GROUP BY session_id
         UNION ALL
-        SELECT attributes ->> 'session.id', max(timestamp)
+        SELECT session_id, max(timestamp)
         FROM log_records
-        WHERE jsonb_exists(attributes, 'session.id')
-        GROUP BY 1
+        WHERE session_id IS NOT NULL
+        GROUP BY session_id
         UNION ALL
         SELECT attributes ->> 'session.id', max(start_timestamp)
         FROM spans
-        WHERE jsonb_exists(attributes, 'session.id')
+        WHERE attributes ->> 'session.id' IS NOT NULL
         GROUP BY 1
       ) AS sessionActivity
       GROUP BY session_id
@@ -202,15 +227,19 @@ public class SystemService {
 
       DELETE FROM log_records AS candidate
       WHERE candidate.timestamp < TIMESTAMPTZ '%2$s'
-        AND ((jsonb_exists(candidate.attributes, 'session.id')
-                AND candidate.attributes ->> 'session.id' IN (SELECT session_id FROM dormant_sessions_for_purge))
-          OR NOT jsonb_exists(candidate.attributes, 'session.id'));
+        AND ((candidate.session_id IS NOT NULL
+                AND candidate.session_id IN (SELECT session_id FROM dormant_sessions_for_purge))
+          OR candidate.session_id IS NULL);
 
       DELETE FROM spans AS candidate
       WHERE candidate.start_timestamp < TIMESTAMPTZ '%2$s'
-        AND ((jsonb_exists(candidate.attributes, 'session.id')
+        AND ((candidate.attributes ->> 'session.id' IS NOT NULL
                 AND candidate.attributes ->> 'session.id' IN (SELECT session_id FROM dormant_sessions_for_purge))
-          OR NOT jsonb_exists(candidate.attributes, 'session.id'));
+          OR candidate.attributes ->> 'session.id' IS NULL);
+
+      -- Not cutoff-gated: runs unconditionally against whatever spans remain after the delete
+      -- above, so a trace_analyses row whose trace no longer has any spans is always cleaned up.
+      DELETE FROM trace_analyses WHERE trace_id NOT IN (SELECT DISTINCT trace_id FROM spans);
 
       -- The newest row of every stream is kept unconditionally, even inside an otherwise
       -- eligible (dormant) session (see METRIC_POINTS_DELETE_FORMAT in SystemService for why).
@@ -407,8 +436,12 @@ public class SystemService {
 
     // Logs and spans first, metric points last: the metric delete is by far the longest, and
     // ordering the cheap ones ahead of it keeps a failure from having done the expensive work twice.
+    // trace_analyses runs immediately after spans, in the same transaction, so it sees the
+    // post-purge spans set and its own unconditional NOT IN is exact -- see
+    // SystemRepository#purgeTraceAnalyses.
     long logRecordsDeleted = systemRepository.purgeLogRecords(cutoff);
     long spansDeleted = systemRepository.purgeSpans(cutoff);
+    long traceAnalysesDeleted = systemRepository.purgeTraceAnalyses();
     long metricPointsDeleted = systemRepository.purgeMetricPoints(cutoff);
 
     systemRepository.analyzeTelemetryTables();
@@ -416,7 +449,8 @@ public class SystemService {
     Map<String, Long> deletedByTable = Map.of(
         LOG_RECORDS_TABLE, logRecordsDeleted,
         SPANS_TABLE, spansDeleted,
-        METRIC_POINTS_TABLE, metricPointsDeleted);
+        METRIC_POINTS_TABLE, metricPointsDeleted,
+        TRACE_ANALYSES_TABLE, traceAnalysesDeleted);
     List<PurgeTableResult> tables = systemRepository.findTableRowStatistics(cutoff).stream()
         .filter(row -> deletedByTable.containsKey((String) row[ROW_STATISTICS_TABLE_NAME_INDEX]))
         .map(row -> {
@@ -433,7 +467,7 @@ public class SystemService {
         effectiveRetentionDays,
         cutoff,
         tables,
-        logRecordsDeleted + spansDeleted + metricPointsDeleted,
+        logRecordsDeleted + spansDeleted + metricPointsDeleted + traceAnalysesDeleted,
         preservedRows,
         databaseTotalBytesBefore,
         systemRepository.findDatabaseTotalBytes(),
@@ -535,17 +569,52 @@ public class SystemService {
   }
 
   /**
+   * Renders one table's self-contained DELETE. Implementations close over whatever varies per table
+   * (a fixed statement, a session-id expression, ...) so {@link #renderDeleteStatement} itself never
+   * branches on the table name.
+   */
+  @FunctionalInterface
+  private interface PurgeTableRenderer {
+    String render(String timestampColumn, Instant cutoff);
+  }
+
+  /**
+   * Builds the {@link PurgeTableRenderer} shared by {@code log_records} and {@code spans}: both are
+   * cutoff-gated deletes against {@link #SESSION_GATED_DELETE_FORMAT}, differing only in which
+   * expression names the row's session id — see {@link #SESSION_ID_COLUMN_EXPRESSION}.
+   */
+  private static PurgeTableRenderer sessionGatedRenderer(String tableName, String sessionIdExpression) {
+    return (timestampColumn, cutoff) -> SESSION_GATED_DELETE_FORMAT.formatted(
+        tableName, DORMANT_SESSION_IDS_SUBQUERY_FORMAT.formatted(cutoff), timestampColumn, cutoff,
+        sessionIdExpression);
+  }
+
+  /**
+   * One renderer per purgeable table, resolved once by table name rather than an if/else ladder in
+   * {@link #renderDeleteStatement}. {@code trace_analyses} is not cutoff-gated at all (see
+   * {@code SystemRepository#purgeTraceAnalyses}); {@code metric_points} keeps its own newest-row
+   * guard per stream ({@link #METRIC_POINTS_DELETE_FORMAT}); {@code log_records} and {@code spans}
+   * share {@link #SESSION_GATED_DELETE_FORMAT} and differ only in how they name a session id.
+   */
+  private static final Map<String, PurgeTableRenderer> PURGE_TABLE_RENDERERS = Map.of(
+      TRACE_ANALYSES_TABLE, (timestampColumn, cutoff) -> TRACE_ANALYSES_DELETE_STATEMENT,
+      METRIC_POINTS_TABLE, (timestampColumn, cutoff) -> METRIC_POINTS_DELETE_FORMAT.formatted(
+          DORMANT_SESSION_IDS_SUBQUERY_FORMAT.formatted(cutoff), cutoff),
+      LOG_RECORDS_TABLE, sessionGatedRenderer(LOG_RECORDS_TABLE, SESSION_ID_COLUMN_EXPRESSION),
+      SPANS_TABLE, sessionGatedRenderer(SPANS_TABLE, SESSION_ID_JSONB_EXPRESSION));
+
+  /**
    * The self-contained DELETE for one table, matching exactly what {@code SystemRepository} runs.
    * Embeds its own copy of the dormant-sessions subquery so this one statement can be copied and
    * run alone — the combined script in {@link #renderPurgeScript} computes that set once instead
    * and is the one to use when running all three together.
    */
   private static String renderDeleteStatement(String tableName, String timestampColumn, Instant cutoff) {
-    String dormantSessionIds = DORMANT_SESSION_IDS_SUBQUERY_FORMAT.formatted(cutoff);
-    if (METRIC_POINTS_TABLE.equals(tableName)) {
-      return METRIC_POINTS_DELETE_FORMAT.formatted(dormantSessionIds, cutoff);
+    PurgeTableRenderer renderer = PURGE_TABLE_RENDERERS.get(tableName);
+    if (renderer == null) {
+      throw new IllegalStateException("No purge delete-statement renderer registered for table: " + tableName);
     }
-    return SESSION_GATED_DELETE_FORMAT.formatted(tableName, dormantSessionIds, timestampColumn, cutoff);
+    return renderer.render(timestampColumn, cutoff);
   }
 
   private static String renderPurgeScript(

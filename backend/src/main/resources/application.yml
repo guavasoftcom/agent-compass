@@ -30,6 +30,70 @@ spring:
       enabled: true
       poll-interval: 1000ms
       quiet-period: 400ms
+ollama:
+  # These are the fallback defaults only. The Settings page can override base-url/model/enabled at
+  # runtime (stored in the ollama_settings table, resolved per-request by OllamaSettingsService)
+  # — see GET/PUT /api/system/ollama-settings. Model must be pulled by the operator
+  # (`ollama pull <model>`); nothing auto-pulls it.
+  # Off by default: most installs don't have a local Ollama server running, and turning this on
+  # unconditionally would make a fresh install's first "Analyze trace" click fail with a 503.
+  # Flip it on here, or from the Settings page, once Ollama is reachable.
+  enabled: false
+  # llama3.1 (8B, ~5GB at Q4) is the light default. qwen2.5:14b (~9GB at Q4) follows
+  # "read this data, judge the pattern, explain why" instructions noticeably better and
+  # is the recommended upgrade if the machine has the RAM headroom.
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  model: ${OLLAMA_MODEL:llama3.1}
+  connect-timeout: 2s
+  read-timeout: 120s
+  # Budgets the FINDINGS prompt (the first of the review's two-or-more review calls). The
+  # apply-this call, which turns findings into the three "Apply this" lines, carries no timeline or
+  # overview and is a few thousand chars whatever the trace looks like, so it is not budgeted here.
+  # Sized against real traces here: a p95 trace renders ~24k chars (timeline with 200-char tool
+  # inputs + full prompt + every assistant turn), on top of ~10.5k of fixed review instructions —
+  # a little more on the minority of traces that clear a "Went well:" observation's bar, since those
+  # sections are all rendered conditionally and cost nothing on a trace with no positive.
+  # Measured against this database (2,177 traces, 2026-09-08): at the OLD 36000 cap, 15 traces
+  # (0.7%) overflowed even TraceAnalysisPromptBuilder.TimelineDetail's tightest level and lost calls
+  # to middle-out elision. At 60000 / 24576, ZERO do — every trace in the corpus fits inside one
+  # partitioned pass. That is what these two numbers buy: NOT a guarantee (TraceAnalysisPromptBuilder
+  # partitions an oversized timeline into consecutive, non-overlapping windows so a call is never
+  # dropped regardless of size — see PromptWindow), but headroom that makes partitioning rare.
+  # context-tokens is the CEILING on options.num_ctx, not a constant: OllamaClient sizes each call's
+  # window to that call's own prompt plus answer headroom and clamps it here, since num_ctx is what
+  # the KV cache is allocated from and the review's later calls need only a fraction of the first's.
+  # Never let this drop below what a capped prompt needs — Ollama SILENTLY left-truncates a prompt
+  # that overflows its window, dropping the instructions at the top. Raising it costs KV-cache RAM
+  # on the Ollama host — this raise is +50% on the single largest allocation a run makes, paid only
+  # on the findings call. 60000 needs at least 24097 tokens: OllamaClient sizes num_ctx as
+  # promptChars/3 + 1 + 4096 (an over-estimate on purpose), giving 24097 against a 24576 ceiling,
+  # where 60861 would be the first value to clamp — and a clamp is the silent left-truncation this
+  # setting exists to prevent. The two must always move together.
+  max-prompt-chars: 60000
+  context-tokens: 24576
+  # Ask for a JSON answer matching a schema and render the markdown from it here, instead of asking
+  # the model to write markdown. Makes the answer's SHAPE unfalsifiable (it cannot repeat itself,
+  # drop an "Apply this" line, or name a rule target off the closed list — that list becomes a schema
+  # enum) but constrains decoding, which can cost answer QUALITY on a small model.
+  # ON here because the review runs as two calls and this is what makes the first call's request
+  # classification binding: `requestKind` from the findings call rebuilds the second call's schema,
+  # so on a request the model itself judged to be a question, `betterWording` becomes an enum whose
+  # only member is None. Prose can only ask for that; a grammar enforces it. Verify on your own model
+  # by running TraceAnalysisRegressionHarness with it off, then on, and comparing.
+  # Needs an Ollama new enough to know `format`; an older one ignores it and the run fails loudly.
+  structured-output: true
+  # Which way an oversized timeline gives way. Both remedies keep every call's line and number; they
+  # differ only in what a trace pays with. FEWEST_REVIEW_WINDOWS (the default) tries every
+  # TimelineDetail level loosest-first and takes whichever needs the fewest windows, so a trace pays
+  # in per-call detail (the tool-input cap drops 200 -> 80 -> 30, the "-> ok" and duration come off
+  # calls that succeeded, a model call's token/cost breakdown comes off) before it pays in model
+  # calls. MOST_TIMELINE_DETAIL inverts that: the timeline stays at FULL detail and is partitioned
+  # into as many windows as that needs, one full model call each, each re-paying the ~10.5k of fixed
+  # review instructions. Worth trying on a small model, which generally reads two short prompts
+  # better than one long one — and the detail the tighter levels thin is exactly what a finding rests
+  # on when a call went wrong. Which wins on YOUR model is a measurement, not an opinion: run
+  # TraceAnalysisRegressionHarness with each and compare the scorecards, as with structured-output.
+  timeline-detail-preference: FEWEST_REVIEW_WINDOWS
 tuning:
   # First tokens of Bash commands with a dedicated-tool replacement, mapped to the
   # replacement the tuning report names in its anti-pattern suggestions.

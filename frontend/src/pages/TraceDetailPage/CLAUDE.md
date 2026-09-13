@@ -40,15 +40,31 @@ TraceDetailPageView.tsx      view — owns all UI state (collapsed set, selected
 TraceDetailPageView.test.tsx vitest coverage for the view (renderWithProviders, prop fixtures)
 ```
 
-The view renders four sub-components inline (no further drilling):
+The view renders five sub-components inline (no further drilling), plus a sixth mounted only
+while its dialog is open:
 
 ```
 TraceDetailHeader  ──  breadcrumb + SummaryStrip KPIs (container/view split)
 WaterfallToolbar   ──  "Span waterfall" label + legend + Expand/Collapse all (tool spans
-                       only — see Collapse and expand) + Next error
+                       only — see Collapse and expand) + "Analyze trace" + Next error
 TraceMinimap       ──  full-trace overview with drag-to-zoom brush
 SpanWaterfallRow   ──  one row per visible span (single-file component, no view split)
 SpanInspectorDrawer ── right-side width-resizable drawer for the selected span
+AnalyzeTraceDialog ──  "Analyze trace" dialog — review of this trace by a local Ollama
+                       model (agent execution quality + request quality), answering in two
+                       sections: "What went wrong", each bullet ending in a Fix, and
+                       "Apply this" — three lines (an instruction rule and the tool swaps,
+                       both paste-ready; then better wording, shown against the request the
+                       reader actually sent) — preceded by an optional
+                       "What went well" when the backend verified a positive. The
+                       instruction rule carries a
+                       target (`CLAUDE.md` or `skill:<name>`) rendered as a chip, since a
+                       rule belonging in a skill's own definition is useless written
+                       against CLAUDE.md — see the Apply-this gotcha below. Saves the
+                       result (container/view
+                       split; only mounted while
+                       `analyzeTraceDialogOpen` is true, matching the `errorCount ?` / `canToggleAll ?`
+                       conditional-render idiom the toolbar buttons already use)
 ```
 
 **Cross-page utilities.** The page imports from `../TracesPage/` rather than duplicating:
@@ -91,6 +107,47 @@ TraceDetailPage/
 │                               and MUI chip color; used by LogEntry and SpanInspectorDrawer
 ├── attrFormat.ts               attrValueAsString(v) — objects → JSON, null/undefined →
 │                               literal string, primitives → String()
+├── spanRelations.ts            buildSpanRelations(span, spans, sortedToolCalls) → the related calls
+│                               the drawer shows for the selected span, plus resolveToolCall, the
+│                               rule for whether a row is a call at all. `sortedToolCalls` is every
+│                               tool call in the trace sorted by start time — `sortedToolCallsOf
+│                               (spans)`, exported so a caller invoking this once per span selection
+│                               (`CallContextSection.tsx`) memoizes that list once per trace rather
+│                               than it being re-filtered/re-sorted on every selection change.
+│                               Selects by RELATION, not position: earlier/later calls against the
+│                               same file_path, each stating how many calls away it is. The +/-1
+│                               window was measured against the live database and rejected — only
+│                               36% of edits whose file was read earlier in the trace had that read
+│                               in the preceding call (median gap 2, p90 gap 15). Returns null for
+│                               anything that isn't a tool call. Each RelatedCall carries the target
+│                               `spanId`, which is what lets the rendered call number link to that
+│                               row. The earlier/later file-relation lists share one
+│                               `relatedByFile(candidates, filePath)` pipeline rather than two
+│                               copies differing only in which candidate list they scan. A
+│                               same-command relation (earlier calls sharing a Bash command's first
+│                               two tokens) was removed on request — don't reintroduce it without
+│                               checking why
+├── spanRelations.test.ts       vitest coverage for the selector: a same-file read 15 calls back, a
+│                               later touch, sub-span resolution, and the non-tool-span null
+├── spanCallFacts.ts            buildSpanCallFacts(span, spans, logsBySpanId) → what is already
+│                               KNOWN about one tool call: the agent's own `description` of its
+│                               intent, success/failure + error, the permission decision and
+│                               whether it was pre-authorized, and the result size.
+│                               The DESCRIPTION is the point: it is the most direct answer to "what
+│                               was this call for" and nothing else on the page surfaces it, since
+│                               it lives inside the tool_result log's `tool_input` JSON string.
+│                               Reachable client-side only because LogService#resolveLeafSpans has
+│                               already re-pointed each tool log onto its exact leaf span by
+│                               tool_use_id — so the buckets sit on the call's CHILDREN
+│                               (tool_result on the execution span, tool_decision on the
+│                               approval-wait span), never on the wrapper, which is why this scans
+│                               children. Every match is re-checked against the call's own
+│                               tool_use_id rather than trusted from the bucket
+├── spanCallFacts.test.ts       vitest coverage built from a real trace's shape: the description
+│                               parse, resolution from the sub-span, the tool_use_id re-check
+│                               rejecting a stray log, a failure with error text, a truncated
+│                               tool_input surviving rather than throwing, and all-null when
+│                               nothing resolved
 ├── spanCost.ts                 costOfSpan(span) → SpanRow.costUsd, a per-span cost breakdown figure
 │                               (0 when none was logged against it) — NOT the source of the header's
 │                               Cost KPI, which reads the backend-authoritative trace total instead;
@@ -106,6 +163,98 @@ TraceDetailPage/
 │                               Overview panel's collapsed flag to
 │                               localStorage['ac-wf-overview-collapsed']; pure, no React; same
 │                               idiom as chipVisibility.ts (see Gotchas)
+├── traceInsightsDerivations.ts pure functions, no React: `classifyToolCall`/`PhaseKind`/
+│                               `PHASE_KIND_COLOR_INDEX` — a READ/EDIT/SEARCH/VERIFY/OTHER
+│                               taxonomy over a tool call's name, plus the palette index each kind
+│                               maps to (paired with `colorForIndex` from `theme.ts`). Named after
+│                               a since-removed phase-timeline feature and kept purely because
+│                               `components/AnalyzeTraceDialog/summarizeTraceWork.ts` and
+│                               `AnalyzeTraceDialogView.tsx` both reuse it to color the Analyze
+│                               Trace dialog's Tools/Files chips consistently — see the "no panel,
+│                               just a surviving taxonomy" note at the end of this file for the
+│                               history and why it lives at the page root rather than in a
+│                               component directory
+├── components/AnalyzeTraceDialog/callCitations.ts
+│                               splitCallCitations (a run of text → plain stretches + the call
+│                               numbers cited in it) + the remark plugin that rewrites each cited
+│                               number into a #call-N link + callCitationHref/callNumberFromHref.
+│                               Pure, no React; see the call-number gotcha
+├── components/AnalyzeTraceDialog/summarizeTraceWork.ts
+│                               summarizeTraceWork(spans) → { toolCalls, modelCalls, durationMs,
+│                               tools, models, files } — the client-side breakdown behind the
+│                               summary card's Work stat line and its collapsed-by-default
+│                               Tools/Models/Files supplementary sections (Cost is threaded
+│                               separately — see the summary-card gotcha below). Pure, no React,
+│                               same idiom as callCitations.ts in this folder. Reuses rather than
+│                               reinvents: `isToolCallSpan` (../TracesPage/traceDerivations) for
+│                               "was this a tool call", `tokenBreakdownForSpan(span).total > 0`
+│                               (../TracesPage/tokenBreakdown) for "was this a model call" — the
+│                               same two rules TraceDetailHeader's KPIs and WaterfallToolbar's
+│                               Collapse-all use, so the card can never disagree with them —
+│                               `shortModelName` (../../lib/format) for the Models chip labels,
+│                               `classifyToolCall` (../../traceInsightsDerivations)
+│                               for each tool count's `kind` (`TraceWorkToolCount`, first-seen per
+│                               distinct tool name — the same READ/EDIT/SEARCH/VERIFY/OTHER
+│                               taxonomy that module exports purely for this reuse — see its own
+│                               "Tool-call classification" section comment), and
+│                               `computeTraceWindow` (../../spanTree) for durationMs (guarded to 0
+│                               for an empty trace, rather than that function's own 1ms zoom-window
+│                               floor). Tool name / file path read off `tool_name` / `file_path`
+│                               span attributes, the same keys SpanWaterfallRow/SpanToolBadge
+│                               already rely on. Never sent to the backend or to Ollama
+├── components/AnalyzeTraceDialog/summarizeTraceWork.test.ts
+│                               vitest coverage: empty trace, repeated vs. once-seen tool/model
+│                               names (count badge only on the former), each tool's kind
+│                               classification (Grep→SEARCH, Bash's own command→VERIFY,
+│                               TodoWrite→OTHER), a file touched by more than one tool, and
+│                               duration from earliest span start to latest span end
+├── components/AnalyzeTraceDialog/fileTypeBadge.ts
+│                               fileTypeBadge(path) → { label, color } — the small colored
+│                               language badge shown at the start of each Files-section row.
+│                               Reads the extension off the filename (`java`→JAVA/orange,
+│                               `tsx`→TSX/blue, ...), or a handful of common extension-less
+│                               filenames (Dockerfile, Makefile, `.gitignore`) matched by name,
+│                               falling back to a neutral badge naming the raw extension (or
+│                               "FILE" when there is none) rather than rendering nothing. Pure, no
+│                               React — deliberately not a per-language icon/logo package: this
+│                               app already favors hand-built SVG/CSS over a component library for
+│                               every visualization (frontend/CLAUDE.md's "Charts and grids"), and
+│                               `@mui/icons-material` has no Java/Python/Go/Rust glyph to reach for
+│                               anyway (just a handful of web-stack ones — Html/Css/Javascript/Php)
+├── components/AnalyzeTraceDialog/fileTypeBadge.test.ts
+│                               vitest coverage: Java vs. TypeScript badged distinctly, extension
+│                               read off the filename only (not a directory segment containing a
+│                               dot), case-insensitive matching, a common extension-less filename
+│                               (Dockerfile, `.gitignore`) badged by name, an unmapped extension
+│                               falling back to itself (uppercased) rather than a blank badge, and
+│                               a name with neither an extension nor a filename match → "FILE"
+├── traceAnalysisApi.ts         fetchTraceAnalysis — page-local fetcher for the
+│                               `/api/traces/{traceId}/analysis` sub-resource (GET = load any
+│                               stored analysis, resolves `null` on 404 rather than throwing since
+│                               "not analyzed yet" is a normal state). Bypasses the shared
+│                               `api/http` `getJson` helper, same pattern as
+│                               `SettingsPage/settingsApi.ts#purgeTelemetry`, so the plain-text
+│                               error body reaches the dialog instead of being collapsed into a
+│                               generic status-text message. `streamTraceAnalysis` is what the
+│                               dialog actually calls to run/regenerate an analysis: POST to
+│                               `/analysis/stream`, parsing the SSE body frame by frame
+│                               (`started`/`plan`/`phase`/`delta`/`done`/`failed`) via the shared
+│                               `readServerSentEvents`/`parseServerSentEvent` (`../../lib/
+│                               serverSentEvents.ts` — this app's first and, so far, only SSE
+│                               consumer; see that module's own doc comment for the generic frame
+│                               reader/parser) and resolving with the same `TraceAnalysisResult`
+│                               shape `fetchTraceAnalysis` loads for a stored row. It rethrows a
+│                               `failed` event's message as an Error, so callers keep one
+│                               try/catch shape across both fetchers. There used to be a third,
+│                               non-streaming `regenerateTraceAnalysis` POST fetcher; it had no
+│                               callers left once the dialog moved onto `streamTraceAnalysis` and
+│                               was deleted rather than kept around unused
+├── traceAnalysisApi.test.ts    vitest coverage for `streamTraceAnalysis`: event order,
+│                               chunk-boundary reassembly, `failed` → thrown Error, and a stream
+│                               that ends with no terminal event. The SSE frame reader/parser
+│                               itself (`readServerSentEvents`/`parseServerSentEvent`) is only
+│                               exercised end-to-end here; its own direct unit tests live in
+│                               `../../lib/serverSentEvents.test.ts` next to the module they cover
 ├── index.ts                    re-exports TraceDetailPage as default
 └── components/
     ├── TraceDetailHeader/
@@ -195,7 +344,103 @@ TraceDetailPage/
     │   │                             toggles (chipsOff — see Badge visibility below; `error`
     │   │                             is not a toggle) + GhostButton "Expand all / Collapse all"
     │   │                             (hidden when there is nothing to fold — see Collapse and
-    │   │                             expand) + "Next error" (when errors > 0)
+    │   │                             expand) + "Analyze trace" (AutoAwesomeIcon, always shown —
+    │   │                             opens AnalyzeTraceDialog) + "Next error" (when errors > 0)
+    │   └── index.ts
+    ├── AnalyzeTraceDialog/
+    │   ├── AnalyzeTraceDialog.tsx      container — `useQuery(['trace-analysis', traceId])`
+    │   │                             (`enabled: open`) for any stored analysis, a second
+    │   │                             `useQuery(['trace-cost-breakdown', traceId])` for the
+    │   │                             per-subagent cost list fed to the summary card's Cost
+    │   │                             section, `enabled: open && supplementaryOpen` — that section
+    │   │                             starts collapsed (TraceSummaryCard's own "Show Tools,
+    │   │                             Models, Files, Cost" toggle), so this stays disabled until
+    │   │                             the reader actually expands it rather than firing on every
+    │   │                             dialog open regardless of whether the section is ever
+    │   │                             opened; `supplementaryOpen` is a container `useState(false)`
+    │   │                             flipped true by `onSupplementaryExpand`, a callback threaded
+    │   │                             down through `AnalyzeTraceDialogView` to
+    │   │                             `TraceSummaryCard`'s own toggle handler (the view keeps
+    │   │                             owning `detailsOpen` itself — this is a one-way notification,
+    │   │                             not a controlled prop) — plus a `useMutation` for "Run
+    │   │                             analysis"/"Regenerate" whose
+    │   │                             `onSuccess` writes the fresh result straight into that
+    │   │                             same query's cache entry (`queryClient.setQueryData`) —
+    │   │                             see the traceAnalysisApi.ts gotcha below for why this is
+    │   │                             the one page-local fetcher that bypasses `getJson`. The
+    │   │                             mutation runs `streamTraceAnalysis`, so the container also
+    │   │                             holds an `AnalysisRunProgress` state (phases, active/draft
+    │   │                             KEY — not phase name, see the multi-pass gotcha below —
+    │   │                             accumulated draft text, character count) fed by the stream's
+    │   │                             callbacks and reset in `onMutate` — react-query models a
+    │   │                             call's result, and everything interesting here happens
+    │   │                             before there is one. Also takes optional `spans`/
+    │   │                             `logsBySpanId`/`traceCostUsd` props, threaded straight
+    │   │                             through from `TraceDetailPageView` (which already holds
+    │   │                             them) to the view, unmodified — this container does no
+    │   │                             computation on them itself. See the summary-card gotcha
+    │   │                             below for what the view does with them
+    │   ├── AnalyzeTraceDialogView.tsx  view — five states in priority order: loading the
+    │   │                             stored query (spinner) → regenerating
+    │   │                             (`isRegenerating`: one spinner naming the step the backend
+    │   │                             says it is on, over the panel the review appears in as the
+    │   │                             model writes it — a skeleton until then; see the streaming
+    │   │                             gotcha below) → regenerate failed (backend's plain-text
+    │   │                             error + "Try again") → no stored analysis (explanation +
+    │   │                             "Run analysis") → have a result (analysis text +
+    │   │                             `model`/`generatedAt`/`generationDurationMs` caption +
+    │   │                             Regenerate/Copy/Close), plus an `Alert severity="warning"`
+    │   │                             banner on top when `analysis.outdated` is true — the
+    │   │                             backend flags this by comparing the trace's CURRENT latest
+    │   │                             span `end_timestamp` against `analyzedThroughTimestamp`
+    │   │                             (the snapshot taken when the analysis was generated), so a
+    │   │                             still-running trace or a late background/subagent
+    │   │                             completion that lands after "Analyze trace" was run shows a
+    │   │                             "may no longer reflect everything" nudge to regenerate
+    │   │                             rather than silently going stale. No client-side staleness
+    │   │                             math — the view only reads the boolean. Two more info-severity
+    │   │                             banners are mutually exclusive (see the windowed-review
+    │   │                             gotcha below): `analysis.timelineTruncated` — LEGACY, only
+    │   │                             ever true on a row stored before the windowed-review rework
+    │   │                             — `ollama.max-prompt-chars` forced the call timeline to be
+    │   │                             elided when that analysis was generated (backend
+    │   │                             `timeline_truncated`/`omitted_line_count` columns, `V25`), so
+    │   │                             the reader is told the review was written from a partial
+    │   │                             timeline AND nudged to regenerate for full coverage; or
+    │   │                             `analysis.reviewPassCount > 1` — a FRESH analysis whose
+    │   │                             oversized timeline was split into that many consecutive
+    │   │                             review passes and merged, naming `analysis.timelineCallCount`
+    │   │                             so the reader knows every call was still seen. A fresh run
+    │   │                             never sets both — see the gotcha for why they can't overlap.
+    │   │                             Below the banners, a `TraceSummaryCard`
+    │   │                             renders `analysis.summary` (backend `trace_analyses.summary`
+    │   │                             column, `V26`) when present — a code-composed recap, plain text
+    │   │                             (never markdown), never sent to Ollama and never judged by it:
+    │   │                             see `TraceAnalysisPromptBuilder#buildTraceSummary` on the backend
+    │   │                             for why a narrated retelling is assembled in code rather than
+    │   │                             asked of the model. One row per labelled line — `Request` (shown
+    │   │                             as "Prompt", a display-only relabel; the parser keys off the ": "
+    │   │                             position, never the label text), `Work`, then whichever of
+    │   │                             `Tools` / `Models` / `Files` / `Cost` / `Skills` / `Compaction`
+    │   │                             the backend had something to say about, then `Outcome`. A line
+    │   │                             with several clauses splits into its own bullet list, **on the
+    │   │                             middle dot the backend joins them with and never on a comma** —
+    │   │                             see the summary-separator gotcha below. Null for an analysis
+    │   │                             stored before that column existed, in which case the card renders
+    │   │                             nothing. Renders the
+    │   │                             analysis text as markdown through `react-markdown` +
+    │   │                             `rehype-sanitize`, never `dangerouslySetInnerHTML` — it is
+    │   │                             model output derived from trace content (prompts, file
+    │   │                             paths, tool inputs) this app did not author, so any stray
+    │   │                             HTML in it is stripped rather than becoming live DOM (see
+    │   │                             the markdown-rendering gotcha below). **Prompt is always the
+    │   │                             backend's own text; Work, Outcome, and the four
+    │   │                             Tools/Models/Files/Cost rows are not** — see the summary-card
+    │   │                             gotcha below for the client-computed replacement
+    │   ├── AnalyzeTraceDialogView.test.tsx  vitest coverage for the view — one fixture per
+    │   │                             state above, plus the summary card's collapsed-by-default
+    │   │                             and expanded states (the only tested file per this
+    │   │                             feature's container/view test split)
     │   └── index.ts
     ├── TraceMinimap/
     │   ├── TraceMinimap.tsx           full-trace overview bar-per-span (height staggered by depth ≤ 4)
@@ -203,7 +448,9 @@ TraceDetailPage/
     │   │                             double-click resets to full trace; exports ZoomView { s, e }
     │   └── index.ts
     ├── SpanWaterfallRow/
-    │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + SpanFullRateBadge (pink
+    │   ├── SpanWaterfallRow.tsx       single row: index badge + span name + SpanCallNumberBadge
+    │   │                             (muted outlined `call N` chip, only on the tool/model spans the
+    │   │                             backend numbered — see the call-number gotcha) + SpanFullRateBadge (pink
     │   │                             input+output+cache-create pill, the three-way split in its
     │   │                             tooltip) + SpanCacheReadBadge (the quiet neutral half of the
     │   │                             pair, its tooltip carrying the hit rate and the 0.1x note) +
@@ -214,8 +461,10 @@ TraceDetailPage/
     │   │                             at 300 chars) + error/descendant-error pills + timeline bar +
     │   │                             duration label. All badges share spanChipSx, so only palette and
     │   │                             weight differ; pure component (no view split). Every badge except
-    │   │                             error/descendant-error is gated on the chipsOff prop (see Badge
-    │   │                             visibility) — the toolbar legend's per-family mute toggle
+    │   │                             the call number and error/descendant-error is gated on the
+    │   │                             chipsOff prop (see Badge visibility) — the toolbar legend's
+    │   │                             per-family mute toggle; those three name the row rather than
+    │   │                             report an optional figure, so they are never hidden
     │   └── index.ts
     └── SpanInspectorDrawer/
         ├── SpanInspectorDrawer.tsx    right-side drawer, a flex sibling of the waterfall card (no
@@ -224,7 +473,8 @@ TraceDetailPage/
         │                             ↑ "n / N" ↓ when >1 row is rendered, close ×) + one
         │                             scrolling column — meta grid (cost row, amber bold, after
         │                             duration when costUsd > 0), self-time bar, ErrorSection,
-        │                             then the Tokens/Tool/Attributes/Events/Logs sections. Stays
+        │                             CallContextSection, then the Tokens/Tool/Attributes/Events/
+        │                             Logs sections. Stays
         │                             mounted while closed (width 0) so the 0.2s width transition
         │                             runs; content is keyed by span id so section/log expand
         │                             state resets per selection; keeps the last selection
@@ -234,6 +484,36 @@ TraceDetailPage/
         │                             `width: 0` stays tabbable. Wraps its content in
         │                             LongValueModalProvider, so a clamped value in any section opens
         │                             the same dialog
+        ├── CallContextSection.tsx     the untitled call-context panel — the call's own
+        │                             computed facts (buildSpanCallFacts: the agent's stated
+        │                             intent, outcome, permission) and its related calls
+        │                             (buildSpanRelations). Entirely computed: no request, no
+        │                             model, nothing to validate, and it renders instantly.
+        │                             It carries no heading of its own (a "What was this call
+        │                             for?" title was removed on request), so the box renders
+        │                             only when there is at least one fact or relation in it —
+        │                             relationRowsOf is shared between that emptiness check and
+        │                             RelationList so the two can't disagree
+        │                             Each relation's call number is a real <button> that calls
+        │                             onRevealSpan — the row it names may be scrolled away, folded
+        │                             inside a subagent dispatch, or outside the zoom, all of which
+        │                             TraceDetailPageView#revealSpan handles.
+        │                             HISTORY WORTH KEEPING: this slot briefly held an on-demand
+        │                             Ollama "analyze this call" button. Measured against nine real
+        │                             spans it returned the computed summary verbatim on three,
+        │                             restated the relation list on three more, and fabricated once
+        │                             ("read 40 characters from a file at offset 2104" — a line
+        │                             count reported as a character count, which passed validation
+        │                             because both numbers were technically in the evidence). It
+        │                             was removed rather than tuned further; the facts below it
+        │                             were carrying the section the whole time. Don't reintroduce a
+        │                             per-span model call without measuring it against the computed
+        │                             layer first.
+        │                             A non-tool span renders nothing at all. An earlier revision
+        │                             showed a placeholder ("Only tool calls carry call context —
+        │                             select a tool row to see it.") on the two waterfall rows out
+        │                             of three that carry no tool_name; it was removed on request,
+        │                             so the drawer simply omits the section there
         ├── CollapsibleSection.tsx     collapsible section primitive: the header row is a real
         │                             <button> (Tab/Enter/Space, aria-expanded) that toggles the
         │                             body, 11px chevron rotates -90° when collapsed, optional
@@ -382,10 +662,25 @@ sample-data compatibility.
 | `TraceDetailPage` (`useQuery`)              | `['trace-spans', traceId]`       | `fetchSpansForTrace(traceId)` → `GET /api/traces/{traceId}` |
 | `TraceDetailPage` (`useQuery`, eager)       | `['trace-logs', traceId]`        | `fetchTraceLogs(traceId)` → `GET /api/traces/{traceId}/logs` |
 | `TraceDetailPage` (`useQuery`)              | `['trace-summary', traceId]`     | `fetchTraceSummaryOrNull(traceId)` → `GET /api/traces/{traceId}/summary` |
+| `AnalyzeTraceDialog` (`useQuery`, `enabled: open`) | `['trace-analysis', traceId]` | `fetchTraceAnalysis(traceId)` → `GET /api/traces/{traceId}/analysis` (404 → `null`, not an error) |
+| `AnalyzeTraceDialog` (`useMutation`)        | n/a (writes `['trace-analysis', traceId]` via `setQueryData` on success) | `streamTraceAnalysis(traceId, handlers)` → `POST /api/traces/{traceId}/analysis/stream` (SSE) |
+| `AnalyzeTraceDialog` (`useQuery`, `enabled: open && supplementaryOpen`) | `['trace-cost-breakdown', traceId]` | `fetchTraceCostBreakdown(traceId)` (shared `api/` barrel) → `GET /api/traces/{traceId}/cost-breakdown` — per-subagent cost list + main-loop/auxiliary totals for `TraceSummaryCard`'s Cost section; `supplementaryOpen` only flips true once the reader expands that section's "Show Tools, Models, Files, Cost" toggle (`onSupplementaryExpand`), so this no longer fires on every dialog open; see that section's gotcha below for why the figure is never reconciled against the trace total |
+| `TraceDetailPage` (`useQuery`)              | `['system-ollama-settings']`     | `fetchOllamaSettings` (imported from `../SettingsPage/settingsApi`) → `GET /api/system/ollama-settings` — same query key as SettingsPage's Ollama tab, so the two share one cache entry |
 
-All three queries are enabled only when `traceId` is truthy (`enabled: Boolean(traceId)`).
-None of them poll — this page has no `WindowSelection`, no auto-refresh, and no
-`refetchInterval`. The logs query is intentionally eager (not gated on a span being selected)
+**"Analyze trace" is hidden, not just disabled, when Ollama is off.** `ollamaSettings?.enabled` (default
+`false` while the query is loading, matching both the Settings page's own initial toggle state and the
+backend's off-by-default `ollama.enabled`) is threaded
+through `TraceDetailPageView` to `WaterfallToolbar` as `ollamaAnalysisEnabled`, which renders the
+button conditionally rather than greying it out — there's nothing useful to show mid-click if the
+feature is off. This is client-side convenience only; `TraceAnalysisService.regenerate` on the backend
+independently re-checks the effective `enabled` flag before ever calling Ollama (see SettingsPage's
+Ollama configuration section for the enforcement detail), so a stale tab still cannot trigger a real
+analysis even if this check is bypassed.
+
+All of the page's own `useQuery` calls (the first three) are enabled
+only when `traceId` is truthy (`enabled: Boolean(traceId)`). None of them poll — this page has no
+`WindowSelection`, no auto-refresh, and no `refetchInterval`. The logs query is intentionally
+eager (not gated on a span being selected)
 so the drawer's Logs section has data the moment the user first selects a span. The summary query
 feeds three things: the header's Prompt row (`firstUserPrompt`), the header's Cost KPI
 (`traceCostUsd`, from `TraceRow.totalCostUsd`), and that same tile's background-cost tooltip
@@ -410,7 +705,8 @@ is passed verbatim to the view; the waterfall's visible-rows traversal walks it 
 
 Three derived maps are computed once in the container's `useMemo` pool:
 
-- `spanIndices` (`buildSpanIndices`) — 1-based DFS counter for the index badge on each row.
+- `spanIndices` (`buildSpanIndices`) — 1-based DFS counter for the index badge on each row. **Not
+  the same number a trace-analysis review cites** — see the call-number gotcha below.
 - `depthBySpanId` (`buildSpanDepths`) — number of ancestors for each span; capped at 4 for
   minimap stagger, used directly for the waterfall indent (`pl: 10 + depth * 15`), and also
   threaded into `TraceDetailHeader` (`Math.max(...depthBySpanId.values()) + 1`) for the Depth KPI
@@ -659,6 +955,14 @@ and `nextError`.
 `waterfallIndex`/`waterfallCount`) and passes it — or null — to `SpanInspectorDrawer`, which always
 stays mounted so the width transition can run and the dragged width survives across selections.
 
+Alongside the selection the drawer takes `traceId`, **the whole `spans` array** and `logsBySpanId`.
+`CallContextSection` scans the spans to find the calls related to the selected one — passing the
+waterfall's *rendered* rows instead would be a silent bug, since a collapsed dispatch or a zoom
+brush would hide exactly the far-apart earlier read this exists to surface — and reads
+`logsBySpanId` for the selected call's own `tool_result` / `tool_decision`. Note the selection's own
+`logs` field is deliberately not enough for that second job: it is the bucket for the *selected*
+span, while a call's tool logs sit on its children (see `spanCallFacts.ts`).
+
 `waterfallIndex`/`waterfallCount` are derived fresh each render as the selected span's position in
 `visible` (cheap — same pattern as `errorSpans`; no new top-level state). `selectAdjacentSpan(delta)`
 moves that index by `delta` and — if in range — calls the existing `setSelected` + `scrollToSpan`.
@@ -692,6 +996,55 @@ so the edge tracks the cursor 1:1.
 
 ## Gotchas
 
+- **A review's "call 20" is not waterfall row 20, and the two numbers must never be conflated.**
+  The index badge on each row is `spanIndices`, a 1-based DFS counter over *every* span — the
+  `claude_code.interaction` root, each tool call's `tool.execution` and `blocked_on_user` children
+  included. The number an analysis cites counts only tool calls and model requests, in trace order,
+  and is computed on the backend (`TraceCallNumbering`) and delivered as **`SpanRow.callNumber`**,
+  null on every span that isn't one. On a real trace the two diverge from the first row. Read the
+  citation number off `callNumber` and nothing else; deriving it client-side would duplicate a rule
+  that is configurable on the backend (`tuning.tool-span-name` / `tuning.llm-request-span-name`) and
+  a citation pointing at the *wrong* row is worse than one pointing nowhere.
+  `TraceDetailPageView` builds `spanIdByCallNumber`/`knownCallNumbers` from that field and hands the
+  dialog a `onNavigateToCall`; the dialog's `callCitations` remark plugin turns each cited number
+  into a button, but **only for a number the trace actually has**
+  — and **the phrase it matches has to allow `call numbers 27, 29, 31` as well as `call 27`**,
+  because the prompt template asks for citations in the words "cite call numbers" and the model
+  writes them back that way. Trace `bc222c551f5acf3c77fc44f8bc53c0f8` is why: every citation in its
+  "What went wrong" section read `(call numbers 22, 43 …)` and none of them linked, while the two
+  bare `at call 3` in "What went well" did, so the feature looked like it worked right up to the
+  section the reader came for. Widening the phrase is the fix rather than tightening the prompt's
+  wording, since the answer is model output and the stored analyses are re-read, never migrated —
+  a number the model INVENTS (one past the end of the trace's timeline) still has no row to land on.
+  Since the windowed-review rework, that is the ONLY way an out-of-range citation happens — no call
+  is ever elided any more (an oversized timeline is split into passes instead) — so it is
+  unambiguously a hallucination, not "maybe hidden." Rather than folding it into indistinguishable
+  plain text (the pre-rework behavior, back when it genuinely could have been either), it is rewritten
+  to a distinctly-marked, non-clickable `<span title="This trace has no call N">` — `known: false` in
+  effect, expressed as a distinct href scheme (`unknownCallCitationHref`/`unknownCallNumberFromHref`
+  in `callCitations.ts`) rather than a field on `CallCitationSegment`, since `splitCallCitations` itself
+  doesn't know which numbers are known — only `remarkCallCitations`'s `isKnownCall` does. Clicking a
+  KNOWN citation closes the dialog (it is modal over the waterfall), expands any collapsed ancestor,
+  widens the zoom only if the target sits outside the current window, then selects and scrolls to the
+  row — which carries the matching `call N` badge, so the landing is verifiable rather than merely
+  plausible.
+
+- **An oversized timeline is now reviewed in multiple passes, never truncated — and the response
+  carries how many.** `TraceAnalysisResult.reviewPassCount` (always ≥ 1) and `.timelineCallCount`
+  are new; `.timelineTruncated`/`.omittedLineCount` are LEGACY, staying in the type only because an
+  OLD stored row can still carry `true`/a nonzero count — a fresh analysis always writes
+  `timelineTruncated: false, omittedLineCount: 0` even when `reviewPassCount > 1`. Don't read
+  `timelineTruncated` as "this was a big trace" any more; read `reviewPassCount > 1` for that. The
+  view's two banners are therefore mutually exclusive by construction (an old truncated row was never
+  partitioned into passes; a fresh partitioned row is never truncated), not by an explicit
+  cross-guard in the JSX — each `Alert` just checks its own field.
+  **The SSE protocol gained a `plan` event and `key`/`stepNumber`/`stepCount` fields** so progress
+  from a repeated phase (DRAFTING recurring once per pass) doesn't visually collide — see the
+  `AnalysisRunProgressView` gotcha above for the client-side half of this. `onPlan` is wired
+  identically to `onStarted` in the container (same reducer, replaces `phases`) — it exists because
+  `started` is sent optimistically, before the backend knows the final pass count, and `plan` is sent
+  once it does.
+
 - **The SummaryStrip Prompt row (and the Cost KPI) have their own query.** `SummaryStrip` renders
   the prompt from the optional `prompt` prop, threaded up as `firstUserPrompt` through
   `TraceDetailHeaderView` / `TraceDetailHeader` / `TraceDetailPageView` from a **third** page
@@ -715,6 +1068,299 @@ so the edge tracks the cursor 1:1.
   a trace whose errors are expected, that is a panel to close on every navigation. Errors are
   still one click away through the toolbar's "Next error" (`errorIndexRef` starts at -1, so the
   first press selects the first error). Don't re-add the auto-select.
+- **The "Analyzing trace…" progress is streamed from the backend, and every phase in it is real.**
+  The dialog used to advance a four-item checklist (`Reading trace spans` → `Reviewing tool calls &
+  errors` → `Checking prompt quality` → `Drafting review`) on a fixed 3s `setInterval`, clamped at
+  the last item. That was not merely imprecise, it was backwards: all four drained in nine seconds
+  while a real run is seconds to minutes, so `Drafting review` silently absorbed the entire wait and
+  read as stuck — the one complaint the indicator existed to prevent. The fix is **not more labels**:
+  everything before the model call is milliseconds, so any list long enough to fill the wait would be
+  invented. `POST /api/traces/{traceId}/analysis/stream` reports the four phases the backend can
+  honestly say it has reached (`TraceAnalysisPhase`, backend `model/`), and `DRAFTING` — the only
+  slow one — reports its progress **as the answer text itself**, rendered live in the same
+  `ANALYSIS_SURFACE_SX` panel the finished analysis lands in, so nothing re-styles or re-flows at the
+  moment the run completes. The phase *labels* come over the wire too, so renaming or adding one is a
+  backend-only change; don't reintroduce a client-side label table. And don't add a timer back as a
+  fallback for a slow first event — before the `started` event the view shows a bare
+  "Starting the analysis…" spinner with no step named or counted, which is the honest rendering of
+  "the stream hasn't said anything yet".
+- **`AnalysisRunProgressView` renders the whole checklist, keyed on `phase.key` — never
+  `phase.phase`.** Every phase in `progress.phases` gets its own row (done/active/pending derived
+  positionally from `activeIndex`, an `aria-live="polite"` region around the list so a row completing
+  is announced rather than silently swapped — it's the only thing that moves for minutes), all of
+  them known up front from the `started`/`plan` events rather than growing a line at a time. This
+  documentation previously (incorrectly) described a single-step "step N of M" display with the other
+  phases hidden — that state never existed in this component; if you're chasing that behavior, you're
+  chasing a doc bug, not a regression.
+  **The windowed-review rework (an oversized timeline split into several DRAFTING passes) is why
+  `key` exists at all as a field distinct from `phase`.** A phase that only ever happens once has
+  `key === phase` and `stepCount === 1` (no suffix rendered); a phase that recurs — DRAFTING once per
+  review window — gets a per-occurrence `key` (e.g. `"DRAFTING#2"`) and its row's label gets an
+  appended `" — pass N of M"` (only when `stepCount > 1`, so a single-pass run's checklist is
+  pixel-identical to before). Keying the row's React `key` and `activeIndex`'s lookup
+  (`progress.phases.findIndex((phase) => phase.key === progress.activeKey)`) on `phase.phase` instead
+  of `phase.key` is the exact bug this was built to avoid: two DRAFTING occurrences sharing a key
+  collide during reconciliation and can flip an already-`done` earlier occurrence back to
+  `active`/`pending` the moment the later one becomes active — pinned by
+  `AnalyzeTraceDialogView.test.tsx`'s repeated-DRAFTING regression test. The container's
+  `phaseKeyQueueRef`/`MINIMUM_PHASE_DISPLAY_MS` pacing queue (`AnalyzeTraceDialog.tsx`) paces on
+  `key` for the same reason.
+  **`draftKey` is the analogous fix for the draft TEXT buffer.** The container resets `draftText` to
+  the incoming delta's text (rather than appending) whenever `delta.key !== current.draftKey` — a
+  second review window's draft no longer appends onto the first window's, and — with no special
+  casing needed — the later "apply this" step's own delta text no longer bleeds onto the findings
+  draft that preceded it, since that step's `key` differs too.
+- **The analysis panel is one fixed height across all three of its states.**
+  `ANALYSIS_SURFACE_HEIGHT` (48vh) is the finished result's `maxHeight`, the live draft's `height`,
+  and the placeholder skeleton's `height`. `AnalysisSurfacePlaceholder` — MUI `Skeleton` text lines
+  in the same bordered box — exists to hold that height from the moment the run starts: without it
+  the dialog opened at the size of a spinner and jumped to a half-screen panel on the first delta,
+  the one moment the reader is most likely watching. The draft box takes the full height from its
+  first character for the same reason, rather than growing into it. The skeleton emits more lines
+  than fit and clips (`overflowY: 'hidden'`), which is what lets one fixed list fill the box at any
+  viewport height; it is `aria-hidden`, since the live region above already says what's happening.
+  The **stored-analysis** loading state deliberately keeps its small spinner row and gets no
+  skeleton — it usually resolves into the short "Run analysis" explanation, so holding half a screen
+  there would open the dialog huge and then collapse it.
+- **The summary card splits a line into bullets on a middle dot, never on a comma.** `summaryRows`
+  breaks `analysis.summary` into one row per `Label: value` line and then splits the value on
+  `SUMMARY_CLAUSE_SEPARATOR` (` · `), the separator the backend's `buildTraceSummary` joins clauses
+  with. An earlier revision split on `/,\s+/`, which shredded the two lines on this card that are
+  free prose — the quoted request, and the quoted final message on `Outcome` — into bullets
+  mid-sentence, and would now also cut a file away from its own `(Read ×2, Edit)` tool list, which
+  is the one place the backend still uses a comma (nested one level down, inside a clause). A
+  summary **stored before that change simply has no dot in it** and renders as one line per fact
+  rather than as bullets: stored analyses are re-read, never migrated, so that degradation is the
+  behavior, not a bug — both paths are pinned by tests. Don't reintroduce a comma fallback for the
+  older rows; it would bring the shredding back with it.
+- **Work, Outcome, Tools, Models, Files, and Cost on the summary card are client-computed, and
+  that supersedes the backend's own text for those labels — but only once spans are in hand.**
+  `TraceSummaryCard` takes optional `spans`/`logsBySpanId`/`traceCostUsd` props (threaded
+  `TraceDetailPageView` → `AnalyzeTraceDialog` → `AnalyzeTraceDialogView` → the card, all three
+  the page already has — nothing new is fetched). When `spans` is present, `summarizeTraceWork
+  (spans)` (`summarizeTraceWork.ts`, this folder) replaces `Work`'s content with duration
+  alone — not "N tool calls" / "N model calls" / duration as an earlier revision had it, since
+  those two counts are also the Tools/Models section labels below (`Tools (N)` / `Models (N)`)
+  and repeating them on Work was the same redundancy the Cost/Files rows never had. `Outcome`
+  is also replaced — not with a recount of errors (the backend's `TraceSummary.errorCount` stays
+  the one count of what this trace considers an error; nothing here re-tallies it from spans),
+  but with a short status line read off the backend's own deterministic Outcome prefix
+  (`outcomeErrorCount`, parsing `outcomeSummaryLine`'s always-"no errors" or
+  always-"N error(s)…" opening — see `TraceAnalysisPromptBuilder` on the backend) plus an
+  ok/warning `CheckCircleOutlineIcon`/`WarningAmberIcon` pair. The
+  call-by-call detail (which call failed, how the turn ended) stays in "What went wrong" below;
+  restating it here was the same redundancy Work/Tools had. The backend's own optional
+  `Tools`/`Files`/`Cost`/`Skills`/`Compaction` lines are dropped from the always-visible rows
+  entirely (`SUMMARY_ALWAYS_VISIBLE_LABELS` keeps only `Prompt`/`Work`/`Outcome`) since they're
+  now superseded by the sections below. Four supplementary sections — Tools, Models, Files,
+  Cost — sit behind a "Show Tools, Models, Files, Cost" toggle, **collapsed by default**
+  (`useState(false)`, chevron flips via `sx` the same way `SummaryStrip`'s Overview toggle does),
+  and are omitted entirely when there is nothing in any of them (an all-empty
+  `hasSupplementaryContent` check) rather than rendering an empty disclosure. Deliberately
+  **not** persisted to `localStorage` the way `SummaryStrip`'s collapsed state is
+  (`summaryStripVisibility.ts`) — this dialog remounts fresh every time it's opened (no
+  container state survives a close), so there is nothing for a stored preference to outlive;
+  don't add a persistence module for this one. **Each section's own label now carries its
+  count** — `Tools (N)` (`work.toolCalls`), `Models (N)` (`work.modelCalls`), `Files (N)`
+  (`work.files.length`), `Cost ($X)` (`traceCostUsd`) — so the collapsed toggle button ("Show
+  Tools, Models, Files, Cost") is no longer the only clue what's behind it. Tools and Models
+  render as name chips with a `×N` count badge that appears **only when a name repeats** (a bare
+  "×1" states nothing the chip's own presence doesn't already); **Tools chips are additionally
+  tinted by `classifyToolCall`'s READ/EDIT/SEARCH/VERIFY/OTHER kind** (imported from
+  `../../traceInsightsDerivations.ts`, `PHASE_KIND_COLOR_INDEX` + `colorForIndex` from
+  `theme.ts`) — first-seen classification per distinct tool NAME (see that file's own
+  `TraceWorkToolCount` doc for why a "Bash" spanning both `git status` and `cat file` still
+  needs one color). `summarizeTraceWork.ts` classifies each name; `AnalyzeTraceDialogView.tsx`
+  itself also imports `PHASE_KIND_COLOR_INDEX` directly to resolve the chip's color — see the
+  gotcha near the bottom of this file for why the module lives at the page root, not in a
+  component directory named after a feature this page doesn't have. Models chips are **not**
+  colored by kind — there is no equivalent taxonomy for models.
+  **Each file row leads with a `FileTypeIcon`** — a small fixed-width colored badge from
+  `fileTypeBadge(path)` (`fileTypeBadge.ts`, this folder) naming the file's language off its
+  extension (`java`→"JAVA"/orange, `tsx`→"TSX"/blue, ...), so a Java file and a TypeScript file in
+  the same list read as visibly different kinds of thing at a glance rather than only differing in
+  the path text itself. Files renders each path
+  next to small chips (not bracketed text) for the *distinct* tools that touched it
+  (deduplicated, first-seen order — reading the same file twice with the same tool bumps that
+  tool's own chip count rather than duplicating the chip), colored by the same per-name kind
+  lookup (`toolKindByName`, built once from `work.tools` so a file's chip always matches the
+  color its Tools-section chip already took, never a second classification of the same name).
+  **Each file-row chip's `×N` count is per-file, not the tool's trace-wide count from the Tools
+  section above it** — `summarizeTraceWork` tracks a `Map<string, number>` of tool counts per
+  file path (`TraceWorkFileTouch.tools: TraceWorkNameCount[]`), so a tool used 8 times across the
+  whole trace but only twice on one file shows `×2` on that file's row and `×8` on its Tools chip.
+  **Every file row first has the directory prefix it shares with every OTHER row in the list
+  stripped off, computed once per file list rather than per row.** `commonDirectoryPrefix` (this
+  file) splits each `work.files[].path` on `/` and walks forward while every path agrees at that
+  segment, requiring at least two paths (nothing to share a prefix with a single file) and at
+  least two shared segments (`sharedSegmentCount > 1`, not `> 0` — a shared leading slash alone
+  isn't a meaningful directory to strip, it's just how every absolute path starts). On a real
+  trace this prefix is almost always the whole project root
+  (`/Users/.../coding-agent-tuning`), which says nothing about any individual file and, left in,
+  pushes the part that actually differs between rows — which project directory, which file — off
+  the edge of the row. **What's left after stripping is split at the last remaining slash into a
+  directory half and a filename half, styled and truncated completely differently: the
+  filename is bold, `text.primary`, and *never* truncates; the directory is `text.secondary`
+  (de-emphasized) and is the only part allowed to lose characters, and only off its FRONT**
+  (`truncateDirectoryFromFront`, this file) — the opposite end from the shared-prefix strip above,
+  since what's cut here is whatever's left that's still furthest from the file itself, and the
+  filename right after it is what a reader almost always cares about more than which directory
+  it's nested under. Both truncations are plain JS string functions against a character budget
+  (`FILE_DIRECTORY_TRUNCATE_LENGTH`, 64 for the directory half — generous rather than tight, since
+  it grows to fill whatever the row's filename and tool chips leave via `flex: '1 1 auto'` and the
+  dialog itself runs up to 920px wide), not CSS `text-overflow` and not a pixel-measured budget,
+  since the row renders in the same monospace font every other path/id on this card uses, where a
+  character is a near-constant width — no `ResizeObserver` needed. Each budget is an upper bound
+  on the JS-computed string, not a guarantee of the rendered width: a `textOverflow: 'ellipsis'` +
+  `overflow: 'hidden'` CSS pair stays on the directory element as a safety net, clipping further
+  (at the trailing end, same as any ordinary overflowing text) on a viewport too narrow to fit
+  even that generous a string, rather than letting it overflow the row outright — the filename
+  gets no such pair, since it is never meant to clip at all. **Don't reach for a leading-ellipsis
+  CSS trick** (`direction: 'rtl'` + `textAlign: 'left'` + `unicodeBidi: 'plaintext'`, the trick the
+  design mockup's own `.fpath .fdir` rule uses) **for the directory's front-truncation** —
+  `unicode-bidi: plaintext` lets the browser redetect directionality from the (ordinary LTR)
+  content itself, which silently overrides the forced `rtl` and leaves the browser truncating at
+  the trailing end regardless of the rule, the exact failure mode this module's own predecessor,
+  `truncateFilePathMiddle`, was rewritten to fix once already (same root cause, different symptom:
+  that version dropped the *whole leading path*, not just enough of it to fit a budget). The
+  `title` tooltip carrying the full untouched path sits on the directory+filename wrapper
+  specifically, not the outer row — the outer row also contains the `FileTypeIcon` badge and the
+  tool chips, and a `title` up there would fold their text into anything reading the tooltip
+  element's own text content. **Without `spans`** (the view's own older test fixtures, or a caller
+  with no waterfall to draw from) nothing is filtered and nothing is replaced — the card renders
+  exactly as it did before this change, full backend text included. This is why the pre-existing
+  "shows the code-composed summary ahead of the model findings" test (no `spans` prop) still
+  asserts on the backend's own `Tools:`/`Files:` lines unchanged.
+  - **Cost's wording is deliberately conservative.** The backend-authoritative `traceCostUsd` —
+    **never** a client-side sum, per this file's own Cost section above and its bug history — is
+    stated exactly once, in the section's own label (`Cost ($X)`); the body does not repeat it as
+    a "Total: …" line, since the label is already visible whenever the body is. When there was at
+    least one model call, the body adds one line: the per-call figure summed via
+    `costOfSelectedSpan(span, logs)` over exactly the spans `work.modelCalls` counted, worded "$X
+    measured across N model calls" so it reads as a partial measurement rather than a second
+    total. There is **no "$X not attributed
+    to any span" remainder line** — the mockup has one, but computing it as
+    `max(0, total − measured)` and calling it "unattributed" would overclaim precision this file's
+    own Cost section explicitly warns against (the per-span sum and the trace total are not
+    expected to reconcile exactly, so a subtraction between them is not a real figure for a
+    specific unattributed request). Add it only if a future revision can word it as an
+    approximate remainder without implying the two numbers were ever meant to reconcile.
+  - **A third, independent figure sits below those two: the per-subagent cost breakdown**, from
+    the dialog's own `['trace-cost-breakdown', traceId]` query (`fetchTraceCostBreakdown` →
+    `GET /api/traces/{traceId}/cost-breakdown`, `enabled: open && supplementaryOpen` — the section
+    this feeds starts collapsed, so the query stays disabled until the reader actually expands it;
+    not part of the mutation, since the figure never changes as a result of running or
+    regenerating a review). Rendered only when `costBreakdown.subagentCosts.length > 0` — a trace
+    that never dispatched a subagent shows nothing new, the pre-existing Total/measured lines
+    unchanged. Each row shows the subagent's label, cost, model-call count, and tool-call count,
+    led by a `SubagentDispatchCallNumberBadge` for its `dispatchCallNumber` — the same call-
+    numbering space as a markdown citation (see the call-number gotcha above), rendered through the
+    same `CallCitationContext` the review text's own citation links read (the whole card sits
+    inside the dialog's `CallCitationContext.Provider`), so clicking it jumps to the waterfall row
+    that dispatched it exactly the way a cited call number does. It renders as plain, non-clickable
+    "call N" text — not a dead link — whenever no citation target is available or the number falls
+    outside `knownCallNumbers`, same fallback the markdown link renderer uses.
+    **`costBreakdown.measuredCostUsd` (main loop + subagents + auxiliary) is a fourth figure, and
+    is stated as its own line, never blended into or reconciled against `traceCostUsd` or
+    `measuredModelCallCostUsd` above it** — per this endpoint's own doc comment
+    (`api/types.ts#TraceCostBreakdown`) it is not guaranteed to sum to the trace's authoritative
+    total, for the identical reason the per-span sum above it isn't: different measurement, not a
+    partial view of the same one. Don't scale the subagent rows to force them to add up to
+    `traceCostUsd` — render every figure labeled by what it is, same rule this file's Cost section
+    states for the per-span figure.
+  - **`summarizeTraceWork` takes only `spans`, not `logsBySpanId`.** An early draft of its
+    signature carried both, matching how the card's data arrives — but every field it computes
+    (tool/model counts, tool and model name chips, tool kind, file→tools) reads only span
+    attributes and `tokenBreakdownForSpan`, so a second, always-unused parameter would fail
+    `@typescript-eslint/no-unused-vars` for no benefit. Cost is computed separately in
+    `TraceSummaryCard` itself, over `costOfSelectedSpan(span, logsBySpanId?.get(span.spanId))`,
+    which is the only place in this card that needs the log buckets.
+  - **`outcomeErrorCount` never claims resolution, only presence.** The mockup's status line
+    reads "1 error, unresolved" — but nothing this component (or the backend's `TraceSummary`)
+    tracks whether a later part of the trace actually fixed an earlier error, so the real status
+    line states only the count ("1 error") or its absence ("No errors"), never a resolved/
+    unresolved judgment it has no signal for.
+- **A half-written draft needs no partial-markdown handling.** `react-markdown` re-parses from
+  scratch every render, so an unterminated `**` or a list cut mid-item renders as the literal
+  characters so far and resolves itself when the rest arrives. The draft box sticks to the bottom as
+  text lands, but only while the reader is already within `SCROLL_STICK_THRESHOLD_PX` of it —
+  scrolling up to re-read something must not be yanked back down by the next delta.
+- **On the structured-output path there is no live draft, and the view detects that without a flag.**
+  When `ollama.structured-output` is on the answer is a JSON document that is only a readable review
+  once fully parsed, so the backend sends `delta` events carrying an empty `text` and a character
+  count only. The view shows the count beside the active phase precisely when text never arrived.
+  Deciding it that way rather than threading a `streamsText` boolean is what keeps the frontend
+  ignorant of a backend setting it has no other reason to know about.
+- **Closing the dialog mid-run does not cancel it.** The backend finishes and stores the analysis
+  once started (see `TraceAnalysisSseStreamer`); reopening the dialog loads it through the ordinary
+  `['trace-analysis', traceId]` query. So a stream that ends with neither `done` nor `failed` throws
+  "reopen this dialog to see whether it finished" rather than reporting a failure it cannot know
+  about.
+- **Analysis failures arrive as an event, not a status code.** By the time the model call runs the
+  SSE response is committed at 200, so an unknown trace id (a 404 on the plain POST) and an
+  unreachable Ollama (a 503) both come back as a `failed` event; `streamTraceAnalysis` rethrows its
+  message as an `Error` so the dialog's existing `regenerateError` path renders it unchanged.
+- **The analysis is markdown, and inline code must not be rendered by a `code` component that
+  branches on `inline`.** react-markdown **9 removed that prop** — a custom `code` component still
+  reading it gets `undefined` on every span, takes its block branch, and renders each `backticked`
+  file name, tool name and quoted observation line as a full-width `<pre>`, breaking every sentence
+  the model wrote into three pieces. Since block code is only ever `pre > code`, `AnalyzeTraceDialogView`
+  styles `code` as an inline chip in the container's `sx` and resets it under `& pre code`. That
+  container `sx` is where nearly all the markdown styling lives; react-markdown's `components` map
+  is deliberately down to a single entry, for the one rule that changes *structure* rather than
+  looks: **a paragraph whose entire content is one `<strong>` is promoted to a section heading.**
+  The model writes its section titles as `**What went wrong**` / `**Apply this**` — plus an optional
+  `**What went well**` ahead of them, on the minority of traces where the backend verified a
+  positive — rather than as markdown headings, so `#`-based styling never fires on this output at
+  all. Nothing here enumerates those titles, which is why the third one needed no frontend change:
+  the promotion rule is structural, not a list of known headings. The check is
+  deliberately strict (one child, a `strong`, nothing beside it) so a finding that merely *starts*
+  bold — `- **Bash Misuse** — …` — stays a bullet. Both are pinned by tests.
+  `remark-gfm` is **not** installed, so a markdown table or `~~strikethrough~~` would render as
+  literal text; nothing the answer contract asks for produces either.
+- **The "Better wording" item is a before/after, not a copy card, and that is the whole point of
+  it.** The other two "Apply this" items are text with a future — a rule goes into a `CLAUDE.md` and
+  changes every trace after it, a tool swap is a standing correction — so a copy button is the right
+  affordance for both. The wording advice is about a request that has *already run*; the reader is
+  looking at this trace precisely because it finished, so pasting a "ready to paste" rewritten
+  version of it could only re-issue work that is already done. Its value is instructional, and that
+  only lands beside the words it replaces. So `WordingComparison` renders "You wrote" (the original)
+  above "Say instead, next time" (the model's suggestion), and the Copy button still copies the
+  suggestion alone, as a template for the next request rather than as this one re-issued.
+  **The "before" is `analysis.userPrompt`, never anything the model wrote** — the backend stores the
+  request it judged (`trace_analyses.user_prompt`, `V24`), because the answer contract already
+  spends a rule on "never invent prompt wording" and having the model quote the request back would
+  put the one half that can be supplied verbatim into the half that has to be policed. It is
+  **null** for a trace whose wording nobody authored (a slash command, a task notification, a
+  subagent run — the same traces whose review skips request quality) and on every row stored before
+  that column existed, and the card then renders the suggestion alone rather than half a comparison;
+  both paths are pinned by tests. The expander under a long original uses a **text heuristic**
+  (`isLongerThanTheClamp`), not a `scrollHeight` measurement, deliberately: measuring would tie the
+  one interactive control on this card to layout jsdom does not compute, and the cost of the
+  heuristic being wrong is a toggle that expands something already fully visible.
+- **The "Apply this" split parses three fixed line prefixes, and two of them carry a legacy
+  alternative that must stay.** `parseApplyThis` splits the analysis on the literal
+  `**Apply this**` heading and then finds each of `Instruction rule:` / `Tool swap:` /
+  `Better wording:` independently, so the model reordering them changes nothing; anything that
+  fails to match falls back to rendering the whole text as one markdown block, which is also what a
+  pre-split stored analysis does. **Two of the three carry a legacy alternative**: the rule pattern also accepts
+  **`CLAUDE.md rule:`**, the prefix used before the line grew a target, and the wording pattern also
+  accepts **`Rewritten request:`**, the prefix used while that advice was framed as a request to
+  paste and re-run. Analyses live in `trace_analyses` and are re-read on every dialog open, so
+  dropping either alternative silently downgrades every older row to raw markdown. `splitTarget` then peels the target off that one line only: a tool swap or
+  wording suggestion containing an em dash must keep it, which is why the split isn't applied to all
+  three. The target renders as a chip and is deliberately **not** part of what the item's Copy
+  button writes — it names the file to paste into, it isn't text to paste.
+  **Which half of that line is the target is decided by shape, not by position.** The prompt asks
+  for `<target> — <rule>`, but the model writes it either way round: trace
+  `9a647d0710ffb63efa4c5fb0c7dd809b` stored ``Instruction rule: `<the whole rule>` — CLAUDE.md``,
+  which the original positional split rendered backwards — the entire rule inside the chip and the
+  bare `CLAUDE.md` as the copyable instruction. `APPLY_TARGET_SHAPE` matches the closed list the
+  backend actually offers (`skill:<name>`, or a `*.md` path) against each side and takes whichever
+  one matches, trailing side included. When **neither** side matches, the line is treated as all
+  instruction and no target — that keeps an em dash inside a targetless rule (every analysis stored
+  before targets existed) instead of eating its first clause into a chip. All three cases are
+  pinned by tests.
 - **The Overview panel's collapsed state persists across traces and reloads.** `SummaryStrip`
   initializes `collapsed` from `loadOverviewCollapsed()` (`../../summaryStripVisibility.ts`,
   `localStorage['ac-wf-overview-collapsed']`, same read-once-on-init idiom as
@@ -922,3 +1568,33 @@ so the edge tracks the cursor 1:1.
      list (so they paint last) and get a red `box-shadow: 0 0 0 1.5px` ring in addition to their
      fill, making them identifiable even at 3px height when an ok/model/tool tick might otherwise
      cover them at the same x-position. Do not remove the sort or the ring.
+
+## `traceInsightsDerivations.ts` — no panel, just a surviving taxonomy
+
+There is **no "Insights" panel on this page.** `TraceInsightsPanel.tsx`/`TraceInsightsPanelView.tsx`
+don't exist, nothing renders between the header and the waterfall besides `SummaryStrip`, and there
+is no `GET /api/traces/{traceId}/insights` or `POST .../findings/{detectorId}/caption` endpoint —
+no percentile ranks, no Findings section, no validated model captions, no phase timeline. If you're
+reading an older description of any of that (percentile comparison, an interruption ledger, hook
+overhead, a wall-clock breakdown, subagent dispatches, or a caption-validation pipeline), it does
+not match this codebase; don't build against it without checking the actual files first.
+
+What's real is a single module, `traceInsightsDerivations.ts` (page root, alongside the other
+pure-function, no-React page-local modules like `spanRelations.ts`/`spanCallFacts.ts`) — exporting a
+small tool-call classification surface: `classifyToolCall`/`PhaseKind`/`PHASE_KIND_COLOR_INDEX`, a
+READ/EDIT/SEARCH/VERIFY/OTHER taxonomy over a tool call's name, paired with the palette index each
+kind maps to via `colorForIndex` (`theme.ts`). Its consumers are `AnalyzeTraceDialog/
+summarizeTraceWork.ts`, which classifies each Tools/Files chip by the identical taxonomy, and
+`AnalyzeTraceDialog/AnalyzeTraceDialogView.tsx` itself, which imports `PHASE_KIND_COLOR_INDEX` +
+`PhaseKind` directly to resolve the chip's rendered color from that classification — together they
+mean a Read/Edit/Search/Bash chip on the Analyze Trace dialog's summary card takes a consistent hue
+— see `summarizeTraceWork.ts`'s own doc comment above and its gotcha entry ("Work, Outcome, Tools,
+Models…") for the reuse detail.
+
+This module used to live in `components/TraceInsightsPanel/` (a component-shaped directory holding
+no component — just this file plus an `index.ts` barrel) purely because that's where a since-removed
+phase-timeline feature had put it. It was moved to the page root and the empty directory deleted:
+nothing about the taxonomy is component-shaped, both of its consumers already live under
+`components/AnalyzeTraceDialog/`, and the flat page-root location matches every other pure-logic,
+no-React module this page keeps outside a component directory. If you're looking for it under
+`components/TraceInsightsPanel/`, that path no longer exists.

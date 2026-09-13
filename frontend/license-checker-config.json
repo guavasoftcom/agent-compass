@@ -11,6 +11,8 @@
     "*.gz",
     "package-lock.json",
     ".pnp.cjs",
-    ".pnp.loader.mjs"
+    ".pnp.loader.mjs",
+    ".yarnrc.yml",
+    "CLAUDE.md"
   ]
 }

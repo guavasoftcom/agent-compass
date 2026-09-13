@@ -13,7 +13,7 @@ Bundle the standard "commit + push" loop into one shot. Steps:
 
 2. **Refuse if on `main`/`master`** — abort with a one-line explanation. The user must branch first; this command is for feature work.
 
-3. **Draft the commit message** — follow the system prompt's commit-message guidance: match the repo's existing style (look at the `git log` output), lead with the *why* in 1–2 sentences for non-trivial changes, no emojis, no PR/branch references, no "this commit" phrasing.
+3. **Draft the commit message** — follow the system prompt's commit-message guidance: match the repo's existing style (look at the `git log` output), lead with the _why_ in 1–2 sentences for non-trivial changes, no emojis, no PR/branch references, no "this commit" phrasing.
 
 4. **Stage explicitly** — `git add` specific paths rather than `git add -A` / `git add .` so untracked secrets or build artifacts don't sneak in. If anything in `git status` looks unintended (`.env`, generated output, scratch files), call it out and skip it.
 

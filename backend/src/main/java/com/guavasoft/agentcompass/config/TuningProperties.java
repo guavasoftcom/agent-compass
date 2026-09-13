@@ -195,6 +195,52 @@ public class TuningProperties {
   private String skillEventName = "api_request";
 
   /**
+   * Value of the OTLP log attribute {@code event.name} emitted once when a skill
+   * is activated. Distinct from {@link #skillEventName}: that one is stamped on
+   * every model call made <em>while</em> a skill runs (so counting it measures how
+   * chatty a skill is), whereas this event fires exactly once per activation and
+   * carries {@link #skillSourceAttribute} and
+   * {@link #skillInvocationTriggerAttribute} alongside the name. The trace-analysis
+   * prompt reads this one, because it needs "which skill drove this trace, and can
+   * the reader edit it" rather than an invocation count.
+   */
+  private String skillActivatedEventName = "skill_activated";
+
+  /**
+   * Attribute key on a {@link #skillActivatedEventName} record naming where the
+   * skill's definition lives. Observed values are {@code projectSettings} (the
+   * user's own repo — see {@link #editableSkillSource}) and {@code bundled}
+   * (shipped with Claude Code, not editable by the reader).
+   */
+  private String skillSourceAttribute = "skill.source";
+
+  /**
+   * {@link #skillSourceAttribute} value marking a skill the reader can actually
+   * edit. Any other source (notably {@code bundled}) means a review must not
+   * suggest changing the skill's own definition — that file is not theirs to
+   * change — and should target the project's instruction files instead.
+   */
+  private String editableSkillSource = "projectSettings";
+
+  /**
+   * Attribute key on a {@link #skillActivatedEventName} record naming what caused
+   * the activation. Observed values: {@code user-slash} (the user typed
+   * {@code /name}), {@code claude-proactive} (the agent chose the skill itself),
+   * {@code nested-skill} (another skill invoked it).
+   */
+  private String skillInvocationTriggerAttribute = "invocation_trigger";
+
+  /**
+   * Attribute key on a {@link #userPromptEventName} record naming the slash command
+   * that produced it. Its presence is what distinguishes {@code /ship} — five
+   * characters standing in for a whole skill definition the telemetry does not
+   * carry — from prose a person actually wrote. See
+   * {@code TraceAnalysisPromptBuilder} for why judging the former as prompt wording
+   * produces a false finding.
+   */
+  private String promptCommandNameAttribute = "command_name";
+
+  /**
    * {@link #toolAttribute} value that marks a tool_result emitted by a subagent
    * dispatch.
    */
@@ -497,5 +543,39 @@ public class TuningProperties {
    * text submitted by the user.
    */
   private String promptAttribute = "prompt";
+
+  /**
+   * Value of the OTLP log attribute {@code event.name} emitted once per completed
+   * assistant turn, carrying that turn's prose in {@link #responseAttribute}. Gated
+   * behind {@code OTEL_LOG_ASSISTANT_RESPONSES}, the same opt-in shape as
+   * {@code OTEL_LOG_USER_PROMPTS}, so its absence is a normal outcome. Read by the
+   * trace-analysis prompt for the agent's own narration, and to fetch the tail of the
+   * PREVIOUS turn in the same session — a request like "do 1 and 2" is only judgeable
+   * against the message it answers.
+   */
+  private String assistantResponseEventName = "assistant_response";
+
+  /**
+   * Attribute key on an {@link #assistantResponseEventName} log carrying that turn's
+   * assistant prose.
+   */
+  private String responseAttribute = "response";
+
+  /**
+   * Value of the OTLP log attribute {@code event.name} emitted once per context
+   * compaction, carrying {@code trigger} ({@code auto} / {@code manual}),
+   * {@code success}, {@code pre_tokens} / {@code post_tokens} and
+   * {@code duration_ms}. Read by the trace-analysis summary, which reports whether a
+   * compaction ran during the trace and how much context it reclaimed.
+   *
+   * <p>This is the trace-correlated signal, and it is deliberately preferred over
+   * counting {@code api_request} logs whose {@link #querySourceAttribute} is
+   * {@code compact}: the event carries the before/after token figures and the
+   * trigger, and it is stamped with the trace id, whereas the request rows only say
+   * that a compaction model call happened. Note it also fires for a compaction that
+   * FAILED ({@code success=false}, with an {@code error}), so a caller must read
+   * {@code success} rather than treating the event's presence as a completed pass.
+   */
+  private String compactionEventName = "compaction";
 
 }

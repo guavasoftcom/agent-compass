@@ -25,6 +25,7 @@ declare module '@mui/material/styles' {
       rowStripe: string;
       titleColor: string;
       surfaceMuted: string;
+      cardShadow: string;
     };
   }
   interface ThemeOptions {
@@ -33,6 +34,7 @@ declare module '@mui/material/styles' {
       rowStripe?: string;
       titleColor?: string;
       surfaceMuted?: string;
+      cardShadow?: string;
     };
   }
 }
@@ -176,6 +178,7 @@ export const createAppTheme = (mode: ColorMode = 'light'): Theme => {
       rowStripe: tokens.rowStripe,
       titleColor: tokens.titleColor,
       surfaceMuted: tokens.surfaceMuted,
+      cardShadow: tokens.cardShadow,
     },
     shape: { borderRadius: 12 },
     typography: {

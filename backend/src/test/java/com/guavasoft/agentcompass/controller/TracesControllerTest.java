@@ -23,15 +23,21 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
+import com.guavasoft.agentcompass.model.SubagentCostBreakdown;
+import com.guavasoft.agentcompass.model.TraceAnalysis;
+import com.guavasoft.agentcompass.model.TraceCostBreakdown;
 import com.guavasoft.agentcompass.model.TraceCursorPage;
 import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
+import com.guavasoft.agentcompass.ollama.OllamaUnavailableException;
 import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceAnalysisService;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
 import com.guavasoft.agentcompass.service.TraceService;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
@@ -41,6 +47,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -58,6 +65,16 @@ class TracesControllerTest {
 
     @MockitoBean
     LogService logService;
+
+    @MockitoBean
+    TraceAnalysisService traceAnalysisService;
+
+    // The SSE endpoint's transport half. Mocked rather than exercised here: what it produces is an
+    // open stream fed from a background thread, which MockMvc's async support can drive but which
+    // says nothing about the controller's own job — handing it the trace id and returning its
+    // emitter. Its behaviour is covered by TraceAnalysisSseStreamerTest.
+    @MockitoBean
+    TraceAnalysisSseStreamer traceAnalysisSseStreamer;
 
     @Test
     void tracesListReturnsCursorPageWithTotalCount() throws Exception {
@@ -193,6 +210,32 @@ class TracesControllerTest {
         verify(traceService).spansForTrace("0102030405060708090a0b0c0d0e0f10");
     }
 
+    @Test
+    void traceCostBreakdownReturnsTheSubagentSplitForTheGivenTraceId() throws Exception {
+        when(traceService.costBreakdownForTrace("0102030405060708090a0b0c0d0e0f10")).thenReturn(
+                new TraceCostBreakdown(
+                        List.of(new SubagentCostBreakdown("Explore", 12, 0.42, 6, 3)),
+                        1.20, 8,
+                        0.01, 1,
+                        1.63));
+
+        mockMvc.perform(get("/api/traces/0102030405060708090a0b0c0d0e0f10/cost-breakdown"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subagentCosts", hasSize(1)))
+                .andExpect(jsonPath("$.subagentCosts[0].subagentLabel").value("Explore"))
+                .andExpect(jsonPath("$.subagentCosts[0].dispatchCallNumber").value(12))
+                .andExpect(jsonPath("$.subagentCosts[0].costUsd").value(0.42))
+                .andExpect(jsonPath("$.subagentCosts[0].modelCallCount").value(6))
+                .andExpect(jsonPath("$.subagentCosts[0].toolCallCount").value(3))
+                .andExpect(jsonPath("$.mainLoopCostUsd").value(1.20))
+                .andExpect(jsonPath("$.mainLoopModelCallCount").value(8))
+                .andExpect(jsonPath("$.auxiliaryCostUsd").value(0.01))
+                .andExpect(jsonPath("$.auxiliaryModelCallCount").value(1))
+                .andExpect(jsonPath("$.measuredCostUsd").value(1.63));
+
+        verify(traceService).costBreakdownForTrace("0102030405060708090a0b0c0d0e0f10");
+    }
+
     // -------------------------------------------------------------------------
     // Window bounds are required on every trace endpoint
     //
@@ -242,4 +285,68 @@ class TracesControllerTest {
         verify(traceExplorerService).offsetPage(
                 any(TraceQueryCriteria.class), eq("new"), eq(0), anyInt());
     }
+
+    // -------------------------------------------------------------------------
+    // Analyze trace via local Ollama
+    // -------------------------------------------------------------------------
+
+    private static final String TRACE_ID = "0102030405060708090a0b0c0d0e0f10";
+
+    @Test
+    void traceAnalysisReturnsTheStoredAnalysisWhenPresent() throws Exception {
+        TraceAnalysis analysis = new TraceAnalysis(
+                TRACE_ID, "llama3.1", "This trace shows repeated reads of the same file.",
+                18_420L, Instant.parse("2026-08-23T11:48:19Z"), Instant.parse("2026-08-23T11:47:58Z"), false,
+                "Fix the repeated reads in TraceService.java", false, 0, 1, 12, "Request: \"fix it\"");
+        when(traceAnalysisService.getStored(TRACE_ID)).thenReturn(Optional.of(analysis));
+
+        mockMvc.perform(get("/api/traces/" + TRACE_ID + "/analysis"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.traceId").value(TRACE_ID))
+                .andExpect(jsonPath("$.model").value("llama3.1"))
+                .andExpect(jsonPath("$.generationDurationMs").value(18420));
+
+        verify(traceAnalysisService).getStored(TRACE_ID);
+    }
+
+    @Test
+    void traceAnalysisReturns404WhenNothingIsStoredYet() throws Exception {
+        when(traceAnalysisService.getStored(TRACE_ID)).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/traces/" + TRACE_ID + "/analysis"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void regenerateTraceAnalysisReturnsTheFreshAnalysis() throws Exception {
+        TraceAnalysis analysis = new TraceAnalysis(
+                TRACE_ID, "llama3.1", "Fresh analysis.", 9_000L,
+                Instant.parse("2026-08-23T12:00:00Z"), Instant.parse("2026-08-23T11:59:50Z"), false, null,
+                false, 0, 1, 5, null);
+        when(traceAnalysisService.regenerate(TRACE_ID)).thenReturn(Optional.of(analysis));
+
+        mockMvc.perform(post("/api/traces/" + TRACE_ID + "/analysis"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.analysis").value("Fresh analysis."));
+
+        verify(traceAnalysisService).regenerate(TRACE_ID);
+    }
+
+    @Test
+    void regenerateTraceAnalysisReturns404WhenTheTraceDoesNotExist() throws Exception {
+        when(traceAnalysisService.regenerate(TRACE_ID)).thenReturn(Optional.empty());
+
+        mockMvc.perform(post("/api/traces/" + TRACE_ID + "/analysis"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void regenerateTraceAnalysisReturns503WhenOllamaIsUnavailable() throws Exception {
+        when(traceAnalysisService.regenerate(TRACE_ID))
+                .thenThrow(new OllamaUnavailableException("Could not reach Ollama — is it running?"));
+
+        mockMvc.perform(post("/api/traces/" + TRACE_ID + "/analysis"))
+                .andExpect(status().isServiceUnavailable());
+    }
+
 }

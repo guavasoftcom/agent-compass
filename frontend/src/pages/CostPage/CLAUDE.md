@@ -321,6 +321,16 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
     `BreakdownList`/`CacheEfficiencyRankCard` already use) via `alpha()`, not a new raw color.
     `TopSessionsCard` picked up the same zebra/hover treatment for consistency between the two
     dense tables on the "What drove it" tab.
+  - **2026-09 styling follow-up: the model dot is 12×12px with a soft same-color halo.** Raised
+    from 9×9 (`MODEL_DOT_SIZE`/`MODEL_DOT_HALO_*` in `CostDriversCard.tsx`) because the dot is the
+    only thing tying a drivers row to its Model mix donut slice and adjacent palette hues were hard
+    to separate at 9px over the zebra stripe. The halo is `alpha(dotColor, 0.18)` as a `box-shadow`
+    ring, not a drop shadow, so it behaves the same in both color modes. The rest of that handoff
+    (`design_handoff_cost_styling_fixes.md`) is deferred, not applied — every other item asks to
+    "verify from mockup", and the Aurora mockup assets are no longer in the repo. Zebra striping,
+    the neutral palette, `eyebrowSm` headers, and the `13px 12px` cell padding in
+    `costTableStyles.ts` are all explicitly *kept* by that handoff's own implementation notes; don't
+    change them on the strength of its "consider…" bullets alone.
   - **`SessionCostDialog` (new component) reuses the Tokens page's `SessionCacheEfficiencyDialog`
     shell idiom**: a `lastSession` state updated during render whenever a non-null `session` with
     a different `sessionId` arrives, body split into a `DialogBody` that only ever renders against

@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { describe, expect, it } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import TraceDetailPageView, {
@@ -62,6 +62,10 @@ const toolSpan: SpanRow = {
   attributes: { tool_name: 'Bash', 'tool.status': 'ok', command: 'echo hi' },
   events: null,
   resourceAttributes: {},
+  // The backend numbers only tool calls and model requests, so of this
+  // fixture's three spans exactly one carries a call number -- which is the
+  // whole reason the badge exists (see the call-number test below).
+  callNumber: 1,
 };
 
 const executionSpan: SpanRow = {
@@ -116,6 +120,8 @@ const baseProps: TraceDetailPageViewProps = {
   firstUserPrompt: 'Refactor the Aurora theme overlay.',
   traceCostUsd: 0.42,
   traceBackgroundCostUsd: 0,
+  traceAnalysis: null,
+  ollamaAnalysisEnabled: true,
 };
 
 // The fixture's span names ("claude_code.interaction" etc.) legitimately
@@ -143,6 +149,18 @@ describe('TraceDetailPageView', () => {
     expect(getRow(container, 'span-exec')).toHaveTextContent('claude_code.tool.execution');
     // Nothing selected on arrival, so the drawer content isn't rendered.
     expect(screen.queryByText('span id')).not.toBeInTheDocument();
+  });
+
+  it('badges the call number a trace-analysis citation would name, and only on a call', () => {
+    // "Call 1" in a review means this row -- and specifically not the row the
+    // waterfall's own index badge numbers 1, which is the interaction root.
+    const { container } = renderWithProviders(
+      <TraceDetailPageView {...baseProps} />,
+    );
+
+    expect(getRow(container, 'span-tool')).toHaveTextContent('call 1');
+    expect(getRow(container, 'span-root')).not.toHaveTextContent('call 1');
+    expect(getRow(container, 'span-exec')).not.toHaveTextContent('call');
   });
 
   it('shows a loading indicator while isLoading is true', () => {
@@ -226,5 +244,28 @@ describe('TraceDetailPageView', () => {
     const expandAllButton = screen.getByRole('button', { name: /expand all/i });
     await user.click(expandAllButton);
     expect(container.querySelector('[data-span="span-exec"]')).not.toBeNull();
+  });
+
+  it('opens the analyze trace dialog when "Analyze trace" is clicked', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TraceDetailPageView {...baseProps} />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /analyze trace/i }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText('trace-0102', { exact: false })).toBeInTheDocument();
+  });
+
+  it('hides the "Analyze trace" button when Ollama is disabled', () => {
+    renderWithProviders(
+      <TraceDetailPageView {...baseProps} ollamaAnalysisEnabled={false} />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: /analyze trace/i }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -25,6 +25,7 @@ frontend/src/
     endpoints.ts                   // fetchXxx(selection) functions
     http.ts                        // transport helpers (getJson/getText/listWithTotalCount/windowQueryParams)
   lib/                             // app-level, non-UI modules
+    cacheEfficiency.ts             // shared cache-hit-rate banding/formatting helpers
     constants.ts                   // WINDOWS, PAGE_SIZE_OPTIONS, MS_PER_* factors, MAX_WINDOW_SPAN_MS
     format.ts                      // formatCompact (12.3K / 4.5M) shared by trend cards
     resolveWindow.ts               // WindowSelection → concrete start/end + label (Logs + Traces + Sessions)
@@ -69,6 +70,9 @@ frontend/src/
     ChartCard/
       ChartCard.tsx                // shared titled chart-container card
       index.ts
+    DeltaBadge/
+      DeltaBadge.tsx               // three-state (good/flat/bad) directional delta pill
+      index.ts
     DonutCard/
       DonutCard.tsx
       index.ts
@@ -96,6 +100,12 @@ frontend/src/
       index.ts
     PageLayout/
       PageLayout.tsx
+      index.ts
+    PillTabs/
+      PillTabs.tsx                 // Aurora pill tab strip (routed section tabs or in-page tabs)
+      index.ts
+    PromptSummaryText/
+      PromptSummaryText.tsx        // renders a prompt, substituting a muted subagent-notification summary for non-authored envelopes
       index.ts
     SearchInput/
       SearchInput.tsx              // shared search box (Logs + Traces, via FacetRail)
@@ -179,6 +189,12 @@ frontend/src/
           SeverityChip.tsx
           index.ts
         severity.ts               // severity → theme color (shared by the sub-components)
+    McpServersPage/
+      CLAUDE.md
+      McpServersPage.tsx
+      McpServersPageView.tsx
+      mcpDerivations.ts
+      index.ts
     MetricsPage/
       CLAUDE.md
       MetricsPage.tsx
@@ -203,9 +219,14 @@ frontend/src/
       CLAUDE.md
       PermissionDenialsPage.tsx
       PermissionDenialsPageView.tsx
-      HookExecutionsCard.tsx      // flat leaf sub-components
-      ToolDenialsCard.tsx
       index.ts
+      components/
+        HookExecutionsCard/
+          HookExecutionsCard.tsx
+          index.ts
+        ToolDenialsCard/
+          ToolDenialsCard.tsx
+          index.ts
     ReportPage/
       CLAUDE.md
       ReportPage.tsx
@@ -219,12 +240,34 @@ frontend/src/
       settingsTypes.ts
       settingsDerivations.ts      // + settingsDerivations.test.ts
       index.ts
-      components/                 // flat leaf cards, no barrels
-        StorageBreakdownCard.tsx
-        IngestHealthCard.tsx
-        SchemaBuildCard.tsx
-        EffectiveConfigurationCard.tsx
-        PurgeDryRunCard.tsx
+      components/
+        EffectiveConfigurationCard/
+          EffectiveConfigurationCard.tsx
+          index.ts
+        IngestHealthCard/
+          IngestHealthCard.tsx
+          index.ts
+        OllamaConfigurationCard/
+          OllamaConfigurationCard.tsx  // Enabled toggle + editable Ollama port/model
+          index.ts
+        OllamaStatusCard/
+          OllamaStatusCard.tsx    // Overridden/Using-default chip + "Test connection" probe
+          index.ts
+        PurgeConfirmDialog/
+          PurgeConfirmDialog.tsx  // type-to-confirm dialog gating the purge
+          index.ts
+        PurgeDryRunCard/
+          PurgeDryRunCard.tsx
+          index.ts
+        SchemaBuildCard/
+          SchemaBuildCard.tsx
+          index.ts
+        StorageBreakdownCard/
+          StorageBreakdownCard.tsx
+          index.ts
+        UnsavedOllamaChangesDialog/
+          UnsavedOllamaChangesDialog.tsx  // confirms leaving the Ollama tab with unsaved edits
+          index.ts
     SessionsPage/
       CLAUDE.md
       SESSIONS-BACKEND.md         // response-shape contract for the sessions endpoints
@@ -234,6 +277,9 @@ frontend/src/
       components/
         PromptTimelinePanel/
           PromptTimelinePanel.tsx // expanded-row per-turn timeline (model/cost/tokens/tools)
+          index.ts
+        SessionDetailDrawer/
+          SessionDetailDrawer.tsx // right-side drawer for a session's detail
           index.ts
         SessionsKpiStrip/
           SessionsKpiStrip.tsx
@@ -256,13 +302,24 @@ frontend/src/
       CLAUDE.md
       TokensPage.tsx
       TokensPageView.tsx
+      cacheEfficiencyBandColors.ts // cache-hit-rate band → color mapping
+      tokenKindColors.ts          // token category → color mapping
       index.ts
       components/
-        TokenByModelCard/
-          TokenByModelCard.tsx
+        CacheEfficiencyRankCard/
+          CacheEfficiencyRankCard.tsx
+          index.ts
+        ContextFootprintCard/
+          ContextFootprintCard.tsx
+          index.ts
+        SessionCacheEfficiencyDialog/
+          SessionCacheEfficiencyDialog.tsx
           index.ts
         TokenCompositionCard/
           TokenCompositionCard.tsx
+          index.ts
+        TokenCostByModelCard/
+          TokenCostByModelCard.tsx // hand-built table (merged "token sum" + "cost by model")
           index.ts
         TokenSummaryCards/
           TokenSummaryCards.tsx
@@ -306,12 +363,24 @@ frontend/src/
       chipVisibility.ts           // ChipFamily + loadChipsOff/persistChipsOff — muted badge-family set
       logBuckets.ts
       severity.ts
+      spanCallFacts.ts            // buildSpanCallFacts — the agent's stated intent/outcome for a tool call
       spanCost.ts                 // costOfSpan / costOfSpanRequests / costOfSelectedSpan — the api_request cost shown for a span
+      spanRelations.ts            // buildSpanRelations — the related calls the inspector drawer shows
       spanTree.ts
+      summaryStripVisibility.ts   // loadOverviewCollapsed/persistOverviewCollapsed
+      traceAnalysisApi.ts         // fetchTraceAnalysis/regenerateTraceAnalysis/streamTraceAnalysis (SSE)
       index.ts
       components/
+        AnalyzeTraceDialog/
+          AnalyzeTraceDialog.tsx
+          AnalyzeTraceDialogView.tsx // "Analyze trace" — a local-Ollama review of the trace
+          callCitations.ts        // splits review text into plain stretches + cited call numbers
+          fileTypeBadge.ts        // language badge for the summary card's Files rows
+          summarizeTraceWork.ts   // client-side Work/Tools/Models/Files breakdown
+          index.ts
         SpanInspectorDrawer/
           SpanInspectorDrawer.tsx
+          CallContextSection.tsx  // computed call facts + related calls for the selected span
           CollapsibleSection.tsx
           ErrorSection.tsx
           SpanAttributeSections.tsx
@@ -328,15 +397,21 @@ frontend/src/
         TraceDetailHeader/
           TraceDetailHeader.tsx
           TraceDetailHeaderView.tsx
+          IdentityPill.tsx        // breadcrumb-row session+trace identity pill
           SummaryStrip.tsx
-          IdChip.tsx
-          useCopyToClipboard.ts
+          SwitchTraceModal.tsx
+          SwitchTraceModalRow.tsx
+          SwitchTraceModalView.tsx
+          index.ts
+        TraceInsightsPanel/
+          traceInsightsDerivations.ts // READ/EDIT/SEARCH/VERIFY/OTHER tool-call taxonomy; no panel
+                                       // component lives here — see the page's own CLAUDE.md
           index.ts
         TraceMinimap/
           TraceMinimap.tsx
           index.ts
         WaterfallToolbar/
-          WaterfallToolbar.tsx
+          WaterfallToolbar.tsx    // "Analyze trace" button lives here
           index.ts
     TracesPage/
       CLAUDE.md
@@ -385,6 +460,23 @@ frontend/src/
           TraceViewToggle.tsx     // thin wrapper over the shared StreamTableToggle
           index.ts
         traceColors.ts            // helper shared by the sub-components (and TraceDetailPage)
+    TrendReportPage/
+      CLAUDE.md
+      TrendReportPage.tsx
+      TrendReportPageView.tsx
+      trendReportApi.ts
+      trendReportDerivations.ts
+      index.ts
+      components/
+        MetricRow/
+          MetricRow.tsx
+          index.ts
+        MetricRowSkeleton/
+          MetricRowSkeleton.tsx
+          index.ts
+        SectionHeader/
+          SectionHeader.tsx
+          index.ts
 ```
 
 ## Container / presentational split
@@ -411,7 +503,7 @@ export { default } from './LogsPage';
 
 **Flat helper files** (e.g. `TraceDetailPage/spanTree.ts`, `TraceDetailPage/logBuckets.ts`, `TraceDetailPage/attrFormat.ts`) live as flat `.ts` files inside the page folder. They are implementation details, not a public surface, and do NOT need their own folder + `index.ts`. Page-local API modules (`LogsPage/logsApi.ts`, `MetricsPage/metricsApi.ts`, `TracesPage/tracesApi.ts`) follow the same rule — they hold fetchers and types for endpoints only that page consumes.
 
-**Page-internal sub-components** go in a `components/` sub-folder inside the page folder (e.g. `ToolCallsPage/components/ToolLatencyCard/`, `LogsPage/components/LogStream/`). Apply the same container/view split and barrel rule as top-level components. Use this pattern when a page grows enough sub-components that the page folder would otherwise become cluttered. Small leaf sub-components that have no container/view split may stay as flat `.tsx` files in the page folder (e.g. `PermissionDenialsPage/HookExecutionsCard.tsx`); give them a folder + barrel once they grow one.
+**Page-internal sub-components** go in a `components/` sub-folder inside the page folder (e.g. `ToolCallsPage/components/ToolLatencyCard/`, `LogsPage/components/LogStream/`). Apply the same container/view split and barrel rule as top-level components. Use this pattern when a page grows enough sub-components that the page folder would otherwise become cluttered. A small leaf sub-component with no container/view split may stay as a flat `.tsx` file in the page folder while it has no need of one; give it a folder + barrel once it grows one.
 
 Promote a sub-component from `PageName/components/` to `src/components/` only when a second page needs it.
 

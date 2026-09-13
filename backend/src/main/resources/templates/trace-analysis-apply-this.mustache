@@ -1,0 +1,123 @@
+You are turning a finished code-agent review into the three lines the reader can act on.
+
+The review below was written about one trace — one run of an AI coding agent. Your only job is to
+distil it into an "Apply this" block. You are not re-reviewing the trace, you cannot see it, and you
+must not invent findings: everything you write has to follow from the review text below.
+
+## The review
+
+{{findings}}
+{{#hasPrompt}}
+
+## The request that trace was answering
+
+{{promptText}}
+{{/hasPrompt}}
+{{#hasSuggestedRules}}
+
+## Ready-made rules
+
+The review's own analysis supplied these, already worded as standing instructions. If one of them
+addresses a fault the review reported, copy it word for word rather than writing your own:
+
+{{suggestedRules}}
+{{/hasSuggestedRules}}
+
+## How to answer
+{{#structuredOutput}}
+
+Answer as a single JSON document matching the schema you have been given. Nothing else — no prose
+around it, no markdown headings, no repeated document. The fields mean:
+
+- `instructionRule` — the standing instruction that stops the worst fault happening again, written as
+  an order to the agent, or `None`. Where a ready-made rule above addresses a fault the review
+  reported, copy that line word for word instead of writing your own.
+- `instructionRuleTarget` — which file has to carry that instruction. `None` when the rule is `None`.
+- `toolSwap` — one line reading "use <tool> instead of <what was used> for <what it was doing>", or
+  `None`.
+{{#toolSwapAlreadySettled}}
+  For this trace it is already decided and is not yours to choose: write it exactly as
+  `{{settledToolSwap}}`. The analysis verified that swap against the calls themselves, so it stands
+  whether or not the review above happens to mention it.
+{{/toolSwapAlreadySettled}}
+- `betterWording` — how the reader should word a request like this one next time, in one or two
+  sentences, or `None`.
+{{/structuredOutput}}
+{{^structuredOutput}}
+
+Write exactly these three lines and nothing else — no heading, no preamble, no closing note. Each is
+either text the reader can use as it stands, or the single word None:
+
+Instruction rule: <target> — <instruction>
+Tool swap: <swap>
+Better wording: <advice>
+
+**After each colon write only your own answer.** Everything below describes what belongs in each
+slot; none of it is text to copy onto the line itself. A line that restates what the line is for,
+instead of answering it, is unusable — the reader sees these three rendered as cards, and a card
+describing the slot tells them nothing about their own trace. If a line has no answer, the whole
+value is the single word None, with nothing before it.
+{{/structuredOutput}}
+
+Instruction rule — <instruction> is the standing instruction that stops the worst fault in the review
+happening again, written as an order to the agent; or None when the review found nothing worth a
+standing rule. One rule, not a list: pick the fault most worth never seeing again.
+  <target> says which file has to carry the instruction, and must be copied EXACTLY from this list:
+  {{ruleTargets}}. Nothing else is a valid target — do not name a file that is not on that list, and
+  do not invent a path. The line always carries a target and an em dash before the instruction: an
+  instruction with no target names no file to put it in, and the reader cannot apply it.
+{{#hasEditableSkillTargets}}
+  **Default to the `skill:` target.** The calls being reviewed were made while that skill's
+  instructions were in force, so the behaviour the review describes is that skill's behaviour, and a
+  rule about it belongs in the file that drives it. Choose `CLAUDE.md` only for behaviour that should
+  apply to every trace in this project regardless of which skill was running — and if you cannot say
+  why the rule should fire on unrelated work, it is not a `CLAUDE.md` rule.
+{{/hasEditableSkillTargets}}
+{{^hasEditableSkillTargets}}
+{{^hasPermissionsTarget}}
+  `CLAUDE.md` is the only target available for this trace.
+{{/hasPermissionsTarget}}
+{{/hasEditableSkillTargets}}
+{{#hasPermissionsTarget}}
+  **A rule about waiting on permission prompts targets `{{permissionsTarget}}`, never `CLAUDE.md`.**
+  Pre-authorising a tool call is a permissions setting the harness reads before it asks; it is not an
+  instruction the agent reads, so no wording in an instructions file can grant one, and a rule about
+  approval waits written against `CLAUDE.md` is advice the reader cannot act on. That target is on
+  the list ONLY because this trace really did sit waiting on user approval — do not name it for any
+  other kind of rule.
+{{/hasPermissionsTarget}}
+
+Tool swap — <swap> reads "use <tool> instead of <what was used> for <what it was doing>", and only
+when the review actually reported a tool being used where a dedicated one exists; otherwise None.
+{{#toolSwapAlreadySettled}}
+  For this trace that line is already decided and is not yours to choose. Write it exactly as
+  `{{settledToolSwap}}`. The analysis verified that swap against the calls themselves, so it stands
+  whether or not the review above happens to mention it — do not write None here, and do not reword
+  it.
+{{/toolSwapAlreadySettled}}
+
+Better wording — <advice> is how to word a request like this one next time, in one or two sentences:
+the words from the request that cost the agent work, and what to say instead. It is None if the
+request was already clear, None if the request asked a question rather than giving an instruction,
+and None whenever there is no request shown above.
+  **Use only what the reader could have written before that trace ran.** Something they plainly knew
+  and left out (the scope they had in mind, which of two things they meant) is fair; something the
+  trace *discovered* — a gap it found, a conclusion it reached, a file or attribute they did not know
+  existed — is not. That is the review's answer, and putting it here tells the reader to have already
+  known the thing they were asking about. If your advice would only occur to someone who had already
+  read this review, write None.
+  **Never tell the reader to name files, classes or modules unless the request shows they already
+  knew them.** A reader describes what they can see — a page, a section, a control, an error message
+  — and a request that named its surface precisely was well aimed even though it named no path.
+  "List the files that need modification" is not better wording; it asks the reader to do the agent's
+  job before the agent runs. If the only thing left unsaid is implementation detail this trace had to
+  discover, write None.
+  **This line is advice, not a request to re-run.** The reader sees it beside their own original
+  wording, so it reads as a comparison: don't open with "please", don't address the agent, and don't
+  restate the whole request when one clause of it was the problem. "Say which of the two dashboards
+  you meant: `the Sessions page cache column` rather than `the cache number`" is the shape — one
+  clause, replaced with something the reader already knew. A re-issued task list is not.
+{{#wordingAlreadySettled}}
+  For this trace that line is None. {{wordingSettledReason}} There is nothing to word better, and
+  rewriting a request whose wording already worked is not advice the reader can use.
+{{/wordingAlreadySettled}}

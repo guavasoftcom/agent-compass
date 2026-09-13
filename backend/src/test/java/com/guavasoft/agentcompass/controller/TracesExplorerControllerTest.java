@@ -31,6 +31,7 @@ import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
 import com.guavasoft.agentcompass.model.TraceSummary;
 import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceAnalysisService;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
 import com.guavasoft.agentcompass.service.TraceService;
 
@@ -70,6 +71,17 @@ class TracesExplorerControllerTest {
 
     @MockitoBean
     LogService logService;
+
+    @MockitoBean
+    TraceAnalysisService traceAnalysisService;
+
+    // Not exercised here -- this slice covers the explorer endpoints, and what the streamer
+    // produces is an SSE body fed from another thread (TraceAnalysisSseStreamerTest owns that).
+    // It is declared because @WebMvcTest builds the real TracesController, which takes it as a
+    // constructor dependency: without the bean the whole context fails to load and every test in
+    // this class errors, not just the analysis ones.
+    @MockitoBean
+    TraceAnalysisSseStreamer traceAnalysisSseStreamer;
 
     // -------------------------------------------------------------------------
     // GET /api/traces/histogram

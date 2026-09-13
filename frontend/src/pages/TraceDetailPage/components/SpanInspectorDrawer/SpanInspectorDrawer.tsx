@@ -30,6 +30,7 @@ import LogEntry from './LogEntry';
 import TokensSection from './TokensSection';
 import SpanAttributeSections from './SpanAttributeSections';
 import SpanEventsList from './SpanEventsList';
+import CallContextSection from './CallContextSection';
 import { LongValueModalProvider } from './longValue';
 import { radii } from '../../../../theme/theme';
 
@@ -58,12 +59,34 @@ interface Props {
   // either way so the open/close width transition can run, and so the last
   // dragged width survives across span selections.
   selection: SpanInspectorSelection | null;
+  // Every span in the trace — what CallContextSection scans to find the calls
+  // related to the selected one. Deliberately not the waterfall's currently
+  // rendered rows: a collapsed dispatch or a zoom brush would hide exactly the
+  // far-apart prior read this exists to surface.
+  spans: SpanRow[];
+  // Trace logs keyed by span id, as the page already holds them. CallContextSection reads the
+  // selected call's own tool_result / tool_decision out of this to state what the call did --
+  // see spanCallFacts.ts.
+  logsBySpanId: Map<string, LogRow[]>;
+  // Reveals a related call the reader clicked in CallContextSection: expands collapsed ancestors,
+  // widens the zoom if needed, then selects and scrolls. TraceDetailPageView#revealSpan.
+  onRevealSpan: (spanId: string) => void;
   onClose: () => void;
   onPreviousSpan: () => void;
   onNextSpan: () => void;
 }
 
-const DrawerContent = ({ selection }: { selection: SpanInspectorSelection }) => {
+const DrawerContent = ({
+  selection,
+  spans,
+  logsBySpanId,
+  onRevealSpan,
+}: {
+  selection: SpanInspectorSelection;
+  spans: SpanRow[];
+  logsBySpanId: Map<string, LogRow[]>;
+  onRevealSpan: (spanId: string) => void;
+}) => {
   const theme = useTheme();
   const { span, selfTimeNanos, tokens, logs, costUsd } = selection;
 
@@ -184,6 +207,13 @@ const DrawerContent = ({ selection }: { selection: SpanInspectorSelection }) => 
 
       <ErrorSection span={span} logs={logs} />
 
+      <CallContextSection
+        span={span}
+        spans={spans}
+        logsBySpanId={logsBySpanId}
+        onRevealSpan={onRevealSpan}
+      />
+
       <TokensSection tokens={tokens} />
       <SpanAttributeSections attributes={span.attributes ?? undefined} />
       <SpanEventsList events={span.events ?? undefined} spanStartMs={startMs} />
@@ -205,6 +235,9 @@ const DrawerContent = ({ selection }: { selection: SpanInspectorSelection }) => 
 // via a width transition and resizable by dragging its left edge.
 const SpanInspectorDrawer = ({
   selection,
+  spans,
+  logsBySpanId,
+  onRevealSpan,
   onClose,
   onPreviousSpan,
   onNextSpan,
@@ -427,7 +460,13 @@ const SpanInspectorDrawer = ({
                 in any section — attributes, tool, events, logs — opens the same
                 dialog instead of each row mounting its own. */}
             <LongValueModalProvider>
-              <DrawerContent key={rendered.span.spanId} selection={rendered} />
+              <DrawerContent
+                key={rendered.span.spanId}
+                selection={rendered}
+                spans={spans}
+                logsBySpanId={logsBySpanId}
+                onRevealSpan={onRevealSpan}
+              />
             </LongValueModalProvider>
           </Box>
         </>

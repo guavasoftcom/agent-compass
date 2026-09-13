@@ -13,20 +13,28 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useDebouncedValue } from '../../lib/useDebouncedValue';
 import SettingsPageView from './SettingsPageView';
 import {
   fetchEffectiveConfiguration,
   fetchIngestHealth,
+  fetchOllamaModels,
+  fetchOllamaSettings,
   fetchPurgePreview,
   fetchStorageOverview,
   fetchSystemBuild,
   purgeTelemetry,
+  saveOllamaSettings,
+  testOllamaConnection,
 } from './settingsApi';
 
 /** Retention windows offered by the purge dry-run's segmented toggle. */
 const DEFAULT_RETENTION_DAYS = 30;
+
+/** How long the Ollama tab's "Settings saved." confirmation stays up before auto-dismissing. */
+const OLLAMA_SAVE_CONFIRMATION_DISPLAY_MS = 4000;
 
 /**
  * Settings container.
@@ -37,10 +45,30 @@ const DEFAULT_RETENTION_DAYS = 30;
  * five independent queries rather than one, so the cheap configuration and build
  * blocks paint immediately while the ~1.3s ingest aggregation resolves.
  */
+type SettingsTab = 'storage-ingest' | 'schema-build' | 'configuration' | 'retention' | 'ollama';
+
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'storage-ingest' | 'schema-build' | 'configuration' | 'retention'>('storage-ingest');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('storage-ingest');
   const [retentionDays, setRetentionDays] = useState(DEFAULT_RETENTION_DAYS);
   const [isPurgeDialogOpen, setIsPurgeDialogOpen] = useState(false);
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('');
+  const [ollamaModel, setOllamaModel] = useState('');
+  const [ollamaEnabled, setOllamaEnabled] = useState(false);
+  // Tracks unsaved edits to the port, model, or Enabled toggle since the form was last
+  // seeded/saved, so leaving the Ollama tab can ask before discarding them.
+  const [isOllamaFormDirty, setIsOllamaFormDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<SettingsTab | null>(null);
+  const saveConfirmationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSaveConfirmationTimeout = useCallback(() => {
+    if (saveConfirmationTimeoutRef.current !== null) {
+      clearTimeout(saveConfirmationTimeoutRef.current);
+      saveConfirmationTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Cleans up a pending auto-dismiss timer if the page unmounts before it fires.
+  useEffect(() => clearSaveConfirmationTimeout, [clearSaveConfirmationTimeout]);
 
   const storageQuery = useQuery({
     queryKey: ['system-storage'],
@@ -62,6 +90,42 @@ export default function SettingsPage() {
     queryKey: ['system-purge-preview', retentionDays],
     queryFn: () => fetchPurgePreview(retentionDays),
   });
+  const ollamaSettingsQuery = useQuery({
+    queryKey: ['system-ollama-settings'],
+    queryFn: fetchOllamaSettings,
+  });
+
+  // Auto-fetches the installed-model list for the Model field's Autocomplete,
+  // keyed on the debounced base URL so editing the port re-fetches
+  // automatically — not gated behind the "Test connection" button, and not a
+  // mutation, since it's meant to run on load and on every base-URL edit
+  // rather than only on an explicit user action. Debounced (not the raw,
+  // per-keystroke `ollamaBaseUrl`) the same way the Logs/Traces search boxes
+  // are: without it, typing a base URL fires a real POST /api/system/ollama/
+  // models — and the backend forwards it to Ollama's own GET /api/tags — on
+  // every keystroke instead of once the operator pauses. A failed fetch is a
+  // normal, silent-degrade outcome (the Autocomplete still works as free
+  // text), so it deliberately does not feed the page's top-level `error`
+  // prop or `handleReload`/`isReloading` the way the other five queries do.
+  const debouncedOllamaBaseUrl = useDebouncedValue(ollamaBaseUrl);
+  const ollamaModelsQuery = useQuery({
+    queryKey: ['system-ollama-models', debouncedOllamaBaseUrl],
+    queryFn: () => fetchOllamaModels(debouncedOllamaBaseUrl),
+    enabled: debouncedOllamaBaseUrl.trim().length > 0,
+  });
+
+  // Seeds the editable fields from the effective settings once they load, but
+  // only the first time — an operator mid-edit shouldn't have their unsaved
+  // typing clobbered by a background refetch. Same render-time-diff idiom
+  // `PurgeDryRunCard` uses to reset its SQL disclosure: no extra render, and
+  // no "setState in an effect" lint violation.
+  const [hasInitializedOllamaForm, setHasInitializedOllamaForm] = useState(false);
+  if (ollamaSettingsQuery.data && !hasInitializedOllamaForm) {
+    setOllamaBaseUrl(ollamaSettingsQuery.data.baseUrl);
+    setOllamaModel(ollamaSettingsQuery.data.model);
+    setOllamaEnabled(ollamaSettingsQuery.data.enabled);
+    setHasInitializedOllamaForm(true);
+  }
 
   // The one mutation in the app. On success every figure on the page is stale by
   // definition, so all five queries are refetched rather than just the estimate.
@@ -74,6 +138,104 @@ export default function SettingsPage() {
       void purgePreviewQuery.refetch();
     },
   });
+
+  const saveOllamaSettingsMutation = useMutation({
+    mutationFn: () => saveOllamaSettings(ollamaBaseUrl, ollamaModel, ollamaEnabled),
+    onSuccess: (settings) => {
+      // Reflects the server-normalized result (e.g. a cleared field falling
+      // back to the default) straight back into the form.
+      setOllamaBaseUrl(settings.baseUrl);
+      setOllamaModel(settings.model);
+      setOllamaEnabled(settings.enabled);
+      setIsOllamaFormDirty(false);
+      void ollamaSettingsQuery.refetch();
+      // The "Settings saved." banner reads the mutation's own `isSuccess`, so
+      // auto-dismissing it means resetting the mutation itself after a delay
+      // — clearing any earlier pending timeout first in case Save was clicked
+      // again before the previous confirmation finished its run.
+      clearSaveConfirmationTimeout();
+      saveConfirmationTimeoutRef.current = setTimeout(() => {
+        saveOllamaSettingsMutation.reset();
+      }, OLLAMA_SAVE_CONFIRMATION_DISPLAY_MS);
+    },
+  });
+
+  const testOllamaConnectionMutation = useMutation({
+    mutationFn: () => testOllamaConnection(ollamaBaseUrl, ollamaModel),
+  });
+
+  // Shared tail for every Ollama field edit: marks the form dirty and clears
+  // out any test/save result that now describes stale, pre-edit values.
+  const markOllamaFieldDirty = useCallback(() => {
+    setIsOllamaFormDirty(true);
+    testOllamaConnectionMutation.reset();
+    saveOllamaSettingsMutation.reset();
+    clearSaveConfirmationTimeout();
+  }, [testOllamaConnectionMutation, saveOllamaSettingsMutation, clearSaveConfirmationTimeout]);
+
+  const handleOllamaBaseUrlChange = useCallback(
+    (nextBaseUrl: string) => {
+      setOllamaBaseUrl(nextBaseUrl);
+      markOllamaFieldDirty();
+    },
+    [markOllamaFieldDirty],
+  );
+
+  const handleOllamaModelChange = useCallback(
+    (nextModel: string) => {
+      setOllamaModel(nextModel);
+      markOllamaFieldDirty();
+    },
+    [markOllamaFieldDirty],
+  );
+
+  const handleOllamaEnabledChange = useCallback(
+    (nextEnabled: boolean) => {
+      setOllamaEnabled(nextEnabled);
+      markOllamaFieldDirty();
+    },
+    [markOllamaFieldDirty],
+  );
+
+  // Guards a tab switch away from the Ollama tab while its form is dirty: rather than switching
+  // immediately, the target tab is parked in `pendingTab` and `UnsavedOllamaChangesDialog` opens.
+  // Any other tab change (including switching TO Ollama) proceeds immediately.
+  const handleTabChange = useCallback(
+    (nextTab: SettingsTab) => {
+      if (activeTab === 'ollama' && isOllamaFormDirty && nextTab !== 'ollama') {
+        setPendingTab(nextTab);
+        return;
+      }
+      setActiveTab(nextTab);
+    },
+    [activeTab, isOllamaFormDirty],
+  );
+
+  const handleCancelOllamaTabSwitch = useCallback(() => setPendingTab(null), []);
+
+  // Discards the unsaved edits by reverting the form to the last-loaded effective settings
+  // (mirroring what a refetch would show), then completes the tab switch that was parked above.
+  const handleDiscardOllamaTabSwitch = useCallback(() => {
+    if (ollamaSettingsQuery.data) {
+      setOllamaBaseUrl(ollamaSettingsQuery.data.baseUrl);
+      setOllamaModel(ollamaSettingsQuery.data.model);
+      setOllamaEnabled(ollamaSettingsQuery.data.enabled);
+    }
+    setIsOllamaFormDirty(false);
+    testOllamaConnectionMutation.reset();
+    saveOllamaSettingsMutation.reset();
+    clearSaveConfirmationTimeout();
+    if (pendingTab) {
+      setActiveTab(pendingTab);
+    }
+    setPendingTab(null);
+  }, [
+    ollamaSettingsQuery.data,
+    pendingTab,
+    testOllamaConnectionMutation,
+    saveOllamaSettingsMutation,
+    clearSaveConfirmationTimeout,
+  ]);
 
   const handleOpenPurgeDialog = useCallback(() => {
     purgeMutation.reset();
@@ -100,14 +262,23 @@ export default function SettingsPage() {
     void buildQuery.refetch();
     void configurationQuery.refetch();
     void purgePreviewQuery.refetch();
-  }, [storageQuery, ingestQuery, buildQuery, configurationQuery, purgePreviewQuery]);
+    void ollamaSettingsQuery.refetch();
+  }, [
+    storageQuery,
+    ingestQuery,
+    buildQuery,
+    configurationQuery,
+    purgePreviewQuery,
+    ollamaSettingsQuery,
+  ]);
 
   const isReloading =
     storageQuery.isFetching ||
     ingestQuery.isFetching ||
     buildQuery.isFetching ||
     configurationQuery.isFetching ||
-    purgePreviewQuery.isFetching;
+    purgePreviewQuery.isFetching ||
+    ollamaSettingsQuery.isFetching;
 
   return (
     <SettingsPageView
@@ -137,10 +308,32 @@ export default function SettingsPage() {
           ingestQuery.error ??
           buildQuery.error ??
           configurationQuery.error ??
-          purgePreviewQuery.error) as Error | null
+          purgePreviewQuery.error ??
+          ollamaSettingsQuery.error) as Error | null
       }
       activeTab={activeTab}
-      onTabChange={setActiveTab}
+      onTabChange={handleTabChange}
+      ollamaSettings={ollamaSettingsQuery.data ?? null}
+      isOllamaSettingsLoading={ollamaSettingsQuery.isLoading}
+      ollamaBaseUrl={ollamaBaseUrl}
+      ollamaModel={ollamaModel}
+      ollamaEnabled={ollamaEnabled}
+      onOllamaBaseUrlChange={handleOllamaBaseUrlChange}
+      onOllamaModelChange={handleOllamaModelChange}
+      onOllamaEnabledChange={handleOllamaEnabledChange}
+      onSaveOllamaSettings={() => saveOllamaSettingsMutation.mutate()}
+      isSavingOllamaSettings={saveOllamaSettingsMutation.isPending}
+      saveOllamaSettingsError={saveOllamaSettingsMutation.error as Error | null}
+      isOllamaSettingsSaved={saveOllamaSettingsMutation.isSuccess}
+      isTestingOllamaConnection={testOllamaConnectionMutation.isPending}
+      ollamaConnectionTestResult={testOllamaConnectionMutation.data ?? null}
+      ollamaConnectionTestError={testOllamaConnectionMutation.error as Error | null}
+      onTestOllamaConnection={() => testOllamaConnectionMutation.mutate()}
+      ollamaModels={ollamaModelsQuery.data?.models ?? []}
+      isOllamaModelsLoading={ollamaModelsQuery.isFetching}
+      isUnsavedOllamaChangesDialogOpen={pendingTab !== null}
+      onCancelOllamaTabSwitch={handleCancelOllamaTabSwitch}
+      onDiscardOllamaTabSwitch={handleDiscardOllamaTabSwitch}
     />
   );
 }

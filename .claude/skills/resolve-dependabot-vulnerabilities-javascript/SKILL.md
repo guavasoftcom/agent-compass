@@ -72,18 +72,19 @@ for two dependents to have pinned incompatible ranges of the same package (e.g. 
 1. **Direct dependency?** Check whether the package name is a key under `dependencies` or
    `devDependencies` in `frontend/package.json`.
    - **Yes (direct)** — mechanism = `yarn up`:
-     `cd frontend && yarn up <package>@<patched_version> -E`
+     `yarn --cwd frontend up <package>@<patched_version> -E`
      (`-E` keeps this repo's exact-pin convention — no `^`/`~`; updates `package.json` and
      `yarn.lock` together.)
    - **No (transitive)** — mechanism = **`resolutions`**: edit `frontend/package.json` to add a
      top-level `"resolutions"` object if one doesn't exist yet (place it alongside
      `dependencies`/`devDependencies`), with `"<package>": "<patched_version>"`. If a resolutions
      entry for that package already exists, update its value. Then run
-     `cd frontend && yarn install` to regenerate `yarn.lock` consistently. Never hand-edit
+     `yarn --cwd frontend install` to regenerate `yarn.lock` consistently. Never hand-edit
      `yarn.lock` directly.
 
 2. **Validate**, in this order, stopping at the first failure:
-   `cd frontend && yarn typecheck`, then `yarn lint`, then `yarn test --run`, then `yarn build`.
+   `yarn --cwd frontend typecheck`, then `lint`, then `test --run`, then `build` (each as
+   `yarn --cwd frontend <script>`).
 
 3. **On success**: mark `RESOLVED (old version -> new version, mechanism)`. Keep the edits
    (`package.json` + `yarn.lock`).

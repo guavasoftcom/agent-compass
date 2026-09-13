@@ -1,4 +1,31 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8080/actuator/health)",
+      "Bash(grep -n \"closed list built from evidence\\\\|putSkills\\\\` now appends\" backend/CLAUDE.md)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest='TraceAnalysisPromptBuilderTest' -DfailIfNoSpecifiedTests=false)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest=TraceInsightsServiceIntegrationTest,TracesControllerTest,TracesExplorerControllerTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml test -Dtest=TraceInsightsServiceIntegrationTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml test -Dtest=TuningPropertyCatalogTest)",
+      "Bash(yarn --cwd frontend test --run traceInsightsDerivations)",
+      "Bash(yarn --cwd frontend test --run TraceInsightsPanelView)",
+      "Bash(grep -n \"AnalyzeTraceDialog ——\\\\|AnalyzeTraceDialog  --\\\\|Saves the$\\\\|└── components/AnalyzeTraceDialog\\\\|Who calls which API\\\\|Every three queries\" /Users/guadalupegarcia/Projects/coding-agent-tuning/frontend/src/pages/TraceDetailPage/CLAUDE.md)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q compile)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest=ShellAntipatternDetectorTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest=FailedToolCallDetectorTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest=FailedModelCallDetectorTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest=BlockedOnUserDetectorTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml -q test -Dtest=RevisitedFileDetectorTest)",
+      "Bash(./backend/mvnw -f backend/pom.xml test -Dtest=DetectorEvaluationServiceIntegrationTest)",
+      "Bash(grep -n \"^- \\\\`\" /Users/guadalupegarcia/Projects/coding-agent-tuning/backend/CLAUDE.md)",
+      "Bash(xargs -I{} echo {})",
+      "Bash(grep -n \"step \\\\|of \\\\${\\\\|stepNumber\\\\|stepCount\" /Users/guadalupegarcia/Projects/coding-agent-tuning/frontend/src/pages/TraceDetailPage/components/AnalyzeTraceDialog/AnalyzeTraceDialogView.tsx)",
+      "Bash(./mvnw -o test-compile)",
+      "Bash(./mvnw -o -Dtest=TraceAnalysisPromptBuilderTest test)",
+      "Bash(./backend/mvnw -f backend/pom.xml compile -q)",
+      "Bash(ps -o pid,pcpu,stat,etime -p 23437)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

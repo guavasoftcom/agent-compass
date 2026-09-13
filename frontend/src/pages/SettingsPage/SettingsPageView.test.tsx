@@ -20,7 +20,7 @@ import { renderWithProviders } from '../../test/renderWithProviders';
 import SettingsPageView, {
   type SettingsPageViewProps,
 } from './SettingsPageView';
-import type { StorageOverview } from './settingsTypes';
+import type { OllamaModel, OllamaSettings, StorageOverview } from './settingsTypes';
 
 const storage: StorageOverview = {
   tables: [
@@ -40,6 +40,13 @@ const storage: StorageOverview = {
   databaseTotalBytes: 1_400_000_000,
   estimatedTotalBytesPerDay: 10_000_000,
   measuredAt: '2026-08-30T00:00:00.000Z',
+};
+
+const ollamaSettings: OllamaSettings = {
+  baseUrl: 'http://localhost:11434',
+  model: 'llama3.1',
+  enabled: true,
+  overridden: false,
 };
 
 const baseProps: SettingsPageViewProps = {
@@ -102,6 +109,27 @@ const baseProps: SettingsPageViewProps = {
   error: null,
   activeTab: 'storage-ingest',
   onTabChange: vi.fn(),
+  ollamaSettings,
+  isOllamaSettingsLoading: false,
+  ollamaBaseUrl: 'http://localhost:11434',
+  ollamaModel: 'llama3.1',
+  ollamaEnabled: true,
+  onOllamaBaseUrlChange: vi.fn(),
+  onOllamaModelChange: vi.fn(),
+  onOllamaEnabledChange: vi.fn(),
+  onSaveOllamaSettings: vi.fn(),
+  isSavingOllamaSettings: false,
+  saveOllamaSettingsError: null,
+  isOllamaSettingsSaved: false,
+  isTestingOllamaConnection: false,
+  ollamaConnectionTestResult: null,
+  ollamaConnectionTestError: null,
+  onTestOllamaConnection: vi.fn(),
+  ollamaModels: [],
+  isOllamaModelsLoading: false,
+  isUnsavedOllamaChangesDialogOpen: false,
+  onCancelOllamaTabSwitch: vi.fn(),
+  onDiscardOllamaTabSwitch: vi.fn(),
 };
 
 describe('SettingsPageView', () => {
@@ -145,5 +173,325 @@ describe('SettingsPageView', () => {
     );
 
     expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPageView — Ollama configuration tab', () => {
+  const withOllamaTab = (overrides: Partial<SettingsPageViewProps> = {}) => ({
+    ...baseProps,
+    activeTab: 'ollama' as const,
+    ...overrides,
+  });
+
+  it('shows the loaded port and model fields', () => {
+    renderWithProviders(<SettingsPageView {...withOllamaTab()} />);
+
+    expect(screen.getByLabelText('Port')).toHaveValue('11434');
+    expect(screen.getByLabelText('Model')).toHaveValue('llama3.1');
+    expect(screen.getByText('Using default')).toBeInTheDocument();
+  });
+
+  it('flags an overridden configuration with a chip', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaSettings: { ...ollamaSettings, overridden: true },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Overridden')).toBeInTheDocument();
+  });
+
+  it('shows the Enabled toggle checked and the fields interactive when enabled', () => {
+    renderWithProviders(<SettingsPageView {...withOllamaTab({ ollamaEnabled: true })} />);
+
+    expect(screen.getByRole('switch', { name: 'Ollama enabled' })).toBeChecked();
+    expect(screen.getByLabelText('Port')).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeEnabled();
+  });
+
+  it('dims and disables the form and Test connection when Ollama is disabled, but keeps Save enabled', () => {
+    renderWithProviders(<SettingsPageView {...withOllamaTab({ ollamaEnabled: false })} />);
+
+    expect(screen.getByRole('switch', { name: 'Ollama enabled' })).not.toBeChecked();
+    expect(screen.getByLabelText('Port')).toBeDisabled();
+    // Save must stay enabled while disabled: it's the only way to persist turning
+    // the toggle off in the first place.
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+  });
+
+  it('calls onOllamaEnabledChange when the toggle is clicked', async () => {
+    const user = userEvent.setup();
+    const onOllamaEnabledChange = vi.fn();
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ onOllamaEnabledChange })} />,
+    );
+
+    await user.click(screen.getByRole('switch', { name: 'Ollama enabled' }));
+
+    expect(onOllamaEnabledChange).toHaveBeenCalledWith(false);
+  });
+
+  it('calls onOllamaBaseUrlChange and onOllamaModelChange as the fields are edited', async () => {
+    const user = userEvent.setup();
+    const onOllamaBaseUrlChange = vi.fn();
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ onOllamaBaseUrlChange })} />,
+    );
+
+    await user.type(screen.getByLabelText('Port'), '1');
+    expect(onOllamaBaseUrlChange).toHaveBeenCalled();
+  });
+
+  it('disables Save and shows "Saving…" while a save is in flight', () => {
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ isSavingOllamaSettings: true })} />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+  });
+
+  it('calls onSaveOllamaSettings when Save is clicked', async () => {
+    const user = userEvent.setup();
+    const onSaveOllamaSettings = vi.fn();
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ onSaveOllamaSettings })} />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSaveOllamaSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the save error message when saving fails', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({ saveOllamaSettingsError: new Error('Invalid base URL') })}
+      />,
+    );
+
+    expect(screen.getByText('Invalid base URL')).toBeInTheDocument();
+  });
+
+  it('shows a confirmation after a successful save', () => {
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ isOllamaSettingsSaved: true })} />,
+    );
+
+    expect(screen.getByText('Settings saved.')).toBeInTheDocument();
+  });
+
+  it('does not show a save confirmation alongside a save error', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          isOllamaSettingsSaved: true,
+          saveOllamaSettingsError: new Error('Invalid base URL'),
+        })}
+      />,
+    );
+
+    expect(screen.queryByText('Settings saved.')).not.toBeInTheDocument();
+  });
+
+  it('disables Test connection and shows "Testing…" while a probe is in flight', () => {
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ isTestingOllamaConnection: true })} />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Testing…' })).toBeDisabled();
+  });
+
+  it('calls onTestOllamaConnection when Test connection is clicked', async () => {
+    const user = userEvent.setup();
+    const onTestOllamaConnection = vi.fn();
+    renderWithProviders(
+      <SettingsPageView {...withOllamaTab({ onTestOllamaConnection })} />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(onTestOllamaConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a success message when the connection test succeeds', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaConnectionTestResult: { success: true, message: 'Reachable' },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Reachable')).toBeInTheDocument();
+  });
+
+  it('shows a failure message when the connection test fails', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaConnectionTestResult: {
+            success: false,
+            message: 'Could not reach Ollama at http://localhost:11434 — is it running?',
+          },
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByText('Could not reach Ollama at http://localhost:11434 — is it running?'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the network-level test error separately from a failed-probe result', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaConnectionTestError: new Error('/api/system/ollama/test-connection → 500'),
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByText('/api/system/ollama/test-connection → 500'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a not-tested placeholder before any probe has run', () => {
+    renderWithProviders(<SettingsPageView {...withOllamaTab()} />);
+
+    expect(screen.getByText('Not tested since load.')).toBeInTheDocument();
+  });
+
+  it('shows a loading skeleton before the effective settings have loaded', () => {
+    const { container } = renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({ ollamaSettings: null, isOllamaSettingsLoading: true })}
+      />,
+    );
+
+    expect(container.querySelectorAll('.MuiSkeleton-root').length).toBeGreaterThan(0);
+  });
+
+  const smallModel: OllamaModel = {
+    name: 'llama3.1:latest',
+    parameterSize: '8.0B',
+    parameterCountBillions: 8.0,
+  };
+  const largeModel: OllamaModel = {
+    name: 'qwen2.5:32b',
+    parameterSize: '32.0B',
+    parameterCountBillions: 32.0,
+  };
+  const unsizedModel: OllamaModel = {
+    name: 'custom:latest',
+    parameterSize: null,
+    parameterCountBillions: null,
+  };
+
+  it('renders the Model field as an Autocomplete populated with the fetched options, annotated with size', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaModel: '',
+          ollamaModels: [smallModel, largeModel, unsizedModel],
+        })}
+      />,
+    );
+
+    await user.click(screen.getByLabelText('Model'));
+    expect(await screen.findByText('llama3.1:latest')).toBeInTheDocument();
+    expect(screen.getByText('8.0B')).toBeInTheDocument();
+    expect(screen.getByText('qwen2.5:32b')).toBeInTheDocument();
+    expect(screen.getByText('32.0B')).toBeInTheDocument();
+    expect(screen.getByText('custom:latest')).toBeInTheDocument();
+  });
+
+  it('calls onOllamaModelChange when typing a model name that is not in the fetched options', async () => {
+    const user = userEvent.setup();
+    const onOllamaModelChange = vi.fn();
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaModel: '',
+          ollamaModels: [smallModel],
+          onOllamaModelChange,
+        })}
+      />,
+    );
+
+    await user.type(screen.getByLabelText('Model'), 'mistral');
+
+    expect(onOllamaModelChange).toHaveBeenCalled();
+  });
+
+  it('shows a warning when the current model matches a fetched entry at or above 13B parameters', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaModel: 'qwen2.5:32b',
+          ollamaModels: [smallModel, largeModel],
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/This is a 32\.0B model/)).toBeInTheDocument();
+  });
+
+  it('shows no warning when the current model matches a fetched entry below 13B parameters', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaModel: 'llama3.1:latest',
+          ollamaModels: [smallModel, largeModel],
+        })}
+      />,
+    );
+
+    expect(screen.queryByText(/local inference may be slow/)).not.toBeInTheDocument();
+  });
+
+  it('shows no warning when the current model is not in the fetched list', () => {
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          ollamaModel: 'not-yet-pulled:latest',
+          ollamaModels: [smallModel, largeModel],
+        })}
+      />,
+    );
+
+    expect(screen.queryByText(/local inference may be slow/)).not.toBeInTheDocument();
+  });
+
+  it('does not show the unsaved-changes dialog by default', () => {
+    renderWithProviders(<SettingsPageView {...withOllamaTab()} />);
+
+    expect(screen.queryByText('Leave without saving?')).not.toBeInTheDocument();
+  });
+
+  it('shows the unsaved-changes dialog when open, and wires Cancel/Leave to their callbacks', async () => {
+    const user = userEvent.setup();
+    const onCancelOllamaTabSwitch = vi.fn();
+    const onDiscardOllamaTabSwitch = vi.fn();
+    renderWithProviders(
+      <SettingsPageView
+        {...withOllamaTab({
+          isUnsavedOllamaChangesDialogOpen: true,
+          onCancelOllamaTabSwitch,
+          onDiscardOllamaTabSwitch,
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Leave without saving?')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancelOllamaTabSwitch).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(onDiscardOllamaTabSwitch).toHaveBeenCalledTimes(1);
   });
 });

@@ -98,4 +98,13 @@ public class Span {
             + "a default level — don't render it as one.",
             example = "high")
     private String effort;
+
+    @Schema(description = "This span's position in the call timeline the trace analysis is written against: "
+            + "1-based across the trace's tool calls and model requests in start order, so a review citing "
+            + "\"call 20\" can be resolved to the span it means. Null on every other span (the interaction root, "
+            + "a tool call's execution and approval-wait children), which the timeline does not number. "
+            + "Deliberately NOT the trace detail waterfall's own index badge, which counts every span in DFS "
+            + "order and therefore diverges from this the moment a trace has any structure at all.",
+            example = "20")
+    private Integer callNumber;
 }

@@ -27,6 +27,15 @@ interface Props {
 
 export const GRID_COLUMNS = '58px 1fr 64px 76px 72px';
 
+// Character budget before an ordinary prompt clamps in this row. The full
+// text is still reachable via the row's `title` tooltip — this modal lists
+// turns to jump to, not to read prompts in full, so there's no "view
+// formatted" button/dialog here unlike the drawer's LongAttrValue.
+const PROMPT_CLAMP = 180;
+
+const clampPrompt = (prompt: string): string =>
+  prompt.length > PROMPT_CLAMP ? `${prompt.slice(0, PROMPT_CLAMP).replace(/\s+$/, '')}…` : prompt;
+
 // Sum of the turn's four-way token split, or null when the turn has none —
 // distinct from 0, which would print "0 tok" instead of the row's "—".
 const tokenTotalOf = (tokens: SwitchTraceRow['tokens']): number | null =>
@@ -68,7 +77,7 @@ const SwitchTraceModalRow = ({ row, isCurrent, onSelect }: Props) => {
           wordBreak: 'break-word',
         }}
       >
-        <PromptSummaryText prompt={row.prompt} />
+        <PromptSummaryText prompt={row.prompt} renderOrdinary={clampPrompt} />
       </Box>
       <Box
         sx={{

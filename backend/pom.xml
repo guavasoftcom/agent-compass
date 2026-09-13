@@ -26,16 +26,16 @@
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <spring.boot.version>4.1.0</spring.boot.version>
-    <otel.proto.version>1.10.0-alpha</otel.proto.version>
-    <lombok.version>1.18.46</lombok.version>
-    <mapstruct.version>1.6.3</mapstruct.version>
+    <spring.boot.version>4.2.0-M1</spring.boot.version>
+    <otel.proto.version>1.11.0-alpha</otel.proto.version>
+    <lombok.version>1.18.48</lombok.version>
+    <mapstruct.version>1.7.0.Beta2</mapstruct.version>
     <lombok.mapstruct.binding.version>0.2.0</lombok.mapstruct.binding.version>
-    <springdoc.version>3.0.3</springdoc.version>
+    <springdoc.version>3.1.1</springdoc.version>
     <testcontainers.version>2.0.5</testcontainers.version>
     <checkstyle.plugin.version>3.6.0</checkstyle.plugin.version>
-    <checkstyle.version>13.6.0</checkstyle.version>
-    <license.plugin.version>4.3</license.plugin.version>
+    <checkstyle.version>14.1.0</checkstyle.version>
+    <license.plugin.version>5.1.2</license.plugin.version>
   </properties>
 
   <dependencyManagement>
@@ -97,6 +97,12 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-flyway</artifactId>
+    </dependency>
+    <!-- Boot 4 splits RestClient auto-configuration (the RestClient.Builder bean OllamaClient
+         needs) into its own module, not pulled in by spring-boot-starter-web alone. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-restclient</artifactId>
     </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>
@@ -298,6 +304,11 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>versions-maven-plugin</artifactId>
+        <version>2.22.0</version>
       </plugin>
     </plugins>
   </build>

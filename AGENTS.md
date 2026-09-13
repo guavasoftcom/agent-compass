@@ -80,6 +80,15 @@ the backend source tree.
   report has repeatedly flagged hundreds of `cat`/`sed`/`find`/`echo` calls per window — the dedicated
   tools give better diffs, avoid shell-quoting mistakes, and don't hide the real command's latency
   behind a pipeline.
+- **Driving the dashboard in a browser: locate first, screenshot last.** Clicking or hovering by a
+  description you expect the page to contain fails about two thirds of the time (23 of 36 `click`
+  calls in one report window came back "does not match any elements"); `browser_snapshot` or
+  `browser_find` first, then pass the exact `ref` it returned as `target` and keep the free-text
+  description in `element`. **Screenshots are the single most expensive thing this project asks of
+  an MCP server** — 57 of them carried 1.8 MB, 88% of all Playwright context, with the worst
+  individual shots at ~270 KB — so take one only when the *user* needs to see the result, not to
+  check your own work. A snapshot answers "did the card render the right number" at a twentieth of
+  the bytes, and the browser console (`browser_console_messages`) answers "did it blow up".
 
 ## Configuration the agent should know
 
@@ -91,7 +100,7 @@ is the authoritative per-property reference.
 The authoritative, machine-readable list of which properties are mirrored is
 [TuningPropertyCatalog.java](backend/src/main/java/com/guavasoft/agentcompass/config/TuningPropertyCatalog.java),
 surfaced at runtime by `GET /api/system/configuration` and on the dashboard's Settings page. It
-classifies all 52 properties three ways and a reflection test fails the build if a newly added
+classifies all 63 properties three ways and a reflection test fails the build if a newly added
 property is left unclassified. Prefer it over the prose below, which names the seven worst offenders
 but is not exhaustive: the real count is **17 across six migrations**, and it includes three
 (`tool-decision-event-name`, `api-request-body-event-name`, `hook-execution-event-name`) whose
@@ -164,3 +173,7 @@ see [backend/.env.example](backend/.env.example).
   is staying on plain OTLP.
 - Don't introduce a separate OpenAPI spec file; the springdoc auto-derivation is authoritative.
 - Don't commit `.env` (only `.env.example`).
+- Read a file once at the length you actually need — don't come back for another slice of a file
+  you've already read unless an edit changed it.
+- Verify the existence of features or components in the codebase before conducting a review to
+  avoid wasted effort.

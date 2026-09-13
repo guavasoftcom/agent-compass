@@ -212,6 +212,7 @@ Any agent that speaks OTLP works the same way — set `OTEL_EXPORTER_OTLP_PROTOC
 | `AGENT_COMPASS_IMAGE`                                 | `ghcr.io/guavasoftcom/agent-compass:latest`     | Image to run. Pin a release tag (`:v0.1.0`) or point at a locally built image.                             |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `postgres` / `coding_agent_tuning` | Database credentials, applied to both services.                                                            |
 | `JAVA_OPTS`                                           | empty                                           | Extra JVM flags, e.g. `-Xmx1g`.                                                                            |
+| `OLLAMA_BASE_URL`                                     | `http://host.docker.internal:11434`             | Where the "Analyze trace" feature reaches Ollama. Ollama itself is **not** part of this stack — run `ollama serve` on the host as usual. `localhost` would resolve to the `app` container itself, not the host, which is why the compose file overrides it and adds `extra_hosts: host.docker.internal:host-gateway` (needed on Linux; Docker Desktop resolves that hostname automatically). |
 
 Postgres is intentionally **not** published to the host — the app reaches it over the compose network. To attach `psql` or a GUI client, uncomment the `ports` block on the `postgres` service (it defaults to `5433` so it won't collide with a dev Postgres on 5432).
 
@@ -235,8 +236,8 @@ volumes:
 The [Dockerfile](../Dockerfile) does no building of its own: it copies in a jar and a Vite bundle that already exist. Build both first, then hand the image name to compose.
 
 ```sh
-cd frontend && yarn install && yarn build && cd ..
-cd backend && ./mvnw clean package -DskipTests && cd ..
+yarn --cwd frontend install && yarn --cwd frontend build
+./backend/mvnw -f backend/pom.xml clean package -DskipTests
 
 docker build -t agent-compass:local .
 AGENT_COMPASS_IMAGE=agent-compass:local docker compose up -d

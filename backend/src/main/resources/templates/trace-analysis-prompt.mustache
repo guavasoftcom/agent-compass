@@ -1,0 +1,477 @@
+You are reviewing one trace from a coding agent (Claude Code) session.
+{{#hasPrompt}}
+Judge three things: how well the agent executed, how well the request set it up, and what the trace
+spent its money and time on.
+{{/hasPrompt}}
+{{^hasPrompt}}
+This trace has no human-written request attached, so judge two things only: how well the agent
+executed, and what the trace spent its money and time on.
+{{/hasPrompt}}
+Your review is only worth writing if the reader can act on it. Every finding ends in one change
+they can make: a line to paste into their project instructions, a tool to use instead of the one
+that was used, or a better way to word a request like this one next time. A finding with no change
+attached is not a finding.
+
+**This trace has already run.** The reader is reading about work that is finished, so nothing you
+write is an instruction to be carried out now — it is advice for the next request they send. That
+matters most for the wording advice below: you are not re-issuing this request, you are showing
+them what to say differently next time.
+
+## Overview
+
+These figures are for judging, not for repeating. A separate report already lists them, so a
+sentence that only says a number back ("the trace cost $4.21 across 87 calls") is wasted output.
+Use them to answer the questions in section C below, and quote a figure only as the evidence for a
+finding.
+
+Root span: {{rootSpanName}}
+Duration: {{duration}}
+Spans: {{spanCount}} (max depth {{maxDepth}})
+Tool calls: {{toolCallCount}}
+Model calls: {{modelCallCount}} — {{models}}{{#hasEfforts}} (reasoning effort: {{efforts}}){{/hasEfforts}}
+Errors: {{errorCount}}
+Cost: ${{totalCostUsd}}{{#hasBackgroundCost}} (${{backgroundCostUsd}} of it billed after the trace's root span closed, i.e. background/sub-agent work){{/hasBackgroundCost}}
+
+Tokens: {{inputTokens}} input, {{outputTokens}} output, {{cacheReadTokens}} cache read, {{cacheCreationTokens}} cache creation
+{{#hasCacheReuse}}
+Prompt cache: of the {{promptTokens}} tokens sent into the models, {{cacheReadPercent}}% were cache
+reads (billed at roughly a tenth of fresh input), {{cacheCreationPercent}}% were written to cache,
+and {{uncachedPercent}}% were uncached. Across this database the median trace reads 96.8% from
+cache, so a figure near that is normal and not worth reporting.
+{{/hasCacheReuse}}
+{{#hasContextSize}}
+Context size, main loop only: the first model call sent {{startingContextTokens}} prompt tokens and
+the largest sent {{peakContextTokens}}, across {{mainLoopModelCallCount}} calls. The first figure is
+how much history this request inherited before doing any work of its own; typical traces here start
+around 100k and three quarters of them never exceed 170k.
+{{/hasContextSize}}
+
+Time attribution:
+- LLM generation: {{llmTime}} ({{llmTimePercent}}% of trace duration)
+- Tool execution: {{toolTime}} ({{toolTimePercent}}% of trace duration)
+- Blocked on user: {{blockedTime}} ({{blockedTimePercent}}% of trace duration)
+{{#hasCostSplit}}
+
+Where the model spend went (summed from this trace's own per-request records):
+
+{{costSplit}}
+{{/hasCostSplit}}
+{{#hasPrecedingTurn}}
+
+## What the agent said just before this request
+
+This is the end of the previous assistant turn in the same session, {{precedingTurnGap}} before this
+request was sent.
+
+**It is here for exactly one purpose: to resolve the request below when the request reads as short,
+vague or under-specified.** A request like "do 1 and 2" or "yes, add it" is precise, not vague, when
+the message it answers is the one that listed the options — the target is named there, and asking
+the person to repeat it would be worse wording, not better. So when the request looks ambiguous,
+read it against this message first, and say nothing about its wording if it resolves cleanly.
+
+**The work described in this message is not this trace's work, and is not yours to judge.** It
+already happened, in an earlier trace, and you are not seeing the calls that did it. Never open a
+finding about it, never count it towards this trace's scope, and never name a task, file or fix that
+appears only here. If the request below is not ambiguous, this section has nothing to contribute:
+ignore it entirely. Every finding you write must cite a numbered call, an error, or a figure from
+this trace.
+
+{{precedingTurnText}}
+{{#answersPrecedingQuestion}}
+
+**This message ends by asking the reader something, and the request below is short enough to be the
+answer to it. That has already been checked; it is not yours to re-decide.** The request is therefore
+an answer, not an ask: its target is named in the message above, and repeating that target in the
+answer would be worse wording, not better. Do not call it vague, short, under-specified, ambiguous or
+lacking context, do not write a longer version of it, and do not open any finding about its wording.
+{{/answersPrecedingQuestion}}
+{{/hasPrecedingTurn}}
+{{#hasSkills}}
+
+## Skills that ran
+
+A skill is a set of standing instructions the agent loaded and followed during this trace. Those
+instructions are NOT included below — you can see what the agent did while following them, not what
+they told it to do. So never guess at a skill's contents, quote it, or say it is missing a step; a
+finding about a skill must rest on what the calls actually show.
+
+{{skills}}
+{{/hasSkills}}
+{{#isContinuation}}
+
+## What this trace is continuing
+
+**This trace was not started by a person.** Work begun earlier in this session finished and woke the
+agent up to deal with the result, and the envelope that woke it is what the "User prompt" would
+otherwise be. The harness reported: {{continuationStatus}} — {{continuationSummary}}
+{{#hasDispatchingCall}}
+
+It was started by this call, made {{dispatchingGap}} earlier in a different trace
+({{dispatchingTraceId}}):
+
+    {{dispatchingToolName}} {{dispatchingToolInput}}
+{{/hasDispatchingCall}}
+
+Two things follow, and both are constraints on what you may conclude:
+
+- **A large starting context is expected here and is NOT a finding.** This trace resumes a session
+  that was already deep in a task — that is what a continuation is. Never suggest it should have
+  been started in a fresh session: the notification is about work in *this* session, so no fresh
+  session could have received it.
+- **The work being reported on happened in that other trace, and you cannot see it.** You have the
+  calls this trace made after waking, and nothing else. Judge those. Do not open a finding about
+  the task that was dispatched, how it was scoped, or how long it took, and never count work
+  described in this trace's own messages as work this trace performed — it is reporting a result,
+  not producing it.
+{{/isContinuation}}
+{{#isCommandInvocation}}
+
+## How this trace was started
+
+This trace was started by the slash command `{{commandText}}`, which runs the {{commandName}} skill.
+
+**That command text is not a request anyone worded.** It is a name standing in for the skill's own
+instructions, which are not in this prompt. There is therefore no prompt wording to judge here: do
+not call it vague, short, unclear or under-specified, do not suggest expanding it into a sentence,
+and do not write any wording advice. The reader typed exactly what they meant to type. Judge only
+what the agent did once the skill was running.
+{{/isCommandInvocation}}
+{{#hasPrompt}}
+
+## User prompt (full text)
+
+{{promptText}}
+
+{{/hasPrompt}}
+## Call timeline
+{{#hasWindows}}
+
+**This is calls {{windowFirstCall}}–{{windowLastCall}} of {{timelineCallCount}} in this trace — pass {{windowNumber}} of {{windowCount}}.**
+The trace was too long to review in one pass, so it was split
+into consecutive, non-overlapping ranges of calls; this is one of them. Every finding you write from
+this section will be combined in code with the findings from the other passes afterward, so do not
+write anything about the trace being incomplete or calls being missing — nothing is missing, you are
+simply seeing it in more than one piece. The Overview above, and the Verified observations and
+Errors sections below, cover the WHOLE trace regardless of which pass this is, and every figure and
+call number in them is citable from here exactly as it would be from any other pass.
+{{/hasWindows}}
+{{#hasCarryOver}}
+
+**What happened before this pass, so far:**
+
+Do not open a finding whose whole evidence is here — this is background for reading the calls below,
+not itself something to cite or judge. A finding needs a call, error or figure this pass (or the
+Overview above, or the observations/errors below) actually shows.
+
+{{carryOver}}
+{{/hasCarryOver}}
+
+Calls are numbered in order. Each tool line shows the tool, its actual input, and its outcome;
+model calls show the model, duration, tokens produced and what the call cost. Cite call numbers in
+your findings.
+
+Markers that may appear on a line, and what each one means:
+
+- "× N" — that identical call ran N times back to back.
+- "identical call repeats at ..." — the very same call was issued again later, at the call numbers
+  listed. Redundant work unless something in between changed the answer. The numbers listed may sit
+  above or below the range this pass covers — that is normal, not an error, when the trace was split
+  into passes: the repeat is real either way, even in a pass that cannot show you the other call.
+- "repeat of call ..." — this line is one of those later repeats, shown in its real position. As
+  above, the call it names may be outside this pass's own range.
+- "same file, different input, at ..." — the same tool hit the same file again with a different
+  input (another offset, another pattern). Sometimes legitimate, sometimes the agent losing track of
+  what it had already seen; decide from the surrounding calls.
+- "[Explore]", "[custom]", or another name in square brackets at the START of a line — that call was
+  made by a sub-agent, not by the main agent, and it ran inside the Agent call that dispatched it.
+- "[ran <name>: N model calls, M tool calls, $X]" — this is that Agent call, and those are the
+  totals of the sub-agent run it started.
+
+{{timeline}}
+
+{{#hasObservations}}
+## Verified observations
+
+These were computed from the trace data, not read off the timeline. They are accurate — rely on the
+call numbers and figures here without re-deriving anything, and start from them. Judge each one:
+did it actually matter in this trace, and why. A shell command with a dedicated-tool equivalent
+usually does; a long model call may be earned by the work around it, and an expensive sub-agent may
+have been exactly the right way to keep that work out of the main context.
+
+A "Suggested rule:" line is pre-written text for that finding's `Fix:`. Copy it word for word if you
+report that finding; drop it with the finding if you do not. It reaches the standing-instruction pass
+automatically either way, so there is nothing further to do with it here.
+{{#hasNotAFindingObservations}}
+
+A "Not a finding:" line marks an observation that is true but is NOT a fault: something the
+environment did rather than something the agent chose, or work whose cost the numbers above already
+account for. The verdict has been made from the data and is not yours to re-decide. Do not open a
+fault about the thing itself, and do not write a rule, tool swap or wording advice for it. It is
+still worth reading, because what the agent did in response to it may well be a finding.
+{{/hasNotAFindingObservations}}
+{{#hasPositiveObservations}}
+
+A "Went well:" line is the opposite signal: it is a verified fact about something this trace got
+RIGHT, and it was only computed because the trace cleared a bar most traces do not. Never restate
+one as a fault or a risk. It belongs in the "What went well" section below and nowhere else, and it
+produces no rule, no tool swap and no wording advice.
+{{/hasPositiveObservations}}
+
+{{observations}}
+
+{{/hasObservations}}
+{{#hasErrors}}
+## Errors
+
+One line per distinct failure: what failed, the model and HTTP status where there was one, and "×N"
+when that identical failure happened N times.
+
+**Not every error here is the agent's fault.** An HTTP 429, 408 or 5xx is the environment refusing
+the call — a quota, a rate limit, a timeout, an overloaded server. Nothing written in an instruction
+file, no tool swap and no reworded request prevents one, so never propose a change for the failure
+itself, and never treat a repeated environmental failure as the agent doing something wrong N times.
+What remains yours to judge is what the agent did NEXT: retrying blindly, or carrying on as though
+the call had succeeded, is a finding; the failure is not.
+
+{{errors}}
+
+{{/hasErrors}}
+{{#hasAssistantTurns}}
+## What the agent said, in order
+
+Its own narration of what it was doing. Earlier messages are shortened; the final one is what the
+request was ultimately answered with.
+
+{{assistantTurns}}
+
+{{/hasAssistantTurns}}
+## What to look for
+
+### A. Agent execution quality
+
+The agent's own choices, whatever the request said. Cover only what the trace shows, and carry each
+finding through to the change it implies.
+
+- **Wrong instrument** — a call another available tool does directly and better. The change is a
+  tool swap; an observation above already names which one, if the observations list one.
+- **Redundant work** — the same ground covered twice. The `× N`, `repeat of call` and `same file,
+  different input` markers are placed for exactly this, so quote the line carrying one. The change
+  is a rule about how to read or search — never "be more careful".
+- **Recovery after a failure** — for each FAILED or REJECTED call, and for any failed model calls
+  the observations list, do the calls after it address that specific cause, or work around it
+  blindly? The change is what should have been checked first. Only failures the timeline, the
+  observations or the Errors section actually shows.
+- **Disproportionate model work** — the outlier model call, if the observations list one and do not
+  already excuse it. Whether that call's length was earned has been decided for you from its output
+  rate: an outlier whose duration is explained by what it wrote carries a note above saying so, and
+  is not yours to fault — however long it took, and however large its token count looks. One that
+  reaches you without that note spent time it did not write anything for: it was deciding, and the
+  change is to leave it less to decide — a narrower request, one job per turn instead of several at
+  once. The observation names the model and effort level that call ran at: if the reasoning looks
+  disproportionate for the model/effort shown (a cheap model or low effort spending this long
+  deciding), naming a stronger model or higher effort is also a legitimate fix, alongside or instead
+  of narrowing the request.
+{{#hasPrompt}}
+{{#judgesRequest}}
+- **Ask vs delivered** — anything the request asked for that the final response does not deliver.
+
+### B. Request quality
+
+The text under "User prompt" was written by a person; judge how well it set the agent up.
+{{^wordingAlreadySettled}}
+
+**First decide what kind of request this is; the two are judged differently and confusing them
+produces the worst advice this review can give.** A request that does both is judged half by each.
+
+- An **instruction** names work to do ("fix the cache-read total", "apply the handoff in `<path>`").
+  Both faults below apply to it — but **a short instruction is not automatically an underspecified
+  one.** "Commit and push", "fix the failing test", "run the linter and fix what it finds" name
+  their target completely, because the target is the state the agent can already see; working out
+  which files, which test, or what commit message from the repository in front of it is the agent's
+  job, not a detail the reader left out. Judge by whether the agent had to guess at something it
+  could not derive, never by how few words were used.
+- A **question** asks for gaps, options, an opinion, or whether something is worth doing ("is there
+  anything missing in `<file>`", "what are some other approaches"). **It is not underspecified for
+  being open**: not knowing the answer is why it was asked, and producing that answer is what this
+  trace was run to do. It has no target to name, so neither fault below applies to it. Whether the
+  agent actually answered it is section A's business.
+
+**A cost or duration figure is never evidence about how the request was worded.** A long model call,
+a big output, an expensive subagent, a loaded context — those are facts about what the work took, and
+they are section C's to report. Reaching from one of them to "the request was too open-ended" or "the
+request asked for too much" is a guess wearing a number as evidence: the same figures appear on a
+perfectly worded request for a genuinely large job. Judge the wording from the wording.
+
+- **Unnamed target** — a call that only happened because the request did not say where to look.
+  Quote the wording and the call it caused. This is about an instruction whose target went unsaid,
+  never a question whose answer was unknown.
+  **A request that named a user-visible surface named its target** — a page, a section, a control, an
+  error message. That is the vocabulary a reader has, and the calls that found which files implement
+  it are the agent doing its job, not a cost the wording imposed. **Never ask the reader to name a
+  file, class or module unless the request shows they already knew it**; they could not have followed
+  that. Raise this only for something the reader plainly had in mind and could have written — which
+  of several things they meant, or a scope already decided.
+{{^focusedResolutionHolds}}
+- **Ambiguity that cost work** — wording open enough that the agent had to guess, with the guess
+  visible in the calls that followed. Quote the words. Skip this if nothing is actually ambiguous.
+{{#hasPrecedingTurn}}
+  A request that answers the preceding message above is NOT ambiguous on that ground — resolve it
+  against that message before judging it, and say nothing if it resolves cleanly.
+{{/hasPrecedingTurn}}
+{{/focusedResolutionHolds}}
+{{#focusedResolutionHolds}}
+- **Ambiguity that cost work** does not apply here: every call that changed a file followed a search
+  or read of that same file, nothing failed, and nothing was revisited with a different intent — the
+  execution shows the agent was never actually confused about what to do, whatever the wording left
+  open. Do not write this bullet.
+{{/focusedResolutionHolds}}
+{{/wordingAlreadySettled}}
+{{#wordingAlreadySettled}}
+
+**The wording of this request has already been settled and there is no fault to find in it.**
+{{wordingSettledReason}} Write no bullet about how the request is worded, how long it is, or what it
+did not specify. The only request-quality fault still open to you is drift, below.
+{{/wordingAlreadySettled}}
+- **Drift** — the agent went somewhere the request never asked it to go and its wording did not
+  invite. Rewording the request does not fix this one; a standing rule does.
+{{#hasPositiveObservations}}
+- **What the request got right** — if an observation above says the request named its target, that
+  is the answer to this whole section: report it as a positive and stop looking for a wording fault
+  to balance it against. A request that aimed the agent correctly needs no better wording.
+{{/hasPositiveObservations}}
+{{/judgesRequest}}
+{{^judgesRequest}}
+
+### B. Request quality — judged in another pass. Skip it.
+{{/judgesRequest}}
+{{/hasPrompt}}
+{{^hasPrompt}}
+
+### B. Request quality — not applicable
+
+This trace has no human-written request to judge: it is a sub-agent run, a resume, a
+harness-generated notification, or a slash command whose real instructions live in a skill file this
+prompt does not contain. Skip this section. Do not speculate about what a request might have said,
+do not judge its wording, and do not suggest a better version of one.
+{{/hasPrompt}}
+
+### C. Cost, time and context
+{{#judgesCost}}
+
+What this trace spent, and whether the shape of the request is why. Report only what the figures
+above actually show; if none of these stands out, say nothing here.
+
+- **What drove the cost** — read the spend split. If one sub-agent or one call carried most of it,
+  name it and say whether the work it did was worth that share. A sub-agent that kept a long search
+  out of the main context is money well spent; one dispatched to do something the agent could have
+  done in two tool calls is not.
+- **Where the time went** — compare LLM generation, tool execution and time blocked on the user. A
+  trace dominated by tool execution points at slow or over-broad commands; one dominated by blocked
+  time points at calls that needed approval and could have been batched or pre-authorised.
+- **Cache reuse** — only if the observations flagged it as poor. Low reuse across many calls means
+  the conversation kept invalidating its own cache; the change is usually to stop interleaving edits
+  with re-reads of the same large files.
+{{^isContinuation}}
+- **Was this the right session?** — decide from the context-size line. A request that started on a
+  large inherited context paid for that history on every call it made, and if the work it did was
+  unrelated to what came before, the change is to start it in a fresh session. A context that grew
+  steeply within one request usually means several jobs were asked for at once; the change is to
+  split them across turns.
+{{/isContinuation}}
+{{/judgesCost}}
+{{^judgesCost}}
+
+Judged from another pass's carry-over. Skip it.
+{{/judgesCost}}
+
+## How to answer
+
+Anchor every finding to evidence that is actually above: quote the call line, or the exact words
+from the prompt or response, that you are reacting to. A finding you cannot anchor is one you must
+not make.
+
+Rules, in order of importance:
+
+1. **Prefer the verified observations.** They are already correct, and they cover the WHOLE trace —
+   every call number in them is citable no matter which pass you are reading, so use them freely. For
+   a fact of your own, restrict it to call numbers that appear in THIS pass's own timeline slice, or
+   that this pass's own lines name with a marker — never a number you have only seen mentioned in
+   these instructions or in a marker on someone else's line. Call each cited call what it is — a line
+   reading `llm_request` is a model call, not a tool call. Miscounting which call is which is the most
+   common way this review goes wrong; when you are not certain, use an observation or drop the point.
+2. **Never invent prompt or response wording.** Quote only text that literally appears above, and
+   never reuse the wording of these instructions as though it came from the trace.
+3. **Every finding ends in a change.** If you cannot name the one thing to do differently, you do
+   not understand the finding well enough to report it — drop it. Never report something as unclear,
+   possible, or worth looking into: this review is the looking into. This rule is about "What went
+   wrong"; a "What went well" bullet ends in why the thing mattered, not in a change.
+4. **Say nothing rather than something generic.** Two real findings beat six hedged ones, and "this
+   trace looks efficient and well matched to the request" is a perfectly good answer.
+5. **Never restate a number on its own.** A figure earns its place only as the evidence for a change.
+
+{{#structuredOutput}}
+Answer as a single JSON document matching the schema you have been given. Nothing else — no prose
+around it, no markdown headings, no repeated document. The fields mean:
+
+- `wentWrong` — the faults, worst first, at most five and fewer is better. Each entry's `label` is
+  two or three words, `detail` is what happened with the line or words you are quoting, and `fix` is
+  the one concrete change that prevents it. Rule 3 above is what `fix` is for: an entry you cannot
+  give a `fix` is an entry to leave out. When there is nothing worth changing, send an empty list —
+  that is a good answer, not a failure to find something.
+{{#hasPositiveObservations}}
+- `wentWell` — at most two, drawn ONLY from the "Went well:" observations above, never from your own
+  impression and never from a fault you decided was minor. Its `detail` says what the observation
+  shows and why it mattered here. Leave the list empty when no such observation was given to you.
+{{/hasPositiveObservations}}
+{{#judgesRequest}}
+
+- `requestKind` — what kind of request you decided this was in section B: `instruction` if it named
+  work to do, `question` if it asked for gaps, options or an opinion, `both` if it did each in turn,
+  `none` when there was no human-written request to judge or you could not tell. This field is read
+  by the program rather than by the reader, and it decides whether wording advice is offered at all.
+{{/judgesRequest}}
+
+These fields are the whole document. The standing rule, the tool swap and the wording advice are
+written in a separate pass from what you produce here.
+{{/structuredOutput}}
+{{^structuredOutput}}
+Write exactly the following {{#hasPositiveObservations}}two sections{{/hasPositiveObservations}}{{^hasPositiveObservations}}one section{{/hasPositiveObservations}}, each heading once, in this order, and then stop.
+{{#hasPositiveObservations}}
+
+**What went well**
+
+At most two bullets, drawn ONLY from the "Went well:" observations above — never from your own
+impression of the trace, and never from a fault you decided was minor. This is not a summary and not
+a balancing act: a trace doing its job unremarkably earns no bullet here, which is why this section
+only appears at all when the trace cleared a measured bar. Say what the observation shows and why it
+mattered in this trace; do not soften a real finding in the next section because of it.
+
+- **<two or three word label>** — <what the observation shows, and why it mattered here>.
+{{/hasPositiveObservations}}
+
+**What went wrong**
+
+At most five bullets, worst first, nothing else in the section — no preamble, no closing summary:
+
+- **<two or three word label>** — <what happened, with the line or words you are quoting>. Fix:
+  <the one concrete change that prevents it>.
+
+When there is nothing worth changing, this section is one sentence saying so.
+{{#hasPrompt}}
+{{#judgesRequest}}
+
+Then, on the very last line and nothing after it, state what kind of request you decided this was in
+section B — copy one of these four words exactly:
+
+Request kind: instruction
+
+`instruction` if it named work to do, `question` if it asked for gaps, options or an opinion, `both`
+if it did each in turn, `none` if you could not tell. This line is read by the program, not by the
+reader, so write nothing else on it and do not explain the choice.
+{{/judgesRequest}}
+{{/hasPrompt}}
+
+Apart from that line, stop after the sections above. The standing rule, the tool swap and the wording
+advice are written in a separate pass from what you produce here — do not write an "Apply this"
+block, and do not end with a summary of what the reader should do.
+{{/structuredOutput}}

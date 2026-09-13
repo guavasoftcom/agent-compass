@@ -26,10 +26,16 @@ measured query plans and timings that shaped the SQL — read it before changing
 ## Files
 
 ```
-SettingsPage.tsx                                   container: 5 useQuery, retentionDays state, refetch-all
-SettingsPageView.tsx                               view: PageLayout + KPI strip + 5 sections
+SettingsPage.tsx                                   container: 6 useQuery, 3 useMutation, retentionDays +
+                                                    Ollama form state (incl. enabled + dirty tracking),
+                                                    tab-switch guard, refetch-all
+SettingsPageView.tsx                               view: PageLayout + KPI strip + 5 tabs (6th is Ollama,
+                                                    rendered as two stacked full-width cards) +
+                                                    UnsavedOllamaChangesDialog
 SettingsPageView.test.tsx                          vitest coverage for the view (renderWithProviders, prop fixtures)
-settingsApi.ts                                     fetchers over the shared api/http getJson
+settingsApi.ts                                     fetchers over the shared api/http getJson, plus three
+                                                    bare-fetch writes (purgeTelemetry, saveOllamaSettings,
+                                                    testOllamaConnection — see Who calls which API)
 settingsTypes.ts                                   interfaces mirroring the Java records
 settingsDerivations.ts                             pure helpers (freshness, shares, spans, config filter)
 settingsDerivations.test.ts                        24 cases over those helpers
@@ -39,6 +45,16 @@ components/SchemaBuildCard/                        version strip + scrollable fl
 components/EffectiveConfigurationCard/             searchable tuning.* list with the SQL-mirroring chip
 components/PurgeDryRunCard/                        retention estimate, caveats, copyable SQL, purge button
 components/PurgeConfirmDialog/                     type-to-confirm dialog gating the purge
+components/OllamaConfigurationCard/                Enabled/Disabled toggle + editable Ollama port/model
+                                                    (host hardcoded to localhost; DB override, falls
+                                                    back to the application.yml default when cleared) —
+                                                    see the Ollama configuration section below
+components/OllamaStatusCard/                       Overridden/Using default chip + "Test connection"
+                                                    probe against whatever is currently typed in the
+                                                    sibling card, kept as its own card so testing
+                                                    doesn't visually compete with editing
+components/UnsavedOllamaChangesDialog/             confirms leaving the Ollama tab with unsaved edits
+                                                    (port, model, or the Enabled toggle)
 index.ts
 ```
 
@@ -73,6 +89,177 @@ index.ts
 | `EffectiveConfigurationCard` | `['system-configuration']` | `fetchEffectiveConfiguration` → `GET /api/system/configuration` |
 | `PurgeDryRunCard` | `['system-purge-preview', retentionDays]` | `fetchPurgePreview` → `GET /api/system/purge-preview?days=` |
 | `PurgeConfirmDialog` | `useMutation` (no key) | `purgeTelemetry` → `DELETE /api/system/telemetry?days=&confirmation=` |
+| `OllamaConfigurationCard` + `OllamaStatusCard` | `['system-ollama-settings']` | `fetchOllamaSettings` → `GET /api/system/ollama-settings` |
+| `OllamaConfigurationCard` (`useMutation`) | no key; `onSuccess` refetches `['system-ollama-settings']` | `saveOllamaSettings` → `PUT /api/system/ollama-settings` |
+| `OllamaStatusCard` (`useMutation`) | no key | `testOllamaConnection` → `POST /api/system/ollama/test-connection` |
+| `OllamaConfigurationCard` (`useQuery`) | `['system-ollama-models', debouncedOllamaBaseUrl]` | `fetchOllamaModels` → `POST /api/system/ollama/models` |
+
+## Ollama configuration section
+
+Editable Ollama connection settings for the "Analyze trace" feature (`TraceDetailPage/CLAUDE.md`),
+added as a sixth tab so this page stays the one place both the read side (Effective Configuration)
+and the one piece of *write*-able runtime config live. Rendered as two stacked, full-width cards
+(`OllamaConfigurationCard` above `OllamaStatusCard`, a plain `Stack`) rather than the Storage & Ingest
+tab's side-by-side `row2` grid — the design handoff shows the pair top-to-bottom, not 2-up. Split into
+two cards so testing a connection doesn't visually compete with editing the form, and so the
+Overridden/Using default chip reads next to "is it currently reachable" rather than next to the fields
+being changed.
+
+- **The Enabled/Disabled toggle gates the whole feature, not just this form.** `OllamaConfigurationCard`
+  renders a header `Switch` (`ollamaEnabled`/`onOllamaEnabledChange`) that dims and disables the port
+  and model fields (nothing to edit or test while the feature is off); `OllamaStatusCard` independently
+  disables its own "Test connection" button off the same `enabled` prop. **Save deliberately stays
+  enabled regardless of `enabled`** — it's the only way to persist flipping the toggle off in the first
+  place, so gating it on `!enabled` would make that edit impossible to commit. This is a real, persisted `ollama_settings`
+  override (`EffectiveOllamaSettings.enabled`), not a client-only flag — the effective value falls back
+  to `ollama.enabled` in `application.yml` (default `false` — the feature ships opt-in, since most
+  installs have no local Ollama server running) exactly like `baseUrl`/`model` do. **The
+  client-side dimming is a convenience, not the enforcement**: `TraceAnalysisService.regenerate` on the
+  backend re-checks the effective `enabled` flag before ever calling Ollama and throws an
+  `OllamaUnavailableException` (503, shown verbatim) when it's off, so a stale tab or a client that
+  bypassed this dimming still cannot trigger a real analysis. Unlike `baseUrl`/`model`, `enabled` has no
+  "blank clears the override" form — a toggle has no blank state — so `saveOllamaSettings` always sends
+  an explicit `true`/`false`, never `null`, once the operator has touched it.
+- **Leaving the tab with unsaved edits asks first.** `SettingsPage.tsx` tracks `isOllamaFormDirty`,
+  set whenever the port, model, or Enabled toggle changes and cleared on a successful save or on
+  discarding. `handleTabChange` intercepts a switch away from `'ollama'` while dirty: it parks the
+  target tab in `pendingTab` instead of switching immediately, which is what opens
+  `UnsavedOllamaChangesDialog` (its `open` prop is just `pendingTab !== null`, so there is no separate
+  boolean to keep in sync). Cancel clears `pendingTab` and leaves the operator on the Ollama tab with
+  their edits intact; "Leave without saving" reverts the three fields to the last-loaded
+  `ollamaSettingsQuery.data` (the same values a refetch would show), resets the test/save mutations and
+  the dirty flag, then completes the switch to `pendingTab`. Switching *to* the Ollama tab, or switching
+  tabs while the form is clean, needs no confirmation and goes through `setActiveTab` directly.
+- **Port and Model render their labels as a plain line above the field, not MUI's notched
+  `label`.** The design handoff's `.fl` labels sit fully above the box, never cut into its border,
+  so `OllamaConfigurationCard` leaves `TextField`'s `label` prop unset on both fields and renders a
+  small `FieldLabel` (Sora, 12px, weight 600 — matching the handoff's `.fl` rule exactly) above each
+  one instead. The accessible name moves to an explicit `aria-label` on `slotProps.htmlInput`
+  (`'Port'` / `'Model'`, the latter merged onto whatever `Autocomplete`'s own `params.slotProps.htmlInput`
+  already carries — combobox role/expanded/autocomplete attributes that must not be clobbered), so
+  `getByLabelText('Port')`/`('Model')` in tests still resolve the same way they would with a real
+  `label`. Both fields' typed value renders in `fontFamilies.mono` (matching the handoff's
+  `.oinput input`), and **the Port value is additionally bold** (`PORT_INPUT_STYLE`) — the prefix
+  adornment stays regular-weight so the two read at different visual weights.
+- **Field chrome (`OLLAMA_FIELD_SX`) and the "dim" vs. "muted" text distinction are pulled from
+  "Ollama Form Style Guide.html"**, a pixel-precise reference built specifically for this tab (see
+  the four `.oinput`/`.ocombo-input`/`.btn`/dropdown token comments in that file, which name exact
+  px/color values `Aurora Settings Mockup.html` only implies). Port and Model are both 44px tall,
+  11px radius, with a border pinned to `divider` at rest **and** on hover — MUI's own default
+  `OutlinedInput` border color is a hardcoded rgba, not palette-aware, so both states have to be
+  overridden explicitly or a plain unfocused field would render a slightly different gray than the
+  rest of the app. Only `:focus`/`.Mui-focused` gets a treatment: border → 32%-alpha
+  `primary.main` plus a `0 0 0 3px` glow at 12% alpha, both via `slotProps.input.sx`. The style
+  guide names a *third* text tone below `text.secondary` ("muted", `#6c6589`, used for `FieldLabel`)
+  — "dim" (`#938cae`), used for the Port prefix and a non-large model's dropdown size label.
+  `dimTextColor` derives it as `alpha(text.secondary, 0.7)` instead of hardcoding the hex, so it
+  keeps working in dark mode, which the (light-mode-only) style guide has no token for.
+- **The Model dropdown menu and its rows also match the style guide, and needed no new hover
+  styling at all** — `action.hover` (`alpha(primary.main, 0.07)` in light mode) already equals the
+  guide's `--hover`, so `MuiAutocomplete-option`'s default hover uses it for free. What did need
+  overriding: `slotProps.paper.sx` (12px radius + `theme.custom.cardShadow`, the app's card-shadow
+  token) and `slotProps.listbox.sx` (6px padding, 8px row radius, mono 13px, 9px/11px row padding).
+  `renderOption` renders the name and the parameter-size annotation as two separate `<span>`s rather
+  than one `"name — size"` string, so the size can carry its own color — `dimTextColor` normally,
+  `severity.warning` (`#e6952b`, matching `--warn`) for a model at/above the large-model threshold —
+  the same "warn in the dropdown before the Alert banner even appears" cue the style guide calls out.
+- **Save and Test connection use `PRIMARY_ACTION_BUTTON_SX` (exported from `OllamaConfigurationCard`,
+  imported by `OllamaStatusCard`), not `GhostButton`'s bare default.** `GhostButton`'s own sizing —
+  30px tall, `text.secondary` at rest, brightening to `text.primary` only on hover — is tuned for
+  the small toolbar/pager actions it was built for (`PurgeDryRunCard`'s Copy SQL/Show SQL, table
+  pagers). The style guide's `.btn` is the opposite shape: 40px tall, bright `text.primary` ("ink")
+  **at rest**, `theme.custom.cardShadow` always applied, and only on hover does it shift to
+  `primary.main` text + a 32%-alpha `primary.main` border. One shared constant rather than two
+  separate ad-hoc `sx` props, so Save and Test connection — the tab's two primary actions, on two
+  different card components — can't visually drift apart.
+- **`theme.custom.cardShadow`** (added to `theme.ts` alongside `progressTrack`/`rowStripe`/etc.) is
+  the reusable form: `MuiPaper`'s `outlined` variant already applied `tokens.cardShadow` internally,
+  but nothing non-`Paper` (a `Box`-based button, an `Autocomplete` popper's `Paper` slot) could reach
+  it without duplicating the light/dark shadow values raw. Reach for `theme.custom.cardShadow` for
+  any future non-`Paper` surface that needs the same shadow, rather than re-deriving it.
+- **The host is hardcoded to `localhost` in the UI; only the port is editable.** Ollama always runs
+  on the operator's own machine, so `OllamaConfigurationCard` never exposes an arbitrary host field —
+  that would mean typing connection details bound for a possibly-external destination into a form on
+  a telemetry dashboard. The card renders a `Port` field with a fixed `http://localhost:` adornment
+  and reassembles the two into the `baseUrl` string `SettingsPage.tsx`'s state and
+  `saveOllamaSettings`/`testOllamaConnection` still expect — `portFromBaseUrl` parses the port back
+  out of that string for display, so a legacy DB override pointing at a non-localhost host (or a
+  host: prefix in a different form) round-trips as an unset port field rather than crashing. No path
+  segment is exposed either: `OllamaClient` (`backend/.../ollama/OllamaClient.java`) appends its own
+  fixed `/api/generate` / `/api/tags` paths, so `baseUrl` never carries one.
+- **Effective config = DB override if one is saved, else the `ollama.*` `application.yml` default** —
+  the same "effective" framing `EffectiveConfigurationCard`/`overridden` already uses for `tuning.*`
+  properties, deliberately reused rather than inventing new language for a second override mechanism
+  on the same page.
+- **The form seeds itself from the GET once, not on every refetch.** `SettingsPage.tsx` tracks
+  `hasInitializedOllamaForm` and only copies `ollamaSettingsQuery.data` into the editable
+  `ollamaBaseUrl`/`ollamaModel` state the first time it resolves — a background refetch (the page's
+  Refresh button hits this query too) must not clobber unsaved typing. Uses the same render-time-diff
+  idiom `PurgeDryRunCard` uses to reset its SQL disclosure on a retention-window change (an `if` at
+  the top of the component body, not a `setState`-in-`useEffect`, which the project's lint rule
+  rejects) rather than `useEffect`.
+- **Saving a blank field clears that field's override back to default**, not "save an empty string" —
+  `saveOllamaSettings` sends `null` for a blank/whitespace-only field (trimmed client-side) rather than
+  `""`. `onSuccess` writes the server-normalized result straight back into the form and refetches the
+  GET, so a cleared field's fallback value shows immediately.
+- **"Test connection" probes whatever is currently typed, not necessarily what's saved.** Unlike the
+  purge card's `retentionDays` (server-driven, always in sync with the preview query),
+  `testOllamaConnection(baseUrl, model)` sends the two live form values, so a reader can check
+  reachability before committing to Save. Editing either field resets any prior test result
+  (`testConnectionMutation.reset()` in the two change handlers) — a stale "Reachable" banner sitting
+  under freshly typed, untested values would be misleading.
+- **A failed test is a normal result, not a query error.** `testOllamaConnection`'s endpoint always
+  responds 200; success/failure lives in the JSON body (`{success, message}`), which is why
+  `OllamaConfigurationCard` renders `testConnectionResult` (the probe's own verdict, success or
+  failure, in a colored banner) and `testConnectionError` (an actual `fetch`/HTTP-layer failure —
+  network down, non-2xx) as two separate slots rather than collapsing them into one.
+- **The Model field is a `freeSolo` `Autocomplete`, populated by its own automatic, non-mutation
+  query.** `POST /api/system/ollama/models` returns `{success, message, models: OllamaModel[]}` where each entry is
+  `{name, parameterSize, parameterCountBillions}` — `models` always an array, empty on any failure
+  (unreachable host, non-2xx, malformed response). `SettingsPage.tsx`'s `ollamaModelsQuery` is a
+  `useQuery` keyed on `['system-ollama-models', debouncedOllamaBaseUrl]` — `ollamaBaseUrl` run through
+  the shared `useDebouncedValue` (`lib/useDebouncedValue.ts`, the same hook the Logs/Traces search
+  boxes use), not the raw per-keystroke form value `testOllamaConnectionMutation` reads — so typing a
+  base URL fires one real request once the operator pauses rather than one per keystroke (each a
+  round trip the backend forwards to Ollama's own `GET /api/tags`); it is deliberately not a mutation,
+  since the requirement is "fetch automatically", not "fetch when the operator clicks something". Its
+  failure is silent-degrade, not page-level: it is excluded from the page's `error` prop and from
+  `handleReload`/`isReloading`, because an unfetched model list just means an empty dropdown and the
+  field still works as free text — the same reasoning `testConnectionResult` already gets for a
+  failed probe. `freeSolo` is why the Autocomplete is wired
+  with `inputValue`/`onInputChange` rather than `value`/`onChange`: the operator's typed text is the
+  thing the form tracks (a model that isn't installed yet, e.g. one about to be `ollama pull`ed, is a
+  valid value to save), not a selection from the fetched list — picking a dropdown option and typing
+  a fresh string both flow through the same `onModelChange` callback this way.
+- **Each dropdown row is annotated with the model's parameter size** (`"name — size"`, e.g.
+  `"llama3.1:latest — 8.0B"`; bare `name` when `parameterSize` is null) via `Autocomplete`'s
+  `renderOption`, while `getOptionLabel` still resolves to the bare `name` — this is what keeps a
+  picked option's saved value as the plain model name Ollama recognizes rather than the annotated
+  display string leaking into `inputValue`. **Large models are warned about, never filtered out** —
+  an explicit user decision: an operator who deliberately pulled a large model must still be able to
+  select it, so nothing is hidden from the dropdown. `OllamaConfigurationCard` shows an inline
+  `Alert severity="warning"` when the current `model` value matches a fetched entry (by name) whose
+  `parameterCountBillions >= 13` — thresholding against the parsed numeric field, not the raw
+  `parameterSize` string, which isn't reliably parseable (a MoE model's size is per-expert, e.g.
+  `"8x7B"` for a 56B-parameter `mixtral`). A model typed free-solo that isn't in the fetched list
+  (not yet pulled, or the list failed to load) shows no warning — there is nothing to check its size
+  against, and warning on every free-typed keystroke would be noise.
+- **A successful save shows a "Settings saved." confirmation** (`Alert severity="success"`), driven by
+  `saveOllamaSettingsMutation.isSuccess` (`isOllamaSettingsSaved`) rather than a separate boolean —
+  there is nothing to reconcile since the mutation already tracks it. It clears itself two ways: the
+  moment any field is edited again (`handleOllamaBaseUrlChange`/`handleOllamaModelChange`/
+  `handleOllamaEnabledChange` all call `saveOllamaSettingsMutation.reset()` alongside the existing
+  `testOllamaConnectionMutation.reset()`,
+  the same "don't let a stale result banner sit under freshly typed, unsaved values" rule the test
+  banner already follows), and automatically after `OLLAMA_SAVE_CONFIRMATION_DISPLAY_MS` (4s) via a
+  `setTimeout` that calls the same `.reset()` — `saveConfirmationTimeoutRef` holds the pending timer
+  so a second Save click (or an edit) before the first confirmation finishes clears it rather than
+  stacking timers or racing a stale one into resetting a newer save. Auto-dismiss resets the mutation
+  itself rather than tracking a separate "banner visible" boolean in the card, so `OllamaConfigurationCard`
+  stays pure props-in/JSX-out with no local state, consistent with every other card on this page.
+  Mutually exclusive with `saveError` by construction (a `useMutation` is never simultaneously
+  `isSuccess` and holding an `error`), but the card still guards `isSaved && !saveError` defensively
+  rather than relying on that invariant silently.
 
 ## Documented deviations from the page conventions
 

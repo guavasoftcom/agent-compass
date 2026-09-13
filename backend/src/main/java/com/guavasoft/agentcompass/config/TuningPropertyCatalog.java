@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  * Describes every {@link TuningProperties} field for {@code GET /api/system/configuration}: which
  * group it belongs to, what it drives, and whether overriding it also requires a Flyway migration.
  *
- * <p><b>Why this is authored by hand.</b> Reflection can read the 52 values but not the three things
+ * <p><b>Why this is authored by hand.</b> Reflection can read the 63 values but not the three things
  * that make the endpoint worth having — the grouping, the one-line descriptions, and above all the
  * {@link SqlMirroring} flag, which is a fact about the migration history and cannot be derived from
  * the field. A hand-written list rots silently, so {@code TuningPropertyCatalogTest} reflects over
@@ -233,6 +233,19 @@ public class TuningPropertyCatalog {
                   "Per-turn identifier shared by user_prompt and api_request logs — the exact join "
                       + "key that makes per-turn rollups a GROUP BY rather than a time bucketing",
                   TuningProperties::getPromptIdAttribute),
+              CatalogEntry.plain("assistantResponseEventName",
+                  "event.name emitted once per completed assistant turn. Feeds the trace-analysis "
+                      + "prompt's narration section and the previous turn's tail; opt-in, so absent "
+                      + "logs are normal.",
+                  TuningProperties::getAssistantResponseEventName),
+              CatalogEntry.plain("responseAttribute",
+                  "Attribute carrying an assistant turn's prose on the assistant_response log",
+                  TuningProperties::getResponseAttribute),
+              CatalogEntry.plain("compactionEventName",
+                  "event.name fired once per context compaction, carrying its trigger, success, "
+                      + "before/after token counts and duration. Read by the trace-analysis summary; "
+                      + "it also fires for a compaction that failed, so success must be read.",
+                  TuningProperties::getCompactionEventName),
               CatalogEntry.plain("sessionStartTypeAttribute",
                   "How a session began, fresh or resume. Drives the Sessions page split; resume "
                       + "streams emit only the session counter, never cost or tokens.",
@@ -293,6 +306,25 @@ public class TuningPropertyCatalog {
                   "event.name emitted when a skill is invoked — api_request, not tool_result, since a "
                       + "skill invoked as a slash command never goes through the dispatcher tool",
                   TuningProperties::getSkillEventName),
+              CatalogEntry.plain("skillActivatedEventName",
+                  "event.name fired once per skill activation, carrying the skill's source and what "
+                      + "triggered it. Read by the trace-analysis prompt, which needs which skill "
+                      + "drove a trace rather than how many calls it made",
+                  TuningProperties::getSkillActivatedEventName),
+              CatalogEntry.plain("skillSourceAttribute",
+                  "Key naming where a skill's definition lives (projectSettings vs bundled)",
+                  TuningProperties::getSkillSourceAttribute),
+              CatalogEntry.plain("editableSkillSource",
+                  "Skill source value meaning the reader can edit that skill — a review may only "
+                      + "suggest changing a skill's own definition for these",
+                  TuningProperties::getEditableSkillSource),
+              CatalogEntry.plain("skillInvocationTriggerAttribute",
+                  "Key naming what caused an activation (user-slash, claude-proactive, nested-skill)",
+                  TuningProperties::getSkillInvocationTriggerAttribute),
+              CatalogEntry.plain("promptCommandNameAttribute",
+                  "Key on a user_prompt naming the slash command behind it — present means the "
+                      + "prompt text is a command, not prose to judge as wording",
+                  TuningProperties::getPromptCommandNameAttribute),
               CatalogEntry.plain("subagentToolName",
                   "Tool name marking a subagent dispatch",
                   TuningProperties::getSubagentToolName),

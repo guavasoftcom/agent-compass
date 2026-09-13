@@ -1,0 +1,39 @@
+-- Drops trace_detector_findings, a table created by an earlier revision of the V28/V29 version
+-- slots before those slots were repurposed for unrelated work (trace_analyses.review_pass_count /
+-- .timeline_call_count and ollama_settings.enabled, in the files actually named V28/V29 today).
+--
+-- WHAT HAPPENED, reconstructed from flyway_schema_history and Flyway's own checksum validation.
+-- The history table recorded rows 28/29 with descriptions matching TODAY's files ("trace analyses
+-- review passes", "ollama settings enabled") and checksums that Flyway's own validate() confirms
+-- match those files exactly -- but the `script` column still named the OLD files
+-- (V28__trace_detector_findings.sql, V29__trace_detector_finding_captions.sql) until this
+-- migration's companion cleanup corrected it directly. That mismatch, plus a schema carrying BOTH
+-- the old table AND the new columns, is only explainable one way: the V28/V29 *files* were edited in
+-- place after being applied (create-table-and-add-captions replaced by add-two-columns /
+-- add-one-column), which violates Flyway's immutability contract for an already-applied version.
+-- Someone then ran the new ALTER TABLE statements by hand against this database to bring the schema
+-- forward, and ran `flyway repair` to stop startup validation from failing on the changed checksums
+-- -- repair realigns checksum/description/type with the current file, but does not touch `script`
+-- and does not drop what the old version had created. The old table survived both the file rewrite
+-- and the repair.
+--
+-- CONFIRMED DEAD CODE, not merely superseded. grep across backend/src and frontend/src for
+-- trace_detector_findings / TraceDetectorFinding / trace_detector turned up zero references in
+-- either tree -- no entity, no repository, no controller, no frontend consumer. Nothing in the
+-- current codebase reads or writes this table.
+--
+-- DATA LOSS is real and was accepted deliberately: 69 rows across 15 traces (2026-09-06 to
+-- 2026-09-09), dumped to trace_detector_findings_rows.json before this migration ran, in case the
+-- detector-findings feature is resurrected later and the historical rows are wanted as a reference.
+-- The captions sub-feature (caption / caption_status / caption_generated_at, added by the OLD V29)
+-- go with it -- they are columns on this same table, not a separate one.
+--
+-- IF EXISTS is load-bearing, not defensive decoration. No file in V1..V30 as they exist TODAY
+-- creates trace_detector_findings -- only the OLD, since-overwritten V28 did, and that content is
+-- gone from disk. A fresh database (every Testcontainers run, CI, a new deployment) therefore never
+-- has this table at all, and a bare DROP TABLE fails it outright with "table ... does not exist"
+-- (42P01) on Flyway's very first migrate -- confirmed by running this migration against a
+-- Testcontainers-provisioned database before adding IF EXISTS. This migration is therefore a no-op
+-- everywhere except the one pre-existing local database that carried the orphan forward from before
+-- V28/V29 were repurposed.
+DROP TABLE IF EXISTS trace_detector_findings;

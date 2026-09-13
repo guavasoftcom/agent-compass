@@ -95,6 +95,40 @@ const TipRow = ({ label, value }: { label: string; value: string }) => (
   </>
 );
 
+// The number this row carries in the call timeline the "Analyze trace" review is
+// written against, so a finding reading "call 20 was an outlier" can be walked
+// back to the call it is about. Deliberately distinct from the leading index
+// badge beside it: that one counts every span in DFS order, while this counts
+// only tool calls and model requests in trace order (the backend fills it — see
+// TraceCallNumbering), so on any real trace the two numbers differ and only this
+// one matches a citation. Rendered only on the spans that have one, which is
+// what keeps it from reading as a second index on every row.
+const SpanCallNumberBadge = ({ callNumber }: { callNumber?: number | null }) => {
+  if (!callNumber) {
+    return null;
+  }
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      title="Call number in the trace analysis timeline — a review citing this number means this row"
+    >
+      <Box
+        component="span"
+        sx={{
+          ...spanChipSx,
+          fontWeight: 500,
+          color: 'text.disabled',
+          border: 1,
+          borderColor: 'divider',
+        }}
+      >
+        {`call ${callNumber}`}
+      </Box>
+    </Tooltip>
+  );
+};
+
 // Two token badges, not one. Cache read routinely runs 10-100x the other three
 // counts, so a single combined total made every model row read as the same huge
 // number and the figures a reader is actually deciding on (input, output, cache
@@ -583,11 +617,14 @@ const SpanWaterfallRow = ({
         >
           {span.name}
         </Box>
-        {/* Chip order is deliberate: the two token figures first (they are on
-            every model row, so a stable position lets the eye scan the column),
-            then cost, then the identity pills. Each is gated on the toolbar
-            legend's per-family visibility toggle except error/descendant-error,
-            which are never hidden. */}
+        {/* Chip order is deliberate: the call number first (it is the row's
+            identity in the analysis, not a figure), then the two token figures
+            (they are on every model row, so a stable position lets the eye scan
+            the column), then cost, then the identity pills. Each is gated on the
+            toolbar legend's per-family visibility toggle except the call number
+            and error/descendant-error, which name the row rather than report an
+            optional figure and are never hidden. */}
+        <SpanCallNumberBadge callNumber={span.callNumber} />
         {!chipsOff.has('tok') ? <SpanFullRateBadge tokens={tokens} /> : null}
         {!chipsOff.has('cr') ? <SpanCacheReadBadge tokens={tokens} /> : null}
         {!chipsOff.has('cost') ? (

@@ -181,7 +181,7 @@ class SystemQueryIntegrationTest {
         assertThat(preview.retentionDays()).isEqualTo(PURGE_RETENTION_DAYS);
         assertThat(preview.cutoff()).isBefore(Instant.now());
         assertThat(preview.tables()).extracting(PurgeTableEstimate::tableName)
-                .containsExactlyInAnyOrder("log_records", "metric_points", "spans");
+                .containsExactlyInAnyOrder("log_records", "metric_points", "spans", "trace_analyses");
 
         PurgeTableEstimate logRecords = purgeEstimateFor(preview, "log_records");
         assertThat(logRecords.rowsToDelete()).isEqualTo(SEEDED_ANCIENT_LOGS);

@@ -19,12 +19,17 @@ import { alpha, Box } from '@mui/material';
 import { fontFamilies } from '../../theme/typography';
 import { radii } from '../../theme/theme';
 
-export type GhostButtonTone = 'default' | 'danger';
+// 'primary'/'info' added for the Analyze trace dialog's Regenerate/Copy pair —
+// a plain-bordered button reads fine for a toolbar full of equal-weight
+// actions, but a dialog's primary action (Regenerate) and its secondary
+// utility action (Copy) needed to look like different things, not two
+// identical gray buttons.
+export type GhostButtonTone = 'default' | 'danger' | 'primary' | 'info';
 
 export interface GhostButtonProps {
   children: ReactNode;
   onClick?: () => void;
-  /** `default` = bordered paper button; `danger` = error-tinted variant. */
+  /** 'default' = bordered paper button; tinted variants borrow the palette color named. */
   tone?: GhostButtonTone;
   disabled?: boolean;
   type?: 'button' | 'submit' | 'reset';
@@ -33,9 +38,15 @@ export interface GhostButtonProps {
   sx?: SxProps<Theme>;
 }
 
+const TONE_PALETTE_KEY: Record<Exclude<GhostButtonTone, 'default'>, 'error' | 'primary' | 'info'> = {
+  danger: 'error',
+  primary: 'primary',
+  info: 'info',
+};
+
 // Outlined "ghost" action button shared across toolbars and pagers: a bordered,
 // paper-backed button whose label brightens on hover. Disabled dims it and
-// suppresses the hover. Pass `sx` to retune size/shape per call site.
+// suppresses the hover. Pass sx to retune size/shape per call site.
 const GhostButton = ({
   children,
   onClick,
@@ -45,7 +56,9 @@ const GhostButton = ({
   title,
   sx,
 }: GhostButtonProps) => {
-  const isDanger = tone === 'danger';
+  const isTinted = tone !== 'default';
+  const paletteKey = isTinted ? TONE_PALETTE_KEY[tone] : null;
+  const isBold = tone === 'danger' || tone === 'primary';
   return (
     <Box
       component="button"
@@ -66,18 +79,18 @@ const GhostButton = ({
           opacity: disabled ? 0.4 : 1,
           fontFamily: fontFamilies.display,
           fontSize: 12,
-          fontWeight: isDanger ? 700 : 600,
-          color: isDanger ? 'error.main' : 'text.secondary',
-          borderColor: isDanger
-            ? (t) => alpha(t.palette.error.main, 0.4)
+          fontWeight: isBold ? 700 : 600,
+          color: paletteKey ? (paletteKey + '.main') : 'text.secondary',
+          borderColor: paletteKey
+            ? (t) => alpha(t.palette[paletteKey].main, 0.4)
             : 'divider',
-          bgcolor: isDanger
-            ? (t) => alpha(t.palette.error.main, 0.12)
+          bgcolor: paletteKey
+            ? (t) => alpha(t.palette[paletteKey].main, 0.12)
             : 'background.paper',
           '& svg': { fontSize: 14 },
           '&:hover': disabled
             ? {}
-            : { color: isDanger ? 'error.main' : 'text.primary' },
+            : { color: paletteKey ? (paletteKey + '.main') : 'text.primary' },
         },
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}

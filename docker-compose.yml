@@ -60,7 +60,15 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-coding_agent_tuning}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # localhost inside this container is the container itself, not the host running
+      # `ollama serve` — without this override, "Analyze trace" works in local dev
+      # (./mvnw spring-boot:run) and silently 503s here. host.docker.internal resolves to
+      # the host on Docker Desktop automatically; the extra_hosts entry below is what makes
+      # it resolve on Linux too.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       JAVA_OPTS: ${JAVA_OPTS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Serves both the dashboard and /api on one port; OTLP ingest lands on the
     # same port under /v1/*. Published on 18080 rather than 8080: the dev
     # backend already owns 8080, and 80/8080 are the first ports anything else

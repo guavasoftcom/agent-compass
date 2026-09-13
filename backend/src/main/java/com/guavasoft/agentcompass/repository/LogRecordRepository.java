@@ -24,7 +24,29 @@ import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
+// GROUP BY session_id binds to the COLUMN (V30), not to a SELECT-list alias of that name.
+//
+// log_records gained a stored generated session_id column in V30. Postgres resolves a bare name in
+// GROUP BY against the INPUT columns first and only falls back to an output alias when no input
+// column matches, so every `... AS session_id ... GROUP BY session_id` in this file changed meaning
+// the moment that column existed. Where the alias was just `attributes ->> 'session.id'` the two are
+// the same value and nothing moved. Where the alias wrapped it — `COALESCE(attributes ->>
+// 'session.id', 'unknown') AS session_id` — the query stopped compiling outright, with "column
+// log_records.attributes must appear in the GROUP BY clause": the select list was no longer grouped
+// by anything. That caught aggregateEditFailureLoopsInRange and aggregateFailedReadPathsInRange (23
+// ReportQueryIntegrationTest errors), and it is a COMPILE-time failure only because the wrapper
+// differs; an alias identical to the column would have silently rebound instead.
+//
+// Both now select COALESCE(session_id, 'unknown') AS session_label and group on session_label —
+// which reads the column instead of detoasting attributes (a real speedup here, see the TOAST note
+// in V30) and cannot collide, since no column is named session_label. Prefer that shape over
+// repeating the expression in GROUP BY. Note ORDER BY is NOT affected: it prefers the output alias,
+// which is the opposite precedence. Window PARTITION BY takes expressions, not aliases, so it is
+// unaffected too. The same trap waits for any future generated column whose name is already in use
+// as an alias in this file.
+//
 // Query on the event_name column, NEVER on attributes ->> 'event.name'.
 //
 // V16 materialized that expression into a stored generated column and, in the same
@@ -69,7 +91,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // aggregation, so every query that groups on the tool dimension needs to split that bucket back
   // out by server, the same way every other tool is already split by :toolAttribute. Real identity
   // lives in :parametersAttribute (tool_parameters), a JSON-encoded STRING, parsed with the same
-  // NULLIF/::jsonb idiom tool_input uses elsewhere in this file. Declared once here and
+  // safe_jsonb() idiom tool_input uses elsewhere in this file. Declared once here and
   // concatenated into each @Query string (still a compile-time constant, since both operands are
   // final Strings) rather than copy-pasted 14 times, so a future change to the parsing logic or to
   // TuningProperties.mcpToolName's default cannot silently miss a callsite. The 'mcp:' prefix keeps
@@ -80,9 +102,25 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // *scope*, so re-admitting it would reintroduce the "(no scope)" false-repeat bug that query's own
   // comment documents) or to findToolEventsForSession (a per-turn detail list, not an analysis
   // surface — see the Sessions page CLAUDE.md).
+  //
+  // tool_input (and tool_parameters, above) can carry arbitrary agent-authored content -- a
+  // Read/Edit/Write payload is literally source code, a Bash payload is literally a shell command --
+  // and a plain ::jsonb cast fails the WHOLE query, not just the offending row, whenever that text is
+  // not valid JSON. Two independent real-data failures already proved this isn't a single fixable
+  // pattern: a Java char literal containing the JSON null-character escape (backslash, 'u', four zero
+  // digits) parses as syntactically valid JSON but can't be converted to Postgres text
+  // ("unsupported Unicode escape sequence" -- backend/CLAUDE.md documents the identical trap for
+  // api_response_body); a grep command containing a backslash immediately followed by a pipe
+  // character is not a legal JSON escape at all ("invalid input syntax for type json"). Stripping
+  // each bad sequence as it turns up does not scale against arbitrary agent-produced text, so V27's
+  // safe_jsonb(text) SQL function attempts the cast and returns NULL on ANY parse failure instead --
+  // the same "not recorded" meaning NULL already carries everywhere else these fields are absent.
+  // Every ::jsonb parse of tool_input/tool_parameters in this file goes through safe_jsonb() rather
+  // than casting the extraction directly.
+
   String MCP_AWARE_TOOL_EXPRESSION = """
       CASE WHEN attributes ->> :toolAttribute = :mcpToolName
-           THEN 'mcp:' || COALESCE(NULLIF((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :serverKey, ''), 'unknown')
+           THEN 'mcp:' || COALESCE(NULLIF(safe_jsonb(attributes ->> :parametersAttribute) ->> :serverKey, ''), 'unknown')
            ELSE COALESCE(attributes ->> :toolAttribute, 'unknown') END""";
 
   // Companion to MCP_AWARE_TOOL_EXPRESSION for the two report queries whose *scope* column is
@@ -93,10 +131,10 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // oversized/slow row actionable.
   String MCP_AWARE_TOOL_INPUT_SCOPE_EXPRESSION = """
       CASE WHEN attributes ->> :toolAttribute = :mcpToolName
-           THEN COALESCE((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :toolKey, '')
-           ELSE COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
+           THEN COALESCE(safe_jsonb(attributes ->> :parametersAttribute) ->> :toolKey, '')
+           ELSE COALESCE(safe_jsonb(attributes ->> 'tool_input') ->> 'file_path',
                     ltrim(regexp_replace(
-                      (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                      safe_jsonb(attributes ->> 'tool_input') ->> 'command',
                       '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
                       '')),
                     '')
@@ -140,6 +178,69 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // trace's logs are exactly the rows carrying its trace_id. The frontend then
   // attaches each log to its emitting span by span_id.
   List<LogRecordEntity> findByTraceIdOrderByTimestampAsc(String traceId);
+
+  // The last assistant turn in this session BEFORE the given trace started -- the
+  // message a follow-up request is answering. The trace-analysis prompt needs it
+  // because a request judged in isolation reads as vague when it is not: "yes
+  // implement those two" is exact wording once the message it replies to is the one
+  // that ends "Want me to implement those two?" (a real pair from this database).
+  //
+  // Deliberately not restricted to the immediately preceding TRACE: a turn can
+  // produce several assistant messages and the newest one before this trace opened
+  // is the one being answered, whichever trace emitted it. The trace's own logs are
+  // still excluded by trace_id so a re-run against a partially ingested trace cannot
+  // quote the trace back to itself.
+  //
+  // session.id is written as the literal expression, not a bind param, on purpose:
+  // idx_log_records_session_id_ts is an EXPRESSION index on exactly this text, and
+  // Postgres matches index expressions structurally, so a :sessionIdAttribute
+  // placeholder would not match it (the same trap V19 documents for event_name).
+  // Measured with that index: 0.08 ms, 8 buffers.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE event_name = :assistantResponseEventName
+        AND attributes ->> 'session.id' = :sessionId
+        AND timestamp < :beforeTimestamp
+        AND (trace_id IS NULL OR trace_id <> :excludedTraceId)
+      ORDER BY timestamp DESC
+      LIMIT 1
+      """, nativeQuery = true)
+  Optional<LogRecordEntity> findLastAssistantResponseBefore(
+      @Param("assistantResponseEventName") String assistantResponseEventName,
+      @Param("sessionId") String sessionId,
+      @Param("beforeTimestamp") Instant beforeTimestamp,
+      @Param("excludedTraceId") String excludedTraceId);
+
+  // The tool call that launched a background task, found from the tool_use_id the
+  // harness quotes back in the <task-notification> envelope that wakes the session.
+  // Lives in a DIFFERENT trace than the notification it produced (the dispatching
+  // turn), which is why the trace-analysis prompt cannot read it off the trace's own
+  // logs -- 103 of 106 notification traces over 30 days carry an id that resolves.
+  //
+  // Scoped to the session and bounded before the notification rather than searched
+  // globally: tool_use_id carries no index of its own, so the session expression
+  // index has to do the narrowing. Same literal-not-bind-param rule as the query
+  // above -- idx_log_records_session_id_ts is an EXPRESSION index on this exact
+  // text. Measured with it: 2.0 ms, 323 buffers, once per regenerate and never on a
+  // dashboard read path. event_name pins tool_result specifically because the
+  // tool_decision row shares the id and carries no tool_input.
+  @Query(value = """
+      SELECT *
+      FROM log_records
+      WHERE event_name = :toolResultEventName
+        AND attributes ->> 'session.id' = :sessionId
+        AND timestamp < :beforeTimestamp
+        AND attributes ->> :toolCallIdAttribute = :toolUseId
+      ORDER BY timestamp DESC
+      LIMIT 1
+      """, nativeQuery = true)
+  Optional<LogRecordEntity> findToolCallByToolUseId(
+      @Param("toolResultEventName") String toolResultEventName,
+      @Param("sessionId") String sessionId,
+      @Param("beforeTimestamp") Instant beforeTimestamp,
+      @Param("toolCallIdAttribute") String toolCallIdAttribute,
+      @Param("toolUseId") String toolUseId);
 
   // Returns every distinct "key=value" pair across log_records.attributes,
   // narrowed to rows
@@ -393,7 +494,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE event_name = :eventName
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
         AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
-        AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
+        AND COALESCE(safe_jsonb(attributes ->> 'tool_input') ->> 'file_path', '')
             !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
         AND timestamp >= :start
         AND timestamp <= :end
@@ -445,8 +546,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           COALESCE(attributes ->> 'error_type', 'unknown')   AS error_type,
           COALESCE(attributes ->> 'error', '')               AS error_message,
           COALESCE(
-            (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path',
-            (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+            safe_jsonb(attributes ->> 'tool_input') ->> 'file_path',
+            safe_jsonb(attributes ->> 'tool_input') ->> 'command',
             '')                                              AS scope
         FROM log_records
         WHERE event_name = :eventName
@@ -510,7 +611,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         SELECT
           COALESCE(
             NULLIF(attributes ->> :innerAttribute, ''),
-            NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
+            NULLIF(safe_jsonb(attributes ->> 'tool_input') ->> :innerAttribute, ''),
             :defaultIdentifier)                                        AS identifier,
           attributes ->> 'session.id'                                  AS session_id,
           timestamp                                                    AS dispatched_at
@@ -580,8 +681,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   @Query(value = """
       WITH mcp_calls AS (
         SELECT
-          COALESCE(NULLIF((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :serverKey, ''), 'unknown') AS server,
-          COALESCE(NULLIF((NULLIF(attributes ->> :parametersAttribute, ''))::jsonb ->> :toolKey, ''), 'unknown')   AS tool,
+          COALESCE(NULLIF(safe_jsonb(attributes ->> :parametersAttribute) ->> :serverKey, ''), 'unknown') AS server,
+          COALESCE(NULLIF(safe_jsonb(attributes ->> :parametersAttribute) ->> :toolKey, ''), 'unknown')   AS tool,
           (attributes ->> 'duration_ms')::numeric            AS duration_ms,
           (attributes ->> 'tool_result_size_bytes')::numeric AS result_bytes,
           attributes ->> 'success' = 'false'                 AS failed
@@ -773,7 +874,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           attributes ->> :toolCallIdAttribute AS tool_use_id,
           COALESCE(
             NULLIF(attributes ->> :innerAttribute, ''),
-            NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> :innerAttribute, ''),
+            NULLIF(safe_jsonb(attributes ->> 'tool_input') ->> :innerAttribute, ''),
             :defaultIdentifier)                                        AS identifier
         FROM log_records
         WHERE event_name = :eventName
@@ -931,16 +1032,26 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
 
   // Biggest line items: top sessions by spend in the window, log-side so this
   // sums into the same total the rest of the Cost page reads from.
+  //
+  // Selects the session_id COLUMN (V30) directly rather than re-deriving
+  // attributes ->> 'session.id' -- the two were interchangeable before that column
+  // existed, but once GROUP BY session_id started binding to the column (see this
+  // file's header note), a SELECT-list expression that merely evaluates to the same
+  // value stopped being enough: Postgres cannot prove attributes ->> 'session.id' is
+  // functionally dependent on the session_id it groups by, since one is an arbitrary
+  // jsonb expression and the other a real column, so the old form failed outright
+  // with "column log_records.attributes must appear in the GROUP BY clause". Reading
+  // the column is simultaneously the fix and the faster query -- no detoast.
   @Query(value = """
       SELECT
-        attributes ->> 'session.id'                                        AS session_id,
+        session_id,
         COALESCE(SUM((attributes ->> :costAttribute)::numeric), 0)::double precision AS cost_usd,
         COUNT(*)::bigint                                                   AS requests
       FROM log_records
       WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
-        AND attributes ->> 'session.id' IS NOT NULL
+        AND session_id IS NOT NULL
       GROUP BY session_id
       ORDER BY cost_usd DESC
       LIMIT :sessionLimit
@@ -1204,7 +1315,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WITH bash_calls AS (
         SELECT
           ltrim(regexp_replace(
-            (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+            safe_jsonb(attributes ->> 'tool_input') ->> 'command',
             '^\\s*(cd\\s+[^&;|\\n]*(&&|;|\\n)\\s*)+',
             ''))                                        AS command,
           (attributes ->> 'duration_ms')::numeric            AS duration_ms,
@@ -1278,7 +1389,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         WHERE event_name = :eventName
           AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
           AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
-          AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
+          AND COALESCE(safe_jsonb(attributes ->> 'tool_input') ->> 'file_path', '')
               !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
           AND timestamp >= :start
           AND timestamp <= :end
@@ -1318,17 +1429,17 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WITH read_events AS (
         SELECT
           COALESCE(attributes ->> 'session.id', 'unknown')                AS session_id,
-          (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
+          safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' AS file_path,
           timestamp                                                        AS read_timestamp,
           LAG(timestamp) OVER (
             PARTITION BY COALESCE(attributes ->> 'session.id', 'unknown'),
-                         (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'
+                         safe_jsonb(attributes ->> 'tool_input') ->> 'file_path'
             ORDER BY timestamp
           )                                                                AS prev_timestamp
         FROM log_records
         WHERE event_name = :eventName
           AND attributes ->> :toolAttribute = 'Read'
-          AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+          AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
           AND timestamp >= :start
           AND timestamp <= :end
       )
@@ -1356,17 +1467,17 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // unwrap as the redundant-read query.
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> 'session.id', 'unknown')                          AS session_id,
-        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path'           AS file_path,
+        COALESCE(session_id, 'unknown')                                   AS session_label,
+        safe_jsonb(attributes ->> 'tool_input') ->> 'file_path'           AS file_path,
         COUNT(*)                                                                   AS failures
       FROM log_records
       WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Edit'
         AND attributes ->> 'success' = 'false'
-        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
-      GROUP BY session_id, file_path
+      GROUP BY session_label, file_path
       HAVING COUNT(*) >= 2
       ORDER BY failures DESC
       LIMIT :loopLimit
@@ -1422,7 +1533,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> 'duration_ms' IS NOT NULL
         AND attributes ->> 'tool_result_size_bytes' IS NOT NULL
         AND COALESCE(attributes ->> :toolAttribute, 'unknown') NOT IN (:excludedTools)
-        AND COALESCE((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', '')
+        AND COALESCE(safe_jsonb(attributes ->> 'tool_input') ->> 'file_path', '')
             !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
         AND (attributes ->> 'duration_ms')::numeric >= :minDurationMs
         AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
@@ -1459,9 +1570,11 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // command examples teaching `cd dir && …` instead of path-scoped invocations).
   @Query(value = """
       SELECT
-        COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' IS NOT NULL) AS with_command,
-        COUNT(*)                                                                                          AS total,
-        COUNT(*) FILTER (WHERE (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command' ~ '^\\s*cd\\s') AS cd_prefixed
+        COUNT(*) FILTER (WHERE safe_jsonb(attributes ->> 'tool_input') ->> 'command' IS NOT NULL)
+          AS with_command,
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE safe_jsonb(attributes ->> 'tool_input') ->> 'command' ~ '^\\s*cd\\s')
+          AS cd_prefixed
       FROM log_records
       WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Bash'
@@ -1485,17 +1598,17 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // dependency (and its 255-char levenshtein limit — scratchpad paths run long).
   @Query(value = """
       SELECT
-        COALESCE(attributes ->> 'session.id', 'unknown')                 AS session_id,
-        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path,
+        COALESCE(session_id, 'unknown')                         AS session_label,
+        safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' AS file_path,
         COUNT(*)                                                          AS failures
       FROM log_records
       WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Read'
         AND attributes ->> 'success' = 'false'
-        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
-      GROUP BY session_id, file_path
+      GROUP BY session_label, file_path
       ORDER BY failures DESC
       LIMIT :failedReadLimit
       """, nativeQuery = true)
@@ -1514,12 +1627,12 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   @Query(value = """
       SELECT DISTINCT
         COALESCE(attributes ->> 'session.id', 'unknown')                 AS session_id,
-        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' AS file_path
+        safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' AS file_path
       FROM log_records
       WHERE event_name = :eventName
         AND attributes ->> :toolAttribute = 'Read'
         AND attributes ->> 'success' = 'true'
-        AND (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path' IS NOT NULL
+        AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
       LIMIT :pathLimit
@@ -1560,7 +1673,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           CASE
             WHEN attributes ->> :toolAttribute IN ('Edit', 'Write', 'Read', 'MultiEdit')
               THEN COALESCE(
-                NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', ''),
+                NULLIF(safe_jsonb(attributes ->> 'tool_input') ->> 'file_path', ''),
                 '(no scope)')
             -- A bare first token collapses e.g. `cd backend && ./mvnw test` and `cd frontend &&
             -- yarn dev` onto the same scope (cd), and `git status`/`git commit` onto git --
@@ -1572,7 +1685,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
                   array_to_string(
                     (regexp_split_to_array(
                       trim(regexp_replace(
-                        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                        safe_jsonb(attributes ->> 'tool_input') ->> 'command',
                         '^(cd\\s+\\S+\\s*(&&|;)\\s*)+', '', 'i')),
                       '\\s+'))[1:2],
                     ' '),
@@ -1633,7 +1746,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           CASE
             WHEN attributes ->> :toolAttribute IN ('Edit', 'Write', 'Read', 'MultiEdit')
               THEN COALESCE(
-                NULLIF((NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'file_path', ''),
+                NULLIF(safe_jsonb(attributes ->> 'tool_input') ->> 'file_path', ''),
                 '(no scope)')
             -- A bare first token collapses e.g. `cd backend && ./mvnw test` and `cd frontend &&
             -- yarn dev` onto the same scope (cd), and `git status`/`git commit` onto git --
@@ -1645,7 +1758,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
                   array_to_string(
                     (regexp_split_to_array(
                       trim(regexp_replace(
-                        (NULLIF(attributes ->> 'tool_input', ''))::jsonb ->> 'command',
+                        safe_jsonb(attributes ->> 'tool_input') ->> 'command',
                         '^(cd\\s+\\S+\\s*(&&|;)\\s*)+', '', 'i')),
                       '\\s+'))[1:2],
                     ' '),

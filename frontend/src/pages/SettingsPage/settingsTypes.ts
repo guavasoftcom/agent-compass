@@ -151,3 +151,57 @@ export interface PurgePreview {
   estimatedReclaimableBytes: number;
   sql: string;
 }
+
+/**
+ * Effective Ollama connection settings — DB override if one has been saved
+ * from this page, else the `ollama.*` `application.yml` default.
+ * `overridden` mirrors `ConfigurationEntry.overridden`'s meaning: "a DB
+ * override is currently set", not "this value differs from a placeholder".
+ * `enabled` gates the whole "Analyze trace" feature — see the Enabled/Disabled
+ * toggle section of this page's CLAUDE.md.
+ */
+export interface OllamaSettings {
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  overridden: boolean;
+}
+
+/**
+ * Result of `POST /api/system/ollama/test-connection`. Always a 200 — success
+ * is carried in the body so the UI can render "Reachable" / "Could not reach
+ * Ollama…" without a query/mutation error state standing in for a legitimate
+ * "unreachable" outcome.
+ */
+export interface OllamaConnectionTestResult {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * One model reported by `POST /api/system/ollama/models`. `parameterSize` is
+ * Ollama's raw string (e.g. `"8.0B"`, `"8x7B"`), or null when Ollama didn't
+ * report one. `parameterCountBillions` is the parsed numeric value in
+ * billions — this is the field to threshold a "large model" warning against,
+ * not `parameterSize`, which isn't reliably parseable (a MoE model's raw
+ * string is per-expert, e.g. `"8x7B"` for a 56B-parameter model).
+ */
+export interface OllamaModel {
+  name: string;
+  parameterSize: string | null;
+  parameterCountBillions: number | null;
+}
+
+/**
+ * Result of `POST /api/system/ollama/models`. Always a 200 — like
+ * `OllamaConnectionTestResult`, success/failure lives in the body rather than
+ * an HTTP error status. `models` is always an array (empty, never null, on
+ * any failure — unreachable host, non-2xx, malformed response), which is
+ * what lets the Model `Autocomplete` treat "no options yet" and "fetch
+ * failed" identically: fall back to free text either way.
+ */
+export interface OllamaModelListResult {
+  success: boolean;
+  message: string;
+  models: OllamaModel[];
+}
