@@ -88,8 +88,8 @@ to apply all, some, or none. Do not edit during the report.
     `// smoothed` into `// smoothedP95Valuesed`. Check with `grep -n` first; if the token appears
     inside larger words or strings, do targeted edits.
 - After editing, run the project's checks and confirm clean:
-  - frontend: `cd frontend && yarn typecheck && yarn lint`
-  - backend: `cd backend && mvn -q compile` (or the project's build)
+  - frontend: `yarn --cwd frontend typecheck && yarn --cwd frontend lint`
+  - backend: `./backend/mvnw -f backend/pom.xml -q compile` (or the project's build)
 - Keep paired names consistent and update the matching prop/type so the behavior/view contracts
   still line up.
 

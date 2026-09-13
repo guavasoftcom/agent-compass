@@ -47,6 +47,33 @@ export const getText = async (path: string): Promise<string> => {
   return res.text();
 };
 
+/**
+ * Shared write path for a mutating fetch (`PUT`/`POST`/`DELETE`, optionally
+ * with a JSON body) whose non-2xx response should surface the server's own
+ * plain-text body rather than a generic status-text message — a validation
+ * failure or a refused confirmation phrase explains itself in that body.
+ * `getJson` can't serve these callers: it never sends a body and always
+ * throws the generic `status statusText` message. Not a cacheable read, so
+ * this stays out of the barrel the same way `getJson`'s siblings do.
+ */
+export const writeJson = async <T>(
+  path: string,
+  method: string,
+  body?: unknown,
+): Promise<T> => {
+  const res = await fetch(path, {
+    method,
+    ...(body !== undefined
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(detail || `${path} → ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+};
+
 export const listWithTotalCount = async <T>(
   path: string,
 ): Promise<ListResult<T>> => {

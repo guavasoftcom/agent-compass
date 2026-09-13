@@ -1,0 +1,102 @@
+-- Stored generated column for log_records' session-id dimension, extending the
+-- V16/V17 pattern (event_name / tool_name) to the one remaining jsonb key that a
+-- whole-table GROUP BY still has to read. Same underlying mechanism as those two
+-- -- TOAST detoasting, NOT V18's index-only-scan story on metric_points -- so the
+-- numbers below are about bytes read off disk, not heap-page visits.
+--
+-- WHAT THIS FIXES. SystemRepository.DORMANT_SESSION_IDS_SUBQUERY computes every
+-- session whose last activity across all three signals predates the retention
+-- cutoff, and its log_records leg is
+--     SELECT attributes ->> 'session.id', max(timestamp)
+--     FROM log_records WHERE jsonb_exists(attributes, 'session.id') GROUP BY 1
+-- which must read attributes for every row in the table. Measured on the live
+-- database (8.3M metric_points, 210k log_records, 124k spans), that ONE leg ran
+-- 10937 ms of the dormant-session computation's 12549 ms; the metric_points leg
+-- was 1409 ms and the spans leg 193 ms. The whole purge preview therefore blew
+-- through the 60s timeout SystemService.purgePreview raises for it, 20 times on
+-- the live database -- so retention never completed, and metric_points grew to
+-- 8.3M rows with 3.0M of them (36%) already past the 30-day window. The purge
+-- timing out is what made the table big enough to time out everything else.
+--
+-- WHY IT IS SLOW, MEASURED THREE WAYS. log_records is 255 MB of heap against
+-- 7505 MB of TOAST -- attributes averages ~11 KB per row and is almost always
+-- stored out of line. Reading any key out of it detoasts the whole value:
+--     SELECT count(*)                                           ->    19 ms
+--     SELECT event_name, max(timestamp) ... GROUP BY 1          ->    90 ms
+--     SELECT attributes ->> 'session.id', max(timestamp) ...    ->  9144 ms
+-- Same row count, same scan, 100x apart: the difference is entirely the 7.5 GB
+-- of TOAST the third form pulls through. A generated column is stored inline in
+-- the heap tuple, so it reads at the speed of the middle row.
+--
+-- WHY THE EXISTING EXPRESSION INDEX DOES NOT ALREADY SOLVE THIS.
+-- idx_log_records_session_id_ts (V3) is a btree on
+-- ((attributes ->> 'session.id'), timestamp), which looks like it should cover
+-- the leg above. It does not, for two separate reasons, both measured:
+--   1. The jsonb_exists() filter is not an expression the index can answer, so
+--      the planner must visit the heap to evaluate it and discards the index.
+--   2. Removing that filter does not help either. Rewritten as
+--      `WHERE attributes ->> 'session.id' IS NOT NULL` the planner still chose a
+--      parallel seq scan (7845 ms), and forcing the index with enable_seqscan=off
+--      produced a plain Index Scan -- not an Index Only Scan -- at 12246 ms, i.e.
+--      WORSE, because it then detoasted one row at a time in index order.
+-- This is the same conclusion V16 reached for event_name, where an expression
+-- index was dropped and rebuilt on the column for exactly this reason.
+--
+-- WHAT THIS MIGRATION DELIBERATELY DOES NOT DO: it does NOT drop
+-- idx_log_records_session_id_ts, and it does NOT rewrite the ~40 other queries
+-- that extract this key. V16 dropped its expression index and moved only the
+-- Logs-page queries onto the column, which left every other callsite silently
+-- unindexed and cost a later migration (V19) to finish -- see the block at the
+-- top of LogRecordRepository. Doing that again here would put a 40-callsite audit
+-- (LogRecordRepository's per-session lookups, SpanRepository's 15 correlated
+-- session legs, and the two literal-expression queries whose own comments pin
+-- them to this index by name) inside a migration whose job is to unblock the
+-- purge. So the expression index STAYS, every existing plan is unchanged, and
+-- only the purge/dormant-session queries move to the column. The follow-up --
+-- migrate the remaining callsites, then drop the expression index -- is a V19
+-- shaped change and belongs in its own migration.
+--
+-- ON THE NEW INDEX. idx_log_records_session_id_col_ts is (session_id, timestamp)
+-- on the real column, which is what lets the dormant-session leg run as an
+-- index-only scan. It duplicates the expression index's coverage on purpose, for
+-- the paragraph above; the cost is one more btree over 210k rows on a table
+-- ingesting a few thousand rows a day, which is not a meaningful write
+-- amplification at this size. When the follow-up migration retires the expression
+-- index, this one is what the other callsites move onto.
+--
+-- SEMANTIC NOTE -- this is a real, if currently empty, behaviour change.
+-- jsonb_exists(attributes, 'session.id') is TRUE for a key present with a JSON
+-- null value, where attributes ->> 'session.id' (and therefore session_id) is
+-- NULL. The purge predicates read `... IN (dormant) OR NOT jsonb_exists(...)`,
+-- so such a row matched NEITHER branch and was unpurgeable by any cutoff,
+-- forever. Moving to `session_id IS NULL` for the sessionless branch makes it
+-- deletable by age, which is both what metric_points has done since V18 and the
+-- only coherent reading -- a row whose session id is null has no session to keep
+-- it alive. Verified on the live database before making the change: 0 rows on
+-- log_records and 0 on spans have the key present with a null value (210823 and
+-- 124693 rows respectively have it present and non-null), so no row changes
+-- treatment today.
+--
+-- SPANS IS DELIBERATELY LEFT ALONE. Its leg of the same computation measured
+-- 193 ms -- 169 MB of heap against only 48 MB of TOAST, so the detoast problem
+-- barely exists there -- and a generated column would buy a rewrite of a third
+-- table for no measurable gain. It keeps the jsonb extraction.
+--
+-- OPERATIONAL CAVEATS for applying this to a live database, both inherited from
+-- V18's experience:
+--   * ADD COLUMN ... GENERATED ALWAYS AS (...) STORED forces a FULL TABLE
+--     REWRITE under ACCESS EXCLUSIVE, including the out-of-line values, so it
+--     needs roughly pg_total_relation_size('log_records') free on the volume
+--     (7882 MB here, against 21 GB free) and blocks reads and writes on the table
+--     while it runs. Ingest will back up for the duration; OTLP clients retry.
+--   * The rewrite RESETS THE VISIBILITY MAP, and index-only scans need it. Until
+--     a VACUUM (ANALYZE) log_records runs, the new index will plan as a
+--     heap-visiting scan and this migration will appear to have changed nothing.
+--     Run it immediately after migrating rather than waiting for autovacuum,
+--     which was measured five days behind on this database.
+ALTER TABLE log_records
+    ADD COLUMN session_id text
+    GENERATED ALWAYS AS (attributes ->> 'session.id') STORED;
+
+CREATE INDEX idx_log_records_session_id_col_ts
+    ON log_records (session_id, timestamp);

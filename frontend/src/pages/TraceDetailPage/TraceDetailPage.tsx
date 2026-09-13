@@ -21,6 +21,8 @@ import type { LogRow } from '../../api';
 import { fetchSpansForTrace, fetchTraceSummaryOrNull } from '../TracesPage/tracesApi';
 import { NANOS_PER_MILLI } from '../TracesPage/tracesApi';
 import { isToolCallSpan } from '../TracesPage/traceDerivations';
+import { fetchOllamaSettings } from '../SettingsPage/settingsApi';
+import { fetchTraceAnalysis } from './traceAnalysisApi';
 import {
   buildSpanDepths,
   buildSpanIndices,
@@ -54,13 +56,36 @@ export default function TraceDetailPage() {
   });
 
   // The trace's aggregate row — the spans response is an array and can't carry
-  // trace-level fields. Feeds `firstUserPrompt` and the header's authoritative
-  // `totalCostUsd`; the header's other numbers (tokens, span/tool counts,
+  // trace-level fields. Feeds firstUserPrompt and the header's authoritative
+  // totalCostUsd; the header's other numbers (tokens, span/tool counts,
   // depth) stay derived from the spans already in hand.
   const { data: traceSummary } = useQuery({
     queryKey: ['trace-summary', traceId],
     queryFn: () => fetchTraceSummaryOrNull(traceId!),
     enabled: Boolean(traceId),
+  });
+
+  // Hoisted from AnalyzeTraceDialog (which still runs the identical query,
+  // gated on 'open') so the toolbar's Analyze trace button can show a dot for
+  // "has a saved analysis" / "saved analysis is outdated" without the reader
+  // having to open the dialog first. Same query key, so this and the dialog's
+  // own useQuery share one cache entry and one network request — mounting
+  // the dialog doesn't trigger a second fetch.
+  const { data: traceAnalysis } = useQuery({
+    queryKey: ['trace-analysis', traceId],
+    queryFn: () => fetchTraceAnalysis(traceId!),
+    enabled: Boolean(traceId),
+  });
+
+  // Same query key as SettingsPage's Ollama tab, so the two share one cache
+  // entry. Gates the "Analyze trace" button — see the Ollama configuration
+  // section of SettingsPage/CLAUDE.md for why `enabled` is the real,
+  // backend-enforced switch rather than a client-only flag. Defaults to
+  // shown (true) while the query is still loading, matching the existing
+  // Settings-page toggle's own initial state.
+  const { data: ollamaSettings } = useQuery({
+    queryKey: ['system-ollama-settings'],
+    queryFn: fetchOllamaSettings,
   });
 
   const tree = useMemo<SpanTree>(() => {
@@ -87,14 +112,6 @@ export default function TraceDetailPage() {
     return computeTraceWindow(spans);
   }, [spans]);
 
-  // What "Collapse all" targets: tool-call spans that actually have children.
-  // Collapsing *every* parent folded away the interaction/llm_request structure
-  // the waterfall is read for; the noise it was aimed at is the SDK's per-call
-  // sub-spans (`claude_code.tool.execution`, `claude_code.tool.blocked_on_user`)
-  // hanging under each `claude_code.tool`. `isToolCallSpan` is the same rule the
-  // traces list counts tool calls with, so sample-store span names
-  // (`tool.Read`, `mcp.connect`) collapse too, and the sub-spans themselves —
-  // which that helper excludes — stay expanded.
   const collapsibleToolSpanIds = useMemo(
     () =>
       (spans ?? [])
@@ -209,6 +226,8 @@ export default function TraceDetailPage() {
       firstUserPrompt={traceSummary?.firstUserPrompt ?? null}
       traceCostUsd={traceSummary?.totalCostUsd ?? null}
       traceBackgroundCostUsd={traceSummary?.backgroundCostUsd ?? 0}
+      traceAnalysis={traceAnalysis ?? null}
+      ollamaAnalysisEnabled={ollamaSettings?.enabled ?? false}
     />
   );
 }

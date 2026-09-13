@@ -27,12 +27,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.entity.TraceAnalysisEntity;
 import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
+import com.guavasoft.agentcompass.repository.TraceAnalysisRepository;
 import com.guavasoft.agentcompass.service.SystemService;
 
 import java.time.Instant;
@@ -98,6 +100,9 @@ class SystemPurgeIntegrationTest {
     SpanRepository spanRepository;
 
     @Autowired
+    TraceAnalysisRepository traceAnalysisRepository;
+
+    @Autowired
     SystemService systemService;
 
     @BeforeEach
@@ -105,6 +110,7 @@ class SystemPurgeIntegrationTest {
         logRecordRepository.deleteAll();
         metricPointRepository.deleteAll();
         spanRepository.deleteAll();
+        traceAnalysisRepository.deleteAll();
     }
 
     @Test
@@ -185,6 +191,72 @@ class SystemPurgeIntegrationTest {
         assertThat(result.totalRowsDeleted()).isEqualTo(2);
         assertThat(logRecordRepository.count()).isZero();
         assertThat(spanRepository.count()).isZero();
+    }
+
+    /**
+     * A trace_analyses row survives while its trace's spans do, and is deleted the moment none of
+     * them do -- whether that is because the whole session was purged, or the row was already
+     * orphaned (no FK can enforce this, since spans.trace_id is not unique).
+     */
+    @Test
+    void purgeRemovesATraceAnalysisOnlyWhenNoneOfItsSpansSurvive() {
+        String sessionId = "analyzed-and-dormant";
+        spanRepository.save(span(daysAgo(ANCIENT_AGE_DAYS), sessionId));
+        String dormantTraceId = spanRepository.findAll().get(0).getTraceId();
+        traceAnalysisRepository.save(traceAnalysis(dormantTraceId));
+
+        String activeTraceId = "%032x".formatted(1L);
+        SpanEntity activeSpan = span(daysAgo(RECENT_AGE_DAYS));
+        activeSpan.setTraceId(activeTraceId);
+        spanRepository.save(activeSpan);
+        traceAnalysisRepository.save(traceAnalysis(activeTraceId));
+
+        String alreadyOrphanedTraceId = "%032x".formatted(2L);
+        traceAnalysisRepository.save(traceAnalysis(alreadyOrphanedTraceId));
+
+        PurgeResult result = systemService.purge(RETENTION_DAYS, SystemService.PURGE_CONFIRMATION_PHRASE);
+
+        assertThat(traceAnalysisRepository.findById(dormantTraceId))
+                .as("the dormant session's spans were purged, so its analysis must go with them")
+                .isEmpty();
+        assertThat(traceAnalysisRepository.findById(activeTraceId))
+                .as("the active trace's spans survived, so its analysis must too")
+                .isPresent();
+        assertThat(traceAnalysisRepository.findById(alreadyOrphanedTraceId))
+                .as("a trace_analyses row with no spans at all was already orphaned")
+                .isEmpty();
+        assertThat(result.tables()).extracting("tableName").contains("trace_analyses");
+    }
+
+    /** The preview's trace_analyses estimate predicts exactly what the purge deletes. */
+    @Test
+    void previewPredictsWhichTraceAnalysesWouldBeOrphaned() {
+        String sessionId = "preview-dormant";
+        spanRepository.save(span(daysAgo(ANCIENT_AGE_DAYS), sessionId));
+        String dormantTraceId = spanRepository.findAll().get(0).getTraceId();
+        traceAnalysisRepository.save(traceAnalysis(dormantTraceId));
+
+        PurgePreview preview = systemService.purgePreview(RETENTION_DAYS);
+        PurgeTableEstimate traceAnalysesEstimate = preview.tables().stream()
+                .filter(table -> table.tableName().equals("trace_analyses"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(traceAnalysesEstimate.rowsToDelete()).isEqualTo(1);
+
+        PurgeResult result = systemService.purge(RETENTION_DAYS, SystemService.PURGE_CONFIRMATION_PHRASE);
+
+        assertThat(result.totalRowsDeleted()).isEqualTo(preview.totalRowsToDelete());
+    }
+
+    private static TraceAnalysisEntity traceAnalysis(String traceId) {
+        TraceAnalysisEntity traceAnalysis = new TraceAnalysisEntity();
+        traceAnalysis.setTraceId(traceId);
+        traceAnalysis.setModel("llama3.1");
+        traceAnalysis.setAnalysisText("Looks fine.");
+        traceAnalysis.setGenerationDurationMs(1000L);
+        traceAnalysis.setGeneratedAt(Instant.now());
+        traceAnalysis.setLastSpanEndTimestamp(Instant.now());
+        return traceAnalysis;
     }
 
     /**
@@ -324,7 +396,14 @@ class SystemPurgeIntegrationTest {
         String sql = systemService.purgePreview(RETENTION_DAYS).sql();
 
         assertThat(sql).contains("dormant_sessions_for_purge");
-        assertThat(sql).contains("jsonb_exists");
+        // Each table gates on its own session id being a member of the dormant set. This stood as
+        // contains("jsonb_exists") until V30 gave log_records a stored session_id column and the
+        // key-existence tests became NULL tests; asserting the gating itself rather than the
+        // operator that used to express it is what the test was always for.
+        assertThat(sql).contains("candidate.session_id IN (SELECT session_id FROM dormant_sessions_for_purge)");
+        assertThat(sql).contains(
+                "candidate.attributes ->> 'session.id' IN (SELECT session_id FROM dormant_sessions_for_purge)");
+        assertThat(sql).doesNotContain("jsonb_exists");
         assertThat(sql).contains("DELETE FROM log_records AS candidate");
         assertThat(sql).contains("DELETE FROM spans AS candidate");
         assertThat(sql).contains("DELETE FROM metric_points AS candidate");

@@ -22,6 +22,7 @@ import { formatDuration } from '../TracesPage/tracesApi';
 import { tokenBreakdownForSpan } from '../TracesPage/tokenBreakdown';
 import { costOfSelectedSpan, costOfSpan } from './spanCost';
 import { type SpanTree, type TraceWindow } from './spanTree';
+import { type TraceAnalysisResult } from './traceAnalysisApi';
 import {
   loadChipsOff,
   persistChipsOff,
@@ -34,6 +35,7 @@ import TraceDetailHeader from './components/TraceDetailHeader';
 import TraceMinimap, { type ZoomView } from './components/TraceMinimap';
 import WaterfallToolbar from './components/WaterfallToolbar';
 import SpanWaterfallRow from './components/SpanWaterfallRow';
+import AnalyzeTraceDialog from './components/AnalyzeTraceDialog';
 import { radii } from '../../theme/theme';
 
 export interface TraceDetailPageViewProps {
@@ -65,6 +67,15 @@ export interface TraceDetailPageViewProps {
   // rather than null, since the header only needs to know whether to show the
   // background-cost caption at all.
   traceBackgroundCostUsd: number;
+  // Cached trace analysis result, hoisted from AnalyzeTraceDialog so the
+  // toolbar can show a dot for "has a saved analysis" without opening the dialog.
+  traceAnalysis: TraceAnalysisResult | null;
+  // Effective Ollama `enabled` setting (SettingsPage's Ollama tab) — gates the
+  // toolbar's "Analyze trace" button. See SettingsPage/CLAUDE.md's Ollama
+  // configuration section: this is a real, backend-enforced switch, not a
+  // client-only flag, so hiding the button here is a convenience on top of
+  // the server already refusing the call when disabled.
+  ollamaAnalysisEnabled: boolean;
 }
 
 const TraceDetailPageView = ({
@@ -84,6 +95,8 @@ const TraceDetailPageView = ({
   firstUserPrompt,
   traceCostUsd,
   traceBackgroundCostUsd,
+  traceAnalysis,
+  ollamaAnalysisEnabled,
 }: TraceDetailPageViewProps) => {
   const waterfallRef = useRef<HTMLDivElement>(null);
 
@@ -243,6 +256,94 @@ const TraceDetailPageView = ({
     [visible, selected, scrollToSpan],
   );
 
+  // Reveals a related call CallContextSection linked to: expands whatever
+  // collapsed ancestor is hiding it, widens the zoom window if it sits outside
+  // the current view, then selects and scrolls to it. Expanding/widening only
+  // takes effect on the next render, so the scroll itself is deferred to the
+  // pendingRevealRef + effect below rather than run synchronously here, where
+  // the row wouldn't exist in the DOM yet.
+  const pendingRevealRef = useRef<string | null>(null);
+  // Bumped on every revealSpan call, purely to force the effect below to
+  // re-run -- see that effect's own comment for why visible can't be trusted
+  // as the trigger.
+  const [pendingRevealTick, setPendingRevealTick] = useState(0);
+  const revealSpan = useCallback(
+    (spanId: string) => {
+      const spanById = new Map((spans ?? []).map((s) => [s.spanId, s]));
+      const target = spanById.get(spanId);
+      if (!target) {
+        return;
+      }
+      setCollapsed((previous) => {
+        if (previous.size === 0) {
+          return previous;
+        }
+        const next = new Set(previous);
+        let current: SpanRow | undefined = target;
+        while (current?.parentSpanId) {
+          next.delete(current.parentSpanId);
+          current = spanById.get(current.parentSpanId);
+        }
+        return next.size === previous.size ? previous : next;
+      });
+      const off = offMsOf(target);
+      const dur = durMsOf(target);
+      setView((previous) => {
+        const start = Math.min(previous.s, off);
+        const end = Math.max(previous.e, off + dur);
+        return start === previous.s && end === previous.e ? previous : { s: start, e: end };
+      });
+      setSelected(spanId);
+      pendingRevealRef.current = spanId;
+      setPendingRevealTick((tick) => tick + 1);
+    },
+    [spans, offMsOf],
+  );
+
+  // Keyed on pendingRevealTick, not visible, so a target that is already
+  // expanded and in the zoom window (where setCollapsed/setView bail out and
+  // return their previous state, leaving visible's reference unchanged) still
+  // triggers the scroll -- the tick bump batches into the same render as
+  // those two updates, so the DOM still reflects them by the time this runs.
+  useEffect(() => {
+    if (pendingRevealRef.current) {
+      const spanId = pendingRevealRef.current;
+      pendingRevealRef.current = null;
+      scrollToSpan(spanId);
+    }
+  }, [pendingRevealTick, scrollToSpan]);
+
+  const [analyzeTraceDialogOpen, setAnalyzeTraceDialogOpen] = useState(false);
+
+  // The dialog's call citations ("call 20") link back to a specific waterfall
+  // row by the backend-numbered callNumber (SpanRow.callNumber), never the
+  // spanIndices DFS counter — see this page's CLAUDE.md "call 20 is not row
+  // 20" gotcha for why the two must never be conflated.
+  const spanIdByCallNumber = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const span of spans ?? []) {
+      if (span.callNumber !== null && span.callNumber !== undefined) {
+        map.set(span.callNumber, span.spanId);
+      }
+    }
+    return map;
+  }, [spans]);
+  const knownCallNumbers = useMemo(
+    () => new Set(spanIdByCallNumber.keys()),
+    [spanIdByCallNumber],
+  );
+  const navigateToCall = useCallback(
+    (callNumber: number) => {
+      const spanId = spanIdByCallNumber.get(callNumber);
+      if (!spanId) {
+        return;
+      }
+      setAnalyzeTraceDialogOpen(false);
+      revealSpan(spanId);
+    },
+    [spanIdByCallNumber, revealSpan, setAnalyzeTraceDialogOpen],
+  );
+
   // ArrowUp/ArrowDown step to the row above/below while a span is selected.
   // Deliberately narrow about what it claims: this is a window-level listener
   // that preventDefaults, so anything it swallows is scrolling or typing the
@@ -400,6 +501,10 @@ const TraceDetailPageView = ({
             onNextError={nextError}
             chipsOff={chipsOff}
             onToggleChipFamily={toggleChipFamily}
+            onAnalyzeTrace={() => setAnalyzeTraceDialogOpen(true)}
+            hasAnalysis={traceAnalysis !== null}
+            analysisOutdated={traceAnalysis?.outdated ?? false}
+            ollamaAnalysisEnabled={ollamaAnalysisEnabled}
           />
 
           <TraceMinimap
@@ -494,11 +599,27 @@ const TraceDetailPageView = ({
 
         <SpanInspectorDrawer
           selection={drawerSelection}
+          spans={spans}
+          logsBySpanId={logsBySpanId}
+          onRevealSpan={revealSpan}
           onClose={() => setSelected(null)}
           onPreviousSpan={() => selectAdjacentSpan(-1)}
           onNextSpan={() => selectAdjacentSpan(1)}
         />
       </Box>
+
+      {analyzeTraceDialogOpen ? (
+        <AnalyzeTraceDialog
+          open={analyzeTraceDialogOpen}
+          onClose={() => setAnalyzeTraceDialogOpen(false)}
+          traceId={traceId}
+          knownCallNumbers={knownCallNumbers}
+          onNavigateToCall={navigateToCall}
+          spans={spans}
+          logsBySpanId={logsBySpanId}
+          traceCostUsd={traceCostUsd}
+        />
+      ) : null}
     </Box>
   );
 };

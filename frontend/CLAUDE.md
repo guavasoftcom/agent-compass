@@ -1,18 +1,3 @@
-/*
-Copyright (c) 2026 Guadalupe Garcia <guad.daniel.garcia@gmail.com>
-SPDX-License-Identifier: GPL-3.0-or-later
-
-This program is free software: you can redistribute it and/or modify it under the terms of the
-GNU General Public License as published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
-even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-General Public License for more details.
-
-You should have received a copy of the GNU General Public License along with this program. If not,
-see <https://www.gnu.org/licenses/>.
-*/
 # Frontend conventions
 
 Project-wide conventions for `frontend/` (React 19, Vite 8, MUI 9, TypeScript). Read [../AGENTS.md](../AGENTS.md) for repo-wide context.
@@ -21,7 +6,7 @@ Project-wide conventions for `frontend/` (React 19, Vite 8, MUI 9, TypeScript). 
 
 The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); everything else lives in a folder. Cross-cutting modules are grouped into `api/`, `theme/`, and `lib/` (described below) alongside `App/`, `components/`, and `pages/`.
 
-- `api/` — shared `fetch` calls, the matching TypeScript types, and the `WindowSelection` discriminated union. Split by concern behind a barrel `index.ts` (so imports stay `from '../../api'`): `types.ts` holds every DTO interface + `ListResult` + `WindowSelection`; `endpoints.ts` holds the `fetchXxx(selection)` functions; `http.ts` holds the transport helpers (`getJson` / `getText` / `listWithTotalCount` / `windowQueryParams`) and is intentionally **not** re-exported by the barrel. New cross-page endpoints add their type to `types.ts` and their fetcher to `endpoints.ts` — unless they serve exactly one page, in which case they live in a page-local API module (`pages/LogsPage/logsApi.ts`, `pages/MetricsPage/metricsApi.ts`, `pages/TracesPage/tracesApi.ts`). Either way, pages never call `fetch` outside these modules.
+- `api/` — shared `fetch` calls, the matching TypeScript types, and the `WindowSelection` discriminated union. Split by concern behind a barrel `index.ts` (so imports stay `from '../../api'`): `types.ts` holds every DTO interface + `ListResult` + `WindowSelection`; `endpoints.ts` holds the `fetchXxx(selection)` functions; `http.ts` holds the transport helpers (`getJson` / `getText` / `listWithTotalCount` / `windowQueryParams` / `writeJson` — the shared mutating-fetch helper for a page-local write that needs the server's own plain-text error body, e.g. `SettingsPage/settingsApi.ts`'s Ollama/purge fetchers) and is intentionally **not** re-exported by the barrel. New cross-page endpoints add their type to `types.ts` and their fetcher to `endpoints.ts` — unless they serve exactly one page, in which case they live in a page-local API module (`pages/LogsPage/logsApi.ts`, `pages/MetricsPage/metricsApi.ts`, `pages/TracesPage/tracesApi.ts`). Either way, pages never call `fetch` outside these modules.
 - `App/` — `App.tsx` wires the React Router routes, `AppShell.tsx` renders the app-bar + drawer chrome around `<Outlet />`, `navGroups.tsx` is the nav model, `ColorModeToggle.tsx` flips the theme.
 - `components/` — cross-page primitives:
   - `PageLayout` — page chrome (title row, subtitle, actions slot, error Alert, body).
@@ -95,6 +80,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `lib/format.ts` — `formatCompact` (`Intl.NumberFormat` compact notation) shared by the token and metric trend cards, `isSparseCounter` (peak ≤ 5, every bucket a whole number) shared by `MetricTrendCard` and `LineSparkline` so a metric's card and detail chart never disagree about drawing bars vs. an area, `shortModelName` (`claude-sonnet-4` → `Sonnet 4`) shared by every per-model breakdown (Token Usage, Skills & Subagents), and `USD_FORMATTER`/`formatTimestamp`/`formatRelativeTime` shared by the Sessions grid and the Tokens page's cache-efficiency rank card/dialog (`pages/SessionsPage/components/sessionsFormat.ts` re-exports them for that page's existing imports).
   - `lib/sampleData.ts` — `createSampleRng(seed)` (seeded RNG factory: `rnd`/`pick`/`ri`/`hx`) + `latency(ms)`, shared by the page-local `VITE_*_SAMPLE` stores (`pages/LogsPage/logsSampleData.ts`, `pages/TracesPage/tracesSampleData.ts`). Each store passes its own seed so its mock data stays deterministic without sharing RNG state.
   - `lib/promptSummary.ts` — `promptSummaryRenderer(prompt)`: null for an ordinary, human-authored prompt; for a prompt that is really a non-authored envelope, a short summary instead. Currently one case — a `<task-notification>` envelope the harness delivers when a background subagent finishes (not something a person typed) — detected by the prompt's exact opening tag (a real envelope always *starts* with it, so a human message that merely pastes one further in, e.g. as an example, isn't misclassified) and summarized from its own `<summary>` tag (or a generic fallback label when it has none). Named and structured generically on purpose: other non-authored prompt shapes needing the same "don't show this raw" treatment belong here as additional cases. Pure, no React — the display side (the "SUBAGENT · summary" styling) is `components/PromptSummaryText`, which wraps this function; reach for that component, not this function directly, wherever a raw prompt/message string is displayed to a reader.
+  - `lib/serverSentEvents.ts` — `readServerSentEvents(response, onFrame)` + `parseServerSentEvent(frame)` (+ the `FRAME_SEPARATOR` constant): a generic SSE frame reader/parser over a streamed `fetch` `Response`, with nothing endpoint-specific in it. `readServerSentEvents` reassembles frames split across chunk boundaries (a network splits an SSE body wherever it likes, including mid-JSON) and falls back to reading the whole body as text when `response.body` is missing (jsdom, not a real browser case). Pure, no React. `pages/TraceDetailPage/traceAnalysisApi.ts#streamTraceAnalysis` is currently the only consumer — this app's first SSE endpoint — but the module carries nothing trace-analysis-specific, so a second streamed endpoint should import from here rather than hand-rolling its own frame reader.
 
 ## Page structure (container/presentational)
 
@@ -105,6 +91,16 @@ Every page is split into two files in the same folder:
 - `index.ts` re-exports the container as the default.
 
 Don't merge a container with its view, even for one-card pages — the split keeps the views easy to read and the data flow obvious in PR review.
+
+**Every component owns a directory with an `index.ts`.** `components/GhostButton/` holds
+`GhostButton.tsx` + `index.ts`, and a page's leaf components nest the same way
+(`pages/CostPage/components/CostDriversCard/CostDriversCard.tsx`). So a path ending in a component
+name is a **directory**, and the file is one segment further down with a `.tsx` extension —
+`Read`ing `components/StatCard` or `pages/TokensPage` fails with `EISDIR`, which is the single most
+common failed tool call in this repo's own tuning report (26 of 28 `EISDIR` reads land on a
+component or page directory). Open `<Name>/<Name>.tsx` directly, or `Glob` the directory first when
+you aren't sure what it holds. The same shape applies to imports: import from the directory and let
+`index.ts` resolve it, rather than reaching for the inner file.
 
 **Every `pages/<Name>Page/` folder has its own `CLAUDE.md`** documenting that page's files, visual layout, which queries hit which endpoints, data-flow semantics, and gotchas. Read the relevant page's `CLAUDE.md` before touching it, and update it when you change the page. (`ToolActivitySection/` — the tab-grouping `SectionLayout` wrapper — has one too.)
 
@@ -193,6 +189,11 @@ since that view takes no props.
 Package manager is Yarn Berry, pinned by the `packageManager` field in `package.json` and resolved
 through Corepack (`corepack enable`) — don't install Yarn globally or bump the pin casually, since
 CI resolves the same field. The stray `package-lock.json` is legacy — don't `npm install`.
+
+**Checking whether a package is already a dependency: use `yarn why <package>`, not `grep`/`cat` on
+`package.json`.** It reports the resolved version and every path that pulls the package in
+(including transitively), so it also answers "is this already here as someone else's transitive
+dependency" — a question a text search can't.
 
 ## Stacked chart labeling conventions
 

@@ -78,17 +78,39 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
    * the session's activity has stopped everywhere, not on any single row's age, means a session is
    * always purged whole or not at all.
    *
-   * <p><b>Why {@code jsonb_exists(...)} and not the {@code ?} operator.</b> They are equivalent, but
-   * {@code ?} inside a native {@code @Query} string collides with JDBC's positional-parameter
-   * parsing when the same query also binds named parameters — Hibernate has no way to tell the two
-   * apart. Every other jsonb key check in this codebase route around the same trap by using
-   * {@code jsonb_each}/{@code jsonb_each_text} instead; this is the equivalent move for existence
-   * checks.
+   * <p><b>No key-existence test survives here, but the trap that shaped the old one still applies to
+   * anything added later.</b> These predicates used {@code jsonb_exists(attributes, 'session.id')}
+   * rather than the {@code ?} operator, because {@code ?} inside a native {@code @Query} string
+   * collides with JDBC's positional-parameter parsing when the query also binds named parameters and
+   * Hibernate cannot tell the two apart — the same reason every other jsonb key check in this
+   * codebase reaches for {@code jsonb_each}/{@code jsonb_each_text}. Use the function form, never
+   * {@code ?}. The existence tests themselves are gone: each is now a NULL test on the extracted
+   * value, for the reason two paragraphs down.
    *
-   * <p>{@code metric_points.session_id} is a stored generated column (V18); {@code log_records} and
-   * {@code spans} have no such column, so their legs extract {@code attributes ->> 'session.id'}
-   * directly. That costs a sequential scan on both — acceptable at their size (hundreds of thousands
-   * of rows, not millions) for a manually triggered admin action, not a page load.
+   * <p><b>{@code metric_points.session_id} (V18) and {@code log_records.session_id} (V30) are
+   * stored generated columns and must be read as columns here; {@code spans} has no such column and
+   * deliberately keeps the jsonb extraction.</b> An earlier revision of this javadoc called the
+   * extraction "acceptable at their size (hundreds of thousands of rows, not millions) for a
+   * manually triggered admin action" — that reasoning was wrong, because the cost of this leg is not
+   * row count, it is TOAST. {@code log_records} carries 255 MB of heap against 7505 MB of TOAST, so
+   * reading one key out of {@code attributes} detoasts ~11 KB per row: the log leg alone measured
+   * <b>10937 ms</b> of this subquery's 12549 ms, against 1409 ms for the 8.3M-row
+   * {@code metric_points} leg and 193 ms for {@code spans}. That is what pushed the purge preview
+   * past the 60s timeout {@code SystemService.purgePreview} raises for it — 20 recorded timeouts on
+   * the live database, which meant retention never ran and the tables kept growing. V30's own
+   * comment carries the three-way measurement and the reason the V3 expression index cannot
+   * substitute for the column.
+   *
+   * <p>{@code spans} keeps {@code attributes ->> 'session.id'} because its leg is 193 ms — 169 MB of
+   * heap against 48 MB of TOAST — so a third table rewrite would buy nothing measurable.
+   *
+   * <p><b>The sessionless branch tests {@code session_id IS NULL}, not
+   * {@code NOT jsonb_exists(...)}, and the two are not identical.</b> A key present with a JSON null
+   * value satisfies {@code jsonb_exists} while extracting to NULL, so under the old form such a row
+   * matched neither the dormant-membership branch nor the sessionless one and was unpurgeable at any
+   * cutoff, forever. Reading it as sessionless is what {@code metric_points} has done since V18 and
+   * is the only coherent treatment. Measured before the change: 0 such rows on {@code log_records}
+   * and 0 on {@code spans}, so nothing changes treatment today.
    *
    * <p><b>Every candidate scan below adds a redundant {@code candidate.timestamp < :cutoff} (or
    * {@code start_timestamp} for {@code spans}) guard alongside the dormant-session membership
@@ -109,14 +131,14 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
          WHERE session_id IS NOT NULL
          GROUP BY session_id
          UNION ALL
-         SELECT attributes ->> 'session.id', max(timestamp)
+         SELECT session_id, max(timestamp)
          FROM log_records
-         WHERE jsonb_exists(attributes, 'session.id')
-         GROUP BY 1
+         WHERE session_id IS NOT NULL
+         GROUP BY session_id
          UNION ALL
          SELECT attributes ->> 'session.id', max(start_timestamp)
          FROM spans
-         WHERE jsonb_exists(attributes, 'session.id')
+         WHERE attributes ->> 'session.id' IS NOT NULL
          GROUP BY 1
        ) AS sessionActivity
        GROUP BY session_id
@@ -181,6 +203,12 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
              (SELECT max(start_timestamp) FROM spans),
              (SELECT count(*) FROM spans WHERE start_timestamp >= :windowStart)
       UNION ALL
+      SELECT 'trace_analyses',
+             (SELECT count(*) FROM trace_analyses),
+             (SELECT min(generated_at) FROM trace_analyses),
+             (SELECT max(generated_at) FROM trace_analyses),
+             (SELECT count(*) FROM trace_analyses WHERE generated_at >= :windowStart)
+      UNION ALL
       SELECT 'flyway_schema_history',
              (SELECT count(*) FROM flyway_schema_history),
              (SELECT min(installed_on) AT TIME ZONE 'UTC' FROM flyway_schema_history),
@@ -191,18 +219,39 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
   List<Object[]> findTableRowStatistics(@Param("windowStart") Instant windowStart);
 
   /**
-   * Arrival freshness and volume per OTLP signal. Measured 1271 ms, dominated by the metric
-   * cardinality counts.
+   * Arrival freshness and volume per OTLP signal. Measured 1383 ms.
    *
    * <p>Each leg computes the three volume windows in ONE index-only scan bounded at seven days
-   * (93 ms) rather than three separate range scans, and reads {@code received_at} off the newest row
-   * by index order rather than aggregating it — see the class javadoc for why.
+   * rather than three separate range scans, and reads {@code received_at} off the newest row by
+   * index order rather than aggregating it — see the class javadoc for why.
    *
-   * <p>The cardinality counts are the expensive part: {@code count(DISTINCT metric_name)} measured
-   * 569 ms, {@code count(DISTINCT stream_id)} 668 ms, against 40 ms and 32 ms for the log and span
-   * name columns. If {@code metric_points} outgrows the budget, replace the two metric counts with a
-   * recursive loose-index-scan CTE over {@code idx_metric_points_name_ts} /
-   * {@code idx_metric_points_stream_ts}, which returns the same answers in 1.8 ms / 27 ms.
+   * <p><b>Every cardinality count is a recursive loose index scan, never {@code count(DISTINCT …)}.
+   * </b> A plain {@code count(DISTINCT col)} cannot be parallelized and cannot be answered from an
+   * index, so it seq-scans the whole table and sorts it — work proportional to ROW COUNT for an
+   * answer whose size is the number of DISTINCT VALUES, which here is 8 metric names, 24 event
+   * names and 5 span names. That is the shape this query died of: at 8.3M rows and 12 GB,
+   * {@code count(DISTINCT stream_id)} measured 6322 ms (external merge, 300 MB to disk) and
+   * {@code count(DISTINCT metric_name)} 4072 ms, and the statement as a whole ran 13915 ms against
+   * the 15s {@code statement_timeout} every pooled connection carries — cancelled 111 times on the
+   * live database before this rewrite. The earlier revision of this javadoc predicted exactly that
+   * and named this remedy; it is now applied to all four counts rather than only the two metric
+   * ones, because the log and span tables grow the same way and the rewrite costs nothing at small
+   * scale.
+   *
+   * <p>The idiom walks the leading column of a btree with one {@code > previous ORDER BY … LIMIT 1}
+   * descent per distinct value — {@code idx_metric_points_name_ts},
+   * {@code idx_metric_points_stream_ts}, {@code idx_log_records_event_name_ts},
+   * {@code idx_spans_name_start}. Cost becomes proportional to distinct values instead of rows:
+   * 5 ms / 53 ms / 9 ms / 8 ms respectively, against 4072 / 6322 / 172 / 109. <b>Any new leg must
+   * have a btree whose LEADING column is the one being counted</b>, or the recursion degrades into
+   * a seq scan per step, which is far worse than the {@code count(DISTINCT …)} it replaced.
+   *
+   * <p>Two details are load-bearing. The recursion's terminating step emits one NULL row, so every
+   * count filters {@code IS NOT NULL}; without it each cardinality reads one too high. And NULLs in
+   * the column itself are skipped identically by both forms — {@code ORDER BY col LIMIT 1} sorts
+   * NULLs last and {@code col > previous} never matches one, which is what {@code count(DISTINCT)}
+   * already does — so the rewrite is exact, not an approximation. Verified against the live
+   * database: 8/8, 7509/7509, 5/5, 24/24.
    *
    * <p>Do NOT reuse {@code /api/metrics/catalog} for this: its {@code COUNT(DISTINCT attributes)}
    * over the jsonb payload measured 2188 ms for a single 7-day window, and it is window-scoped where
@@ -217,6 +266,50 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
    * rows_last_day, rows_last_week, name_cardinality, name_cardinality_label, series_cardinality)}.
    */
   @Query(value = """
+      WITH RECURSIVE distinctEventNames AS (
+              (SELECT event_name FROM log_records ORDER BY event_name LIMIT 1)
+            UNION ALL
+              SELECT (SELECT nextLogRecord.event_name
+                      FROM log_records nextLogRecord
+                      WHERE nextLogRecord.event_name > distinctEventNames.event_name
+                      ORDER BY nextLogRecord.event_name
+                      LIMIT 1)
+              FROM distinctEventNames
+              WHERE distinctEventNames.event_name IS NOT NULL
+      ),
+      distinctMetricNames AS (
+              (SELECT metric_name FROM metric_points ORDER BY metric_name LIMIT 1)
+            UNION ALL
+              SELECT (SELECT nextMetricPoint.metric_name
+                      FROM metric_points nextMetricPoint
+                      WHERE nextMetricPoint.metric_name > distinctMetricNames.metric_name
+                      ORDER BY nextMetricPoint.metric_name
+                      LIMIT 1)
+              FROM distinctMetricNames
+              WHERE distinctMetricNames.metric_name IS NOT NULL
+      ),
+      distinctStreamIds AS (
+              (SELECT stream_id FROM metric_points ORDER BY stream_id LIMIT 1)
+            UNION ALL
+              SELECT (SELECT nextMetricPoint.stream_id
+                      FROM metric_points nextMetricPoint
+                      WHERE nextMetricPoint.stream_id > distinctStreamIds.stream_id
+                      ORDER BY nextMetricPoint.stream_id
+                      LIMIT 1)
+              FROM distinctStreamIds
+              WHERE distinctStreamIds.stream_id IS NOT NULL
+      ),
+      distinctSpanNames AS (
+              (SELECT name FROM spans ORDER BY name LIMIT 1)
+            UNION ALL
+              SELECT (SELECT nextSpan.name
+                      FROM spans nextSpan
+                      WHERE nextSpan.name > distinctSpanNames.name
+                      ORDER BY nextSpan.name
+                      LIMIT 1)
+              FROM distinctSpanNames
+              WHERE distinctSpanNames.name IS NOT NULL
+      )
       SELECT 'logs' AS signal,
              'log_records' AS table_name,
              (SELECT max(timestamp) FROM log_records)                                  AS newest_timestamp,
@@ -225,7 +318,8 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
              logWindow.rows_last_hour,
              logWindow.rows_last_day,
              logWindow.rows_last_week,
-             (SELECT count(DISTINCT event_name) FROM log_records)                      AS name_cardinality,
+             (SELECT count(*) FROM distinctEventNames
+               WHERE event_name IS NOT NULL)                                           AS name_cardinality,
              'event_name'                                                              AS name_cardinality_label,
              CAST(NULL AS bigint)                                                      AS series_cardinality
       FROM (SELECT count(*) FILTER (WHERE timestamp >= :oneHourAgo) AS rows_last_hour,
@@ -240,9 +334,9 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
              metricWindow.rows_last_hour,
              metricWindow.rows_last_day,
              metricWindow.rows_last_week,
-             (SELECT count(DISTINCT metric_name) FROM metric_points),
+             (SELECT count(*) FROM distinctMetricNames WHERE metric_name IS NOT NULL),
              'metric_name',
-             (SELECT count(DISTINCT stream_id) FROM metric_points)
+             (SELECT count(*) FROM distinctStreamIds WHERE stream_id IS NOT NULL)
       FROM (SELECT count(*) FILTER (WHERE timestamp >= :oneHourAgo) AS rows_last_hour,
                    count(*) FILTER (WHERE timestamp >= :oneDayAgo)  AS rows_last_day,
                    count(*)                                         AS rows_last_week
@@ -255,7 +349,7 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
              spanWindow.rows_last_hour,
              spanWindow.rows_last_day,
              spanWindow.rows_last_week,
-             (SELECT count(DISTINCT name) FROM spans),
+             (SELECT count(*) FROM distinctSpanNames WHERE name IS NOT NULL),
              'name',
              CAST(NULL AS bigint)
       FROM (SELECT count(*) FILTER (WHERE start_timestamp >= :oneHourAgo) AS rows_last_hour,
@@ -364,14 +458,14 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
           WHERE session_id IS NOT NULL
           GROUP BY session_id
           UNION ALL
-          SELECT attributes ->> 'session.id', max(timestamp)
+          SELECT session_id, max(timestamp)
           FROM log_records
-          WHERE jsonb_exists(attributes, 'session.id')
-          GROUP BY 1
+          WHERE session_id IS NOT NULL
+          GROUP BY session_id
           UNION ALL
           SELECT attributes ->> 'session.id', max(start_timestamp)
           FROM spans
-          WHERE jsonb_exists(attributes, 'session.id')
+          WHERE attributes ->> 'session.id' IS NOT NULL
           GROUP BY 1
         ) AS sessionActivity
         GROUP BY session_id
@@ -383,10 +477,9 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
              (SELECT count(*) FROM log_records WHERE timestamp < :cutoff)
                - (SELECT count(*) FROM log_records candidate
                    WHERE candidate.timestamp < :cutoff
-                     AND ((jsonb_exists(candidate.attributes, 'session.id')
-                             AND candidate.attributes ->> 'session.id'
-                                   IN (SELECT session_id FROM dormant_sessions))
-                       OR NOT jsonb_exists(candidate.attributes, 'session.id')))  AS preserved_rows,
+                     AND ((candidate.session_id IS NOT NULL
+                             AND candidate.session_id IN (SELECT session_id FROM dormant_sessions))
+                       OR candidate.session_id IS NULL))                          AS preserved_rows,
              (SELECT count(*) FROM log_records)                                        AS total_rows,
              pg_total_relation_size('log_records')                                     AS total_bytes
       UNION ALL
@@ -412,12 +505,31 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
              (SELECT count(*) FROM spans WHERE start_timestamp < :cutoff)
                - (SELECT count(*) FROM spans candidate
                    WHERE candidate.start_timestamp < :cutoff
-                     AND ((jsonb_exists(candidate.attributes, 'session.id')
+                     AND ((candidate.attributes ->> 'session.id' IS NOT NULL
                              AND candidate.attributes ->> 'session.id'
                                    IN (SELECT session_id FROM dormant_sessions))
-                       OR NOT jsonb_exists(candidate.attributes, 'session.id'))),
+                       OR candidate.attributes ->> 'session.id' IS NULL)),
              (SELECT count(*) FROM spans),
              pg_total_relation_size('spans')
+      UNION ALL
+      SELECT 'trace_analyses',
+             'generated_at',
+             -- trace_analyses has no cutoff of its own: a stored analysis is orphaned (and
+             -- therefore counted here as "older") the moment none of the spans on its trace would
+             -- survive this purge -- see purgeTraceAnalyses for why the actual delete instead
+             -- runs unconditionally, straight after purgeSpans, against whatever spans remain.
+             (SELECT count(*) FROM trace_analyses candidate
+               WHERE NOT EXISTS (
+                     SELECT 1 FROM spans surviving
+                     WHERE surviving.trace_id = candidate.trace_id
+                       AND NOT (surviving.start_timestamp < :cutoff
+                         AND ((surviving.attributes ->> 'session.id' IS NOT NULL
+                                 AND surviving.attributes ->> 'session.id'
+                                       IN (SELECT session_id FROM dormant_sessions))
+                           OR surviving.attributes ->> 'session.id' IS NULL)))),
+             0,
+             (SELECT count(*) FROM trace_analyses),
+             pg_total_relation_size('trace_analyses')
       ORDER BY table_name
       """, nativeQuery = true)
   List<Object[]> findPurgeEstimates(@Param("cutoff") Instant cutoff);
@@ -452,10 +564,10 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
   @Query(value = """
       DELETE FROM log_records AS candidate
       WHERE candidate.timestamp < :cutoff
-        AND ((jsonb_exists(candidate.attributes, 'session.id')
-                AND candidate.attributes ->> 'session.id' IN """ + DORMANT_SESSION_IDS_SUBQUERY + """
+        AND ((candidate.session_id IS NOT NULL
+                AND candidate.session_id IN """ + DORMANT_SESSION_IDS_SUBQUERY + """
 )
-          OR NOT jsonb_exists(candidate.attributes, 'session.id'))
+          OR candidate.session_id IS NULL)
       """, nativeQuery = true)
   int purgeLogRecords(@Param("cutoff") Instant cutoff);
 
@@ -467,10 +579,10 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
   @Query(value = """
       DELETE FROM spans AS candidate
       WHERE candidate.start_timestamp < :cutoff
-        AND ((jsonb_exists(candidate.attributes, 'session.id')
+        AND ((candidate.attributes ->> 'session.id' IS NOT NULL
                 AND candidate.attributes ->> 'session.id' IN """ + DORMANT_SESSION_IDS_SUBQUERY + """
 )
-          OR NOT jsonb_exists(candidate.attributes, 'session.id'))
+          OR candidate.attributes ->> 'session.id' IS NULL)
       """, nativeQuery = true)
   int purgeSpans(@Param("cutoff") Instant cutoff);
 
@@ -524,6 +636,27 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
                 AND (newer.timestamp, newer.id) > (candidate.timestamp, candidate.id))
       """, nativeQuery = true)
   int purgeMetricPoints(@Param("cutoff") Instant cutoff);
+
+  /**
+   * Deletes every stored trace analysis whose trace no longer has any surviving spans. Deliberately
+   * unconditional and cutoff-free, unlike the other three purge methods: it is called immediately
+   * after {@link #purgeSpans}, in the same transaction, so by the time this runs {@code spans}
+   * already reflects the post-purge state and a plain {@code NOT EXISTS} against it is exact — no
+   * separate dormant-session computation needed here. {@code NOT EXISTS} rather than {@code NOT IN}
+   * for the same reason {@link #findPurgeEstimates}'s equivalent check already uses it: {@code NOT
+   * IN} against a subquery is NULL-unsafe (a single NULL {@code trace_id} in {@code spans} makes it
+   * match nothing at all) and typically cannot plan as an anti-join the way {@code NOT EXISTS} can.
+   * Not FK-enforceable: {@code spans.trace_id} is not unique (one trace has many spans), so a
+   * foreign key cannot express "delete when the last one goes". Without this, an analyzed trace's
+   * {@code trace_analyses} row would survive its own purge, leaving the dialog showing an analysis
+   * of spans that no longer exist and growing this table unboundedly. Returns the number removed.
+   */
+  @Modifying
+  @Query(value = """
+      DELETE FROM trace_analyses candidate
+      WHERE NOT EXISTS (SELECT 1 FROM spans surviving WHERE surviving.trace_id = candidate.trace_id)
+      """, nativeQuery = true)
+  int purgeTraceAnalyses();
 
   /**
    * Refreshes planner statistics on the three telemetry tables.

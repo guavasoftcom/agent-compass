@@ -27,26 +27,32 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
+import com.guavasoft.agentcompass.model.TraceAnalysis;
 import com.guavasoft.agentcompass.model.TraceCursorPage;
 import com.guavasoft.agentcompass.model.TraceFacets;
 import com.guavasoft.agentcompass.model.TraceFilterParams;
 import com.guavasoft.agentcompass.model.TraceHistogram;
 import com.guavasoft.agentcompass.model.TracePage;
 import com.guavasoft.agentcompass.model.TracePaginationParams;
+import com.guavasoft.agentcompass.model.TraceCostBreakdown;
 import com.guavasoft.agentcompass.model.TraceQueryCriteria;
 import com.guavasoft.agentcompass.model.TraceSummary;
 import com.guavasoft.agentcompass.service.LogService;
+import com.guavasoft.agentcompass.service.TraceAnalysisService;
 import com.guavasoft.agentcompass.service.TraceExplorerService;
 import com.guavasoft.agentcompass.service.TraceService;
 
@@ -66,6 +72,8 @@ public class TracesController {
     private final TraceService traceService;
     private final TraceExplorerService traceExplorerService;
     private final LogService logService;
+    private final TraceAnalysisService traceAnalysisService;
+    private final TraceAnalysisSseStreamer traceAnalysisSseStreamer;
 
     @GetMapping("/histogram")
     @Operation(
@@ -200,6 +208,29 @@ public class TracesController {
         return traceService.spansForTrace(traceId);
     }
 
+    @GetMapping("/{traceId}/cost-breakdown")
+    @Operation(
+            summary = "Per-subagent cost breakdown for a single trace",
+            description = "Splits a trace's measured spend by who spent it: the main loop, one entry per "
+                    + "Agent-tool dispatch (in the order each was dispatched), and auxiliary harness work "
+                    + "(session-title generation, compaction, web fetch). Deterministic and code-computed -- "
+                    + "unlike GET /{traceId}/analysis this needs no Ollama analysis to have ever been "
+                    + "generated for the trace. measuredCostUsd is not guaranteed to equal "
+                    + "TraceSummary.totalCostUsd; see TraceCostBreakdown's own description. Returns an "
+                    + "all-zero breakdown with no dispatches, never 404, when the trace has no spans.")
+    @ApiResponses(@ApiResponse(
+            responseCode = "200",
+            description = "Cost breakdown for the requested trace",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = TraceCostBreakdown.class))))
+    public TraceCostBreakdown traceCostBreakdown(
+            @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)",
+                    example = "0102030405060708090a0b0c0d0e0f10")
+            @PathVariable String traceId) {
+        return traceService.costBreakdownForTrace(traceId);
+    }
+
     @GetMapping("/{traceId}/logs")
     @Operation(
             summary = "All log records correlated to a single trace by trace_id, oldest first",
@@ -217,6 +248,65 @@ public class TracesController {
                     example = "0102030405060708090a0b0c0d0e0f10")
             @PathVariable String traceId) {
         return logService.logsForTrace(traceId);
+    }
+
+    @GetMapping("/{traceId}/analysis")
+    @Operation(
+            summary = "The stored local-Ollama analysis of a single trace, if one has been generated",
+            description = "Latest-only: a trace has at most one stored analysis, overwritten by the most "
+                    + "recent regenerate. 404 when none has been generated yet.")
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "The stored analysis",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = TraceAnalysis.class))),
+            @ApiResponse(responseCode = "404", description = "No analysis has been generated for this trace",
+                    content = @Content())})
+    public ResponseEntity<TraceAnalysis> traceAnalysis(
+            @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)",
+                    example = "0102030405060708090a0b0c0d0e0f10")
+            @PathVariable String traceId) {
+        return ResponseEntity.of(traceAnalysisService.getStored(traceId));
+    }
+
+    @PostMapping("/{traceId}/analysis")
+    @Operation(
+            summary = "Generate (or regenerate) a local-Ollama analysis of a single trace, blocking until done",
+            description = "Overwrites whatever analysis was previously stored for this trace. Prefer "
+                    + "POST /{traceId}/analysis/stream to narrate progress instead of blocking for the "
+                    + "full Ollama call. 503 when Ollama cannot be reached, errors, or returns no usable "
+                    + "output; 404 when no spans exist for this trace.")
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "The freshly generated analysis",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = TraceAnalysis.class))),
+            @ApiResponse(responseCode = "404", description = "No spans exist for that trace id", content = @Content()),
+            @ApiResponse(responseCode = "503", description = "Ollama is unavailable", content = @Content())})
+    public ResponseEntity<TraceAnalysis> regenerateTraceAnalysis(
+            @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)",
+                    example = "0102030405060708090a0b0c0d0e0f10")
+            @PathVariable String traceId) {
+        return ResponseEntity.of(traceAnalysisService.regenerate(traceId));
+    }
+
+    @PostMapping(value = "/{traceId}/analysis/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(
+            summary = "Generate (or regenerate) a local-Ollama analysis, narrating progress over Server-Sent Events",
+            description = "Runs the same analysis as POST /{traceId}/analysis, but returns immediately with "
+                    + "an open SSE stream carrying 'started', 'plan', 'phase', 'delta', 'done'/'failed' events "
+                    + "as the run progresses, so the caller can show the draft being written instead of "
+                    + "blocking on the full Ollama call.")
+    @ApiResponse(responseCode = "200", description = "SSE stream of analysis progress events")
+    public SseEmitter streamTraceAnalysis(
+            @Parameter(description = "Hex-encoded OTLP trace ID (16 bytes / 32 hex chars)",
+                    example = "0102030405060708090a0b0c0d0e0f10")
+            @PathVariable String traceId) {
+        return traceAnalysisSseStreamer.stream(traceId);
     }
 
     private static TraceQueryCriteria buildCriteria(TraceFilterParams filterParams) {

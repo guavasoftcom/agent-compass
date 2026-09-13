@@ -15,7 +15,7 @@ see <https://www.gnu.org/licenses/>.
 */
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { alpha, Box, Button, Tooltip, useTheme } from '@mui/material';
+import { alpha, Box, Button, Stack, Tooltip, useTheme } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import PageLayout from '../../components/PageLayout';
@@ -35,10 +35,16 @@ import IngestHealthCard from './components/IngestHealthCard';
 import SchemaBuildCard from './components/SchemaBuildCard';
 import EffectiveConfigurationCard from './components/EffectiveConfigurationCard';
 import PurgeDryRunCard from './components/PurgeDryRunCard';
+import OllamaConfigurationCard from './components/OllamaConfigurationCard';
+import OllamaStatusCard from './components/OllamaStatusCard';
+import UnsavedOllamaChangesDialog from './components/UnsavedOllamaChangesDialog';
 import { daysUntilSize, retentionSpanDays } from './settingsDerivations';
 import type {
   EffectiveConfiguration,
   IngestHealth,
+  OllamaConnectionTestResult,
+  OllamaModel,
+  OllamaSettings,
   PurgePreview,
   PurgeResult,
   StorageOverview,
@@ -49,7 +55,8 @@ type SettingsTab =
   | 'storage-ingest'
   | 'schema-build'
   | 'configuration'
-  | 'retention';
+  | 'retention'
+  | 'ollama';
 
 /** Projection ceiling for the growth KPI's caption. */
 const PROJECTION_CEILING_BYTES = 10 * 1024 ** 3;
@@ -140,6 +147,27 @@ export interface SettingsPageViewProps {
   error: Error | null;
   activeTab: SettingsTab;
   onTabChange: (tab: SettingsTab) => void;
+  ollamaSettings: OllamaSettings | null;
+  isOllamaSettingsLoading: boolean;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  ollamaEnabled: boolean;
+  onOllamaBaseUrlChange: (baseUrl: string) => void;
+  onOllamaModelChange: (model: string) => void;
+  onOllamaEnabledChange: (enabled: boolean) => void;
+  onSaveOllamaSettings: () => void;
+  isSavingOllamaSettings: boolean;
+  saveOllamaSettingsError: Error | null;
+  isOllamaSettingsSaved: boolean;
+  isTestingOllamaConnection: boolean;
+  ollamaConnectionTestResult: OllamaConnectionTestResult | null;
+  ollamaConnectionTestError: Error | null;
+  onTestOllamaConnection: () => void;
+  ollamaModels: OllamaModel[];
+  isOllamaModelsLoading: boolean;
+  isUnsavedOllamaChangesDialogOpen: boolean;
+  onCancelOllamaTabSwitch: () => void;
+  onDiscardOllamaTabSwitch: () => void;
 }
 
 const SettingsPageView = ({
@@ -167,6 +195,27 @@ const SettingsPageView = ({
   error,
   activeTab,
   onTabChange,
+  ollamaSettings,
+  isOllamaSettingsLoading,
+  ollamaBaseUrl,
+  ollamaModel,
+  ollamaEnabled,
+  onOllamaBaseUrlChange,
+  onOllamaModelChange,
+  onOllamaEnabledChange,
+  onSaveOllamaSettings,
+  isSavingOllamaSettings,
+  saveOllamaSettingsError,
+  isOllamaSettingsSaved,
+  isTestingOllamaConnection,
+  ollamaConnectionTestResult,
+  ollamaConnectionTestError,
+  onTestOllamaConnection,
+  ollamaModels,
+  isOllamaModelsLoading,
+  isUnsavedOllamaChangesDialogOpen,
+  onCancelOllamaTabSwitch,
+  onDiscardOllamaTabSwitch,
 }: SettingsPageViewProps) => {
   const theme: Theme = useTheme();
   const TABS = [
@@ -174,6 +223,7 @@ const SettingsPageView = ({
     { value: 'schema-build' as const, label: 'Schema & Build' },
     { value: 'configuration' as const, label: 'Effective Configuration' },
     { value: 'retention' as const, label: 'Retention' },
+    { value: 'ollama' as const, label: 'Ollama' },
   ];
   // Composition of the whole database, not of one table: three numbers summed
   // across every table, which is what a single ring can honestly represent.
@@ -422,7 +472,44 @@ const SettingsPageView = ({
             purgeResult={purgeResult}
           />
         )}
+
+        {/* Ollama configuration tab */}
+        {activeTab === 'ollama' && (
+          <Stack spacing={2}>
+            <OllamaConfigurationCard
+              ollamaSettings={ollamaSettings}
+              isOllamaSettingsLoading={isOllamaSettingsLoading}
+              baseUrl={ollamaBaseUrl}
+              model={ollamaModel}
+              enabled={ollamaEnabled}
+              onBaseUrlChange={onOllamaBaseUrlChange}
+              onModelChange={onOllamaModelChange}
+              onEnabledChange={onOllamaEnabledChange}
+              onSave={onSaveOllamaSettings}
+              isSaving={isSavingOllamaSettings}
+              saveError={saveOllamaSettingsError}
+              isSaved={isOllamaSettingsSaved}
+              ollamaModels={ollamaModels}
+              isOllamaModelsLoading={isOllamaModelsLoading}
+            />
+            <OllamaStatusCard
+              ollamaSettings={ollamaSettings}
+              isOllamaSettingsLoading={isOllamaSettingsLoading}
+              enabled={ollamaEnabled}
+              isTestingConnection={isTestingOllamaConnection}
+              testConnectionResult={ollamaConnectionTestResult}
+              testConnectionError={ollamaConnectionTestError}
+              onTestConnection={onTestOllamaConnection}
+            />
+          </Stack>
+        )}
       </Box>
+
+      <UnsavedOllamaChangesDialog
+        open={isUnsavedOllamaChangesDialogOpen}
+        onCancel={onCancelOllamaTabSwitch}
+        onDiscard={onDiscardOllamaTabSwitch}
+      />
     </PageLayout>
   );
 };

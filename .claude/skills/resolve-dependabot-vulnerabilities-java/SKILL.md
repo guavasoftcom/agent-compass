@@ -84,7 +84,7 @@ to change — you need it for the report, and to revert cleanly on failure.
 
 3. Make the edit to `backend/pom.xml` with the Edit tool.
 
-4. **Validate**: `cd backend && ./mvnw clean verify` (includes Testcontainers integration tests —
+4. **Validate**: `./backend/mvnw -f backend/pom.xml clean verify` (includes Testcontainers tests —
    Docker must be running).
 
 5. **On success**: mark `RESOLVED (old version -> new version, mechanism used)`. Keep the edit.

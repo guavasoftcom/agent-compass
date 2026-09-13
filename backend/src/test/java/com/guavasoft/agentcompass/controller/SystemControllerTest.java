@@ -24,7 +24,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.guavasoft.agentcompass.model.ConfigurationEntry;
 import com.guavasoft.agentcompass.model.ConfigurationGroup;
 import com.guavasoft.agentcompass.model.EffectiveConfiguration;
+import com.guavasoft.agentcompass.model.EffectiveOllamaSettings;
 import com.guavasoft.agentcompass.model.IngestHealth;
+import com.guavasoft.agentcompass.model.OllamaConnectionTestResult;
+import com.guavasoft.agentcompass.model.OllamaModelListResult;
+import com.guavasoft.agentcompass.model.OllamaModelListResult.OllamaModelSummary;
 import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
@@ -35,6 +39,7 @@ import com.guavasoft.agentcompass.model.SqlMirroring;
 import com.guavasoft.agentcompass.model.StorageOverview;
 import com.guavasoft.agentcompass.model.SystemBuild;
 import com.guavasoft.agentcompass.model.TableStorage;
+import com.guavasoft.agentcompass.service.OllamaSettingsService;
 import com.guavasoft.agentcompass.service.SystemService;
 
 import java.time.Instant;
@@ -44,12 +49,16 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -64,6 +73,9 @@ class SystemControllerTest {
 
     @MockitoBean
     SystemService systemService;
+
+    @MockitoBean
+    OllamaSettingsService ollamaSettingsService;
 
     @Test
     void storageReturnsPerTableFootprintAndDatabaseTotal() throws Exception {
@@ -257,6 +269,140 @@ class SystemControllerTest {
                 .andExpect(status().is4xxClientError());
 
         verify(systemService, never()).purge(anyInt(), anyString());
+    }
+
+    // -------------------------------------------------------------------------
+    // Ollama settings — GET/PUT effective, POST test-connection
+    // -------------------------------------------------------------------------
+
+    @Test
+    void ollamaSettingsReturnsTheDefaultWhenNothingIsOverridden() throws Exception {
+        when(ollamaSettingsService.effectiveSettings())
+                .thenReturn(new EffectiveOllamaSettings("http://localhost:11434", "llama3.1", true, false));
+
+        mockMvc.perform(get("/api/system/ollama-settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.baseUrl").value("http://localhost:11434"))
+                .andExpect(jsonPath("$.model").value("llama3.1"))
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.overridden").value(false));
+    }
+
+    @Test
+    void putOllamaSettingsStoresAnOverrideAndReturnsTheUpdatedEffectiveSettings() throws Exception {
+        when(ollamaSettingsService.updateSettings("http://localhost:22222", "qwen2.5:14b", false))
+                .thenReturn(new EffectiveOllamaSettings("http://localhost:22222", "qwen2.5:14b", false, true));
+
+        mockMvc.perform(put("/api/system/ollama-settings")
+                        .contentType("application/json")
+                        .content("{\"baseUrl\":\"http://localhost:22222\",\"model\":\"qwen2.5:14b\","
+                                + "\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.baseUrl").value("http://localhost:22222"))
+                .andExpect(jsonPath("$.model").value("qwen2.5:14b"))
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.overridden").value(true));
+
+        verify(ollamaSettingsService).updateSettings("http://localhost:22222", "qwen2.5:14b", false);
+    }
+
+    /** Null fields clear the override; the service (not the controller) decides what that means. */
+    @Test
+    void putOllamaSettingsWithNullFieldsForwardsThemToTheServiceToClear() throws Exception {
+        when(ollamaSettingsService.updateSettings(isNull(), isNull(), isNull()))
+                .thenReturn(new EffectiveOllamaSettings("http://localhost:11434", "llama3.1", true, false));
+
+        mockMvc.perform(put("/api/system/ollama-settings")
+                        .contentType("application/json")
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.overridden").value(false));
+
+        verify(ollamaSettingsService).updateSettings(isNull(), isNull(), isNull());
+    }
+
+    @Test
+    void testOllamaConnectionReturns200WithSuccessTrueWhenOllamaAnswers() throws Exception {
+        when(ollamaSettingsService.testConnection(isNull(), isNull()))
+                .thenReturn(new OllamaConnectionTestResult(true, "Connected to Ollama at http://localhost:11434."));
+
+        mockMvc.perform(post("/api/system/ollama/test-connection"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    /** A failed connection is a normal outcome for this endpoint — 200, not 503. */
+    @Test
+    void testOllamaConnectionReturns200WithSuccessFalseWhenOllamaIsUnreachable() throws Exception {
+        when(ollamaSettingsService.testConnection(isNull(), isNull()))
+                .thenReturn(new OllamaConnectionTestResult(
+                        false, "Could not reach Ollama at http://localhost:11434 — is it running?"));
+
+        mockMvc.perform(post("/api/system/ollama/test-connection"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value(containsString("Could not reach Ollama")));
+    }
+
+    /** Inline overrides in the request body let the Settings page test an unsaved form value. */
+    @Test
+    void testOllamaConnectionForwardsAnInlineOverrideRatherThanTheSavedValue() throws Exception {
+        when(ollamaSettingsService.testConnection(eq("http://localhost:9999"), isNull()))
+                .thenReturn(new OllamaConnectionTestResult(true, "Connected to Ollama at http://localhost:9999."));
+
+        mockMvc.perform(post("/api/system/ollama/test-connection")
+                        .contentType("application/json")
+                        .content("{\"baseUrl\":\"http://localhost:9999\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(ollamaSettingsService).testConnection("http://localhost:9999", null);
+    }
+
+    @Test
+    void listOllamaModelsReturns200WithTheInstalledModelNamesOnSuccess() throws Exception {
+        when(ollamaSettingsService.listModels(isNull()))
+                .thenReturn(new OllamaModelListResult(true, "Connected to Ollama at http://localhost:11434.",
+                        List.of(new OllamaModelSummary("llama3.1:latest", "8.0B", 8.0),
+                                new OllamaModelSummary("qwen2.5:14b", "13B", 13.0))));
+
+        mockMvc.perform(post("/api/system/ollama/models"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.models", hasSize(2)))
+                .andExpect(jsonPath("$.models[0].name").value("llama3.1:latest"))
+                .andExpect(jsonPath("$.models[0].parameterSize").value("8.0B"))
+                .andExpect(jsonPath("$.models[0].parameterCountBillions").value(8.0));
+    }
+
+    /** A failed connection is a normal outcome for this endpoint — 200, not 503, with an empty list. */
+    @Test
+    void listOllamaModelsReturns200WithSuccessFalseAndAnEmptyListWhenOllamaIsUnreachable() throws Exception {
+        when(ollamaSettingsService.listModels(isNull()))
+                .thenReturn(new OllamaModelListResult(
+                        false, "Could not reach Ollama at http://localhost:11434 — is it running?", List.of()));
+
+        mockMvc.perform(post("/api/system/ollama/models"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value(containsString("Could not reach Ollama")))
+                .andExpect(jsonPath("$.models", hasSize(0)));
+    }
+
+    /** Inline overrides in the request body let the Settings page list models for an unsaved form value. */
+    @Test
+    void listOllamaModelsForwardsAnInlineOverrideRatherThanTheSavedValue() throws Exception {
+        when(ollamaSettingsService.listModels(eq("http://localhost:9999")))
+                .thenReturn(new OllamaModelListResult(true, "Connected to Ollama at http://localhost:9999.",
+                        List.of(new OllamaModelSummary("llama3.1:latest", "8.0B", 8.0))));
+
+        mockMvc.perform(post("/api/system/ollama/models")
+                        .contentType("application/json")
+                        .content("{\"baseUrl\":\"http://localhost:9999\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(ollamaSettingsService).listModels("http://localhost:9999");
     }
 
     private static PurgePreview samplePurgePreview() {

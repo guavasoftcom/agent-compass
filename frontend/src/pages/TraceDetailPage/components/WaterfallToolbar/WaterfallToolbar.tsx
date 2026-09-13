@@ -15,6 +15,7 @@ see <https://www.gnu.org/licenses/>.
 */
 import { Box, useTheme } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import GhostButton from '../../../../components/GhostButton';
 import { tokenFigureColor } from '../../../../theme/colors';
 import type { ChipFamily } from '../../chipVisibility';
@@ -30,14 +31,25 @@ interface Props {
   // Badge families currently hidden from every span row.
   chipsOff: Set<ChipFamily>;
   onToggleChipFamily: (family: ChipFamily) => void;
+  onAnalyzeTrace: () => void;
+  // Whether a stored analysis exists for this trace, and whether it's stale —
+  // drives the small dot on the Analyze trace button so a reader doesn't have
+  // to open the dialog just to find out. Both come from the page's own
+  // ['trace-analysis', traceId] query (see TraceDetailPage.tsx), which now
+  // runs unconditionally rather than only while the dialog is mounted.
+  hasAnalysis: boolean;
+  analysisOutdated: boolean;
+  // Effective Ollama `enabled` setting — hides "Analyze trace" entirely when
+  // false, the same way "Collapse all" hides when canToggleAll is false.
+  ollamaAnalysisEnabled: boolean;
 }
 
 interface LegendKey {
-  // Absent for `error`: it names the row's status (the red bar), not an
+  // Absent for 'error': it names the row's status (the red bar), not an
   // optional figure, so it's the one key that isn't a toggle.
   family?: ChipFamily;
   label: string;
-  // Longer noun used in the toggle's title/aria text; falls back to `label`.
+  // Longer noun used in the toggle's title/aria text; falls back to 'label'.
   toggleNoun?: string;
   color: string;
 }
@@ -50,10 +62,14 @@ const WaterfallToolbar = ({
   onNextError,
   chipsOff,
   onToggleChipFamily,
+  onAnalyzeTrace,
+  hasAnalysis,
+  analysisOutdated,
+  ollamaAnalysisEnabled,
 }: Props) => {
   const theme = useTheme();
 
-  // One key per badge family that can appear on a row. `ok` (the bar's default
+  // One key per badge family that can appear on a row. 'ok' (the bar's default
   // color) named every span and carried no information, so it's gone — red
   // still reads as the exception against the default bar color without it.
   // The other five double as row-density controls: click one to hide that
@@ -201,6 +217,29 @@ const WaterfallToolbar = ({
       {canToggleAll ? (
         <GhostButton onClick={onToggleAll}>
           {anyCollapsed ? 'Expand all' : 'Collapse all'}
+        </GhostButton>
+      ) : null}
+      {ollamaAnalysisEnabled ? (
+        <GhostButton onClick={onAnalyzeTrace} sx={{ px: 1.5 }}>
+          <AutoAwesomeIcon /> Analyze trace
+          {hasAnalysis ? (
+            <Box
+              component="span"
+              title={
+                analysisOutdated
+                  ? 'Analysis may be outdated — new activity since it was generated'
+                  : 'Analysis available'
+              }
+              sx={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                ml: 0.3,
+                bgcolor: analysisOutdated ? 'warning.main' : 'primary.main',
+                flexShrink: 0,
+              }}
+            />
+          ) : null}
         </GhostButton>
       ) : null}
       {errorCount ? (

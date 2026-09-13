@@ -1,0 +1,20 @@
+-- The human-written request this analysis judged, snapshotted at generation time.
+--
+-- It backs the "Better wording" card's before/after: the suggestion the model writes is only
+-- advice if the reader can see what it is replacing, and the "before" half must be the words that
+-- were actually typed rather than the model's recollection of them -- the answer contract already
+-- spends a rule ("Never invent prompt or response wording") guarding exactly that failure.
+--
+-- Stored rather than resolved on read for two reasons. GET /api/traces/{traceId}/analysis fires on
+-- every dialog open and is deliberately one cheap MAX(end_timestamp) probe; re-reading the prompt
+-- would mean a second query on that path, or the full log gather. And the value is free at write
+-- time -- TraceAnalysisPromptBuilder has already decided which text (if any) is judgeable prompt
+-- wording, and this is that same decision, so the card can never show a "before" the review was
+-- not actually given.
+--
+-- NULLABLE on purpose: a slash command, a <task-notification> envelope and a sub-agent run all
+-- have no request whose wording anyone wrote, which is exactly when the review drops its
+-- request-quality half. Null here means "no before to show", and every row written before this
+-- column existed reads the same way -- correct, since those analyses were generated against a
+-- contract that produced a paste-ready rewrite rather than a comparison.
+ALTER TABLE trace_analyses ADD COLUMN user_prompt TEXT;

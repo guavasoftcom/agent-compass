@@ -21,6 +21,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.guavasoft.agentcompass.ollama.OllamaUnavailableException;
+
 /**
  * Maps request-param constraint violations (e.g. {@code @Min}/{@code @Max} on a bare
  * {@code @RequestParam}) to a 400 response.
@@ -51,5 +53,16 @@ class ApiExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<String> handleIllegalArgument(IllegalArgumentException exception) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(exception.getMessage());
+    }
+
+    /**
+     * Ollama unreachable, returning an error, or producing no usable output — from either the
+     * "Analyze trace" endpoint's generate call. The message is written to be shown directly to the
+     * user (see {@link OllamaUnavailableException}), so it is returned verbatim as the body rather
+     * than wrapped.
+     */
+    @ExceptionHandler(OllamaUnavailableException.class)
+    ResponseEntity<String> handleOllamaUnavailable(OllamaUnavailableException exception) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(exception.getMessage());
     }
 }

@@ -39,6 +39,16 @@ export interface CostDriversCardProps {
 
 const NOT_RECORDED_LABEL = 'not recorded';
 
+/**
+ * Model dot geometry. 12px (up from 9px) per the 2026-09 styling handoff — the dot is the
+ * only thing tying a row to its Model mix donut slice, and at 9px the palette's adjacent
+ * hues were hard to tell apart against the zebra stripe. The soft halo is the same color at
+ * low alpha rather than a drop shadow, so it reads identically in light and dark mode.
+ */
+const MODEL_DOT_SIZE = 12;
+const MODEL_DOT_HALO_WIDTH = 3;
+const MODEL_DOT_HALO_OPACITY = 0.18;
+
 // Matches the trace waterfall's token tooltip (SpanWaterfallRow's SpanFullRateBadge):
 // bold mono header line + a label/value grid, no dividers.
 const tipGridSx = {
@@ -117,6 +127,7 @@ const CostDriversCard = ({ cells, isLoading, modelColorIndex }: CostDriversCardP
             <Box component="tbody">
               {cells.map((cell) => {
                 const share = totalCost === 0 ? 0 : (cell.costUsd / totalCost) * 100;
+                const modelDotColor = colorForIndex(modelColorIndex(cell.model));
                 const cacheHitRate = cacheHitRateLabel({
                   input: cell.inputTokens,
                   output: cell.outputTokens,
@@ -130,11 +141,12 @@ const CostDriversCard = ({ cells, isLoading, modelColorIndex }: CostDriversCardP
                       <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1.125 }}>
                         <Box
                           sx={{
-                            width: 9,
-                            height: 9,
-                            borderRadius: '3px',
+                            width: MODEL_DOT_SIZE,
+                            height: MODEL_DOT_SIZE,
+                            borderRadius: '4px',
                             flexShrink: 0,
-                            bgcolor: colorForIndex(modelColorIndex(cell.model)),
+                            bgcolor: modelDotColor,
+                            boxShadow: `0 0 0 ${MODEL_DOT_HALO_WIDTH}px ${alpha(modelDotColor, MODEL_DOT_HALO_OPACITY)}`,
                           }}
                         />
                         {shortModelName(cell.model)}

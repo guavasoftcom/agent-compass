@@ -22,8 +22,10 @@ import org.springframework.transaction.annotation.Transactional;
 import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.mapper.SpanMapper;
+import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.ToolLatency;
+import com.guavasoft.agentcompass.model.TraceCostBreakdown;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import java.time.Duration;
@@ -31,6 +33,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 
 @Service
@@ -47,13 +50,42 @@ public class TraceService {
   private final SpanRepository spanRepository;
   private final SpanMapper spanMapper;
   private final TuningProperties tuningProperties;
+  private final LogService logService;
+  private final SubagentCostAttributor subagentCostAttributor;
 
   public List<Span> spansForTrace(String traceId) {
     List<SpanEntity> spanEntities = spanRepository.findByTraceIdOrderByStartTimestampAsc(traceId);
     List<Span> spans = spanMapper.toSpans(spanEntities);
     applySpanCosts(traceId, spans);
     applySpanEfforts(traceId, spans);
+    applyCallNumbers(spans);
     return spans;
+  }
+
+  /**
+   * The per-subagent cost breakdown for a single trace -- deterministic, code-computed data (like
+   * {@code span_costs}/{@code span_efforts}), available whether or not an Ollama trace analysis
+   * has ever been generated for it. Reuses {@link #spansForTrace} and {@link LogService#logsForTrace}
+   * rather than issuing a new query -- the same spans/logs
+   * {@code TraceAnalysisPromptBuilder} already fetches for the (optional) Ollama analysis.
+   */
+  public TraceCostBreakdown costBreakdownForTrace(String traceId) {
+    List<Span> spans = spansForTrace(traceId);
+    List<LogRecord> logRecords = logService.logsForTrace(traceId);
+    return subagentCostAttributor.costBreakdown(spans, logRecords);
+  }
+
+  // The number the trace-analysis timeline gives each call, so a review citing
+  // "call 20" can be resolved to a waterfall row -- see TraceCallNumbering for
+  // why both sides read the rule from there. Pure arithmetic over the spans
+  // already in hand: no query, and no default, since a span that is not a call
+  // has no call number rather than a zeroth one.
+  private void applyCallNumbers(List<Span> spans) {
+    Map<String, Integer> callNumberBySpanId = TraceCallNumbering.callNumbersBySpanId(
+        spans, tuningProperties.getToolSpanName(), tuningProperties.getLlmRequestSpanName());
+    for (Span span : spans) {
+      span.setCallNumber(callNumberBySpanId.get(span.getSpanId()));
+    }
   }
 
   // One grouped query for the whole trace instead of one correlated subquery
@@ -87,6 +119,16 @@ public class TraceService {
       valueBySpanId.put((String) row[0], valueExtractor.apply(row));
     }
     return valueBySpanId;
+  }
+
+  /**
+   * Latest {@code end_timestamp} across every span in a trace, or empty if the trace currently
+   * has no spans. A cheap freshness probe -- {@code TraceAnalysisService#getStored} uses it to
+   * flag a stored analysis out-of-date without paying for {@code spansForTrace}'s cost/effort
+   * joins or {@code traceSummaryById}'s root-span resolution and cost LEFT JOIN LATERAL.
+   */
+  public Optional<Instant> latestSpanEndTimestamp(String traceId) {
+    return Optional.ofNullable(spanRepository.findLatestEndTimestampForTrace(traceId));
   }
 
   public List<ToolLatency> aggregateToolLatency(int minutes) {

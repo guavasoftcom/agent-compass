@@ -70,6 +70,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -156,6 +157,49 @@ public class LogService {
     List<SpanEntity> traceSpans = spanRepository.findByTraceIdOrderByStartTimestampAsc(traceId);
     resolveLeafSpans(logRecords, traceSpans);
     return logRecords;
+  }
+
+  /**
+   * The assistant turn that closed the conversation immediately before {@code traceStart} in the
+   * same session — the message a follow-up request is replying to. Empty is a normal outcome: the
+   * trace may open a session, carry no session id, or predate assistant-response logging.
+   *
+   * <p>Read by the trace-analysis prompt only, and only on an explicit regenerate, so it pays a
+   * single indexed lookup rather than riding on any dashboard read path.
+   */
+  public Optional<LogRecord> lastAssistantResponseBeforeTrace(
+      String sessionId, Instant traceStart, String traceId) {
+    if (sessionId == null || traceStart == null) {
+      return Optional.empty();
+    }
+    return logRecordRepository
+        .findLastAssistantResponseBefore(
+            tuningProperties.getAssistantResponseEventName(), sessionId, traceStart, traceId)
+        .map(logRecordMapper::toLogRecord);
+  }
+
+  /**
+   * The tool call that launched the background task whose completion woke this trace, found by the
+   * {@code tool_use_id} the {@code <task-notification>} envelope quotes back.
+   *
+   * <p>A notification trace is a continuation, not a request: the work it reports on was started in
+   * an earlier trace, and the call that started it is the one fact that makes the trace legible.
+   * Empty is a normal outcome — the prompt is not a notification, the envelope carries no id, or the
+   * dispatching turn has been purged. Like {@link #lastAssistantResponseBeforeTrace}, this is read
+   * by the trace-analysis prompt only and only on an explicit regenerate.
+   */
+  public Optional<LogRecord> dispatchingToolCall(String sessionId, Instant traceStart, String toolUseId) {
+    if (sessionId == null || traceStart == null || toolUseId == null || toolUseId.isBlank()) {
+      return Optional.empty();
+    }
+    return logRecordRepository
+        .findToolCallByToolUseId(
+            tuningProperties.getToolEventName(),
+            sessionId,
+            traceStart,
+            tuningProperties.getToolCallIdAttribute(),
+            toolUseId)
+        .map(logRecordMapper::toLogRecord);
   }
 
   // Claude Code stamps most event logs with a coarse span id: tool_result and

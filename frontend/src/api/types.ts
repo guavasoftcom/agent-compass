@@ -148,6 +148,13 @@ export interface SpanRow {
   // Null on non-model spans and on calls whose log recorded no effort (~2% of
   // recent traffic). Null means NOT RECORDED — never render it as a default level.
   effort?: string | null;
+  // This span's position in the call timeline the trace analysis is written
+  // against: 1-based across the trace's tool calls and model requests in start
+  // order, so a review citing "call 20" resolves to a row. Null on every other
+  // span (the interaction root, a tool call's execution and approval-wait
+  // children), which that timeline does not number. Deliberately NOT the trace
+  // detail waterfall's own index badge, which counts every span in DFS order.
+  callNumber?: number | null;
 }
 
 export interface ListResult<T> {
@@ -560,6 +567,42 @@ export interface CostBreakdown {
   /** Biggest line items: top sessions by spend, sorted descending. */
   topSessions: CostSessionShare[];
   bucketSeconds: number;
+}
+
+/**
+ * One subagent dispatch's cost, in trace (dispatch) order — one element of
+ * `TraceCostBreakdown.subagentCosts` (`GET /api/traces/{traceId}/cost-breakdown`).
+ * `dispatchCallNumber` is the same call-numbering space as `SpanRow.callNumber`
+ * (see TraceDetailPage/CLAUDE.md's call-number gotcha) — it names the `Agent`
+ * tool call that dispatched this subagent, not a span id, so a reader can jump
+ * to the waterfall row that started it.
+ */
+export interface SubagentCostBreakdown {
+  subagentLabel: string;
+  dispatchCallNumber: number;
+  costUsd: number;
+  modelCallCount: number;
+  toolCallCount: number;
+}
+
+/**
+ * Per-subagent cost breakdown for one trace (`GET /api/traces/{traceId}/cost-breakdown`).
+ * `subagentCosts` is in trace (dispatch) order and can be empty (a trace with no
+ * subagent dispatches). `measuredCostUsd` is the sum this endpoint can attribute
+ * (main loop + subagents + auxiliary) — it is NOT guaranteed to equal the
+ * trace's authoritative total (`TraceRow.totalCostUsd`, what the Analyze dialog's
+ * Cost section calls "Total"). Per this codebase's two-pipelines convention (see
+ * AGENTS.md / TraceDetailPage/CLAUDE.md's Cost section), never scale these parts
+ * to force them to reconcile with the total — render both, each labeled by what
+ * it is.
+ */
+export interface TraceCostBreakdown {
+  subagentCosts: SubagentCostBreakdown[];
+  mainLoopCostUsd: number;
+  mainLoopModelCallCount: number;
+  auxiliaryCostUsd: number;
+  auxiliaryModelCallCount: number;
+  measuredCostUsd: number;
 }
 
 export interface HookExecutionRow {

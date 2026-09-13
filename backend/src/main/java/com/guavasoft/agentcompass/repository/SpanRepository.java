@@ -55,6 +55,12 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             """, nativeQuery = true)
     List<Object[]> findSpanEffortsForTrace(@Param("traceId") String traceId);
 
+    // Cheap freshness probe for TraceAnalysisService#getStored: just the latest span activity
+    // for one trace, without traceSummaryById's root-span resolution and cost LEFT JOIN LATERAL.
+    // Null when the trace has no spans (MAX over an empty set).
+    @Query(value = "SELECT MAX(end_timestamp) FROM spans WHERE trace_id = :traceId", nativeQuery = true)
+    Instant findLatestEndTimestampForTrace(@Param("traceId") String traceId);
+
     // For each (session_id, reference_timestamp) pair in the exemplar list, find
     // the span whose start_timestamp is closest to the reference timestamp and
     // whose attributes carry the same session_id. Used by the token-distribution

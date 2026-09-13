@@ -221,8 +221,10 @@ All under `/api`, consumed by the React dashboard. Most accept a time window as 
 - `GET /api/metrics` — raw metric points, offset-paged (`page`/`size`, size clamped to 500, `totalCount` in the body); plus `/series`, `/catalog`, `/cost`, `/distribution`, and `/attributes`.
 - `GET /api/tool-activity/...` — `calls`, `calls/timeseries`, `calls/latency`, `context-footprint`, `failure-rates`, `denials`, `repeats`, `skill-usage`, `subagent-usage`, `hook-executions`. `skill-usage` and `subagent-usage` rows carry a `byModel` split of their call count. `context-footprint` ranks tools by the total bytes their results pushed into the context window; its `estimatedTokens` is `bytes / 4`, an estimate for ranking only, never billed spend.
 - `GET /api/traces` — trace list, cursor-paged (`before`/`after`, for the Stream / live-tail view) or offset-paged (`page`/`size`, for the Table view); plus `/api/traces/histogram` (throughput + p95 overlay), `/api/traces/facets` (filter-rail counts), `/api/traces/{traceId}` span detail, `/api/traces/{traceId}/summary` (one trace's aggregate row, including the user prompt that initiated it), and `/api/traces/{traceId}/logs` cross-signal log linkage.
+- `GET /api/traces/{traceId}/cost-breakdown` — per-subagent cost attribution for one trace, for the trace detail page's "Analyze trace" summary card.
+- `GET /api/traces/{traceId}/analysis` — the stored local-Ollama review of a trace, 404 if none has been generated yet; `POST` (same path) runs or regenerates it synchronously, and `POST /api/traces/{traceId}/analysis/stream` (`text/event-stream`) does the same while narrating progress. All three 503 with a plain-text body when Ollama is unreachable, errors, or the feature is disabled — see "Analyze trace" under Frontend pages below.
 - `GET /api/sessions` — session list, with `/summary`, `/token-usage`, and `/{sessionId}/prompts` (per-session prompt timeline with per-turn model / cost / token / tool rollups).
-- `GET /api/system/...` — operational diagnostics for the Settings page, the one group that takes no time window: `storage` (per-table heap / index / TOAST bytes, exact row counts, and a seven-day growth estimate), `ingest` (per-signal arrival freshness, volume, and cardinality), `build` (application / Java / Postgres versions plus the full Flyway history), `configuration` (every effective `tuning.*` value, flagged where overriding it also requires a migration), and `purge-preview?days=30` (a retention dry run — it measures and renders SQL, and never deletes). `DELETE /api/system/telemetry?days=30&confirmation=PURGE` is the one endpoint in the application that deletes data; the confirmation phrase is required and re-checked server-side.
+- `GET /api/system/...` — operational diagnostics for the Settings page, the one group that takes no time window: `storage` (per-table heap / index / TOAST bytes, exact row counts, and a seven-day growth estimate), `ingest` (per-signal arrival freshness, volume, and cardinality), `build` (application / Java / Postgres versions plus the full Flyway history), `configuration` (every effective `tuning.*` value, flagged where overriding it also requires a migration), and `purge-preview?days=30` (a retention dry run — it measures and renders SQL, and never deletes). `DELETE /api/system/telemetry?days=30&confirmation=PURGE` is the one endpoint in the application that deletes data; the confirmation phrase is required and re-checked server-side. `GET`/`PUT /api/system/ollama-settings`, `POST /api/system/ollama/test-connection`, and `POST /api/system/ollama/models` manage the local Ollama connection used by "Analyze trace" — a runtime-overridable counterpart to `ollama.*` in `application.yml`, unlike everything else in this group.
 
 ### Report
 
@@ -243,9 +245,9 @@ Sections: failures by root cause, path near-misses, redundant file reads, edit f
 - **Sessions** — session list with summary KPIs, per-session token usage, cache efficiency, and a first-prompt preview per row; clicking a row opens a detail drawer with its per-turn prompt timeline (model, cost, token breakdown, tool calls).
 - **Logs** — structured-event explorer: severity histogram with bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body.
 - **Metrics** — metric catalog and series explorer over raw `metric_points`.
-- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body. Rows carry the trace's model spend and its initiating prompt, and are sortable by cost; they expand to an inline span summary, with a full per-trace span detail (waterfall, with cost attributed per span) and cross-signal logs.
+- **Traces** — distributed-trace explorer: throughput histogram with p95 overlay and bar-click zoom, faceted filtering, full-text search, and a live-tailable Stream or paged Table body. Rows carry the trace's model spend and its initiating prompt, and are sortable by cost; they expand to an inline span summary, with a full per-trace span detail (waterfall, with cost attributed per span) and cross-signal logs. Its toolbar's **Analyze trace** button (off, and hidden, by default — enable it on the Settings page once a local Ollama server is reachable) opens an on-demand review of the trace by a local Ollama model — a markdown critique ("what went wrong", each finding ending in a paste-ready fix; optionally "what went well") streamed live via SSE and persisted per trace.
 - **Tuning Report** — renders the report as monospace text with a one-click "Copy markdown" button.
-- **Settings** — the dashboard's view of itself: storage per table (with the heap / index / TOAST split, since `log_records` keeps most of its bytes out of line), whether telemetry is still arriving per signal, the running versions and migration history, every effective `tuning.*` property with a warning on the ones that are duplicated as literals in migration SQL, and retention management. Read-only apart from the purge, which is the only action in the dashboard that deletes anything: it deletes whole sessions, never a session's rows piecemeal, and sits behind a type-to-confirm dialog restating the exact cutoff and per-table row counts.
+- **Settings** — the dashboard's view of itself: storage per table (with the heap / index / TOAST split, since `log_records` keeps most of its bytes out of line), whether telemetry is still arriving per signal, the running versions and migration history, every effective `tuning.*` property with a warning on the ones that are duplicated as literals in migration SQL, retention management, and the local Ollama connection (base URL/port, model, enabled toggle, and a test-connection probe) that powers Traces' "Analyze trace" feature. Read-only apart from the purge, which is the only action in the dashboard that deletes anything: it deletes whole sessions, never a session's rows piecemeal, and sits behind a type-to-confirm dialog restating the exact cutoff and per-table row counts.
 
 ## Reading the numbers
 
@@ -313,11 +315,11 @@ The backend ships with Testcontainers-backed integration tests that spin up a re
 
 ```sh
 # Backend — checkstyle + unit + Testcontainers integration tests.
-cd backend && ./mvnw verify
+./backend/mvnw -f backend/pom.xml verify
 
 # Frontend — vitest (bare `yarn test` is watch mode; test:coverage enforces the 80% thresholds).
-cd frontend && yarn test --run
-cd frontend && yarn test:coverage
+yarn --cwd frontend test --run
+yarn --cwd frontend test:coverage
 ```
 
 [.github/workflows/pull-request.yml](.github/workflows/pull-request.yml) runs the same checks on every pull request — `./mvnw verify` on JDK 21, plus frontend lint / typecheck / test / build on Node 22.
@@ -345,7 +347,8 @@ docker run --rm -p 18080:8080 \
 To build the same image locally, produce the artifacts first (the Dockerfile deliberately doesn't):
 
 ```sh
-cd frontend && yarn build && cd ../backend && ./mvnw clean package -DskipTests && cd ..
+yarn --cwd frontend build
+./backend/mvnw -f backend/pom.xml clean package -DskipTests
 docker build -t agent-compass:local .
 ```
 

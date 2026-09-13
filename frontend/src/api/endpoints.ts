@@ -40,6 +40,7 @@ import type {
   ToolLatencyRow,
   ToolRepeatStatRow,
   TokenUsageSummary,
+  TraceCostBreakdown,
   TraceRow,
   WindowSelection,
 } from './types';
@@ -180,6 +181,13 @@ export const fetchTraceLogs = (traceId: string): Promise<LogRow[]> =>
 // 404s when no spans carry the trace id.
 export const fetchTraceSummary = (traceId: string): Promise<TraceRow> =>
   getJson(`/api/traces/${encodeURIComponent(traceId)}/summary`);
+
+// Per-subagent cost breakdown for one trace — same 404-on-unknown-trace shape
+// as fetchTraceSummary. Not window-scoped.
+export const fetchTraceCostBreakdown = (
+  traceId: string,
+): Promise<TraceCostBreakdown> =>
+  getJson(`/api/traces/${encodeURIComponent(traceId)}/cost-breakdown`);
 
 export const fetchCostBreakdown = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },
