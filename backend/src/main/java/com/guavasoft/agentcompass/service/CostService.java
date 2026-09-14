@@ -143,7 +143,6 @@ public class CostService {
 
     List<Object[]> subagentCostRows = logRecordRepository.aggregateSubagentCostByModelInRange(
         tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
         tuningProperties.getSubagentToolName(),
         tuningProperties.getSubagentTypeAttribute(),
         tuningProperties.getDefaultSubagentType(),
@@ -185,16 +184,22 @@ public class CostService {
         DEFAULT_TOP_SESSION_LIMIT);
     List<String> topSessionIds = topSessionRows.stream().map(row -> (String) row[0]).toList();
 
-    // Reuses the Sessions grid's counts query purely for its firstUserPrompt column,
-    // the same idiom MetricService#worstCacheEfficiencySessions follows -- the ranking
-    // already comes back one row per session, so this is a lookup keyed on those ids,
-    // not a second ranking.
+    // A lookup keyed on the ranking's own session ids -- it already comes back one row
+    // per session, so there is no second ranking to write.
+    //
+    // Deliberately NOT the Sessions grid's aggregateSessionCounts, which this used to
+    // call "purely for its firstUserPrompt column" (the idiom
+    // MetricService#worstCacheEfficiencySessions still follows). That query is
+    // unwindowed by design, matches every event_name, and reads three jsonb keys per
+    // row, so borrowing it for one column dominated this whole endpoint: 3544 ms of a
+    // ~4.2 s breakdown on a 30-day window, against 18 ms for the purpose-built query
+    // (see its own comment for the measurements). Nothing else on this page needs a
+    // per-session tool-call or denial count, so the three counts it also returned were
+    // being computed and discarded.
     Map<String, String> firstUserPromptBySessionId = topSessionIds.isEmpty()
         ? Map.of()
-        : buildFirstUserPromptMap(logRecordRepository.aggregateSessionCounts(
+        : buildFirstUserPromptMap(logRecordRepository.aggregateFirstUserPromptsForSessions(
             topSessionIds,
-            tuningProperties.getToolEventName(),
-            tuningProperties.getToolDecisionEventName(),
             tuningProperties.getUserPromptEventName(),
             tuningProperties.getPromptAttribute()));
 
@@ -340,12 +345,15 @@ public class CostService {
         .toList();
   }
 
-  // aggregateSessionCounts' row shape is (session_id, tool_call_count, denial_count,
-  // user_prompt_count, first_user_prompt) -- only the id and the last column matter here.
+  // aggregateFirstUserPromptsForSessions' row shape is (session_id, first_user_prompt).
+  // A session whose prompts are all empty or absent has no row at all rather than a null
+  // prompt, so buildTopSessions' map lookup returning null IS the "no prompt captured"
+  // case the frontend renders -- same outcome the old five-column shape gave via a null
+  // in its last column.
   private static Map<String, String> buildFirstUserPromptMap(List<Object[]> rows) {
     Map<String, String> firstUserPromptBySessionId = new LinkedHashMap<>(rows.size());
     for (Object[] row : rows) {
-      firstUserPromptBySessionId.put((String) row[0], (String) row[4]);
+      firstUserPromptBySessionId.put((String) row[0], (String) row[1]);
     }
     return firstUserPromptBySessionId;
   }

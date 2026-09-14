@@ -1085,7 +1085,6 @@ public class LogService {
         end);
     List<Object[]> costRows = logRecordRepository.aggregateSubagentCostByModelInRange(
         tuningProperties.getToolEventName(),
-        tuningProperties.getToolAttribute(),
         tuningProperties.getSubagentToolName(),
         tuningProperties.getSubagentTypeAttribute(),
         tuningProperties.getDefaultSubagentType(),

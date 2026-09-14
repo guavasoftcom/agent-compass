@@ -837,7 +837,16 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   //   1. subagent_dispatches: one row per :subagentToolName tool_result, carrying its
   //      tool_use_id and the resolved identifier -- the same tool_input JSON fallback
   //      + :defaultIdentifier default aggregateToolInvocationsByInnerAttributeAndModelInRange
-  //      uses, so the two queries agree on how a subagent is named.
+  //      uses, so the two queries agree on how a subagent is named. The dispatch filter
+  //      reads the V17 tool_name COLUMN, not attributes ->> :toolAttribute: as an
+  //      expression it was unindexable, so every tool_result row in the window had its
+  //      attributes detoasted just to be discarded (16,977 of 17,134 on the live
+  //      database). Measured over a 30-day window, warm cache: that scan went 274 ms /
+  //      14,640 heap blocks -> 21 ms / 273, taking the whole query 372 ms -> 129 ms with
+  //      byte-identical output. Same fix, same reasoning, as V16/V17 applied to the Logs
+  //      page -- and the same consequence AGENTS.md already records: overriding
+  //      tuning.tool-attribute away from "tool_name" needs a migration regenerating that
+  //      column, which is why :toolAttribute is no longer a parameter here.
   //   2. LEFT JOIN to the spans row that IS this dispatch's own execution (name =
   //      :toolExecutionSpanName, :toolCallIdAttribute match) -- the span every LLM call
   //      the subagent itself makes hangs directly beneath.
@@ -878,7 +887,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             :defaultIdentifier)                                        AS identifier
         FROM log_records
         WHERE event_name = :eventName
-          AND attributes ->> :toolAttribute = :toolName
+          AND tool_name = :toolName
           AND timestamp >= :start
           AND timestamp <= :end
       ),
@@ -909,7 +918,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       """, nativeQuery = true)
   List<Object[]> aggregateSubagentCostByModelInRange(
       @Param("eventName") String eventName,
-      @Param("toolAttribute") String toolAttribute,
       @Param("toolName") String toolName,
       @Param("innerAttribute") String innerAttribute,
       @Param("defaultIdentifier") String defaultIdentifier,
@@ -1868,6 +1876,50 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionIds") Collection<String> sessionIds,
       @Param("toolEventName") String toolEventName,
       @Param("toolDecisionEventName") String toolDecisionEventName,
+      @Param("userPromptEventName") String userPromptEventName,
+      @Param("promptAttribute") String promptAttribute);
+
+  // Each given session's chronologically-first user prompt body, and nothing else.
+  //
+  // Exists because aggregateSessionCounts above is the wrong query for a caller that
+  // wants only its last column. That one is deliberately NOT window-scoped (a session's
+  // lifetime counts must not be clipped to the dashboard's window), reads THREE separate
+  // jsonb keys per row, and matches every event_name -- so asking it for a prompt makes
+  // it visit every log record those sessions ever emitted. Measured on the live database
+  // (the Cost page's 10 top-spend sessions over a 30-day window, warm cache):
+  // 3544 ms and 421K buffers for aggregateSessionCounts against 18 ms and 573 buffers
+  // for this query, identical first_user_prompt output. The gap is detoast, not row
+  // count: log_records is 253 MB of heap against 7916 MB of TOAST, so each of those
+  // three extractions pulls a whole attribute payload -- prompt bodies included -- back
+  // through the toast fetcher, for 25,434 rows where this query touches 152.
+  //
+  // Three things make it cheap, and all three are what the general query cannot do:
+  // event_name = :userPromptEventName narrows to the ~1% of rows that can carry a prompt
+  // at all (V16 column, so the filter is indexed rather than a per-row detoast);
+  // session_id is the V30 generated column rather than attributes ->> 'session.id', so
+  // the IN-list rides idx_log_records_session_id_col_ts; and DISTINCT ON stops at one
+  // row per session instead of aggregating every match.
+  //
+  // DISTINCT ON + ORDER BY (session_id, timestamp ASC) picks the same row
+  // aggregateSessionCounts' ARRAY_AGG(... ORDER BY timestamp ASC)[1] picks, and the
+  // whitespace-collapse + 200-char truncation are copied verbatim from it so a prompt
+  // preview reads identically whichever query produced it -- the service never holds an
+  // untruncated prompt body either way. Sessions whose prompts all have an empty/absent
+  // :promptAttribute are filtered out rather than returning a null prompt, matching the
+  // general query's FILTER clause; the service defaults a missing entry to null.
+  @Query(value = """
+      SELECT DISTINCT ON (session_id)
+          session_id                                                               AS session_id,
+          left(regexp_replace(NULLIF(attributes ->> :promptAttribute, ''), '\\s+', ' ', 'g'), 200)
+                                                                                   AS first_user_prompt
+      FROM log_records
+      WHERE event_name = :userPromptEventName
+        AND session_id IN :sessionIds
+        AND NULLIF(attributes ->> :promptAttribute, '') IS NOT NULL
+      ORDER BY session_id, timestamp ASC
+      """, nativeQuery = true)
+  List<Object[]> aggregateFirstUserPromptsForSessions(
+      @Param("sessionIds") Collection<String> sessionIds,
       @Param("userPromptEventName") String userPromptEventName,
       @Param("promptAttribute") String promptAttribute);
 

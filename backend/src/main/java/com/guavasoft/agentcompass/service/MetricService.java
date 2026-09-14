@@ -426,19 +426,24 @@ public class MetricService {
         minimumInputSideTokens,
         PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT));
 
-    // Reuses the Sessions grid's counts query purely for its firstUserPrompt
-    // column -- the ranking already comes back one row per session, so there is
-    // no second aggregation to write, just a lookup keyed on the same session ids.
+    // A lookup keyed on the ranking's own session ids -- it already comes back one
+    // row per session, so there is no second aggregation to write.
+    //
+    // This used to reuse the Sessions grid's aggregateSessionCounts "purely for its
+    // firstUserPrompt column" and paid dearly for it: that query is unwindowed by
+    // design, matches every event_name, and reads three jsonb keys per row, so a
+    // 10-session prompt lookup visited every log record those sessions ever emitted
+    // -- 3544 ms and 421K buffers on the live database, against 18 ms and 573 for
+    // the purpose-built query. Only the prompt was ever read here; the three counts
+    // it also computed were discarded. See aggregateFirstUserPromptsForSessions'
+    // own comment for the measurements.
     List<String> sessionIds = rows.stream().map(row -> (String) row[0]).toList();
-    Map<String, SessionCounts> countsBySessionId = sessionIds.isEmpty()
+    Map<String, String> firstUserPromptBySessionId = sessionIds.isEmpty()
         ? Map.of()
-        : buildSessionCountsMap(logRecordRepository.aggregateSessionCounts(
+        : buildFirstUserPromptMap(logRecordRepository.aggregateFirstUserPromptsForSessions(
             sessionIds,
-            tuningProperties.getToolEventName(),
-            tuningProperties.getToolDecisionEventName(),
             tuningProperties.getUserPromptEventName(),
             tuningProperties.getPromptAttribute()));
-    SessionCounts zeroCounts = new SessionCounts(0L, 0L, 0L, null);
 
     // Row shape: session_id, cache_efficiency, cache_read_tokens, input_side_tokens
     // (read only by ORDER BY, not mapped into the record -- SessionCacheEfficiency
@@ -457,7 +462,7 @@ public class MetricService {
           ((Number) row[6]).longValue(),
           ((Number) row[7]).doubleValue(),
           (Instant) row[8],
-          countsBySessionId.getOrDefault(sessionId, zeroCounts).firstUserPrompt()));
+          firstUserPromptBySessionId.get(sessionId)));
     }
     return sessions;
   }
@@ -587,6 +592,18 @@ public class MetricService {
   // and the fresh/resume KPI split stay consistent.
   private static String normalizeStartType(String rawStartType) {
     return START_TYPE_RESUME.equals(rawStartType) ? START_TYPE_RESUME : START_TYPE_FRESH;
+  }
+
+  // aggregateFirstUserPromptsForSessions' row shape is (session_id, first_user_prompt).
+  // A session whose prompts are all empty or absent has no row rather than a null prompt,
+  // so a missing key reads back as null -- the same "no prompt captured" value the wider
+  // counts query produced via a null in its last column.
+  private static Map<String, String> buildFirstUserPromptMap(List<Object[]> rows) {
+    Map<String, String> firstUserPromptBySessionId = new LinkedHashMap<>(rows.size());
+    for (Object[] row : rows) {
+      firstUserPromptBySessionId.put((String) row[0], (String) row[1]);
+    }
+    return firstUserPromptBySessionId;
   }
 
   private static Map<String, SessionCounts> buildSessionCountsMap(List<Object[]> rows) {
