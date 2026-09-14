@@ -285,6 +285,19 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // exclusions, while the single 'total' row is kept unconditionally, matching
   // aggregateTotalTokens' unfiltered semantics.
   //
+  // value_delta IS DISTINCT FROM 0 is the same performance filter V32/V33 document
+  // (see aggregateMetricsTotalsCombined for the full argument): it cannot change a
+  // SUM, and it takes this scan off the ghost rows that are 99.45% of this table.
+  // It made GET /api/sessions/token-usage 12.78 s -> 0.06 s on the live database.
+  // One consequence specific to GROUPING SETS: a (bucket, token_type) pair or a
+  // model whose every row in the window is a ghost now produces no row at all where
+  // it used to produce one summing to 0. That is safe because these two grouping
+  // sets were ALREADY sparse by contract -- a pair or model only appeared when a
+  // stream advanced there, and the service zero-fills the gaps (see the paragraph
+  // below) -- so an all-ghost group was indistinguishable from an absent one to
+  // every caller. The 'total' grouping set always returns exactly one row either
+  // way, since GROUPING SETS ((), ...) emits the grand total even over no rows.
+  //
   // row_type discriminates which grouping set produced a row via GROUPING(),
   // same idiom as aggregateCostBreakdown. Bucket rows sort by (bucket,
   // token_type) ascending (matching the old aggregateTokenUsageTimeseriesInRange
@@ -315,6 +328,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           value_delta
         FROM metric_points
         WHERE metric_name = :metricName
+          AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :start
           AND timestamp <= :end
       ) AS token_rows
@@ -460,6 +474,31 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // of the four known kinds (unexpected/future token types) are silently excluded
   // from the breakdown and therefore from the row's total -- same trade-off the
   // dashboard's TokenUsageSummary breakdown already makes.
+  // The totals and tokens laterals both carry "value_delta IS DISTINCT FROM 0", which is what
+  // lets them ride V32's partial index -- without it this query timed out on the live database
+  // (15,424 ms against the pooled 15s statement_timeout; 18.9 ms after). See V32's own header
+  // for the full measurements and for why a filter without the index bought almost nothing.
+  // Three notes on why the filter is safe, because it is NOT obviously a no-op:
+  //
+  //   1. Every SUM is unaffected by construction -- a zero-delta row contributes exactly 0 --
+  //      and last_seen already carried this exact filter as its own FILTER clause. Verified on
+  //      live data: the four token sums come back identical (e.g. input 983,031 either way).
+  //   2. first_seen is the one output that reads every row rather than summing, and it is the
+  //      reason the filter needs an argument rather than an assertion. MIN(COALESCE(
+  //      start_timestamp, timestamp)) is a fact about when the session's STREAM opened, and a
+  //      ghost row belongs to the same stream and carries the same start_timestamp, so dropping
+  //      ghosts cannot move it -- unless a session has NO non-zero row at all, in which case
+  //      first_seen would go null. Such sessions exist (13 on the live database) but can never
+  //      reach this lateral: session_window has always required a non-zero row to admit a
+  //      session at all. Measured across all 324 sessions that do reach it, first_seen is
+  //      identical to the unfiltered value, drift 0.000000s.
+  //   3. The cost/active sums can differ in their last bit or two, and that is expected rather
+  //      than a defect. double precision addition is not associative, and the partial index
+  //      returns rows in index order where the old bitmap heap scan returned them in physical
+  //      order, so the same addends accumulate differently. Measured over the same window: max
+  //      absolute difference 2.8e-14 USD, max relative 3.0e-16 (about one ULP), and the
+  //      window's own total is unchanged at $1390.4079862500005. Do not "fix" this by summing
+  //      as numeric -- that changes the column types the service and DTOs read.
   @Query(value = """
       WITH session_window AS (
         SELECT
@@ -499,6 +538,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         FROM metric_points p
         WHERE p.session_id = w.session_id
           AND p.metric_name IN (:costMetric, :activeTimeMetric)
+          AND p.value_delta IS DISTINCT FROM 0
       ) totals
       LEFT JOIN LATERAL (
         SELECT
@@ -514,6 +554,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         FROM metric_points tp
         WHERE tp.session_id = w.session_id
           AND tp.metric_name = :tokenMetric
+          AND tp.value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR tp.timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR tp.timestamp <= :endTimestamp)
       ) tokens ON true
@@ -667,9 +708,20 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen,
           SUM(p.value_delta)
             FILTER (WHERE p.metric_name = :costMetric AND p.value_double IS NOT NULL) AS cost_usd
+        -- NOTE: no apostrophes in this comment -- Spring Data tracks quote state without
+        -- skipping SQL line comments, so one here breaks repository creation at startup.
+        -- p.value_delta IS DISTINCT FROM 0 lets this otherwise unbounded per-session join
+        -- ride the V32 partial index. Both outputs are unaffected: last_seen already
+        -- carries the identical test, and cost_usd is a SUM, to which a ghost row
+        -- contributes exactly 0. Unlike the session_span joins elsewhere in this class
+        -- there is no MIN(start_timestamp) here, so the first_seen argument those need
+        -- does not even arise. A session whose cost rows are all ghosts now produces no
+        -- row here rather than one holding 0.0 and a NULL last_seen; the outer LEFT JOIN
+        -- plus COALESCE(st.cost_usd, 0) turns that back into the same 0.0 and NULL.
         FROM session_window w
         JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
+          AND p.value_delta IS DISTINCT FROM 0
         GROUP BY 1
       ),
       token_per_session AS (
@@ -687,6 +739,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         FROM metric_points
         WHERE metric_name = :tokenMetric
           AND session_id IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         GROUP BY 1
@@ -860,6 +913,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // exactly on :from counts in the current total only, never in both (the two
   // windows used to both include timestamp = :from, double-counting that
   // boundary point).
+  //
+  // The non-zero filter (V32/V33; see aggregateMetricsTotalsCombined for the argument)
+  // matters more here than the row counts above suggest, because this query spans TWO
+  // windows: it was the last unfiltered scan on the Tokens page and held
+  // GET /api/sessions/token-usage at 1.55 s after the page's other two queries had
+  // dropped to 20 ms and 0.4 s. Both outputs are SUMs, so the filter cannot change them.
   @Query(value = """
       SELECT
         COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from AND timestamp <= :to), 0)::double precision
@@ -870,6 +929,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       WHERE metric_name = :metricName
         AND session_id IS NOT NULL
         AND value_double IS NOT NULL
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :priorFrom
         AND timestamp <= :to
       """, nativeQuery = true)
@@ -895,6 +955,13 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // aggregateCostTrend) and model rows sort by spend descending (matching the
   // old aggregateCostByModel), so the service's list-order-dependent colorIndex
   // assignment for the model breakdown is unaffected by the merge.
+  //
+  // Carries the same value_delta IS DISTINCT FROM 0 performance filter, on the same
+  // reasoning as aggregateTokenUsageBreakdown above -- including that its bucket and
+  // model grouping sets are already sparse-by-contract, so a group losing its last
+  // non-ghost row simply stops appearing rather than reporting a spurious 0. Note the
+  // COALESCE(attributes ->> 'model', 'unknown') means the model grouping set never
+  // emits a NULL model, so no Java-side null filtering depends on group presence here.
   @Query(value = """
       SELECT
         CASE
@@ -914,6 +981,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         WHERE metric_name = :metricName
           AND session_id IS NOT NULL
           AND value_double IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :from
           AND timestamp <= :to
       ) AS cost_rows
@@ -938,6 +1006,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       SELECT COALESCE(SUM(value_delta), 0)::bigint AS total_tokens
       FROM metric_points
       WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :start
         AND timestamp <= :end
       """, nativeQuery = true)
@@ -1396,6 +1465,28 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // cast to double precision on every leg (not bigint on the token legs) purely so
   // UNION ALL's legs agree on a type; the service already reads every current/prior total
   // in this class through the same doubleAt helper.
+  //
+  // THE NON-ZERO FILTER ON EVERY LEG IS A PERFORMANCE FIX, AND IT IS A NO-OP ON THE RESULT.
+  // Shared by all four Trend Report queries in this class (this one,
+  // aggregateSessionCountAndDurationCurrentAndPrior, aggregateMetricsSparklinesCombined,
+  // aggregateTokenTypeSparklinesCombined); see V33 for the measurements -- /api/trends/cost was
+  // 9.52 s and /api/trends/token-efficiency 11.96 s before it, this query alone 6828 ms -> 194 ms.
+  // Only 46,995 of 8,586,064 metric_points rows carry a non-zero value_delta (0.55%), so without
+  // the filter every one of these SUMs read ~180x the rows it needed. The reason it went unnoticed
+  // is the reason backend/CLAUDE.md flags this trap: a zero-delta row contributes exactly 0 to a
+  // SUM, so the numbers were always right while the row set was badly wrong.
+  //
+  // Two consequences worth knowing before editing any of the four:
+  //   1. A GROUP BY leg can now omit a group entirely where it previously emitted an explicit 0
+  //      (a token_type whose every row in the window is a ghost). That is safe here because
+  //      TrendService#queryMetricsTotalsCombined initialises every accumulator to 0.0 and only
+  //      overwrites it when a row arrives -- a missing group reads as zero, which is its true
+  //      value. Keep that property if you add a leg.
+  //   2. The cost sums can move in their last bit or two: double precision addition is not
+  //      associative and the index returns rows in a different order than the old heap scan.
+  //      Measured over a fixed 30-day window, the prior-period cost total went
+  //      1391.3704928500024 -> 1391.3704928500008 (1.6e-12 absolute, ~1.1e-15 relative) while
+  //      every token total was identical to the digit. Same effect V32 documents; not a defect.
   @Query(value = """
       SELECT
         'cost'       AS row_type,
@@ -1408,6 +1499,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       WHERE metric_name = :costMetric
         AND session_id IS NOT NULL
         AND value_double IS NOT NULL
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :priorFrom
         AND timestamp <= :to
 
@@ -1422,6 +1514,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AS prior_total
       FROM metric_points
       WHERE metric_name = :tokenMetric
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :priorFrom
         AND timestamp <= :to
 
@@ -1436,6 +1529,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AS prior_total
       FROM metric_points
       WHERE metric_name = :tokenMetric
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :priorFrom
         AND timestamp <= :to
       GROUP BY token_type
@@ -1479,6 +1573,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
           AND session_id IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :priorFrom
           AND timestamp <= :to
       ),
@@ -1496,8 +1591,18 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           MIN(COALESCE(p.start_timestamp, p.timestamp)) AS first_seen,
           MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
         FROM session_window w
+        -- NOTE: no apostrophes in this comment -- Spring Data tracks quote state without
+        -- skipping SQL line comments, so one here breaks repository creation at startup.
+        -- p.value_delta IS DISTINCT FROM 0 is what lets this otherwise unbounded
+        -- per-session join ride the V32 partial index. It is safe for last_seen (which
+        -- already carries the same test) and for first_seen for the reason the
+        -- aggregateSessionSummaries comment sets out at length: a ghost row shares the
+        -- start_timestamp of its own stream so it cannot move the MIN, and the only case
+        -- that could -- a session with no non-zero row at all -- cannot reach here,
+        -- because session_window admits a session only on a non-zero increment.
         JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
+          AND p.value_delta IS DISTINCT FROM 0
         GROUP BY w.session_id, w.period
       )
       SELECT
@@ -1686,6 +1791,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             value_delta
           FROM metric_points
           WHERE metric_name IN (:costMetric, :tokenMetric)
+            AND value_delta IS DISTINCT FROM 0
             AND timestamp >= :priorFrom
             AND timestamp <= :to
         ) AS labelled_rows
@@ -1708,6 +1814,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         FROM metric_points
         WHERE metric_name IN (:costMetric, :activeTimeMetric)
           AND session_id IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :priorFrom
           AND timestamp <= :to
       ),
@@ -1726,8 +1833,18 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           MIN(COALESCE(p.start_timestamp, p.timestamp))                    AS first_seen,
           MAX(p.timestamp) FILTER (WHERE p.value_delta IS DISTINCT FROM 0) AS last_seen
         FROM session_window w
+        -- NOTE: no apostrophes in this comment -- Spring Data tracks quote state without
+        -- skipping SQL line comments, so one here breaks repository creation at startup.
+        -- p.value_delta IS DISTINCT FROM 0 is what lets this otherwise unbounded
+        -- per-session join ride the V32 partial index. It is safe for last_seen (which
+        -- already carries the same test) and for first_seen for the reason the
+        -- aggregateSessionSummaries comment sets out at length: a ghost row shares the
+        -- start_timestamp of its own stream so it cannot move the MIN, and the only case
+        -- that could -- a session with no non-zero row at all -- cannot reach here,
+        -- because session_window admits a session only on a non-zero increment.
         JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
+          AND p.value_delta IS DISTINCT FROM 0
         GROUP BY w.session_id, w.period, w.bucket_index
       ),
       session_bucketed AS (
@@ -1788,6 +1905,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           value_delta
         FROM metric_points
         WHERE metric_name = :tokenMetric
+          AND value_delta IS DISTINCT FROM 0
           AND timestamp >= :priorFrom
           AND timestamp <= :to
       )
