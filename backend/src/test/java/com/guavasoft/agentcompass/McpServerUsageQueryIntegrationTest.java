@@ -91,6 +91,10 @@ class McpServerUsageQueryIntegrationTest {
     private static final String ATTR_DECISION = "decision";
     private static final String ATTR_SOURCE = "source";
     private static final String ATTR_TOOL_INPUT = "tool_input";
+    private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
+
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     private static final String EVENT_TOOL_RESULT = "tool_result";
     private static final String EVENT_TOOL_DECISION = "tool_decision";
@@ -151,7 +155,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void mcpServerUsageSplitsCallsByServerAndTool() {
-        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd);
+        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows).extracting(McpServerUsage::server)
                 .contains(SERVER_PLAYWRIGHT, SERVER_CODE_GRAPH, "unknown");
@@ -173,7 +177,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void blankToolParametersBucketsUnderUnknownRatherThanBeingDropped() {
-        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd);
+        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null);
 
         McpServerUsage unknown = singleRowFor(rows, "unknown");
         assertThat(unknown.tool()).isEqualTo("unknown");
@@ -182,8 +186,42 @@ class McpServerUsageQueryIntegrationTest {
     }
 
     @Test
+    void mcpServerUsageRepositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
+        // None of seed()'s rows carry vcs.repository.url.full, so repositoryUrl = null must read
+        // exactly what mcpServerUsageSplitsCallsByServerAndTool already asserts unfiltered.
+        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null);
+
+        McpServerUsage playwright = singleRowFor(rows, SERVER_PLAYWRIGHT);
+        assertThat(playwright.calls()).isEqualTo(3L);
+    }
+
+    @Test
+    void mcpServerUsageIsScopedToItsOwnRepositoryAndExcludedFromAnotherRepositorysWindow() {
+        saveMcpToolResult(660, SERVER_PLAYWRIGHT, TOOL_BROWSER_EVALUATE, true, 1_000L, 4_000L,
+                null, null, REPOSITORY_A);
+        saveMcpToolResult(720, SERVER_PLAYWRIGHT, TOOL_BROWSER_EVALUATE, true, 1_000L, 9_000L,
+                null, null, REPOSITORY_B);
+
+        List<McpServerUsage> scopedToRepositoryA =
+                logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, REPOSITORY_A);
+        List<McpServerUsage> scopedToRepositoryB =
+                logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, REPOSITORY_B);
+
+        // Scoped to A: only the row attributed to A is visible -- none of seed()'s unattributed
+        // rows (repository_url NULL) nor B's row, since (:repositoryUrl IS NULL OR
+        // repository_url = :repositoryUrl) excludes a NULL row once :repositoryUrl is bound.
+        McpServerUsage playwrightA = singleRowFor(scopedToRepositoryA, SERVER_PLAYWRIGHT);
+        assertThat(playwrightA.calls()).isEqualTo(1L);
+        assertThat(playwrightA.totalBytes()).isEqualTo(4_000L);
+
+        McpServerUsage playwrightB = singleRowFor(scopedToRepositoryB, SERVER_PLAYWRIGHT);
+        assertThat(playwrightB.calls()).isEqualTo(1L);
+        assertThat(playwrightB.totalBytes()).isEqualTo(9_000L);
+    }
+
+    @Test
     void aggregateToolCallsSplitsMcpRowsByServerInsteadOfCollapsing() {
-        List<ToolCallCount> rows = logService.aggregateToolCallsInRange(windowStart, windowEnd);
+        List<ToolCallCount> rows = logService.aggregateToolCallsInRange(windowStart, windowEnd, null);
 
         assertThat(rows).extracting(ToolCallCount::getTool)
                 .contains("mcp:" + SERVER_PLAYWRIGHT, "mcp:" + SERVER_CODE_GRAPH, "mcp:unknown", TOOL_BASH)
@@ -195,7 +233,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolFailureRatesSplitsFailuresByServer() {
-        List<ToolFailureRate> rows = logService.aggregateToolFailureRatesInRange(windowStart, windowEnd);
+        List<ToolFailureRate> rows = logService.aggregateToolFailureRatesInRange(windowStart, windowEnd, null);
 
         ToolFailureRate playwright = rows.stream()
                 .filter(row -> ("mcp:" + SERVER_PLAYWRIGHT).equals(row.tool()))
@@ -218,7 +256,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolDenialsInRangeSplitsMcpDenialsByServer() {
-        List<ToolDenialCount> rows = logService.aggregateToolDenialsInRange(windowStart, windowEnd);
+        List<ToolDenialCount> rows = logService.aggregateToolDenialsInRange(windowStart, windowEnd, null);
 
         assertThat(rows).anySatisfy(row -> {
             assertThat(row.tool()).isEqualTo("mcp:" + SERVER_PLAYWRIGHT);
@@ -229,7 +267,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolContextFootprintInRangeSplitsBytesByServer() {
-        List<ToolContextFootprint> rows = logService.aggregateToolContextFootprintInRange(windowStart, windowEnd);
+        List<ToolContextFootprint> rows = logService.aggregateToolContextFootprintInRange(windowStart, windowEnd, null);
 
         ToolContextFootprint playwright = rows.stream()
                 .filter(row -> ("mcp:" + SERVER_PLAYWRIGHT).equals(row.tool()))
@@ -265,7 +303,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void spanAggregateToolLatencyInRangeCollapsesRawMcpSpanNamesToOneRowPerServer() {
-        List<ToolLatency> rows = traceService.aggregateToolLatencyInRange(windowStart, windowEnd);
+        List<ToolLatency> rows = traceService.aggregateToolLatencyInRange(windowStart, windowEnd, null);
 
         assertThat(rows).extracting(ToolLatency::tool)
                 .contains("mcp:" + SERVER_PLAYWRIGHT, TOOL_BASH)
@@ -295,6 +333,13 @@ class McpServerUsageQueryIntegrationTest {
                 resultBytes, errorType, errorMessage, null);
     }
 
+    private void saveMcpToolResult(
+            int offsetSeconds, String server, String tool, boolean success, Long durationMs, Long resultBytes,
+            String errorType, String errorMessage, String repositoryUrl) {
+        saveToolResult(offsetSeconds, MCP_TOOL_NAME, mcpParametersJson(server, tool), success, durationMs,
+                resultBytes, errorType, errorMessage, null, repositoryUrl);
+    }
+
     private void saveMcpToolDecision(int offsetSeconds, String server, String tool, String source) {
         Instant timestamp = windowStart.plusSeconds(offsetSeconds);
         LogRecordEntity entity = new LogRecordEntity();
@@ -318,6 +363,13 @@ class McpServerUsageQueryIntegrationTest {
     private void saveToolResult(
             int offsetSeconds, String toolName, String toolParametersJson, boolean success, Long durationMs,
             Long resultBytes, String errorType, String errorMessage, String toolInputJson) {
+        saveToolResult(offsetSeconds, toolName, toolParametersJson, success, durationMs, resultBytes, errorType,
+                errorMessage, toolInputJson, null);
+    }
+
+    private void saveToolResult(
+            int offsetSeconds, String toolName, String toolParametersJson, boolean success, Long durationMs,
+            Long resultBytes, String errorType, String errorMessage, String toolInputJson, String repositoryUrl) {
         Instant timestamp = windowStart.plusSeconds(offsetSeconds);
         LogRecordEntity entity = new LogRecordEntity();
         entity.setTimestamp(timestamp);
@@ -347,6 +399,9 @@ class McpServerUsageQueryIntegrationTest {
         }
         if (toolInputJson != null) {
             attributes.put(ATTR_TOOL_INPUT, toolInputJson);
+        }
+        if (repositoryUrl != null) {
+            attributes.put(ATTR_REPOSITORY_URL, repositoryUrl);
         }
         entity.setAttributes(attributes);
         entity.setResourceAttributes(Map.of("service.name", "claude-code"));

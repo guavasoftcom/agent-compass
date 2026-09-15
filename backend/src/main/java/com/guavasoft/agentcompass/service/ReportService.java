@@ -105,19 +105,19 @@ public class ReportService {
     this.bashAntipatternReplacements = Map.copyOf(tuningProperties.getBashAntipatternReplacements());
   }
 
-  public String renderMarkdown(int minutes) {
+  public String renderMarkdown(int minutes, String repositoryUrl) {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
-    return renderForWindow(start, end, minutes);
+    return renderForWindow(start, end, minutes, repositoryUrl);
   }
 
-  public String renderMarkdownInRange(Instant start, Instant end) {
+  public String renderMarkdownInRange(Instant start, Instant end, String repositoryUrl) {
     long minutes = Math.max(1, Duration.between(start, end).toMinutes());
-    return renderForWindow(start, end, (int) Math.min(minutes, Integer.MAX_VALUE));
+    return renderForWindow(start, end, (int) Math.min(minutes, Integer.MAX_VALUE), repositoryUrl);
   }
 
-  private String renderForWindow(Instant start, Instant end, int minutesForContext) {
-    List<ToolCallCount> rows = logService.aggregateToolCallsInRange(start, end);
+  private String renderForWindow(Instant start, Instant end, int minutesForContext, String repositoryUrl) {
+    List<ToolCallCount> rows = logService.aggregateToolCallsInRange(start, end, repositoryUrl);
     long total = rows.stream().mapToLong(ToolCallCount::getCalls).sum();
 
     List<Map<String, Object>> rowsWithShare = rows.stream()
@@ -203,7 +203,7 @@ public class ReportService {
         })
         .toList();
 
-    List<McpServerUsage> mcpServerUsageRows = logService.aggregateMcpServerUsageInRange(start, end);
+    List<McpServerUsage> mcpServerUsageRows = logService.aggregateMcpServerUsageInRange(start, end, repositoryUrl);
     List<McpServerRollup> mcpServerRollups = rollUpMcpServersByServer(mcpServerUsageRows);
     long mcpServersTotalBytes = mcpServerRollups.stream().mapToLong(McpServerRollup::totalBytes).sum();
     List<Map<String, Object>> mcpServersContext = mcpServerRollups.stream()

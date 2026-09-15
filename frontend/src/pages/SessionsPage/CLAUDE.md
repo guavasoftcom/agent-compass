@@ -279,6 +279,17 @@ trace link for those rows, not a disabled placeholder.
   never *closes* the drawer — it hits the backdrop first, which closes it. That's the mockup's
   behavior too; the toggle branch stays because the state model is "which session is open", not
   "was the last click on the open row".
+- **Repository attribution (2026-09).** Applying the `CostPage` template
+  (`.design-docs/repository-attribution-plan.md`, Phase 4, slice 2): `selectionKey` appends
+  `:repository:<repositoryUrl ?? 'all'>` so TanStack Query never serves cross-repo stale data,
+  and `fetchSessionsSummary`/`fetchSessions` are both called with `{ ...selection, repositoryUrl }`
+  (the field lives on `WindowSelection` itself — see `api/types.ts` — so `windowQueryParams` stays
+  the single choke point without a second fetcher argument). `SessionsPageView` threads
+  `repositoryUrl`/`onRepositoryUrlChange` through to `PageActions`, which renders
+  `RepositorySelector` beside `WindowSelector`. `fetchSessionPrompts` (the on-demand prompt
+  timeline, `GET /api/sessions/{id}/prompts`) deliberately does **not** take `repositoryUrl` — it's
+  per-session detail keyed on a session id the user already picked, not a window-scoped
+  aggregation, so there is nothing to scope by repo.
 - **Prompt-timeline window dimming**: `SessionsPageView` derives `windowStartMs`/`windowEndMs` by
   calling the shared `resolveWindow(selection)` (`lib/resolveWindow`, the same helper
   LogsPage/TracesPage use) and `Date.parse`-ing its `startTimestamp`/`endTimestamp`, then passes

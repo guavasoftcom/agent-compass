@@ -21,7 +21,8 @@ import { useWindowContext } from '../../lib/windowContext';
 import LogsPageView from './LogsPageView';
 
 export default function LogsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
   const queryClient = useQueryClient();
 
   const resolved = useMemo(() => resolveWindow(selection), [selection]);
@@ -56,6 +57,8 @@ export default function LogsPage() {
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}
       isPolling={false}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
     />
   );
 }

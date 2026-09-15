@@ -132,9 +132,9 @@ TokensPage/
 
 | Source                   | Query key                         | Fetcher → endpoint |
 |--------------------------|-----------------------------------|--------------------|
-| `TokensPage` (`useQuery`) | `['token-usage', selectionKey]`   | `fetchTokenUsage(selection)` → `GET /api/sessions/token-usage?…` |
-| `TokensPage` (`useQuery`) | `['session-cache-efficiency', selectionKey, limit]` | `fetchSessionCacheEfficiency(selection, 8)` → `GET /api/sessions/cache-efficiency?…&limit=8` |
-| `TokensPage` (`useQuery`) | `['tool-context-footprint', selectionKey]` | `fetchToolContextFootprint(selection)` → `GET /api/tool-activity/context-footprint?…` |
+| `TokensPage` (`useQuery`) | `['token-usage', selectionKey]`   | `fetchTokenUsage({ ...selection, repositoryUrl })` → `GET /api/sessions/token-usage?…` |
+| `TokensPage` (`useQuery`) | `['session-cache-efficiency', selectionKey, limit]` | `fetchSessionCacheEfficiency({ ...selection, repositoryUrl }, 8)` → `GET /api/sessions/cache-efficiency?…&limit=8` |
+| `TokensPage` (`useQuery`) | `['tool-context-footprint', selectionKey]` | `fetchToolContextFootprint({ ...selection, repositoryUrl })` → `GET /api/tool-activity/context-footprint?…` |
 
 `selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'`. No sub-card fetches
 independently — the container owns all three queries and passes plain props down.
@@ -142,6 +142,15 @@ independently — the container owns all three queries and passes plain props do
 The token summary is the page's spine, so its error wins `PageLayout`'s error slot; the two
 ranked lists are supplementary, and when only one of them fails the page still renders with
 that card showing its own empty state. `onReload` refetches all three.
+
+**Repository attribution (2026-09).** This page was missed by the initial repository-attribution
+rollout (`.design-docs/repository-attribution-plan.md`) — its three backing endpoints
+(`/api/sessions/token-usage`, `/api/sessions/cache-efficiency`, `/api/tool-activity/context-footprint`)
+were already scoped by the Sessions and Tool Activity slices, but the page container itself never
+read `repositoryUrl` off `useWindowContext()` or passed it through. Fixed the same way as every
+other page: `selectionKey` appends `:repository:<repositoryUrl ?? 'all'>`, all three fetch calls
+spread `{ ...selection, repositoryUrl }`, and `TokensPageView` threads `repositoryUrl`/
+`onRepositoryUrlChange` into `PageActions` so `RepositorySelector` renders beside `WindowSelector`.
 
 ## Data flow and semantics
 

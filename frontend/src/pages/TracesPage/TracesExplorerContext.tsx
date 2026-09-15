@@ -36,6 +36,8 @@ export interface TracesExplorerContextValue extends TracesExplorer {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (next: string | null) => void;
 }
 
 export const TracesExplorerContext = createContext<TracesExplorerContextValue | null>(null);
@@ -49,7 +51,8 @@ export const useTracesExplorerContext = (): TracesExplorerContextValue => {
 };
 
 export const TracesExplorerProvider = ({ children }: { children: ReactNode }) => {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
   const queryClient = useQueryClient();
   const resolved = useMemo(() => resolveWindow(selection), [selection]);
 
@@ -58,6 +61,7 @@ export const TracesExplorerProvider = ({ children }: { children: ReactNode }) =>
     endTimestamp: resolved.endTimestamp,
     autoRefresh,
     onAutoRefreshChange: setAutoRefresh,
+    repositoryUrl,
   });
 
   const reloadTraces = () => {
@@ -92,6 +96,8 @@ export const TracesExplorerProvider = ({ children }: { children: ReactNode }) =>
     autoRefresh,
     onAutoRefreshChange: setAutoRefresh,
     isPolling: false,
+    repositoryUrl,
+    onRepositoryUrlChange: setRepositoryUrl,
   };
 
   return <TracesExplorerContext.Provider value={value}>{children}</TracesExplorerContext.Provider>;

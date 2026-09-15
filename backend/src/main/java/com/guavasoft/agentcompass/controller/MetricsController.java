@@ -71,8 +71,10 @@ public class MetricsController {
             @Parameter(description = "Inclusive window start (ISO-8601)", example = "2026-05-01T00:00:00Z")
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
-            @RequestParam Instant to) {
-        return metricSeriesService.metricSeries(from, to);
+            @RequestParam Instant to,
+            @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
+            @RequestParam(required = false) String repositoryUrl) {
+        return metricSeriesService.metricSeries(from, to, repositoryUrl);
     }
 
     @GetMapping("")

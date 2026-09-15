@@ -38,6 +38,8 @@ export interface MetricsPageViewProps {
   metrics?: MetricSeries[];
   isLoading?: boolean;
   error?: Error | null;
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (next: string | null) => void;
 }
 
 const SPLIT_NONE = 'None';
@@ -66,6 +68,8 @@ const MetricsPageView = ({
   metrics = METRICS,
   isLoading = false,
   error = null,
+  repositoryUrl,
+  onRepositoryUrlChange,
 }: MetricsPageViewProps) => {
   const [selectedId, setSelectedId] = useState(metrics[0]?.id ?? '');
   const [split, setSplit] = useState<string>(SPLIT_NONE);
@@ -102,6 +106,7 @@ const MetricsPageView = ({
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}
           isPolling={isPolling}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
         />
       }
     >

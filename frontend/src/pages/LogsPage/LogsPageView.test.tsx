@@ -13,8 +13,12 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
+import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { ColorModeProvider } from '../../theme/colorMode';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import type { LogRow } from '../../api';
 import type { HistogramBucket, LogCursorPage, LogFacets, LogHistogram, LogsListResult } from './logsApi';
@@ -91,6 +95,25 @@ const baseProps = {
   autoRefresh: false,
   onAutoRefreshChange: vi.fn(),
   isPolling: false,
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
+};
+
+// `renderWithProviders` nests its provider JSX directly, so its returned `rerender` would drop
+// the providers on a rerender with new props. The repository-change cursor-reset test below needs
+// a real rerender within the same mounted tree (an effect re-firing on a changed dependency, not
+// a remount), so it renders through RTL's own `wrapper` option instead, which re-wraps every
+// `rerender` call automatically.
+const renderLogsPageViewWithRerenderableProviders = (props: typeof baseProps) => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const Wrapper = ({ children }: { children: ReactNode }) => (
+    <ColorModeProvider>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>{children}</MemoryRouter>
+      </QueryClientProvider>
+    </ColorModeProvider>
+  );
+  return render(<LogsPageView {...props} />, { wrapper: Wrapper });
 };
 
 describe('LogsPageView', () => {
@@ -111,5 +134,31 @@ describe('LogsPageView', () => {
     renderWithProviders(<LogsPageView {...baseProps} error={new Error('logs explorer boom')} />);
 
     expect(await screen.findByText('logs explorer boom')).toBeInTheDocument();
+  });
+
+  // Mirrors how a window-selection change already resets the stream cursor: both ride the same
+  // `filters` object, so both changes produce a new `filtersKey` and re-trigger the "reset stream
+  // + collapse rows" effect in LogsPageView, which starts the stream over with `cursor: null`
+  // rather than paging on a cursor built under the old repository's result set.
+  it('resets the stream cursor (fresh cursor: null fetch) when repositoryUrl changes, the same way a window change already does', async () => {
+    const { rerender } = renderLogsPageViewWithRerenderableProviders({
+      ...baseProps,
+      repositoryUrl: 'https://github.com/example/repo-a',
+    });
+
+    await screen.findByText('Tool call failed with a retryable error');
+    const callCountBeforeRepositoryChange = fetchLogsCursor.mock.calls.length;
+    expect(callCountBeforeRepositoryChange).toBeGreaterThan(0);
+
+    rerender(<LogsPageView {...baseProps} repositoryUrl="https://github.com/example/repo-b" />);
+
+    await waitFor(() => {
+      expect(fetchLogsCursor.mock.calls.length).toBeGreaterThan(callCountBeforeRepositoryChange);
+    });
+
+    const [filtersArg, pageArg] = fetchLogsCursor.mock.calls[fetchLogsCursor.mock.calls.length - 1];
+    // resetStream always requests a fresh first page, never a continuation of the old cursor.
+    expect(pageArg).toEqual({ cursor: null, limit: 60 });
+    expect(filtersArg).toMatchObject({ repositoryUrl: 'https://github.com/example/repo-b' });
   });
 });

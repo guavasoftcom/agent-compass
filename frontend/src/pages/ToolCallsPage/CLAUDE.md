@@ -88,9 +88,9 @@ All three fetchers live in the shared `api/` barrel (`from '../../api'`).
 
 | Source                      | Query key                             | Fetcher → endpoint |
 |-----------------------------|---------------------------------------|--------------------|
-| `ToolCallsPage` (`useQuery`) | `['tool-calls', selectionKey]`       | `fetchToolCalls(selection)` → `GET /api/tool-activity/calls?…` |
-| `ToolCallsPage` (`useQuery`) | `['tool-calls-timeseries', selectionKey]` | `fetchToolCallsTimeseries(selection)` → `GET /api/tool-activity/calls/timeseries?…` |
-| `ToolCallsPage` (`useQuery`) | `['tool-calls-latency', selectionKey]`  | `fetchToolCallLatency(selection)` → `GET /api/tool-activity/calls/latency?…` |
+| `ToolCallsPage` (`useQuery`) | `['tool-calls', selectionKey]`       | `fetchToolCalls({ ...selection, repositoryUrl })` → `GET /api/tool-activity/calls?…` |
+| `ToolCallsPage` (`useQuery`) | `['tool-calls-timeseries', selectionKey]` | `fetchToolCallsTimeseries({ ...selection, repositoryUrl })` → `GET /api/tool-activity/calls/timeseries?…` |
+| `ToolCallsPage` (`useQuery`) | `['tool-calls-latency', selectionKey]`  | `fetchToolCallLatency({ ...selection, repositoryUrl })` → `GET /api/tool-activity/calls/latency?…` |
 
 `selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'`. All three queries share
 the same key suffix, so section-level reload (which invalidates by prefix) covers all of them.
@@ -100,9 +100,20 @@ they receive already-fetched data as props from the container or the view.
 
 ## Data flow and semantics
 
-- `ToolCallsPage` reads `selection` and `autoRefresh` from `useSectionContext()` (not
-  `useWindowContext()`) because this page is a child tab of `ToolActivitySection`. Mixing
-  them up compiles but ignores the section's shared selection state.
+- `ToolCallsPage` reads `selection`, `autoRefresh`, and `repositoryUrl` from
+  `useSectionContext()` (not `useWindowContext()`) because this page is a child tab of
+  `ToolActivitySection`. Mixing them up compiles but ignores the section's shared selection
+  state.
+- **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
+  'all'>` so TanStack Query never serves cross-repo stale data, and all three fetchers are
+  called with `{ ...selection, repositoryUrl }` (`CostPage`'s Phase 4 template — see that
+  page's CLAUDE.md). The `RepositorySelector` itself is **not** rendered by this page: it lives
+  in `SectionLayoutView` (`components/SectionLayout/`), which reads `repositoryUrl`/
+  `setRepositoryUrl` off `useWindowContext()` and renders one `RepositorySelector` beside the
+  `WindowSelector` for all five Tool Usage tabs at once — that plumbing had to be added to
+  `SectionLayout`/`SectionLayoutView`/`SectionContextValue` as part of this slice, since no
+  section-tab page had opted into repository attribution before. Don't add a second
+  `RepositorySelector` here.
 - `refetchInterval` is `AUTO_REFRESH_INTERVAL_MS` (60 s) only when `autoRefresh` is true
   and `selection.kind === 'preset'`. Custom ranges have a fixed end and must not poll.
 - **`rowsWithShare` derivation**: the container `useMemo` computes `totalCalls` as the

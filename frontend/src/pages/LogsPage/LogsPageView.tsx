@@ -56,6 +56,8 @@ export interface LogsPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (next: string | null) => void;
 }
 
 const STREAM_PAGE = 60;
@@ -102,6 +104,8 @@ const LogsPageView = ({
   autoRefresh,
   onAutoRefreshChange,
   isPolling,
+  repositoryUrl,
+  onRepositoryUrlChange,
 }: LogsPageViewProps) => {
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState<FacetSelections>(emptySelections);
@@ -135,6 +139,10 @@ const LogsPageView = ({
   // reaches no endpoint. Folding it in here would put it in `filtersKey`, which keys all three
   // queries and drives the stream-reset effect below — muting a severity would then collapse
   // every expanded row and re-pull the stream for a change that alters no request parameter.
+  // repositoryUrl rides this same object (not a second fetcher argument) so a
+  // repository change falls into `filtersKey` exactly like a window/facet/search
+  // change already does — that's what drives the "reset stream + collapse rows"
+  // effect below to reset the live-tail cursor on a repository change too.
   const filters = useMemo<LogsFilters>(
     () => ({
       startTimestamp: zoom ? zoom.startTimestamp : startTimestamp,
@@ -143,8 +151,9 @@ const LogsPageView = ({
       event: [...sel.event],
       tool: [...sel.tool],
       q: debouncedSearch || undefined,
+      repositoryUrl,
     }),
-    [zoom, startTimestamp, endTimestamp, sel, debouncedSearch],
+    [zoom, startTimestamp, endTimestamp, sel, debouncedSearch, repositoryUrl],
   );
   const filtersKey = JSON.stringify(filters);
 
@@ -361,6 +370,7 @@ const LogsPageView = ({
           onAutoRefreshChange={onAutoRefreshChange}
           isPolling={isPolling}
           autoRefreshDisabled={zoom != null}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
         />
       }
     >

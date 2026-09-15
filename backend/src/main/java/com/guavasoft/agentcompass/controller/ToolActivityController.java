@@ -77,9 +77,10 @@ public class ToolActivityController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return logService.aggregateToolCallsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return logService.aggregateToolCallsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateToolCalls(minutes);
+        return logService.aggregateToolCalls(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/calls/timeseries")
@@ -102,9 +103,10 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolCallsTimeseriesInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), topN);
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), topN,
+                    timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateToolCallsTimeseries(minutes, topN);
+        return logService.aggregateToolCallsTimeseries(minutes, topN, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/calls/latency")
@@ -124,9 +126,9 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return traceService.aggregateToolLatencyInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return traceService.aggregateToolLatency(minutes);
+        return traceService.aggregateToolLatency(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/context-footprint")
@@ -156,9 +158,9 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolContextFootprintInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateToolContextFootprint(minutes);
+        return logService.aggregateToolContextFootprint(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/failure-rates")
@@ -180,9 +182,9 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolFailureRatesInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateToolFailureRates(minutes);
+        return logService.aggregateToolFailureRates(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/denials")
@@ -203,9 +205,10 @@ public class ToolActivityController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return logService.aggregateToolDenialsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return logService.aggregateToolDenialsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateToolDenials(minutes);
+        return logService.aggregateToolDenials(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/repeats")
@@ -234,9 +237,10 @@ public class ToolActivityController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return logService.aggregateToolRepeatsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return logService.aggregateToolRepeatsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateToolRepeats(minutes);
+        return logService.aggregateToolRepeats(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/skill-usage")
@@ -266,9 +270,10 @@ public class ToolActivityController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return logService.aggregateSkillUsageInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return logService.aggregateSkillUsageInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateSkillUsage(minutes);
+        return logService.aggregateSkillUsage(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/subagent-usage")
@@ -302,9 +307,9 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateSubagentUsageInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateSubagentUsage(minutes);
+        return logService.aggregateSubagentUsage(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/mcp-usage")
@@ -330,9 +335,9 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateMcpServerUsageInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateMcpServerUsage(minutes);
+        return logService.aggregateMcpServerUsage(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/hook-executions")
@@ -353,8 +358,8 @@ public class ToolActivityController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateHookExecutionsInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return logService.aggregateHookExecutions(minutes);
+        return logService.aggregateHookExecutions(minutes, timeWindowParams.repositoryUrl());
     }
 }

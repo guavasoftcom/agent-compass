@@ -42,6 +42,8 @@ export interface TracesFilters {
   session?: string[];
   /** full-text over traceId / sessionId / rootSpanName */
   q?: string;
+  /** distinct repository to scope every explorer endpoint to, or null/omitted for "all repositories" */
+  repositoryUrl?: string | null;
 }
 
 export interface TraceHistogramBucket {

@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { describe, expect, it } from 'vitest';
-import { formatBytes, shortModelName } from './format';
+import { formatBytes, shortModelName, shortRepositoryLabel } from './format';
 
 describe('formatBytes', () => {
   it('renders raw bytes without decimals', () => {
@@ -45,5 +45,27 @@ describe('shortModelName', () => {
 
   it('leaves an unrecognized id alone', () => {
     expect(shortModelName('')).toBe('');
+  });
+});
+
+describe('shortRepositoryLabel', () => {
+  it('shortens an https URL to owner/repo, dropping the .git suffix', () => {
+    expect(shortRepositoryLabel('https://github.com/guavasoftcom/coding-agent-tuning.git')).toBe(
+      'guavasoftcom/coding-agent-tuning',
+    );
+  });
+
+  it('shortens an ssh remote the same way', () => {
+    expect(shortRepositoryLabel('git@github.com:guavasoftcom/coding-agent-tuning.git')).toBe(
+      'guavasoftcom/coding-agent-tuning',
+    );
+  });
+
+  it('strips a trailing slash before parsing', () => {
+    expect(shortRepositoryLabel('https://github.com/owner/repo/')).toBe('owner/repo');
+  });
+
+  it('falls back to the raw URL when it has no owner/repo pair', () => {
+    expect(shortRepositoryLabel('not-a-url')).toBe('not-a-url');
   });
 });

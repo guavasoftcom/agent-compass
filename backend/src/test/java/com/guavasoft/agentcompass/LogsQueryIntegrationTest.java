@@ -619,7 +619,7 @@ class LogsQueryIntegrationTest {
             String fullTextQuery) {
         return LogQueryCriteria.of(
                 windowStart, windowEnd,
-                filters, severities, events, tools, fullTextQuery);
+                filters, severities, events, tools, fullTextQuery, null);
     }
 
     private static long countForSeverity(LogFacets facets, String severityLabel) {

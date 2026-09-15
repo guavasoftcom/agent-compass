@@ -27,6 +27,16 @@ export interface WindowContextValue {
   setSelection: (next: WindowSelection) => void;
   autoRefresh: boolean;
   setAutoRefresh: (next: boolean) => void;
+  /**
+   * Distinct repository (`vcs.repository.url.full`) every window-scoped page
+   * should be filtered to, or `null` for "all repositories" (the default —
+   * existing numbers must not silently change until a repo is picked). Set via
+   * `RepositorySelector`, rendered beside `WindowSelector` in `PageActions`.
+   * `null` and `UNATTRIBUTED_REPOSITORY` are the two special values; anything
+   * else is a real repository URL from `GET /api/system/repositories`.
+   */
+  repositoryUrl: string | null;
+  setRepositoryUrl: (next: string | null) => void;
 }
 
 const DEFAULT_SELECTION: WindowSelection = { kind: 'preset', minutes: 60 * 24 };
@@ -36,6 +46,8 @@ const WindowContext = createContext<WindowContextValue>({
   setSelection: () => {},
   autoRefresh: false,
   setAutoRefresh: () => {},
+  repositoryUrl: null,
+  setRepositoryUrl: () => {},
 });
 
 export const useWindowContext = (): WindowContextValue =>
@@ -48,10 +60,18 @@ export interface WindowProviderProps {
 export const WindowProvider = ({ children }: WindowProviderProps) => {
   const [selection, setSelection] = useState<WindowSelection>(DEFAULT_SELECTION);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
+  const [repositoryUrl, setRepositoryUrl] = useState<string | null>(null);
 
   const value = useMemo<WindowContextValue>(
-    () => ({ selection, setSelection, autoRefresh, setAutoRefresh }),
-    [selection, autoRefresh],
+    () => ({
+      selection,
+      setSelection,
+      autoRefresh,
+      setAutoRefresh,
+      repositoryUrl,
+      setRepositoryUrl,
+    }),
+    [selection, autoRefresh, repositoryUrl],
   );
 
   return (

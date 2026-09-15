@@ -42,6 +42,8 @@ const TracesPageView = () => {
     autoRefresh,
     onAutoRefreshChange,
     isPolling,
+    repositoryUrl,
+    onRepositoryUrlChange,
     view,
     onViewChange,
     sort,
@@ -73,6 +75,7 @@ const TracesPageView = () => {
           onAutoRefreshChange={onAutoRefreshChange}
           isPolling={isPolling}
           autoRefreshDisabled={tailLocked}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
         />
       }
     >

@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
 import java.util.List;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -85,6 +86,21 @@ public class TraceFilterParams implements DateRangeBounds {
             description = "Full-text search over traceId, sessionId, and rootSpanName",
             example = "tool.execute")
     private String q;
+
+    @Setter(AccessLevel.NONE)
+    @Parameter(
+            description = "Repository URL to scope results to; null shows all repositories",
+            example = "https://github.com/guavasoftcom/agent-compass")
+    private String repositoryUrl;
+
+    /**
+     * Normalizes the frontend's "Unattributed" sentinel to {@code null} — see
+     * {@link RepositoryUrlFilter}. Replaces the Lombok-generated setter (excluded above)
+     * because {@code @ModelAttribute} binds this class through its setters, not a constructor.
+     */
+    public void setRepositoryUrl(String repositoryUrl) {
+        this.repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
+    }
 
     // DateRangeBounds — explicit accessors matching the interface's record-style method
     // names, distinct from the Lombok-generated getStartTimestamp()/getEndTimestamp().

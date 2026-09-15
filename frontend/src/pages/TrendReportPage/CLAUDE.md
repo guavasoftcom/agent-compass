@@ -81,10 +81,10 @@ One `useQueries` call in the container builds one independent query per `TREND_S
 
 | Section | Query key | Fetcher → endpoint |
 |---|---|---|
-| Cost | `['trend-report', 'cost', selectionKey]` | `fetchTrendSection('cost', selection)` → `GET /api/trends/cost?…` |
-| Token efficiency | `['trend-report', 'tokenEfficiency', selectionKey]` | `fetchTrendSection('tokenEfficiency', selection)` → `GET /api/trends/token-efficiency?…` |
-| Reliability | `['trend-report', 'reliability', selectionKey]` | `fetchTrendSection('reliability', selection)` → `GET /api/trends/reliability?…` |
-| Activity | `['trend-report', 'activity', selectionKey]` | `fetchTrendSection('activity', selection)` → `GET /api/trends/activity?…` |
+| Cost | `['trend-report', 'cost', selectionKey]` | `fetchTrendSection('cost', { ...selection, repositoryUrl })` → `GET /api/trends/cost?…` |
+| Token efficiency | `['trend-report', 'tokenEfficiency', selectionKey]` | `fetchTrendSection('tokenEfficiency', { ...selection, repositoryUrl })` → `GET /api/trends/token-efficiency?…` |
+| Reliability | `['trend-report', 'reliability', selectionKey]` | `fetchTrendSection('reliability', { ...selection, repositoryUrl })` → `GET /api/trends/reliability?…` |
+| Activity | `['trend-report', 'activity', selectionKey]` | `fetchTrendSection('activity', { ...selection, repositoryUrl })` → `GET /api/trends/activity?…` |
 
 `selectionKey` follows the same `preset:<minutes>` / `custom:<start>:<end>` pattern as every other
 page (computed from the *raw* selection, not the day-snapped one below — see the gotcha), and is
@@ -153,6 +153,20 @@ fetch — the view derives each section's rows from that section's own resolved 
   activity = `cyan`) or existing theme tokens (token efficiency = `theme.palette.primary.main`,
   reliability = `theme.palette.success.main`) — chosen in `TrendReportPageView`, not hardcoded
   hex, per the repo-wide "no literal color in a component" rule.
+- **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
+  'all'>` so TanStack Query never serves cross-repo stale data across all four section query
+  keys — same `CostPage`-template pattern as every other page in this rollout (see that page's
+  CLAUDE.md). `fetchTrendSection(section.key, { ...selection, repositoryUrl })` is called once
+  per section from the container's `useQueries` map, so `repositoryUrl` rides the same
+  `WindowSelection` object every other fetcher reads it from — no second argument was added to
+  `fetchTrendSection`. `resolveTrendReportSelection`'s day-snapping (>24h windows) rebuilds a new
+  `custom` selection object; it explicitly re-attaches `repositoryUrl` from the input selection
+  onto that rebuilt object, since spreading a fresh `{ kind, startTimestamp, endTimestamp }`
+  literal would otherwise silently drop it and re-widen every snapped request back to "all
+  repositories". `PageActions` is rendered directly by `TrendReportPageView` (this is a top-level
+  page reading `useWindowContext()`, not a `SectionLayout` child), so `repositoryUrl`/
+  `onRepositoryUrlChange` thread straight from the container through the view's props into
+  `PageActions` — same shape as `CostPage`, not `ToolCallsPage`'s `SectionLayout`-hosted selector.
 - **`DeltaBadge`** (`components/DeltaBadge/`, not page-local) is a new shared 3-state pill —
   good/flat/bad, borrowing `StatCard`'s two-state arrow-SVG idiom (`TrendArrowUp`/
   `TrendArrowDown`) but adding the missing neutral/flat state (gray, "≈" glyph) that `StatCard`'s

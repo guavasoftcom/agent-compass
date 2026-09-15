@@ -109,7 +109,12 @@ export const resolveTrendReportSelection = (selection: WindowSelection): WindowS
     const wholeDays = Math.round(spanMs / MS_PER_DAY);
     const end = endOfLocalDay(new Date());
     const start = startOfLocalDay(new Date(end.getTime() - (wholeDays - 1) * MS_PER_DAY));
-    return { kind: 'custom', startTimestamp: start.toISOString(), endTimestamp: end.toISOString() };
+    return {
+      kind: 'custom',
+      startTimestamp: start.toISOString(),
+      endTimestamp: end.toISOString(),
+      repositoryUrl: selection.repositoryUrl,
+    };
   }
 
   const start = new Date(selection.startTimestamp);
@@ -121,6 +126,7 @@ export const resolveTrendReportSelection = (selection: WindowSelection): WindowS
     kind: 'custom',
     startTimestamp: startOfLocalDay(start).toISOString(),
     endTimestamp: endOfLocalDay(end).toISOString(),
+    repositoryUrl: selection.repositoryUrl,
   };
 };
 

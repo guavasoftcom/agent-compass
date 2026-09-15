@@ -27,6 +27,18 @@ public record TimeWindowParams(
                 + "Overrides minutes when paired with endTimestamp.", example = "2026-04-01T00:00:00Z") Instant startTimestamp,
         @Parameter(description = "Inclusive upper bound on the custom range (ISO-8601). "
                 + "Overrides minutes when paired with startTimestamp. "
-                + "Must be within 30 days of startTimestamp.", example = "2026-04-30T23:59:59Z") Instant endTimestamp)
+                + "Must be within 30 days of startTimestamp.", example = "2026-04-30T23:59:59Z") Instant endTimestamp,
+        @Parameter(description = "Repository URL to scope the result to (see repository_url on spans / "
+                + "log_records / metric_points). Omitted or null means show every repository, "
+                + "including telemetry with no repository attribution.",
+                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl)
         implements DateRangeBounds {
+
+    /**
+     * Normalizes the frontend's "Unattributed" sentinel to {@code null} — see
+     * {@link RepositoryUrlFilter}.
+     */
+    public TimeWindowParams {
+        repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
+    }
 }

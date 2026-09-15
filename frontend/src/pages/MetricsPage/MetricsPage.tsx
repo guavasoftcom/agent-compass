@@ -26,7 +26,7 @@ import { fetchMetrics, type MetricsQueryParams } from './metricsApi';
  * the other pages; the simplified view does the rest.
  */
 export default function MetricsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
     useWindowContext();
 
   const params = useMemo<MetricsQueryParams>(() => {
@@ -39,8 +39,8 @@ export default function MetricsPage() {
         ? selection.startTimestamp
         : new Date(nowMs - selection.minutes * MS_PER_MINUTE).toISOString();
     const to = selection.kind === 'custom' ? selection.endTimestamp : now;
-    return { from, to };
-  }, [selection]);
+    return { from, to, repositoryUrl };
+  }, [selection, repositoryUrl]);
 
   const refetchInterval: number | false =
     autoRefresh && selection.kind === 'preset'
@@ -68,6 +68,8 @@ export default function MetricsPage() {
       metrics={metricsQuery.data}
       isLoading={metricsQuery.isLoading}
       error={metricsQuery.error as Error | null}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
     />
   );
 }

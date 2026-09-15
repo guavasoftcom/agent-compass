@@ -104,7 +104,7 @@ class CostSummaryQueryIntegrationTest {
   @Test
   void currentAndPriorTotalsMatchTheOldTwoQuerySemantics() {
     Object[] totalsRow = metricPointRepository.aggregateCostCurrentAndPriorTotals(
-        COST_METRIC, from, to, priorFrom).get(0);
+        COST_METRIC, from, to, priorFrom, null).get(0);
 
     assertThat(((Number) totalsRow[0]).doubleValue()).isEqualTo(40.0);
     assertThat(((Number) totalsRow[1]).doubleValue()).isEqualTo(10.0);
@@ -114,7 +114,7 @@ class CostSummaryQueryIntegrationTest {
   void groupingSetsGrandTotalEqualsSumOfPerModelRowsAndTheFilterQueryCurrentTotal() {
     long bucketSeconds = 257L;
     List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
-        COST_METRIC, from, to, bucketSeconds);
+        COST_METRIC, from, to, bucketSeconds, null);
 
     double grandTotal = breakdownRows.stream()
         .filter(row -> "total".equals(row[0]))
@@ -130,7 +130,7 @@ class CostSummaryQueryIntegrationTest {
         .sum();
 
     Object[] totalsRow = metricPointRepository.aggregateCostCurrentAndPriorTotals(
-        COST_METRIC, from, to, priorFrom).get(0);
+        COST_METRIC, from, to, priorFrom, null).get(0);
     double currentTotalFromFilterQuery = ((Number) totalsRow[0]).doubleValue();
 
     assertThat(grandTotal).isEqualTo(40.0);

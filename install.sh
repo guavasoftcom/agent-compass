@@ -290,6 +290,10 @@ telemetry_environment = {
     "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
     "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
     "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "true",
+    # Requires Claude Code v2.1.269+; older versions silently ignore this key. Derived
+    # from the git `origin` remote, omitted entirely (not empty) with no repo/origin.
+    # See .design-docs/repository-attribution-plan.md.
+    "OTEL_METRICS_INCLUDE_REPOSITORY": "true",
     # Metrics stay at the 60s default on purpose: the counters are cumulative, so a
     # missed export self-heals on the next one, and ~99% of the points are unchanged
     # re-exports of dead streams. Lowering this multiplies storage and buys nothing.

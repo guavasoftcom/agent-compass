@@ -33,6 +33,7 @@ import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
 import com.guavasoft.agentcompass.model.PurgeTableResult;
+import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.SchemaMigration;
 import com.guavasoft.agentcompass.model.SignalIngest;
 import com.guavasoft.agentcompass.model.SqlMirroring;
@@ -113,6 +114,25 @@ class SystemControllerTest {
                 .andExpect(jsonPath("$.signals[0].seriesCardinality").doesNotExist())
                 .andExpect(jsonPath("$.signals[1].seriesCardinality").value(4454L))
                 .andExpect(jsonPath("$.signals[1].rowsLastHour").value(1842L));
+    }
+
+    @Test
+    void repositoriesReturnsRepositoryUsageNewestFirst() throws Exception {
+        when(systemService.repositoryUsage()).thenReturn(List.of(
+                new RepositoryUsage("https://github.com/guavasoftcom/coding-agent-tuning", MEASURED_AT, 18420L),
+                new RepositoryUsage("https://github.com/guavasoftcom/spring-batch-dashboard", CUTOFF, 52L)));
+
+        mockMvc.perform(get("/api/system/repositories"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].repositoryUrl")
+                        .value("https://github.com/guavasoftcom/coding-agent-tuning"))
+                .andExpect(jsonPath("$[0].count").value(18420L))
+                .andExpect(jsonPath("$[1].repositoryUrl")
+                        .value("https://github.com/guavasoftcom/spring-batch-dashboard"))
+                .andExpect(jsonPath("$[1].count").value(52L));
+
+        verify(systemService).repositoryUsage();
     }
 
     @Test

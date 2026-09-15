@@ -102,7 +102,7 @@ public class MetricSeriesService {
   private final TuningProperties tuningProperties;
   private final MetricPointRepository repository;
 
-  public List<MetricSeries> metricSeries(Instant from, Instant to) {
+  public List<MetricSeries> metricSeries(Instant from, Instant to, String repositoryUrl) {
     long windowSeconds = Math.max(1L, Duration.between(from, to).getSeconds());
     long bucketSeconds = Math.max(1L, windowSeconds / TREND_BUCKETS);
     Instant priorFrom = from.minusSeconds(windowSeconds);
@@ -116,16 +116,16 @@ public class MetricSeriesService {
     // total instead of one scan per metric, one scan for every metric's trend
     // instead of one scan per metric.
     Map<String, MetricWindowTotals> totalsByMetricName = repository
-        .aggregateMetricTotals(metricNames, priorFrom, from, to).stream()
+        .aggregateMetricTotals(metricNames, priorFrom, from, to, repositoryUrl).stream()
         .collect(Collectors.toMap(
             row -> (String) row[0],
             row -> new MetricWindowTotals(
                 ((Number) row[1]).doubleValue(), ((Number) row[2]).doubleValue())));
     Map<String, List<Object[]>> trendRowsByMetricName = repository
-        .aggregateMetricTrend(metricNames, from, to, bucketSeconds).stream()
+        .aggregateMetricTrend(metricNames, from, to, bucketSeconds, repositoryUrl).stream()
         .collect(Collectors.groupingBy(row -> (String) row[0]));
     Map<String, Map<String, Map<String, Double>>> splitTotalsByMetricThenAttribute =
-        aggregateSplitTotals(specs, from, to);
+        aggregateSplitTotals(specs, from, to, repositoryUrl);
 
     List<MetricSeries> series = new ArrayList<>(specs.size());
     for (MetricSpec spec : specs) {
@@ -149,7 +149,7 @@ public class MetricSeriesService {
   // label for, reproducing the "attribute IS NOT NULL" filter the old
   // per-split query applied in SQL.
   private Map<String, Map<String, Map<String, Double>>> aggregateSplitTotals(
-      List<MetricSpec> specs, Instant from, Instant to) {
+      List<MetricSpec> specs, Instant from, Instant to, String repositoryUrl) {
     List<String> splitMetricNames = specs.stream()
         .filter(spec -> !spec.splits().isEmpty())
         .map(MetricSpec::name)
@@ -160,7 +160,7 @@ public class MetricSeriesService {
     String typeAttribute = tuningProperties.getTokenTypeAttribute();
     Map<String, Map<String, Map<String, Double>>> totalsByMetricThenAttribute = new HashMap<>();
     for (Object[] row : repository.aggregateMetricSplits(
-        splitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to)) {
+        splitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl)) {
       String metricName = (String) row[0];
       double rowTotal = ((Number) row[4]).doubleValue();
       addSplitContribution(totalsByMetricThenAttribute, metricName, MODEL_ATTRIBUTE, (String) row[1], rowTotal);

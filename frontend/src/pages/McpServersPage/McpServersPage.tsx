@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchMcpServerUsage } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
 import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import McpServersPageView from './McpServersPageView';
 import {
   buildServerColorIndexes,
@@ -27,19 +28,16 @@ import {
 } from './mcpDerivations';
 
 export default function McpServersPage() {
-  const { selection, autoRefresh } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const mcpUsageQuery = useQuery({
     queryKey: ['mcp-usage', selectionKey],
-    queryFn: () => fetchMcpServerUsage(selection),
+    queryFn: () => fetchMcpServerUsage({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 

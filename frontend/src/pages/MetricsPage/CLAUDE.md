@@ -92,7 +92,7 @@ MetricsPage/
 
 | Source | Query key | Fetcher → endpoint |
 |---|---|---|
-| `MetricsPage` (`useQuery`) | `['metrics/series', params]` where `params = { from, to }` | `fetchMetrics(params)` → `GET /api/metrics/series?from=…&to=…` |
+| `MetricsPage` (`useQuery`) | `['metrics/series', params]` where `params = { from, to, repositoryUrl }` | `fetchMetrics(params)` → `GET /api/metrics/series?from=…&to=…[&repositoryUrl=…]` |
 
 `MetricKpiStrip`, `MetricHeader`, `MetricTrendCard`, and `MetricBreakdown` never
 fetch — they receive `MetricSeries[]` (or a single `MetricSeries`) as props from
@@ -168,3 +168,14 @@ the view. The other `MetricsController` endpoints (`GET /api/metrics`,
   used by other pages. If you refactor, also update `MetricsPage`'s manual `refetch()` call —
   it uses the hook directly, not `queryClient.invalidateQueries`, so the key mismatch would only
   matter if a section-level reload predicate is added later.
+- **Repository attribution (2026-09).** This page fell through the cracks of the repository-attribution
+  rollout: `GET /api/metrics/series` had no `repositoryUrl` parameter at all — a backend gap, not just
+  a frontend one, unlike `TokensPage`'s (see that page's own note) — so `MetricsPage` never rendered the
+  repository selector. Fixed by adding `repositoryUrl` to `MetricsController#metricSeries`,
+  `MetricSeriesService#metricSeries`, and the three batched `MetricPointRepository` queries it drives
+  (`aggregateMetricTotals`, `aggregateMetricTrend`, `aggregateMetricSplits`), each gaining the standard
+  `(:repositoryUrl IS NULL OR repository_url = :repositoryUrl)` clause. `MetricsPage` now reads
+  `repositoryUrl`/`setRepositoryUrl` from `useWindowContext()`, folds `repositoryUrl` into the `params`
+  `useMemo` (so it rides the existing query key with no separate `:repository:` suffix needed, unlike
+  pages with a hand-built `selectionKey`), and passes both through to `MetricsPageView`, which threads
+  them into `PageActions`.

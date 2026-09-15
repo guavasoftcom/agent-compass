@@ -26,6 +26,7 @@ import type {
   ListResult,
   LogRow,
   McpServerUsageRow,
+  RepositorySummary,
   SessionCacheEfficiencyRow,
   SessionKpis,
   SessionPromptRow,
@@ -195,6 +196,12 @@ export const fetchCostBreakdown = (
   const params = windowQueryParams(selection);
   return getJson(`/api/cost/breakdown?${params.toString()}`);
 };
+
+// Distinct repositories seen in telemetry, feeding the RepositorySelector.
+// Not window-scoped — the picker lists every repository ever attributed,
+// regardless of the currently selected time range.
+export const fetchRepositories = (): Promise<RepositorySummary[]> =>
+  getJson('/api/system/repositories');
 
 export const fetchReportMarkdown = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },

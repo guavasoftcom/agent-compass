@@ -92,9 +92,10 @@ public class SessionController {
         SessionSummaryPage result;
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             result = metricService.sessionsSummaryInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), sort, direction, page, size);
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), sort, direction, page, size,
+                    timeWindowParams.repositoryUrl());
         } else {
-            result = metricService.sessionsSummary(minutes, sort, direction, page, size);
+            result = metricService.sessionsSummary(minutes, sort, direction, page, size, timeWindowParams.repositoryUrl());
         }
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Total-Count", String.valueOf(result.totalCount()));
@@ -120,9 +121,10 @@ public class SessionController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return metricService.sessionsKpisInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return metricService.sessionsKpisInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return metricService.sessionsKpis(minutes);
+        return metricService.sessionsKpis(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/token-usage")
@@ -145,9 +147,9 @@ public class SessionController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return metricService.aggregateTokenUsageInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return metricService.aggregateTokenUsage(minutes);
+        return metricService.aggregateTokenUsage(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/cache-efficiency")
@@ -175,9 +177,10 @@ public class SessionController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return metricService.worstCacheEfficiencySessionsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), limit);
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), limit,
+                    timeWindowParams.repositoryUrl());
         }
-        return metricService.worstCacheEfficiencySessions(minutes, limit);
+        return metricService.worstCacheEfficiencySessions(minutes, limit, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/{sessionId}/prompts")

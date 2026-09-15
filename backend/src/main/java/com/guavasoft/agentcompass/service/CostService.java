@@ -98,12 +98,12 @@ public class CostService {
   private final LogRecordRepository logRecordRepository;
   private final TuningProperties tuningProperties;
 
-  public CostBreakdown breakdown(int minutes) {
+  public CostBreakdown breakdown(int minutes, String repositoryUrl) {
     Instant end = Instant.now();
-    return breakdownInRange(end.minus(Duration.ofMinutes(minutes)), end);
+    return breakdownInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl);
   }
 
-  public CostBreakdown breakdownInRange(Instant start, Instant end) {
+  public CostBreakdown breakdownInRange(Instant start, Instant end, String repositoryUrl) {
     double windowSeconds = Math.max(1.0, Duration.between(start, end).getSeconds());
     Instant priorStart = start.minus(Duration.ofSeconds((long) windowSeconds));
     long bucketSeconds = Math.max(MINIMUM_BUCKET_SECONDS, (long) windowSeconds / TREND_BUCKETS);
@@ -117,7 +117,8 @@ public class CostService {
         tuningProperties.getApiRequestCostAttribute(),
         start,
         end,
-        bucketSeconds);
+        bucketSeconds,
+        repositoryUrl);
 
     Object[] totalRow = findTotalRow(categoryRows);
     long totalRequests = totalRow == null ? 0L : asLong(totalRow[CATEGORY_ROW_REQUESTS_INDEX]);
@@ -133,7 +134,8 @@ public class CostService {
         tuningProperties.getApiRequestEventName(),
         tuningProperties.getApiRequestCostAttribute(),
         priorStart,
-        start));
+        start,
+        repositoryUrl));
     double priorTotal = priorTotalRow == null ? 0.0 : asDouble(priorTotalRow[0]);
     double deltaPct = priorTotal == 0.0 ? 0.0 : (currentTotal - priorTotal) / priorTotal * HUNDRED_PERCENT;
 
@@ -153,14 +155,16 @@ public class CostService {
         tuningProperties.getModelAttribute(),
         tuningProperties.getApiRequestCostAttribute(),
         start,
-        end);
+        end,
+        repositoryUrl);
     List<Object[]> skillCostRows = logRecordRepository.aggregateSkillCostByModelInRange(
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
         tuningProperties.getModelAttribute(),
         tuningProperties.getApiRequestCostAttribute(),
         start,
-        end);
+        end,
+        repositoryUrl);
 
     List<CostCategoryShare> categories = buildCategories(
         categoryRows, currentTotal, subagentCostRows, skillCostRows);
@@ -173,7 +177,8 @@ public class CostService {
         tuningProperties.getApiRequestEffortAttribute(),
         tuningProperties.getApiRequestCostAttribute(),
         start,
-        end);
+        end,
+        repositoryUrl);
     List<CostModelEffortCell> modelEffort = buildModelEffort(modelEffortRows);
 
     List<Object[]> topSessionRows = logRecordRepository.aggregateTopCostSessionsInRange(
@@ -181,7 +186,8 @@ public class CostService {
         tuningProperties.getApiRequestCostAttribute(),
         start,
         end,
-        DEFAULT_TOP_SESSION_LIMIT);
+        DEFAULT_TOP_SESSION_LIMIT,
+        repositoryUrl);
     List<String> topSessionIds = topSessionRows.stream().map(row -> (String) row[0]).toList();
 
     // A lookup keyed on the ranking's own session ids -- it already comes back one row
@@ -214,7 +220,8 @@ public class CostService {
             tuningProperties.getApiRequestEventName(),
             start,
             end,
-            topSessionIds));
+            topSessionIds,
+            repositoryUrl));
 
     List<CostSessionShare> topSessions =
         buildTopSessions(topSessionRows, firstUserPromptBySessionId, categoryCostBySessionId);

@@ -65,8 +65,9 @@ public class CostController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return costService.breakdownInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return costService.breakdownInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return costService.breakdown(minutes);
+        return costService.breakdown(minutes, timeWindowParams.repositoryUrl());
     }
 }

@@ -170,9 +170,35 @@ export interface FacetValue {
   count: number;
 }
 
-export type WindowSelection =
+/**
+ * Reserved `repositoryUrl` sentinel meaning "only telemetry with no repository
+ * attribution" — the UI's "Unattributed" bucket. Never a real git URL; the
+ * backend maps it to `repository_url IS NULL` rather than an equality match.
+ */
+export const UNATTRIBUTED_REPOSITORY = '__unattributed__';
+
+export type WindowSelection = (
   | { kind: 'preset'; minutes: number }
-  | { kind: 'custom'; startTimestamp: string; endTimestamp: string };
+  | { kind: 'custom'; startTimestamp: string; endTimestamp: string }
+) & {
+  /**
+   * Distinct repository (by `vcs.repository.url.full`) to scope every windowed
+   * fetcher to, sourced from `WindowContextValue.repositoryUrl` (see
+   * `lib/windowContext.tsx`). `null`/omitted means "all repositories" — today's
+   * behavior, unchanged — and `UNATTRIBUTED_REPOSITORY` means "no repository
+   * attribution". Carried on `WindowSelection` itself (rather than as a second
+   * argument to every fetcher) so `windowQueryParams` stays everyone's single
+   * choke point — see `api/http.ts`.
+   */
+  repositoryUrl?: string | null;
+};
+
+/** One distinct repository seen in telemetry (`GET /api/system/repositories`). */
+export interface RepositorySummary {
+  repositoryUrl: string;
+  lastSeen: string;
+  count: number;
+}
 
 export interface ToolCallTimeseriesPoint {
   timestamp: string;

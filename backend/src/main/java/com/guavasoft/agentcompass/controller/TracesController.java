@@ -318,6 +318,7 @@ public class TracesController {
                 filterParams.getService(),
                 filterParams.getDuration(),
                 filterParams.getSession(),
-                filterParams.getQ());
+                filterParams.getQ(),
+                filterParams.getRepositoryUrl());
     }
 }

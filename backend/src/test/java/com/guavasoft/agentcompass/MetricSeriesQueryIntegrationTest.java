@@ -137,7 +137,7 @@ class MetricSeriesQueryIntegrationTest {
 
   @Test
   void returnsEveryCuratedMetricEvenWhenUnseeded() {
-    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now());
+    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null);
     assertThat(series).extracting(MetricSeries::id)
         .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit", "pull_request");
     // Metrics with no rows still return a well-formed zero series, no splits populated.
@@ -157,7 +157,7 @@ class MetricSeriesQueryIntegrationTest {
     saveWithUnit("acme.agent.spend.total", "USD", 100.0, base.plusSeconds(60));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now());
+    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null);
 
     // Curated order is preserved and the unknown metric lands after it.
     assertThat(series).extracting(MetricSeries::id)
@@ -178,7 +178,7 @@ class MetricSeriesQueryIntegrationTest {
     saveWithUnit("acme.agent.legacy.count", "", 7.0, base.minus(90, ChronoUnit.DAYS));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    MetricSeries discovered = metricSeriesService.metricSeries(windowStart(), Instant.now()).stream()
+    MetricSeries discovered = metricSeriesService.metricSeries(windowStart(), Instant.now(), null).stream()
         .filter(candidate -> "acme-agent-legacy-count".equals(candidate.id()))
         .findFirst()
         .orElseThrow();
@@ -189,7 +189,7 @@ class MetricSeriesQueryIntegrationTest {
   }
 
   private MetricSeries seriesById(String id) {
-    return metricSeriesService.metricSeries(windowStart(), Instant.now()).stream()
+    return metricSeriesService.metricSeries(windowStart(), Instant.now(), null).stream()
         .filter(series -> id.equals(series.id()))
         .findFirst()
         .orElseThrow();

@@ -88,7 +88,8 @@ public class LogsController {
                 List.of(),
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
-                logFilterParams.getQ());
+                logFilterParams.getQ(),
+                timeWindowParams.repositoryUrl());
         return logService.histogram(criteria, buckets);
     }
 
@@ -118,7 +119,8 @@ public class LogsController {
                 severity,
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
-                logFilterParams.getQ());
+                logFilterParams.getQ(),
+                timeWindowParams.repositoryUrl());
         return logService.facets(criteria);
     }
 
@@ -160,7 +162,8 @@ public class LogsController {
                 severity,
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
-                logFilterParams.getQ());
+                logFilterParams.getQ(),
+                timeWindowParams.repositoryUrl());
 
         if (logPaginationParams.isOffsetMode()) {
             LogPage logPage = logService.offsetPage(criteria, logPaginationParams.getPage(), logPaginationParams.getSize());
@@ -190,7 +193,10 @@ public class LogsController {
             @RequestParam(required = false) List<String> filter,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         return logService.availableAttributePairs(
-                filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                filter == null ? List.of() : filter,
+                timeWindowParams.startTimestamp(),
+                timeWindowParams.endTimestamp(),
+                timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/attribute-keys")
@@ -210,7 +216,10 @@ public class LogsController {
             @RequestParam(required = false) List<String> filter,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         return logService.availableAttributeKeys(
-                filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                filter == null ? List.of() : filter,
+                timeWindowParams.startTimestamp(),
+                timeWindowParams.endTimestamp(),
+                timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/attribute-values")
@@ -230,6 +239,10 @@ public class LogsController {
             @RequestParam(required = false) List<String> filter,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         return logService.availableAttributeValues(
-                key, filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                key,
+                filter == null ? List.of() : filter,
+                timeWindowParams.startTimestamp(),
+                timeWindowParams.endTimestamp(),
+                timeWindowParams.repositoryUrl());
     }
 }

@@ -40,6 +40,17 @@ public record RequiredTimeWindowParams(
         @NotNull
         @Parameter(description = "Inclusive upper bound on the histogram window (ISO-8601, required). "
                 + "Must be within 30 days of startTimestamp.",
-                example = "2026-04-30T23:59:59Z") Instant endTimestamp)
+                example = "2026-04-30T23:59:59Z") Instant endTimestamp,
+        @Parameter(description = "Repository URL to scope the result to. Omitted or null means show "
+                + "every repository, including telemetry with no repository attribution.",
+                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl)
         implements DateRangeBounds {
+
+    /**
+     * Normalizes the frontend's "Unattributed" sentinel to {@code null} — see
+     * {@link RepositoryUrlFilter}.
+     */
+    public RequiredTimeWindowParams {
+        repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
+    }
 }

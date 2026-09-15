@@ -16,6 +16,7 @@ see <https://www.gnu.org/licenses/>.
 import type { ReactNode } from 'react';
 import type { WindowSelection } from '../../api';
 import type { WindowOption } from '../../lib/constants';
+import RepositorySelector from '../RepositorySelector';
 import WindowSelector from '../WindowSelector';
 import PageActionsView from './PageActionsView';
 
@@ -32,6 +33,19 @@ export interface PageActionsProps {
   /** Force auto-refresh off + disabled regardless of preset state (e.g. Logs is zoomed into a bucket). */
   autoRefreshDisabled?: boolean;
   extraActions?: ReactNode;
+  /**
+   * `RepositorySelector`'s current value + change handler, wired to
+   * `WindowContextValue.repositoryUrl`/`setRepositoryUrl`. A single object rather than
+   * two independently-optional props, so "value present, handler absent" (or vice
+   * versa) isn't representable — the selector renders exactly when this is passed.
+   * Omitted entirely (not just `{ value: null, ... }`) hides the selector — opt-in per
+   * page while a page's backend slice doesn't yet honor `repositoryUrl`, per the
+   * repository-attribution design doc's staged rollout.
+   */
+  repositorySelector?: {
+    value: string | null;
+    onChange: (next: string | null) => void;
+  };
 }
 
 const noop = () => {};
@@ -48,6 +62,7 @@ const PageActions = ({
   hideAutoRefresh = false,
   autoRefreshDisabled = false,
   extraActions,
+  repositorySelector,
 }: PageActionsProps) => {
   // Both Refresh and Auto-refresh are tied to "preset" mode: a custom range has a fixed
   // end, so re-fetching can't surface new data and polling would be wasted requests.
@@ -62,6 +77,14 @@ const PageActions = ({
           onSelectionChange={onSelectionChange}
           windows={windows}
         />
+      }
+      repositorySelector={
+        repositorySelector != null ? (
+          <RepositorySelector
+            value={repositorySelector.value}
+            onValueChange={repositorySelector.onChange}
+          />
+        ) : undefined
       }
       extraActions={extraActions}
       onReload={onReload ?? noop}

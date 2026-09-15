@@ -130,7 +130,7 @@ class LogsControllerTest {
 
     @Test
     void logAttributesReturnsDistinctKeyValuePairsWhenNoFilterApplied() throws Exception {
-        when(logService.availableAttributePairs(List.of(), null, null)).thenReturn(List.of(
+        when(logService.availableAttributePairs(List.of(), null, null, null)).thenReturn(List.of(
                 "event.name=tool_result",
                 "tool_name=Bash",
                 "tool_name=Read"));
@@ -140,13 +140,13 @@ class LogsControllerTest {
                 .andExpect(jsonPath("$", hasSize(3)))
                 .andExpect(jsonPath("$[0]").value("event.name=tool_result"));
 
-        verify(logService).availableAttributePairs(List.of(), null, null);
+        verify(logService).availableAttributePairs(List.of(), null, null, null);
     }
 
     @Test
     void logAttributesNarrowsBySuppliedFilters() throws Exception {
         when(logService.availableAttributePairs(
-                List.of("event.name=tool_result"), null, null))
+                List.of("event.name=tool_result"), null, null, null))
                 .thenReturn(List.of("event.name=tool_result", "tool_name=Read"));
 
         mockMvc.perform(get("/api/logs/attributes")
@@ -155,14 +155,14 @@ class LogsControllerTest {
                 .andExpect(jsonPath("$", hasSize(2)));
 
         verify(logService).availableAttributePairs(
-                List.of("event.name=tool_result"), null, null);
+                List.of("event.name=tool_result"), null, null, null);
     }
 
     @Test
     void logAttributesNarrowsByTimeWindow() throws Exception {
         Instant windowStart = Instant.parse("2026-05-21T12:00:00Z");
         Instant windowEnd = Instant.parse("2026-05-21T12:05:00Z");
-        when(logService.availableAttributePairs(List.of(), windowStart, windowEnd))
+        when(logService.availableAttributePairs(List.of(), windowStart, windowEnd, null))
                 .thenReturn(List.of("event.name=tool_result", "tool_name=Read"));
 
         mockMvc.perform(get("/api/logs/attributes")
@@ -171,7 +171,7 @@ class LogsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)));
 
-        verify(logService).availableAttributePairs(List.of(), windowStart, windowEnd);
+        verify(logService).availableAttributePairs(List.of(), windowStart, windowEnd, null);
     }
 
     // -------------------------------------------------------------------------

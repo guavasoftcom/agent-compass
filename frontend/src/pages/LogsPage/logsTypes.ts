@@ -36,6 +36,15 @@ export interface LogsFilters {
   tool?: string[];
   /** full-text over body + serialized attributes */
   q?: string;
+  /**
+   * Distinct repository (`vcs.repository.url.full`) to scope every query to, or
+   * `null`/omitted for "all repositories". Part of `LogsFilters` (not a second
+   * fetcher argument) specifically so it rides `filtersKey` — see
+   * `LogsPageView`'s "reset stream + collapse rows" effect, which fires on any
+   * `filtersKey` change and therefore resets the live-tail cursor on a
+   * repository change the same way it already does on a window change.
+   */
+  repositoryUrl?: string | null;
 }
 
 export interface HistogramBucket {

@@ -24,6 +24,7 @@ import {
   type WindowSelection,
 } from '../../api';
 import { AUTO_REFRESH_INTERVAL_MS, PAGE_SIZE_OPTIONS, WINDOWS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import { useWindowContext } from '../../lib/windowContext';
 import SessionsPageView, {
   type PaginationModel,
@@ -59,7 +60,8 @@ const EMPTY_KPIS: SessionsKpis = {
 };
 
 export default function SessionsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
   const [paginationModel, setPaginationModel] = useState<PaginationModel>({
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -90,10 +92,7 @@ export default function SessionsPage() {
     );
   }, [searchParams, setSearchParams]);
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
@@ -102,7 +101,7 @@ export default function SessionsPage() {
   // cached summary instead of re-running the heavy percentile aggregation.
   const summaryQuery = useQuery({
     queryKey: ['sessions-summary', selectionKey],
-    queryFn: () => fetchSessionsSummary(selection),
+    queryFn: () => fetchSessionsSummary({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 
@@ -115,7 +114,8 @@ export default function SessionsPage() {
       sortModel.field,
       sortModel.direction,
     ],
-    queryFn: () => fetchSessions(selection, { ...paginationModel, sort: sortModel }),
+    queryFn: () =>
+      fetchSessions({ ...selection, repositoryUrl }, { ...paginationModel, sort: sortModel }),
     refetchInterval,
     placeholderData: keepPreviousData,
   });
@@ -186,6 +186,8 @@ export default function SessionsPage() {
       selection={selection}
       onSelectionChange={handleSelectionChange}
       windows={WINDOWS}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
       rows={rows}
       rowCount={sessionsQuery.data?.totalCount ?? summaryQuery.data?.totalSessions ?? 0}
       paginationModel={paginationModel}

@@ -35,6 +35,7 @@ export interface SectionLayoutProps {
 export interface SectionContextValue {
   selection: WindowSelection;
   autoRefresh: boolean;
+  repositoryUrl: string | null;
 }
 
 const SectionLayout = ({
@@ -43,7 +44,8 @@ const SectionLayout = ({
   tabs,
   queryKeyPrefixes,
 }: SectionLayoutProps) => {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
   const location = useLocation();
   const queryClient = useQueryClient();
 
@@ -72,7 +74,7 @@ const SectionLayout = ({
   const groupHeading = groupForPath(location.pathname);
   const eyebrow = groupHeading;
 
-  const context: SectionContextValue = { selection, autoRefresh };
+  const context: SectionContextValue = { selection, autoRefresh, repositoryUrl };
 
   return (
     <SectionLayoutView
@@ -84,6 +86,8 @@ const SectionLayout = ({
       onSelectionChange={setSelection}
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
       isPolling={isPolling}
       onReload={handleReload}
       activeTab={activeTab}

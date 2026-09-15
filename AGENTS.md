@@ -130,7 +130,13 @@ and not just a find-and-replace: the index is **partial** on the event name, and
 predicate-implication prover matches expressions structurally, so it cannot tell that `event_name`
 and the expression it is generated from are the same value — rewriting a query to the column while
 the predicate still named the expression silently dropped the index. **Any new partial index keyed on
-an event name must write its predicate against `event_name`.** Overriding `tool-attribute`
+an event name must write its predicate against `event_name`.** The same rule applies to
+`repository_url` (`V34`, stored generated on `spans`/`log_records`/`metric_points` from Claude
+Code's `vcs.repository.url.full` attribute, added for repository-scoped telemetry — see
+[.design-docs/repository-attribution-plan.md](.design-docs/repository-attribution-plan.md)): any
+partial index keyed on repository identity must write its predicate against the `repository_url`
+column, never the raw `attributes ->>` / `resource_attributes ->>` expression it's generated from.
+Overriding `tool-attribute`
 away from `"tool_name"` now means a migration that drops and re-adds `tool_name` against the new key,
 or the Logs page's tool facet/filter/histogram silently read the wrong attribute. Token/cost/active-time
 counters are cumulative per stream and ingest precomputes reset-aware increments into

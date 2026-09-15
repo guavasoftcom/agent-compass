@@ -35,7 +35,8 @@ public record LogQueryCriteria(
         String[] severities,
         String[] events,
         String[] tools,
-        String fullTextQuery) {
+        String fullTextQuery,
+        String repositoryUrl) {
 
     /**
      * Normalizes the window to Postgres's microsecond resolution — see
@@ -45,6 +46,7 @@ public record LogQueryCriteria(
     public LogQueryCriteria {
         startTimestamp = QueryWindowPrecision.toDatabasePrecision(startTimestamp);
         endTimestamp = QueryWindowPrecision.toDatabasePrecision(endTimestamp);
+        repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
     }
 
     /** Convenience factory that coerces null lists to empty arrays. */
@@ -55,7 +57,8 @@ public record LogQueryCriteria(
             List<String> severities,
             List<String> events,
             List<String> tools,
-            String fullTextQuery) {
+            String fullTextQuery,
+            String repositoryUrl) {
         return new LogQueryCriteria(
                 startTimestamp,
                 endTimestamp,
@@ -63,7 +66,8 @@ public record LogQueryCriteria(
                 toArray(severities),
                 toArray(events),
                 toArray(tools),
-                fullTextQuery == null ? "" : fullTextQuery);
+                fullTextQuery == null ? "" : fullTextQuery,
+                repositoryUrl);
     }
 
     private static String[] toArray(List<String> list) {

@@ -21,6 +21,7 @@ import {
   type CostSessionShare,
 } from '../../api';
 import { AUTO_REFRESH_INTERVAL_MS, WINDOWS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import { useWindowContext } from '../../lib/windowContext';
 import CostPageView, { type CostPageTab } from './CostPageView';
 
@@ -43,24 +44,22 @@ const emptyBreakdown: CostBreakdown = {
 };
 
 export default function CostPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
   const [activeTab, setActiveTab] = useState<CostPageTab>('overview');
   // The clicked "Most expensive sessions" row itself, not its id: the dialog
   // shows only fields the row already carries, so opening it costs no fetch —
   // same idiom as TokensPage's selectedCacheEfficiencyRow.
   const [selectedSession, setSelectedSession] = useState<CostSessionShare | null>(null);
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const breakdownQuery = useQuery({
     queryKey: ['cost-breakdown', selectionKey],
-    queryFn: () => fetchCostBreakdown(selection),
+    queryFn: () => fetchCostBreakdown({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 
@@ -84,6 +83,8 @@ export default function CostPage() {
       selection={selection}
       onSelectionChange={setSelection}
       windows={WINDOWS}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
       breakdown={breakdownQuery.data ?? emptyBreakdown}
       activeTab={activeTab}
       onActiveTabChange={handleActiveTabChange}

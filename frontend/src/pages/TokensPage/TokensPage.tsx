@@ -23,6 +23,7 @@ import {
   type TokenUsageSummary,
 } from '../../api';
 import { AUTO_REFRESH_INTERVAL_MS, WINDOWS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import { useWindowContext } from '../../lib/windowContext';
 import TokensPageView, { type TokensPageTab } from './TokensPageView';
 
@@ -55,7 +56,8 @@ const emptySummary: TokenUsageSummary = {
 };
 
 export default function TokensPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
   const [activeTab, setActiveTab] = useState<TokensPageTab>('overview');
   // The clicked ranking row itself, not its id: the dialog shows only fields the
   // row already carries, and holding the row means a poll that re-ranks (or drops)
@@ -63,29 +65,27 @@ export default function TokensPage() {
   const [selectedCacheEfficiencyRow, setSelectedCacheEfficiencyRow] =
     useState<SessionCacheEfficiencyRow | null>(null);
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const summaryQuery = useQuery({
     queryKey: ['token-usage', selectionKey],
-    queryFn: () => fetchTokenUsage(selection),
+    queryFn: () => fetchTokenUsage({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 
   const cacheEfficiencyQuery = useQuery({
     queryKey: ['session-cache-efficiency', selectionKey, CACHE_EFFICIENCY_ROW_LIMIT],
-    queryFn: () => fetchSessionCacheEfficiency(selection, CACHE_EFFICIENCY_ROW_LIMIT),
+    queryFn: () =>
+      fetchSessionCacheEfficiency({ ...selection, repositoryUrl }, CACHE_EFFICIENCY_ROW_LIMIT),
     refetchInterval,
   });
 
   const contextFootprintQuery = useQuery({
     queryKey: ['tool-context-footprint', selectionKey],
-    queryFn: () => fetchToolContextFootprint(selection),
+    queryFn: () => fetchToolContextFootprint({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 
@@ -134,6 +134,8 @@ export default function TokensPage() {
       autoRefresh={autoRefresh}
       onAutoRefreshChange={(next) => setAutoRefresh(next)}
       isPolling={isPolling}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
     />
   );
 }

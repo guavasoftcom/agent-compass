@@ -15,6 +15,7 @@ see <https://www.gnu.org/licenses/>.
 */
 import { useQueries } from '@tanstack/react-query';
 import { AUTO_REFRESH_INTERVAL_MS, WINDOWS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import { useWindowContext } from '../../lib/windowContext';
 import TrendReportPageView from './TrendReportPageView';
 import { fetchTrendSection } from './trendReportApi';
@@ -30,12 +31,10 @@ import type { TrendSectionState } from './TrendReportPageView';
  * rules-of-hooks.
  */
 export default function TrendReportPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh } = useWindowContext();
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+    useWindowContext();
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval: number | false =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
@@ -43,7 +42,7 @@ export default function TrendReportPage() {
   const sectionQueries = useQueries({
     queries: TREND_SECTIONS.map((section) => ({
       queryKey: ['trend-report', section.key, selectionKey],
-      queryFn: () => fetchTrendSection(section.key, selection),
+      queryFn: () => fetchTrendSection(section.key, { ...selection, repositoryUrl }),
       refetchInterval,
     })),
   });
@@ -72,6 +71,8 @@ export default function TrendReportPage() {
       selection={selection}
       onSelectionChange={setSelection}
       windows={WINDOWS}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
       onReload={handleReload}
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}

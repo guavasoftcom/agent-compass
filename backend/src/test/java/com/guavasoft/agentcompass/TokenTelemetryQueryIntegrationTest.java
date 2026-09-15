@@ -152,7 +152,7 @@ class TokenTelemetryQueryIntegrationTest {
   @Test
   void ranksSessionsByAscendingCacheEfficiencyIgnoringOutputTokens() {
     List<SessionCacheEfficiency> ranked =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null);
 
     assertThat(ranked).extracting(SessionCacheEfficiency::sessionId)
         .containsExactly(SESSION_WORST, SESSION_MIDDLE, SESSION_BEST);
@@ -212,7 +212,7 @@ class TokenTelemetryQueryIntegrationTest {
   @Test
   void excludesSessionsBelowTheInputSideTokenFloor() {
     List<SessionCacheEfficiency> ranked =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null);
 
     // tiny has the worst ratio of anything seeded (10%); it is absent purely
     // because it is too small to judge, not because it ranked poorly.
@@ -222,7 +222,7 @@ class TokenTelemetryQueryIntegrationTest {
   @Test
   void excludesResumeHeartbeatSessionsStructurally() {
     List<SessionCacheEfficiency> ranked =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null);
 
     // The heartbeat session carries a full 1,000,000 input-side tokens and a 60%
     // ratio, so it clears the floor and would rank second if it were visible at
@@ -235,14 +235,14 @@ class TokenTelemetryQueryIntegrationTest {
 
   @Test
   void honoursTheRequestedRowLimit() {
-    List<SessionCacheEfficiency> ranked = metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, 1);
+    List<SessionCacheEfficiency> ranked = metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, 1, null);
 
     assertThat(ranked).extracting(SessionCacheEfficiency::sessionId).containsExactly(SESSION_WORST);
   }
 
   @Test
   void windowCacheReadRatioUsesTheSameDenominatorAsThePerSessionRatio() {
-    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES);
+    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES, null);
 
     long inputSideTokens =
         summary.inputTokens() + summary.cacheCreationTokens() + summary.cacheReadTokens();
@@ -265,7 +265,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveToolResult("Bash", 30_000L, false, base.plusSeconds(2));
     saveToolResult("Read", 4_000L, true, base.plusSeconds(3));
 
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
 
     ToolContextFootprint bash = toolRow(footprint, "Bash");
     assertThat(bash.calls()).isEqualTo(3L);
@@ -287,7 +287,7 @@ class TokenTelemetryQueryIntegrationTest {
     // question — what is filling the window — and must count it.
     saveToolResult("Agent", 100_000L, true, base.plusSeconds(2));
 
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
 
     assertThat(footprint).extracting(ToolContextFootprint::tool)
         .containsExactly("Agent", "Bash", "Read");
@@ -299,7 +299,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveToolResult("Bash", 10_000L, true, base);
     saveToolResultWithoutSize("Bash", base.plusSeconds(1));
 
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
 
     // The sizeless call is not counted as a zero-byte call: `calls` means "calls
     // we can account for", so it stays 1 and the average is not deflated.
@@ -318,7 +318,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveToolResult("Bash", 500_000L, true, base.plusSeconds(20));
 
     ToolContextFootprint bash =
-        toolRow(logService.aggregateToolContextFootprint(WINDOW_MINUTES), "Bash");
+        toolRow(logService.aggregateToolContextFootprint(WINDOW_MINUTES, null), "Bash");
 
     assertThat(bash.calls()).isEqualTo(20L);
     assertThat(bash.p95Bytes()).isGreaterThan(1_000L);
@@ -326,7 +326,7 @@ class TokenTelemetryQueryIntegrationTest {
 
   @Test
   void returnsNothingWhenNoToolResultCarriedASize() {
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
 
     assertThat(footprint).isEmpty();
   }
@@ -454,7 +454,7 @@ class TokenTelemetryQueryIntegrationTest {
   // ---- fixtures -------------------------------------------------------------
 
   private SessionCacheEfficiency rankedSession(String sessionId) {
-    return metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT).stream()
+    return metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null).stream()
         .filter(session -> sessionId.equals(session.sessionId()))
         .findFirst()
         .orElseThrow();

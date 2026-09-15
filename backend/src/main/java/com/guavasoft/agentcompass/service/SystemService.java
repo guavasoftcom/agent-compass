@@ -28,6 +28,7 @@ import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
 import com.guavasoft.agentcompass.model.PurgeTableResult;
+import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.SchemaMigration;
 import com.guavasoft.agentcompass.model.SignalIngest;
 import com.guavasoft.agentcompass.model.StorageOverview;
@@ -285,6 +286,10 @@ public class SystemService {
   private static final int INGEST_NAME_CARDINALITY_LABEL_INDEX = 8;
   private static final int INGEST_SERIES_CARDINALITY_INDEX = 9;
 
+  private static final int REPOSITORY_USAGE_URL_INDEX = 0;
+  private static final int REPOSITORY_USAGE_LAST_SEEN_INDEX = 1;
+  private static final int REPOSITORY_USAGE_COUNT_INDEX = 2;
+
   private static final int MIGRATION_RANK_INDEX = 0;
   private static final int MIGRATION_VERSION_INDEX = 1;
   private static final int MIGRATION_DESCRIPTION_INDEX = 2;
@@ -358,6 +363,17 @@ public class SystemService {
   /** Every resolved {@code tuning.*} property, grouped and flagged for SQL mirroring. */
   public EffectiveConfiguration effectiveConfiguration() {
     return tuningPropertyCatalog.describe(tuningProperties);
+  }
+
+  /**
+   * Every repository seen in telemetry, unioned across all three signal tables and re-aggregated by
+   * {@code repository_url}, newest first. Feeds the repository picker's real-repo entries — the
+   * synthetic "All repositories" / "Unattributed" choices are added by the frontend around this list.
+   */
+  public List<RepositoryUsage> repositoryUsage() {
+    return systemRepository.findRepositoryUsage().stream()
+        .map(SystemService::toRepositoryUsage)
+        .toList();
   }
 
   /**
@@ -531,6 +547,13 @@ public class SystemService {
         toLong(row[INGEST_NAME_CARDINALITY_INDEX]),
         (String) row[INGEST_NAME_CARDINALITY_LABEL_INDEX],
         seriesCardinality == null ? null : toLong(seriesCardinality));
+  }
+
+  private static RepositoryUsage toRepositoryUsage(Object[] row) {
+    return new RepositoryUsage(
+        (String) row[REPOSITORY_USAGE_URL_INDEX],
+        (Instant) row[REPOSITORY_USAGE_LAST_SEEN_INDEX],
+        toLong(row[REPOSITORY_USAGE_COUNT_INDEX]));
   }
 
   private static SchemaMigration toSchemaMigration(Object[] row) {
