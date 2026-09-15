@@ -23,6 +23,8 @@ import type { WindowSelection } from '../../api';
 export interface ReportPageViewProps {
   selection: WindowSelection;
   onSelectionChange: (next: WindowSelection) => void;
+  repositoryUrl?: string | null;
+  onRepositoryUrlChange?: (next: string | null) => void;
   data: string | undefined;
   isLoading: boolean;
   error: Error | null;
@@ -34,6 +36,8 @@ export interface ReportPageViewProps {
 export default function ReportPageView({
   selection,
   onSelectionChange,
+  repositoryUrl,
+  onRepositoryUrlChange,
   data,
   isLoading,
   error,
@@ -51,6 +55,11 @@ export default function ReportPageView({
         <PageActions
           selection={selection}
           onSelectionChange={onSelectionChange}
+          repositorySelector={
+            onRepositoryUrlChange != null
+              ? { value: repositoryUrl ?? null, onChange: onRepositoryUrlChange }
+              : undefined
+          }
           onReload={onReload}
           hideAutoRefresh
           extraActions={

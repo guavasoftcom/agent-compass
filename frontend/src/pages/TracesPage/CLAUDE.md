@@ -83,6 +83,10 @@ TracesPage/
 │                             (takes zero props, reads useTracesExplorerContext())
 ├── TracesExplorerContext.tsx provider + useTracesExplorerContext(); window resolve + reload poll
 ├── useTracesExplorer.ts      the behavior hook (returns TracesExplorer)
+├── useTracesExplorer.test.tsx  renderHook coverage: repositoryUrl folds into the filters/query-key,
+│                             and a repositoryUrl change resets the stream cursor the same way a
+│                             window change already does — this hook is the container/view exception's
+│                             behavior layer, so this is where that test lives (not a Page/View test)
 ├── tracesApi.ts              the 5 fetch* functions + USE_SAMPLE_DATA; re-exports traceTypes +
 │                             traceDerivations so `from './tracesApi'` stays the single import surface
 ├── traceTypes.ts             shared types (TracesFilters, TraceHistogram, TraceFacets, cursors, …) — no runtime
@@ -172,6 +176,27 @@ displays.
 All fetchers live in `tracesApi.ts` (not the shared `api/index.ts`) and share `buildTracesQuery(filters)` for the
 query string. `filtersKey = JSON.stringify(filters)`, where `filters` already has the zoom range
 substituted for the window range when a zoom is active.
+
+**Repository attribution** (repository-attribution-plan.md slice 6) rides the same `filters` object
+`repositoryUrl` LogsPage already uses, not a second fetcher argument: `TracesFilters.repositoryUrl`
+(`traceTypes.ts`) is set from `TracesExplorerProvider`'s `useWindowContext().repositoryUrl` and threaded
+into `useTracesExplorer`'s `UseTracesExplorerParams`, which folds it into the `filters` memo (and its dep
+array) alongside the zoom/facet/search inputs. `buildTracesQuery` (`traceDerivations.ts`) serializes it
+exactly like `buildLogsQuery` does — omitted when `null` ("all repositories", the default, so existing
+numbers don't silently change), set as `?repositoryUrl=...` otherwise, matching the backend
+`TraceQueryCriteria`'s `:repositoryUrl IS NULL OR ...` contract. Because it's part of `filters`, it
+reaches all four scoped endpoints (`trace-histogram`, `trace-facets`, `trace-table`, and the cursor
+fetch behind Stream/live-tail) through the one `filtersKey`, so the TanStack cache for
+`['trace-histogram', filtersKey]` / `['trace-facets', filtersKey]` / `['trace-table', filtersKey, sort,
+page, size]` never serves cross-repo data, and — because `filtersKey` also drives the `[filtersKey,
+view, sort]` stream-reset effect — a repository change resets the Stream cursor and collapses expanded
+rows exactly the same way a window change already does (see "The stream is hook-local" below); no
+separate reset path was written. The per-trace-id detail endpoints (`fetchSpansForTrace`,
+`fetchTraceSummaryOrNull`) are deliberately NOT touched — a single trace already belongs to one
+repository. `TracesExplorerContextValue` exposes `repositoryUrl`/`onRepositoryUrlChange`, which
+`TracesPageView` passes straight into `PageActions` (rendering `RepositorySelector` beside
+`WindowSelector`) — nothing about the histogram/facet/table/stream/table components changed; they all
+read `filters`-derived data from context as before.
 
 | Source                                          | Query key                                       | Fetcher → endpoint |
 |-------------------------------------------------|-------------------------------------------------|--------------------|

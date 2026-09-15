@@ -77,6 +77,10 @@ class CostBreakdownQueryIntegrationTest {
 
     private static final String EVENT_API_REQUEST = "api_request";
 
+    private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
+
     private static final String MODEL_OPUS = "claude-opus-4-8";
     private static final String MODEL_SONNET = "claude-sonnet-4-6";
 
@@ -145,7 +149,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void categoriesPartitionEveryRequestExactlyOnceAndSumToTheTotal() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         assertThat(breakdown.totalCostUsd()).isCloseTo(TOTAL_COST, offset(COST_ASSERTION_TOLERANCE));
         assertThat(breakdown.categories().stream().mapToDouble(CostCategoryShare::costUsd).sum())
@@ -156,7 +160,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void aSkillRunningInsideASubagentIsCreditedToSubagentNotSkill() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         double subagentCost = categoryCost(breakdown, "SUBAGENT");
         double skillCost = categoryCost(breakdown, "SKILL");
@@ -171,7 +175,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void mainLoopAndAuxiliaryCategoriesReadTheirOwnRows() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         assertThat(categoryCost(breakdown, "MAIN_LOOP")).isCloseTo(COST_MAIN_LOOP, offset(COST_ASSERTION_TOLERANCE));
         assertThat(categoryCost(breakdown, "AUXILIARY")).isCloseTo(COST_AUXILIARY, offset(COST_ASSERTION_TOLERANCE));
@@ -182,7 +186,7 @@ class CostBreakdownQueryIntegrationTest {
         // No tool_result / span correlation was seeded, so aggregateSubagentCostByModelInRange
         // has nothing to attribute to a named subagent identifier -- identifiedCostUsd must
         // read 0 rather than being clamped up to (or silently misreported as) costUsd.
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         CostCategoryShare subagent = breakdown.categories().stream()
                 .filter(category -> "SUBAGENT".equals(category.category()))
@@ -196,7 +200,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void modelEffortGridSumsToTheSameTotalAndKeepsMissingEffortNull() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         assertThat(breakdown.modelEffort().stream().mapToDouble(cell -> cell.costUsd()).sum())
                 .isCloseTo(breakdown.totalCostUsd(), offset(COST_ASSERTION_TOLERANCE));
@@ -211,7 +215,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void topSessionsAreRankedByCostDescending() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         assertThat(breakdown.topSessions()).isNotEmpty();
         assertThat(breakdown.topSessions().get(0).sessionId()).isEqualTo("session-sub");
@@ -229,7 +233,7 @@ class CostBreakdownQueryIntegrationTest {
                 ATTR_SESSION_ID, "session-main",
                 "prompt", promptText));
 
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         CostSessionShare mainLoopSession = breakdown.topSessions().stream()
                 .filter(session -> "session-main".equals(session.sessionId()))
@@ -261,7 +265,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void trendBucketsPerCategorySumToTheCategoryTotal() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         double subagentFromTrend = breakdown.trend().stream()
                 .mapToDouble(point -> point.costByCategory().getOrDefault("SUBAGENT", 0.0))
@@ -271,10 +275,57 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void deltaVsPriorWindowReadsZeroWhenNoPriorSpendExists() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
 
         assertThat(breakdown.priorCostUsd()).isEqualTo(0.0);
         assertThat(breakdown.deltaPct()).isEqualTo(0.0);
+    }
+
+    @Test
+    void repositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
+        // None of seed()'s rows carry vcs.repository.url.full, so repositoryUrl = null must read
+        // exactly what every other test in this class already asserts for the unfiltered window --
+        // the behavior-preservation guarantee the repository_url column was designed around.
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+
+        assertThat(breakdown.totalCostUsd()).isCloseTo(TOTAL_COST, offset(COST_ASSERTION_TOLERANCE));
+        assertThat(breakdown.categories().stream().mapToLong(CostCategoryShare::requests).sum())
+                .isEqualTo(5L);
+    }
+
+    @Test
+    void aRowCarryingTheVcsAttributeIsScopedToItsOwnRepositoryAndExcludedFromAnotherRepositorysWindow() {
+        double costRepositoryA = 5.00;
+        double costRepositoryB = 7.00;
+        saveLog(400, Map.of(
+                ATTR_EVENT_NAME, EVENT_API_REQUEST,
+                ATTR_SESSION_ID, "session-repo-a",
+                ATTR_MODEL, MODEL_SONNET,
+                ATTR_QUERY_SOURCE, "sdk",
+                ATTR_COST_USD, costRepositoryA,
+                ATTR_REPOSITORY_URL, REPOSITORY_A));
+        saveLog(410, Map.of(
+                ATTR_EVENT_NAME, EVENT_API_REQUEST,
+                ATTR_SESSION_ID, "session-repo-b",
+                ATTR_MODEL, MODEL_SONNET,
+                ATTR_QUERY_SOURCE, "sdk",
+                ATTR_COST_USD, costRepositoryB,
+                ATTR_REPOSITORY_URL, REPOSITORY_B));
+
+        CostBreakdown scopedToRepositoryA = service.breakdownInRange(windowStart, windowEnd, REPOSITORY_A);
+        CostBreakdown scopedToRepositoryB = service.breakdownInRange(windowStart, windowEnd, REPOSITORY_B);
+        CostBreakdown unscoped = service.breakdownInRange(windowStart, windowEnd, null);
+
+        // Scoped to A: only the row attributed to A is visible, not B's row nor the five
+        // unattributed rows seed() writes -- the row absent the vcs attribute has repository_url
+        // NULL, and (:repositoryUrl IS NULL OR repository_url = :repositoryUrl) excludes a NULL row
+        // once :repositoryUrl is bound to a real value.
+        assertThat(scopedToRepositoryA.totalCostUsd()).isCloseTo(costRepositoryA, offset(COST_ASSERTION_TOLERANCE));
+        // Scoped to B excludes A's row the same way.
+        assertThat(scopedToRepositoryB.totalCostUsd()).isCloseTo(costRepositoryB, offset(COST_ASSERTION_TOLERANCE));
+        // Unscoped includes every row: the five from seed() plus both repository-attributed ones.
+        assertThat(unscoped.totalCostUsd())
+                .isCloseTo(TOTAL_COST + costRepositoryA + costRepositoryB, offset(COST_ASSERTION_TOLERANCE));
     }
 
     private static double categoryCost(CostBreakdown breakdown, String category) {

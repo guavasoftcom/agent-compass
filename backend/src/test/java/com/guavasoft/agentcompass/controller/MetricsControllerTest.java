@@ -247,7 +247,7 @@ class MetricsControllerTest {
     void metricSeriesDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricSeriesService.metricSeries(from, to)).thenReturn(List.of(
+        when(metricSeriesService.metricSeries(from, to, null)).thenReturn(List.of(
                 new MetricSeries(
                         "token",
                         "claude_code.token.usage",
@@ -282,6 +282,6 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[0].splits.Model[0].label").value("claude-sonnet-4"))
                 .andExpect(jsonPath("$[0].splits.Model[0].pct").value(60));
 
-        verify(metricSeriesService).metricSeries(from, to);
+        verify(metricSeriesService).metricSeries(from, to, null);
     }
 }

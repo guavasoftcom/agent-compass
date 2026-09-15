@@ -44,10 +44,13 @@ import com.guavasoft.agentcompass.model.OllamaModelListResult;
 import com.guavasoft.agentcompass.model.OllamaSettingsRequest;
 import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
+import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.StorageOverview;
 import com.guavasoft.agentcompass.model.SystemBuild;
 import com.guavasoft.agentcompass.service.OllamaSettingsService;
 import com.guavasoft.agentcompass.service.SystemService;
+
+import java.util.List;
 
 /**
  * Operational diagnostics for the Settings page, plus the one action in the dashboard that mutates
@@ -196,6 +199,20 @@ public class SystemController {
                   required = true, example = "PURGE")
           @RequestParam String confirmation) {
     return systemService.purge(days, confirmation);
+  }
+
+  @GetMapping("/repositories")
+  @Operation(
+          summary = "Every repository seen in telemetry, for the repository picker",
+          description = "Distinct repository_url values unioned across spans, log_records, and "
+                  + "metric_points, each with its newest timestamp and total row count, newest first. "
+                  + "Takes no time window — see the class-level note. Only repositories with a "
+                  + "non-null repository_url are listed; the frontend adds its own synthetic 'All "
+                  + "repositories' and 'Unattributed' entries around this list.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "Repositories seen in telemetry",
+          content = @Content(schema = @Schema(implementation = RepositoryUsage.class))))
+  public List<RepositoryUsage> repositories() {
+    return systemService.repositoryUsage();
   }
 
   @GetMapping("/ollama-settings")

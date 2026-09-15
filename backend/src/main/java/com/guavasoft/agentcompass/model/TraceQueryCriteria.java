@@ -32,7 +32,8 @@ public record TraceQueryCriteria(
         String[] services,
         String[] durations,
         String[] sessions,
-        String fullTextQuery) {
+        String fullTextQuery,
+        String repositoryUrl) {
 
     /**
      * Normalizes the window to Postgres's microsecond resolution — see
@@ -42,6 +43,7 @@ public record TraceQueryCriteria(
     public TraceQueryCriteria {
         startTimestamp = QueryWindowPrecision.toDatabasePrecision(startTimestamp);
         endTimestamp = QueryWindowPrecision.toDatabasePrecision(endTimestamp);
+        repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
     }
 
     /** Convenience factory that coerces null lists to empty arrays. */
@@ -53,7 +55,8 @@ public record TraceQueryCriteria(
             List<String> services,
             List<String> durations,
             List<String> sessions,
-            String fullTextQuery) {
+            String fullTextQuery,
+            String repositoryUrl) {
         return new TraceQueryCriteria(
                 startTimestamp,
                 endTimestamp,
@@ -62,7 +65,8 @@ public record TraceQueryCriteria(
                 toArray(services),
                 toArray(durations),
                 toArray(sessions),
-                fullTextQuery == null ? "" : fullTextQuery);
+                fullTextQuery == null ? "" : fullTextQuery,
+                repositoryUrl);
     }
 
     private static String[] toArray(List<String> list) {

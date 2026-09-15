@@ -16,6 +16,7 @@
 package com.guavasoft.agentcompass.controller;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -39,6 +40,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,6 +61,7 @@ class TracesExplorerControllerTest {
     private static final String TRACE_ID = "aabbccddeeff00112233445566778899";
     private static final String SECOND_TRACE_ID = "99887766554433221100ffeeddccbbaa";
     private static final String FIRST_USER_PROMPT = "Add a firstUserPrompt field to the Traces API";
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
 
     @Autowired
     MockMvc mockMvc;
@@ -435,5 +438,97 @@ class TracesExplorerControllerTest {
                 .andExpect(status().isOk());
 
         verify(traceExplorerService).histogram(any(TraceQueryCriteria.class), anyInt());
+    }
+
+    // -------------------------------------------------------------------------
+    // repositoryUrl binding — repository attribution, slice 6 (Traces explorer)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void histogramBindsRepositoryUrlOntoTheCriteria() throws Exception {
+        when(traceExplorerService.histogram(any(TraceQueryCriteria.class), anyInt()))
+                .thenReturn(new TraceHistogram(1_800_000L, List.of(), 0.0, 0.0, 0L, 0L));
+
+        ArgumentCaptor<TraceQueryCriteria> criteriaCaptor = ArgumentCaptor.forClass(TraceQueryCriteria.class);
+
+        mockMvc.perform(get("/api/traces/histogram")
+                        .param("startTimestamp", WINDOW_START)
+                        .param("endTimestamp", WINDOW_END)
+                        .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(traceExplorerService).histogram(criteriaCaptor.capture(), anyInt());
+        assertThat(criteriaCaptor.getValue().repositoryUrl()).isEqualTo(REPOSITORY_URL);
+    }
+
+    @Test
+    void histogramLeavesRepositoryUrlNullWhenAbsent() throws Exception {
+        when(traceExplorerService.histogram(any(TraceQueryCriteria.class), anyInt()))
+                .thenReturn(new TraceHistogram(1_800_000L, List.of(), 0.0, 0.0, 0L, 0L));
+
+        ArgumentCaptor<TraceQueryCriteria> criteriaCaptor = ArgumentCaptor.forClass(TraceQueryCriteria.class);
+
+        mockMvc.perform(get("/api/traces/histogram")
+                        .param("startTimestamp", WINDOW_START)
+                        .param("endTimestamp", WINDOW_END))
+                .andExpect(status().isOk());
+
+        verify(traceExplorerService).histogram(criteriaCaptor.capture(), anyInt());
+        assertThat(criteriaCaptor.getValue().repositoryUrl()).isNull();
+    }
+
+    @Test
+    void facetsBindsRepositoryUrlOntoTheCriteria() throws Exception {
+        when(traceExplorerService.facets(any(TraceQueryCriteria.class)))
+                .thenReturn(new TraceFacets(List.of(), List.of(), List.of(), List.of(), List.of()));
+
+        ArgumentCaptor<TraceQueryCriteria> criteriaCaptor = ArgumentCaptor.forClass(TraceQueryCriteria.class);
+
+        mockMvc.perform(get("/api/traces/facets")
+                        .param("startTimestamp", WINDOW_START)
+                        .param("endTimestamp", WINDOW_END)
+                        .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(traceExplorerService).facets(criteriaCaptor.capture());
+        assertThat(criteriaCaptor.getValue().repositoryUrl()).isEqualTo(REPOSITORY_URL);
+    }
+
+    @Test
+    void tracesOffsetPageBindsRepositoryUrlOntoTheCriteria() throws Exception {
+        when(traceExplorerService.offsetPage(any(TraceQueryCriteria.class), eq("new"), eq(0), eq(25)))
+                .thenReturn(new TracePage(List.of(), 0L));
+
+        ArgumentCaptor<TraceQueryCriteria> criteriaCaptor = ArgumentCaptor.forClass(TraceQueryCriteria.class);
+
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", WINDOW_START)
+                        .param("endTimestamp", WINDOW_END)
+                        .param("page", "0")
+                        .param("size", "25")
+                        .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(traceExplorerService).offsetPage(criteriaCaptor.capture(), eq("new"), eq(0), eq(25));
+        assertThat(criteriaCaptor.getValue().repositoryUrl()).isEqualTo(REPOSITORY_URL);
+    }
+
+    @Test
+    void tracesCursorPageBindsRepositoryUrlOntoTheCriteria() throws Exception {
+        when(traceExplorerService.cursorPage(
+                any(TraceQueryCriteria.class), eq("new"), isNull(), isNull(), anyInt()))
+                .thenReturn(new TraceCursorPage(List.of(), null, false, 0L));
+
+        ArgumentCaptor<TraceQueryCriteria> criteriaCaptor = ArgumentCaptor.forClass(TraceQueryCriteria.class);
+
+        mockMvc.perform(get("/api/traces")
+                        .param("startTimestamp", WINDOW_START)
+                        .param("endTimestamp", WINDOW_END)
+                        .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(traceExplorerService)
+                .cursorPage(criteriaCaptor.capture(), eq("new"), isNull(), isNull(), anyInt());
+        assertThat(criteriaCaptor.getValue().repositoryUrl()).isEqualTo(REPOSITORY_URL);
     }
 }

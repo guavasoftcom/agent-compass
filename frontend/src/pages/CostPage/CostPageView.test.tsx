@@ -21,6 +21,15 @@ import CostPageView, { type CostPageViewProps } from './CostPageView';
 import type { CostBreakdown, CostSessionShare, WindowSelection } from '../../api';
 import { WINDOWS } from '../../lib/constants';
 
+// CostPageView always passes onRepositoryUrlChange, so PageActions renders
+// RepositorySelector, which fetches the repository list itself (it is not
+// window-scoped and has no page-level query to stub via props). Stub the
+// fetcher rather than let it hit the network in jsdom.
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+});
+
 const selection: WindowSelection = { kind: 'preset', minutes: 1440 };
 
 const topSession: CostSessionShare = {
@@ -117,6 +126,8 @@ const baseProps: CostPageViewProps = {
   selection,
   onSelectionChange: vi.fn(),
   windows: WINDOWS,
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
   breakdown,
   activeTab: 'overview',
   onActiveTabChange: vi.fn(),

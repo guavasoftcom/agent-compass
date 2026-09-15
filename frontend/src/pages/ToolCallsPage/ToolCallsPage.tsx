@@ -22,34 +22,32 @@ import {
 } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
 import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import ToolCallsPageView, {
   type ToolCallRowWithShare,
 } from './ToolCallsPageView';
 
 export default function ToolCallsPage() {
-  const { selection, autoRefresh } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const toolCallsQuery = useQuery({
     queryKey: ['tool-calls', selectionKey],
-    queryFn: () => fetchToolCalls(selection),
+    queryFn: () => fetchToolCalls({ ...selection, repositoryUrl }),
     refetchInterval,
   });
   const timeseriesQuery = useQuery({
     queryKey: ['tool-calls-timeseries', selectionKey],
-    queryFn: () => fetchToolCallsTimeseries(selection),
+    queryFn: () => fetchToolCallsTimeseries({ ...selection, repositoryUrl }),
     refetchInterval,
   });
   const latencyQuery = useQuery({
     queryKey: ['tool-calls-latency', selectionKey],
-    queryFn: () => fetchToolCallLatency(selection),
+    queryFn: () => fetchToolCallLatency({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 

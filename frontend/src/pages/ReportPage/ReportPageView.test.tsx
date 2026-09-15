@@ -20,11 +20,22 @@ import { renderWithProviders } from '../../test/renderWithProviders';
 import ReportPageView, { type ReportPageViewProps } from './ReportPageView';
 import type { WindowSelection } from '../../api';
 
+// ReportPageView always passes onRepositoryUrlChange, so PageActions renders
+// RepositorySelector, which fetches the repository list itself (it is not
+// window-scoped and has no page-level query to stub via props). Stub the
+// fetcher rather than let it hit the network in jsdom.
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+});
+
 const selection: WindowSelection = { kind: 'preset', minutes: 1440 };
 
 const baseProps: ReportPageViewProps = {
   selection,
   onSelectionChange: vi.fn(),
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
   data: '# Tuning report\n\nEverything looks fine.',
   isLoading: false,
   error: null,

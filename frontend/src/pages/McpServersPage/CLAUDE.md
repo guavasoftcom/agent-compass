@@ -72,7 +72,7 @@ The fetcher lives in `api/endpoints.ts` (the shared barrel, not a page-local mod
 
 | Container hook | Query key                    | Fetcher → endpoint |
 |-----------------|-------------------------------|---------------------|
-| `useQuery`      | `['mcp-usage', selectionKey]` | `fetchMcpServerUsage(selection)` → `GET /api/tool-activity/mcp-usage?…` |
+| `useQuery`      | `['mcp-usage', selectionKey]` | `fetchMcpServerUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/mcp-usage?…` |
 
 Returns `McpServerUsageRow[]` (imported from `../../api`) — one row per **(server, tool)**
 pair, not per server. `server`/`tool` identify the MCP server (e.g. `playwright`) and the
@@ -83,10 +83,14 @@ single response feeds every card on the page — there is no second query.
 
 ## Data flow and semantics
 
-- **Section tab, not a top-level page.** The container reads `selection` and `autoRefresh` from
-  `useSectionContext()` (not `useWindowContext()`). The `WindowSelector`, reload button, and
-  auto-refresh toggle all live in `SectionLayout`'s `PageActions`; this page renders no chrome
-  of its own.
+- **Section tab, not a top-level page.** The container reads `selection`, `autoRefresh`, and
+  `repositoryUrl` from `useSectionContext()` (not `useWindowContext()`). The `WindowSelector`,
+  `RepositorySelector`, reload button, and auto-refresh toggle all live in `SectionLayout`'s
+  `PageActions`; this page renders no chrome of its own.
+- **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
+  'all'>` and `fetchMcpServerUsage` is called with `{ ...selection, repositoryUrl }` — the
+  `CostPage` Phase 4 template. See `ToolCallsPage/CLAUDE.md` for the note on the `SectionLayout`
+  plumbing that renders the shared `RepositorySelector` for all five Tool Usage tabs.
 - **`selectionKey`** is built in the container: `preset:<minutes>` or
   `custom:<startTimestamp>:<endTimestamp>`, placed in the query key so the TanStack cache splits
   cleanly per window selection.

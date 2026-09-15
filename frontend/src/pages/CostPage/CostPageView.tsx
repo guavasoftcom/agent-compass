@@ -47,6 +47,8 @@ export interface CostPageViewProps {
   selection: WindowSelection;
   onSelectionChange: (selection: WindowSelection) => void;
   windows: readonly WindowOption[];
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (repositoryUrl: string | null) => void;
   breakdown: CostBreakdown;
   activeTab: CostPageTab;
   onActiveTabChange: (tab: CostPageTab) => void;
@@ -102,6 +104,8 @@ const CostPageView = ({
   selection,
   onSelectionChange,
   windows,
+  repositoryUrl,
+  onRepositoryUrlChange,
   breakdown,
   activeTab,
   onActiveTabChange,
@@ -165,6 +169,7 @@ const CostPageView = ({
           selection={selection}
           onSelectionChange={onSelectionChange}
           windows={windows}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
           onReload={onReload}
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}

@@ -90,7 +90,7 @@ Superseded images accumulate on disk; `docker image prune` clears the untagged l
 
 Claude Code emits telemetry only when you turn it on, and each signal — metrics, logs (events), traces — has its own exporter switch. The dashboard uses all three: metrics drive Tokens/Insights, logs drive Tool Activity and the log explorer, traces drive the Traces pages. Turning on only metrics leaves most of the UI empty.
 
-**One endpoint, one destination.** `OTEL_EXPORTER_OTLP_ENDPOINT` decides which backend receives your telemetry, and there is only one value — you can't feed both stacks at once. The compose stack listens on `http://localhost:18080`; the dev backend (`./mvnw spring-boot:run`) listens on `http://localhost:8080`. Those are separate databases, so telemetry recorded against one is not visible in the other. Switching which one you're feeding means editing this value and starting a new Claude Code session; if you moved the container with `APP_PORT`, match that instead.
+**One endpoint, one destination.** `OTEL_EXPORTER_OTLP_ENDPOINT` decides which backend receives your telemetry, and there is only one value — you can't feed both stacks at once. The compose stack listens on `http://localhost:18080`; the dev backend (`./mvnw spring-boot:run`) listens on `http://localhost:8080`. Those are separate databases, so telemetry recorded against one is not visible in the other. Switching which one you're feeding means editing this value and starting a new Claude Code session; if you moved the container with `APP_PORT`, match that instead. Within one destination, though, a single endpoint can now correctly serve many repositories at once — `OTEL_METRICS_INCLUDE_REPOSITORY` (above) tags each repo's telemetry so it can be filtered back apart on the dashboard, rather than requiring one endpoint per project.
 
 ### The full configuration
 
@@ -121,6 +121,7 @@ Put these in the `env` block of `~/.claude/settings.json` so every session picks
     "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
     "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
     "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "true",
+    "OTEL_METRICS_INCLUDE_REPOSITORY": "true",
 
     "OTEL_METRIC_EXPORT_INTERVAL": "60000",
     "OTEL_LOGS_EXPORT_INTERVAL": "5000",
@@ -152,6 +153,7 @@ For a single shell instead, `export` the same names and values.
 | `OTEL_METRICS_INCLUDE_ACCOUNT_UUID`                            | Account UUID on metrics. Enables multi-account / multi-user filtering and analysis.                                                                                                                                                                                     |
 | `OTEL_METRICS_INCLUDE_ENTRYPOINT`                              | Entrypoint (CLI, extension, IDE, web) on metrics. Enables per-interface usage analysis.                                                                                                                                                                                 |
 | `OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES`                     | Resource-level attributes (hostname, process ID, runtime version) on metrics. Useful for debugging deployment and environment issues.                                                                                                                                   |
+| `OTEL_METRICS_INCLUDE_REPOSITORY`                              | `vcs.repository.url.full` / `.owner.name` / `.repository.name` / `.provider.name`, derived from the git `origin` remote. **Requires Claude Code v2.1.269+** — older versions silently ignore this key. Powers the repository picker beside the window selector; a user working across multiple repos against one endpoint gets blended, contaminated results without it. Omitted entirely (not an empty string) with no git repo or no `origin`. See [.design-docs/repository-attribution-plan.md](../.design-docs/repository-attribution-plan.md). |
 | `OTEL_METRIC_EXPORT_INTERVAL`                                  | Metric batching, in ms. Leave it at the `60000` default — lowering it costs a lot of storage and buys no accuracy, for the reason below.                                                                                                                                |
 | `OTEL_LOGS_EXPORT_INTERVAL` / `OTEL_TRACES_EXPORT_INTERVAL`    | Log and span batching, in ms. Both default to `5000` and belong there: unlike the counters, a buffered log batch that never ships is gone. See below.                                                                                                                   |
 
@@ -185,7 +187,7 @@ That is the intended trade for a local tuning tool, and the Logs explorer's expa
 ### Optional additions
 
 - `OTEL_METRICS_INCLUDE_VERSION=true` — stamps `app.version` on metrics, which makes it possible to line a behavior change up against an upgrade. It defaults to `false`, and like the other `OTEL_METRICS_INCLUDE_*` switches it takes `true` / `false` — `1` will not turn it on.
-- `OTEL_RESOURCE_ATTRIBUTES=key=value,key2=value2` — your own dimensions (team, machine, experiment). They land in the jsonb payload and are filterable in the Logs and Traces explorers.
+- `OTEL_RESOURCE_ATTRIBUTES=key=value,key2=value2` — your own dimensions (team, machine, experiment). They land in the jsonb payload and are filterable in the Logs and Traces explorers. Don't hand-roll a repository dimension through this — `OTEL_METRICS_INCLUDE_REPOSITORY` (above) is the native, structured way to get repository identity, and the dashboard's repository picker is built against its specific attribute keys, not an arbitrary custom one.
 
 ### Verify it's flowing
 

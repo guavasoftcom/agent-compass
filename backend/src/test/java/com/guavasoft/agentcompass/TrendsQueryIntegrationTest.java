@@ -51,6 +51,9 @@ class TrendsQueryIntegrationTest {
 
   private static final String COST_METRIC = "claude_code.cost.usage";
   private static final String TOOL_RESULT_EVENT = "tool_result";
+  private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
+  private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+  private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
   @Container
   @ServiceConnection
@@ -90,7 +93,7 @@ class TrendsQueryIntegrationTest {
     saveToolResult("session-prior", from.minusSeconds(1), false);
 
     Object[] row = logRecordRepository.aggregateSessionFailuresCurrentAndPrior(
-        TOOL_RESULT_EVENT, "success", from, to, priorFrom).get(0);
+        TOOL_RESULT_EVENT, "success", from, to, priorFrom, null).get(0);
 
     long currentFailures = ((Number) row[0]).longValue();
     long priorFailures = ((Number) row[1]).longValue();
@@ -105,7 +108,7 @@ class TrendsQueryIntegrationTest {
     saveCost("session-A", "opus", 12.0, from.plusSeconds(300));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse response = trendService.costTrendsInRange(from, to);
+    TrendsResponse response = trendService.costTrendsInRange(from, to, null);
     TrendsResponse.MetricTrend costPerSession = response.metrics().get("cost_per_session");
 
     assertThat(costPerSession.before()).isZero();
@@ -131,7 +134,7 @@ class TrendsQueryIntegrationTest {
     // Prior window: no failures.
     saveToolResult("session-C", priorFrom.plusSeconds(400), true);
 
-    TrendsResponse costResponse = trendService.costTrendsInRange(from, to);
+    TrendsResponse costResponse = trendService.costTrendsInRange(from, to, null);
 
     assertThat(costResponse.current().start()).isEqualTo(from);
     assertThat(costResponse.current().end()).isEqualTo(to);
@@ -147,7 +150,7 @@ class TrendsQueryIntegrationTest {
     assertThat(totalCost.afterSeries()).hasSize(7);
     assertThat(totalCost.directionIsGoodWhen()).isEqualTo("down");
 
-    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to);
+    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to, null);
 
     assertThat(reliabilityResponse.metrics()).containsOnlyKeys("tool_errors", "error_rate_pct", "session_failures");
 
@@ -155,7 +158,7 @@ class TrendsQueryIntegrationTest {
     assertThat(sessionFailures.after()).isEqualTo(1.0);
     assertThat(sessionFailures.before()).isZero();
 
-    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to);
+    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to, null);
 
     assertThat(activityResponse.metrics()).containsOnlyKeys("sessions", "avg_duration_min");
 
@@ -177,22 +180,128 @@ class TrendsQueryIntegrationTest {
     }
   }
 
+  @Test
+  void repositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
+    // None of these rows carry vcs.repository.url.full, so repositoryUrl = null must read exactly
+    // what the unfiltered window already returns -- the behavior-preservation guarantee the
+    // repository_url column was designed around.
+    saveCost("session-A", "opus", 10.0, from.plusSeconds(300));
+    saveToolResult("session-A", from.plusSeconds(400), false);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    TrendsResponse costResponse = trendService.costTrendsInRange(from, to, null);
+    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to, null);
+    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to, null);
+    TrendsResponse tokenEfficiencyResponse = trendService.tokenEfficiencyTrendsInRange(from, to, null);
+
+    assertThat(costResponse.metrics().get("total_cost").after()).isEqualTo(10.0);
+    assertThat(reliabilityResponse.metrics().get("tool_errors").after()).isEqualTo(1.0);
+    assertThat(activityResponse.metrics().get("sessions").after()).isEqualTo(1.0);
+    assertThat(tokenEfficiencyResponse.metrics()).containsKeys(
+        "cache_read_ratio_pct", "tokens_total", "tokens_per_session");
+  }
+
+  @Test
+  void costTrendsScopeToTheirOwnRepositoryAndExcludeAnotherRepositorysCurrentAndPriorRows() {
+    // Both the current and prior period carry a row for each repository, proving the before/after
+    // diff stays comparing like-for-like once scoped rather than an unscoped prior against a
+    // scoped current -- an unscoped prior would produce a nonsensical delta.
+    saveCost("session-a-current", "opus", 10.0, from.plusSeconds(300), REPOSITORY_A);
+    saveCost("session-a-prior", "opus", 4.0, priorFrom.plusSeconds(300), REPOSITORY_A);
+    saveCost("session-b-current", "opus", 7.0, from.plusSeconds(300), REPOSITORY_B);
+    saveCost("session-b-prior", "opus", 3.0, priorFrom.plusSeconds(300), REPOSITORY_B);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    TrendsResponse scopedToRepositoryA = trendService.costTrendsInRange(from, to, REPOSITORY_A);
+    TrendsResponse scopedToRepositoryB = trendService.costTrendsInRange(from, to, REPOSITORY_B);
+    TrendsResponse unscoped = trendService.costTrendsInRange(from, to, null);
+
+    TrendsResponse.MetricTrend totalCostA = scopedToRepositoryA.metrics().get("total_cost");
+    assertThat(totalCostA.after()).isEqualTo(10.0);
+    assertThat(totalCostA.before()).isEqualTo(4.0);
+
+    TrendsResponse.MetricTrend totalCostB = scopedToRepositoryB.metrics().get("total_cost");
+    assertThat(totalCostB.after()).isEqualTo(7.0);
+    assertThat(totalCostB.before()).isEqualTo(3.0);
+
+    TrendsResponse.MetricTrend totalCostUnscoped = unscoped.metrics().get("total_cost");
+    assertThat(totalCostUnscoped.after()).isEqualTo(17.0);
+    assertThat(totalCostUnscoped.before()).isEqualTo(7.0);
+  }
+
+  @Test
+  void tokenEfficiencyTrendsScopeToTheirOwnRepository() {
+    saveCost("session-a", "opus", 10.0, from.plusSeconds(300), REPOSITORY_A);
+    saveCost("session-b", "opus", 7.0, from.plusSeconds(300), REPOSITORY_B);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    TrendsResponse scopedToRepositoryA = trendService.tokenEfficiencyTrendsInRange(from, to, REPOSITORY_A);
+    TrendsResponse unscoped = trendService.tokenEfficiencyTrendsInRange(from, to, null);
+
+    assertThat(scopedToRepositoryA.metrics()).containsKeys(
+        "cache_read_ratio_pct", "tokens_total", "tokens_per_session");
+    assertThat(unscoped.metrics()).containsKeys("cache_read_ratio_pct", "tokens_total", "tokens_per_session");
+  }
+
+  @Test
+  void reliabilityTrendsScopeToTheirOwnRepositoryAndExcludeAnotherRepositorysFailures() {
+    saveToolResult("session-a", from.plusSeconds(400), false, REPOSITORY_A);
+    saveToolResult("session-b", from.plusSeconds(400), false, REPOSITORY_B);
+    saveToolResult("session-b", from.plusSeconds(450), true, REPOSITORY_B);
+
+    TrendsResponse scopedToRepositoryA = trendService.reliabilityTrendsInRange(from, to, REPOSITORY_A);
+    TrendsResponse scopedToRepositoryB = trendService.reliabilityTrendsInRange(from, to, REPOSITORY_B);
+    TrendsResponse unscoped = trendService.reliabilityTrendsInRange(from, to, null);
+
+    assertThat(scopedToRepositoryA.metrics().get("tool_errors").after()).isEqualTo(1.0);
+    assertThat(scopedToRepositoryB.metrics().get("tool_errors").after()).isEqualTo(1.0);
+    assertThat(scopedToRepositoryB.metrics().get("error_rate_pct").after()).isEqualTo(50.0);
+    assertThat(unscoped.metrics().get("tool_errors").after()).isEqualTo(2.0);
+  }
+
+  @Test
+  void activityTrendsScopeToTheirOwnRepositoryAndExcludeAnotherRepositorysSessions() {
+    saveCost("session-a", "opus", 10.0, from.plusSeconds(300), REPOSITORY_A);
+    saveCost("session-b", "opus", 7.0, from.plusSeconds(300), REPOSITORY_B);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    TrendsResponse scopedToRepositoryA = trendService.activityTrendsInRange(from, to, REPOSITORY_A);
+    TrendsResponse scopedToRepositoryB = trendService.activityTrendsInRange(from, to, REPOSITORY_B);
+    TrendsResponse unscoped = trendService.activityTrendsInRange(from, to, null);
+
+    assertThat(scopedToRepositoryA.metrics().get("sessions").after()).isEqualTo(1.0);
+    assertThat(scopedToRepositoryB.metrics().get("sessions").after()).isEqualTo(1.0);
+    assertThat(unscoped.metrics().get("sessions").after()).isEqualTo(2.0);
+  }
+
   private void saveCost(String sessionId, String model, double value, Instant timestamp) {
+    saveCost(sessionId, model, value, timestamp, null);
+  }
+
+  private void saveCost(String sessionId, String model, double value, Instant timestamp, String repositoryUrl) {
     MetricPointEntity entity = new MetricPointEntity();
     entity.setMetricName(COST_METRIC);
     entity.setTimestamp(timestamp);
     entity.setReceivedAt(Instant.now());
     entity.setValueDouble(value);
     entity.setValueKind("double");
-    entity.setAttributes(Map.of(
-        "session.id", sessionId,
-        "model", model,
-        "query_source", "main"));
+    Map<String, Object> attributes = new HashMap<>();
+    attributes.put("session.id", sessionId);
+    attributes.put("model", model);
+    attributes.put("query_source", "main");
+    if (repositoryUrl != null) {
+      attributes.put(ATTR_REPOSITORY_URL, repositoryUrl);
+    }
+    entity.setAttributes(attributes);
     MetricPointEntity savedEntity = metricPointRepository.save(entity);
     seededMetricPointIds.add(savedEntity.getId());
   }
 
   private void saveToolResult(String sessionId, Instant timestamp, boolean success) {
+    saveToolResult(sessionId, timestamp, success, null);
+  }
+
+  private void saveToolResult(String sessionId, Instant timestamp, boolean success, String repositoryUrl) {
     LogRecordEntity entity = new LogRecordEntity();
     entity.setTimestamp(timestamp);
     entity.setObservedTimestamp(timestamp);
@@ -202,6 +311,9 @@ class TrendsQueryIntegrationTest {
     attributes.put("event.name", TOOL_RESULT_EVENT);
     attributes.put("session.id", sessionId);
     attributes.put("success", String.valueOf(success));
+    if (repositoryUrl != null) {
+      attributes.put(ATTR_REPOSITORY_URL, repositoryUrl);
+    }
     entity.setAttributes(attributes);
     logRecordRepository.save(entity);
   }

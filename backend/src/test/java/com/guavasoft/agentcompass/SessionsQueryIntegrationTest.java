@@ -27,6 +27,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionPromptToolCount;
@@ -171,7 +172,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void defaultSortRanksSessionsByCostDescendingWithTotalCount() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
 
     assertThat(page.totalCount()).isEqualTo(3);
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C", "B");
@@ -182,7 +183,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void ascendingActiveTimeSortPutsTheIdleOnlySessionFirst() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "activeTimeSeconds", "asc", 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "activeTimeSeconds", "asc", 0, 25, null);
 
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("C", "B", "A");
   }
@@ -197,17 +198,17 @@ class SessionsQueryIntegrationTest {
     saveCost("B", "opus", "main", 1.6, base.plusSeconds(120));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage descending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "desc", 0, 25);
+    SessionSummaryPage descending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "desc", 0, 25, null);
     assertThat(descending.items()).extracting(SessionSummary::sessionId).containsExactly("B", "A", "C");
 
-    SessionSummaryPage ascending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "asc", 0, 25);
+    SessionSummaryPage ascending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "asc", 0, 25, null);
     assertThat(ascending.items()).extracting(SessionSummary::sessionId).containsExactly("C", "A", "B");
   }
 
   @Test
   void paginationReturnsRequestedSliceWhileTotalCountStaysWholeWindow() {
-    SessionSummaryPage firstPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2);
-    SessionSummaryPage secondPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2);
+    SessionSummaryPage firstPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2, null);
+    SessionSummaryPage secondPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2, null);
 
     assertThat(firstPage.totalCount()).isEqualTo(3);
     assertThat(firstPage.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C");
@@ -217,7 +218,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void rowsCarryTokensTerminalAndStartTypeAndSortByTokens() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "tokens", "desc", 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "tokens", "desc", 0, 25, null);
 
     // A is the only session with token rows, so it sorts first on tokens.
     SessionSummary sessionA = page.items().get(0);
@@ -268,7 +269,7 @@ class SessionsQueryIntegrationTest {
 
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
     SessionSummary sessionI = page.items().stream()
         .filter(item -> "I".equals(item.sessionId())).findFirst().orElseThrow();
 
@@ -299,7 +300,7 @@ class SessionsQueryIntegrationTest {
     saveCost("R", "opus", "main", 1.0, base);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<String> descending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "desc", 0, 25)
+    List<String> descending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "desc", 0, 25, null)
         .items().stream().map(SessionSummary::sessionId).toList();
     // Seed session A has 1,000,000 input tokens but zero cacheRead -> 0% efficiency
     // (defined, not null), so the defined-efficiency order highest-first is P, Q, A.
@@ -310,7 +311,7 @@ class SessionsQueryIntegrationTest {
     assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("B"));
     assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("C"));
 
-    List<String> ascending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "asc", 0, 25)
+    List<String> ascending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "asc", 0, 25, null)
         .items().stream().map(SessionSummary::sessionId).toList();
     // Ascending flips the defined order to A (0%), Q (20%), P (90%); nulls still last.
     assertThat(ascending).containsSubsequence("A", "Q", "P");
@@ -340,7 +341,7 @@ class SessionsQueryIntegrationTest {
     saveCost("X", "opus", "main", 99.0, beforeWindow);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
     assertThat(page.items()).extracting(SessionSummary::sessionId).doesNotContain("X");
 
     SessionSummary sessionW = page.items().stream()
@@ -375,18 +376,18 @@ class SessionsQueryIntegrationTest {
     saveCost("H", "opus", "main", 7.0, insideWindow.plusSeconds(60));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
     assertThat(page.items()).extracting(SessionSummary::sessionId).doesNotContain("H");
     assertThat(page.totalCount()).isEqualTo(3);
 
     // The KPI population is filtered the same way, so the ghost cannot pad the
     // session count or drag the cost percentiles toward zero.
-    assertThat(metricService.sessionsKpis(WINDOW_MINUTES).totalSessions()).isEqualTo(3);
+    assertThat(metricService.sessionsKpis(WINDOW_MINUTES, null).totalSessions()).isEqualTo(3);
   }
 
   @Test
   void kpisComputePercentilesOverTheWholeWindow() {
-    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES);
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null);
 
     assertThat(kpis.totalSessions()).isEqualTo(3);
     // Costs sorted: [1.5, 8.0, 15.0] -> P50 = 8.0, P95 interpolates to 14.3.
@@ -419,7 +420,7 @@ class SessionsQueryIntegrationTest {
     saveCost("R", "opus", "main", 9.0, insideWindow);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES);
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null);
 
     assertThat(kpis.totalSessions()).isEqualTo(4);
     assertThat(kpis.sessionsTrend().stream().mapToLong(Long::longValue).sum())
@@ -428,7 +429,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void promptContextEnrichesFirstPromptAndCountPerSession() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
 
     SessionSummary sessionA = page.items().stream()
         .filter(item -> "A".equals(item.sessionId())).findFirst().orElseThrow();
@@ -1080,6 +1081,99 @@ class SessionsQueryIntegrationTest {
         "session.id", sessionId,
         "model", model,
         "query_source", querySource));
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
+  }
+
+  // ---- Repository attribution (V34's repository_url generated column) -----
+
+  private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
+  private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+  private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
+
+  @Test
+  void repositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
+    // None of seedSessions()'s rows carry vcs.repository.url.full, so repositoryUrl = null must
+    // read exactly what every other test in this class already asserts for the unfiltered window.
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    assertThat(page.totalCount()).isEqualTo(3);
+    assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C", "B");
+
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null);
+    assertThat(kpis.totalSessions()).isEqualTo(3);
+  }
+
+  @Test
+  void aSessionCarryingTheVcsAttributeIsScopedToItsOwnRepositoryAndExcludedFromAnotherRepositorysWindow() {
+    Instant base = Instant.now().minus(6, ChronoUnit.MINUTES);
+    saveCostWithRepository("REPO_A", "opus", "main", 4.0, base, REPOSITORY_A);
+    saveCostWithRepository("REPO_B", "opus", "main", 9.0, base, REPOSITORY_B);
+    // Clears the cache-efficiency ranking's input-side token floor (default 100,000)
+    // so REPO_A actually surfaces in that ranking rather than being excluded as too small.
+    saveTokenUsageWithRepository("REPO_A", 150_000.0, base, REPOSITORY_A);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage scopedToA =
+        metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, REPOSITORY_A);
+    SessionSummaryPage scopedToB =
+        metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, REPOSITORY_B);
+    SessionSummaryPage unscoped = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+
+    // Scoped to A: only REPO_A is visible -- not REPO_B's session nor the three
+    // unattributed seed sessions (A, B, C), whose repository_url is NULL and is
+    // excluded once :repositoryUrl is bound to a real value.
+    assertThat(scopedToA.items()).extracting(SessionSummary::sessionId).containsExactly("REPO_A");
+    assertThat(scopedToB.items()).extracting(SessionSummary::sessionId).containsExactly("REPO_B");
+    // Unscoped includes every session: the three from seedSessions() plus both
+    // repository-attributed ones.
+    assertThat(unscoped.items()).extracting(SessionSummary::sessionId)
+        .containsExactlyInAnyOrder("A", "B", "C", "REPO_A", "REPO_B");
+
+    SessionKpis kpisScopedToA = metricService.sessionsKpis(WINDOW_MINUTES, REPOSITORY_A);
+    assertThat(kpisScopedToA.totalSessions()).isEqualTo(1);
+
+    List<SessionCacheEfficiency> cacheEfficiencyScopedToA =
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, DEFAULT_CACHE_EFFICIENCY_LIMIT, REPOSITORY_A);
+    assertThat(cacheEfficiencyScopedToA).extracting(SessionCacheEfficiency::sessionId)
+        .containsExactly("REPO_A");
+
+    List<SessionCacheEfficiency> cacheEfficiencyScopedToB =
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, DEFAULT_CACHE_EFFICIENCY_LIMIT, REPOSITORY_B);
+    assertThat(cacheEfficiencyScopedToB).extracting(SessionCacheEfficiency::sessionId)
+        .doesNotContain("REPO_A");
+  }
+
+  private static final int DEFAULT_CACHE_EFFICIENCY_LIMIT = 8;
+
+  private void saveCostWithRepository(
+      String sessionId, String model, String querySource, double value, Instant timestamp, String repositoryUrl) {
+    MetricPointEntity entity = new MetricPointEntity();
+    entity.setMetricName(COST_METRIC);
+    entity.setTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setValueDouble(value);
+    entity.setValueKind("double");
+    entity.setAttributes(Map.of(
+        "session.id", sessionId,
+        "model", model,
+        "query_source", querySource,
+        ATTR_REPOSITORY_URL, repositoryUrl));
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
+  }
+
+  private void saveTokenUsageWithRepository(
+      String sessionId, double value, Instant timestamp, String repositoryUrl) {
+    MetricPointEntity entity = new MetricPointEntity();
+    entity.setMetricName(TOKEN_METRIC);
+    entity.setTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setValueDouble(value);
+    entity.setValueKind("double");
+    entity.setAttributes(Map.of(
+        "session.id", sessionId,
+        "type", "input",
+        ATTR_REPOSITORY_URL, repositoryUrl));
     MetricPointEntity savedEntity = metricPointRepository.save(entity);
     seededMetricPointIds.add(savedEntity.getId());
   }

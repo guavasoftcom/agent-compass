@@ -70,18 +70,26 @@ Both fetchers live in `api/endpoints.ts` (shared barrel, `from '../../api'`).
 
 | Component (hook)                 | Query key                        | Fetcher → endpoint |
 |----------------------------------|----------------------------------|--------------------|
-| `PermissionDenialsPage` (`useQuery`) | `['tool-denials', selectionKey]` | `fetchToolDenials(selection)` → `GET /api/tool-activity/denials?…` |
-| `PermissionDenialsPage` (`useQuery`) | `['hook-executions', selectionKey]` | `fetchHookExecutions(selection)` → `GET /api/tool-activity/hook-executions?…` |
+| `PermissionDenialsPage` (`useQuery`) | `['tool-denials', selectionKey]` | `fetchToolDenials({ ...selection, repositoryUrl })` → `GET /api/tool-activity/denials?…` |
+| `PermissionDenialsPage` (`useQuery`) | `['hook-executions', selectionKey]` | `fetchHookExecutions({ ...selection, repositoryUrl })` → `GET /api/tool-activity/hook-executions?…` |
 
 `ToolDenialsCard`, `HookExecutionsCard`, and `DonutCard` never fetch — they receive
 `denialRows` / `hookRows` as props and do all derivation locally.
 
 ## Data flow and semantics
 
-- **Section tab, not top-level route.** The container reads `selection` and `autoRefresh` from
-  `useSectionContext()` (not `useWindowContext()`). Window selection, the reload button, and the
-  auto-refresh toggle live in the parent `SectionLayout` chrome, so `PageLayout` here receives no
-  `actions` prop and no `title`.
+- **Section tab, not top-level route.** The container reads `selection`, `autoRefresh`, and
+  `repositoryUrl` from `useSectionContext()` (not `useWindowContext()`). Window selection, the
+  repository picker, the reload button, and the auto-refresh toggle live in the parent
+  `SectionLayout` chrome, so `PageLayout` here receives no `actions` prop and no `title`.
+- **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
+  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl }` — the `CostPage`
+  Phase 4 template. `fetchHookExecutions` is one of the two `ToolActivityController` endpoints
+  (alongside `/calls/latency`) that don't obviously belong to a single named page in the design
+  doc's rollout list; this page is the one that renders hook-execution data
+  (`HookExecutionsCard`), so it's now in scope for this slice too. See
+  `ToolCallsPage/CLAUDE.md` for the note on the `SectionLayout` plumbing that renders the shared
+  `RepositorySelector` for all five Tool Usage tabs.
 - **`selectionKey`** is `preset:<minutes>` or `custom:<startTimestamp>:<endTimestamp>` — same
   shape used across all section tab containers. Both query keys include it so the TanStack cache
   splits cleanly per window.

@@ -23,6 +23,15 @@ import SessionsPageView, {
 import type { SessionSummaryRow } from '../../api';
 import { WINDOWS } from '../../lib/constants';
 
+// SessionsPageView always passes onRepositoryUrlChange, so PageActions renders
+// RepositorySelector, which fetches the repository list itself (it is not
+// window-scoped and has no page-level query to stub via props). Stub the
+// fetcher rather than let it hit the network in jsdom.
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+});
+
 const rows: SessionSummaryRow[] = [
   {
     sessionId: '690cb902-1234-4e02-9a71-9ddc290d9200',
@@ -51,6 +60,8 @@ const baseProps: SessionsPageViewProps = {
   selection: { kind: 'preset', minutes: 1440 },
   onSelectionChange: vi.fn(),
   windows: WINDOWS,
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
   rows,
   rowCount: 1,
   paginationModel: { page: 0, pageSize: 25 },

@@ -60,10 +60,12 @@ public class ReportController {
             @Parameter(description = "Optional explicit start of the custom range (ISO-8601). Overrides "
                     + "`minutes` when paired with endTimestamp.") @RequestParam(required = false) Instant startTimestamp,
             @Parameter(description = "Optional explicit end of the custom range (ISO-8601). Overrides "
-                    + "`minutes` when paired with startTimestamp.") @RequestParam(required = false) Instant endTimestamp) {
+                    + "`minutes` when paired with startTimestamp.") @RequestParam(required = false) Instant endTimestamp,
+            @Parameter(description = "Optional repository URL to scope the report to a single repo; "
+                    + "omitted or null reports across all repositories.") @RequestParam(required = false) String repositoryUrl) {
         String body = startTimestamp != null && endTimestamp != null
-                ? reportService.renderMarkdownInRange(startTimestamp, endTimestamp)
-                : reportService.renderMarkdown(minutes);
+                ? reportService.renderMarkdownInRange(startTimestamp, endTimestamp, repositoryUrl)
+                : reportService.renderMarkdown(minutes, repositoryUrl);
         return ResponseEntity.ok()
                 .contentType(MARKDOWN)
                 .body(body);

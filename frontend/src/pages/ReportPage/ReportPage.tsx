@@ -16,23 +16,21 @@ see <https://www.gnu.org/licenses/>.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchReportMarkdown } from '../../api';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import { useWindowContext } from '../../lib/windowContext';
 import ReportPageView from './ReportPageView';
 
 const COPIED_TIMEOUT_MS = 1500;
 
 export default function ReportPage() {
-  const { selection, setSelection } = useWindowContext();
+  const { selection, setSelection, repositoryUrl, setRepositoryUrl } = useWindowContext();
   const [copied, setCopied] = useState<boolean>(false);
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const reportQuery = useQuery({
     queryKey: ['report', selectionKey],
-    queryFn: () => fetchReportMarkdown(selection),
+    queryFn: () => fetchReportMarkdown({ ...selection, repositoryUrl }),
   });
   const { data, isLoading, error } = reportQuery;
 
@@ -49,6 +47,8 @@ export default function ReportPage() {
     <ReportPageView
       selection={selection}
       onSelectionChange={setSelection}
+      repositoryUrl={repositoryUrl}
+      onRepositoryUrlChange={setRepositoryUrl}
       data={data}
       isLoading={isLoading}
       error={error as Error | null}

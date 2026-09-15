@@ -109,7 +109,7 @@ CostPage/
 
 | Container hook | Query key | Fetcher → endpoint |
 |---|---|---|
-| `useQuery` | `['cost-breakdown', selectionKey]` | `fetchCostBreakdown(selection)` → `GET /api/cost/breakdown?…` |
+| `useQuery` | `['cost-breakdown', selectionKey]` | `fetchCostBreakdown({ ...selection, repositoryUrl })` → `GET /api/cost/breakdown?…` |
 | `useQuery` | `['skill-usage', selectionKey]` | `fetchSkillUsage(selection)` → `GET /api/tool-activity/skill-usage?…` (reused from Skills & Subagents) |
 | `useQuery` | `['subagent-usage', selectionKey]` | `fetchSubagentUsage(selection)` → `GET /api/tool-activity/subagent-usage?…` (reused) |
 
@@ -130,6 +130,17 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
   note) — `breakdown.totalCostUsd` reads a few percent below the counter-derived KPIs shown
   elsewhere for the same window, and the page's subtitle says so. Never blend a figure from this
   page with one from Tokens/Sessions in the same sentence or chart.
+- **`cost_usd` itself is a client-side estimate, not a bill — the "Total spend" info tooltip says
+  so.** Per Anthropic's Agent SDK cost-tracking docs, the per-request cost Claude Code exports
+  over OTLP is computed locally from a bundled price table (`total_cost_usd`/`costUSD`'s own
+  docs warning), and can drift from what an account is actually billed on pricing changes, an
+  unrecognized model, or a billing rule the client can't model. This page has no way to correct
+  for that — the fix is disclosure, not a local price-table re-estimate (already tried once and
+  measured 2-3× off, see `V14`'s migration header) — so `COST_SOURCE_INFO_TOOLTIP`
+  (`costDerivations.ts`), wired to the "Total spend" `StatCard` via `infoTooltipSeverity="warning"`,
+  covers both caveats in one place: the two-pipelines mismatch above, and this estimate-vs-bill
+  gap. Extend that one constant if either caveat needs more text — don't add a second tooltip or
+  duplicate the wording into the page subtitle.
 - **The money map partitions, it doesn't overlap.** `CostCategoryShare.costUsd` across the four
   categories always sums exactly to `breakdown.totalCostUsd` — the backend resolves a request
   tagged as both a subagent call and a skill invocation (a skill running inside a subagent) to
@@ -192,6 +203,17 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
   Tokens page. `SessionCostDialog`'s category bar divides by its own segment sum rather than by
   `session.costUsd`, so a contract drift shows up as segments that don't fill the track instead of
   as overflow.
+
+- **Repository attribution (2026-09).** This page is the proven template for the repository-
+  attribution rollout (`.design-docs/repository-attribution-plan.md`, Phase 4): `selectionKey`
+  appends `:repository:<repositoryUrl ?? 'all'>` so TanStack Query never serves cross-repo stale
+  data, `fetchCostBreakdown` is called with `{ ...selection, repositoryUrl }` (the `repositoryUrl`
+  field lives on `WindowSelection` itself — see `api/types.ts` — so `windowQueryParams` stays the
+  single choke point without a second fetcher argument), and `PageActions` renders
+  `RepositorySelector` beside `WindowSelector` since both `repositoryUrl`/`onRepositoryUrlChange`
+  are passed through. Cost's backend slice is the one that actually filters on this param today;
+  other pages' containers still need the identical `selectionKey`/query fix before their own
+  `RepositorySelector` should be turned on.
 
 ## Gotchas
 

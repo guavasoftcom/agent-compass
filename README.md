@@ -55,6 +55,13 @@ your sessions. That's not incidental: it's what bash anti-pattern detection, red
 near-miss analysis, and the per-turn prompt timeline actually read. Drop those switches and the
 corresponding sections go quiet rather than wrong.
 
+If you point more than one repository at the same endpoint, turn on `OTEL_METRICS_INCLUDE_REPOSITORY`
+too (**requires Claude Code v2.1.269+**) — see [docs/local-docker-deployment.md](docs/local-docker-deployment.md#point-claude-code-at-it).
+It tags every record with the git repo it came from, which is what the dashboard's repository picker
+filters on; without it, telemetry from every project you work in is blended into one set of numbers.
+Attribution only applies going forward from when it's turned on — see
+[.design-docs/repository-attribution-plan.md](.design-docs/repository-attribution-plan.md).
+
 There is **no authentication on any endpoint** — no Spring Security on the classpath, no API key on
 ingest. Anything that can reach the port can push telemetry *and* read every stored prompt. That is
 a reasonable trade on `localhost`, which is what this is built for; exposing it beyond your own

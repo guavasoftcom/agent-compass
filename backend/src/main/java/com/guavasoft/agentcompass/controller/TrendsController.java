@@ -70,9 +70,10 @@ public class TrendsController {
             @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
-            return trendService.costTrendsInRange(timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+            return trendService.costTrendsInRange(
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return trendService.costTrends(minutes);
+        return trendService.costTrends(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/token-efficiency")
@@ -94,9 +95,9 @@ public class TrendsController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.tokenEfficiencyTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return trendService.tokenEfficiencyTrends(minutes);
+        return trendService.tokenEfficiencyTrends(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/reliability")
@@ -118,9 +119,9 @@ public class TrendsController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.reliabilityTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return trendService.reliabilityTrends(minutes);
+        return trendService.reliabilityTrends(minutes, timeWindowParams.repositoryUrl());
     }
 
     @GetMapping("/activity")
@@ -142,8 +143,8 @@ public class TrendsController {
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.activityTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
         }
-        return trendService.activityTrends(minutes);
+        return trendService.activityTrends(minutes, timeWindowParams.repositoryUrl());
     }
 }

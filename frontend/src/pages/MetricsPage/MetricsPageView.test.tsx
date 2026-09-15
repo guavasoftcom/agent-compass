@@ -22,6 +22,14 @@ import { METRICS } from './components/metricsSampleData';
 import type { WindowSelection } from '../../api';
 import { WINDOWS } from '../../lib/constants';
 
+// MetricsPageView always passes onRepositoryUrlChange, so PageActions renders
+// RepositorySelector, which fetches the repository list itself (it is not
+// window-scoped and has no page-level query to stub via props). Stub the
+// fetcher rather than let it hit the network in jsdom.
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+});
 
 const selection: WindowSelection = { kind: 'preset', minutes: 1440 };
 
@@ -36,6 +44,8 @@ const baseProps: MetricsPageViewProps = {
   metrics: METRICS,
   isLoading: false,
   error: null,
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
 };
 
 describe('MetricsPageView', () => {

@@ -66,6 +66,8 @@ export interface TrendReportPageViewProps {
   selection: WindowSelection;
   onSelectionChange: (selection: WindowSelection) => void;
   windows: readonly WindowOption[];
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (repositoryUrl: string | null) => void;
   onReload: () => void;
   autoRefresh: boolean;
   onAutoRefreshChange: (autoRefresh: boolean) => void;
@@ -174,6 +176,8 @@ const TrendReportPageView = ({
   selection,
   onSelectionChange,
   windows,
+  repositoryUrl,
+  onRepositoryUrlChange,
   onReload,
   autoRefresh,
   onAutoRefreshChange,
@@ -275,6 +279,7 @@ const TrendReportPageView = ({
           selection={selection}
           onSelectionChange={onSelectionChange}
           windows={windows}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
           onReload={onReload}
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}

@@ -90,8 +90,8 @@ Fetchers live in `api/endpoints.ts` (the shared barrel), not a page-local module
 
 | Source                          | Query key                             | Fetcher → endpoint |
 |---------------------------------|---------------------------------------|--------------------|
-| `ToolReliabilityPage` (`useQuery`) | `['tool-failure-rates', selectionKey]` | `fetchToolFailureRates(selection)` → `GET /api/tool-activity/failure-rates?…` |
-| `ToolReliabilityPage` (`useQuery`) | `['tool-repeats', selectionKey]`       | `fetchToolRepeats(selection)` → `GET /api/tool-activity/repeats?…` |
+| `ToolReliabilityPage` (`useQuery`) | `['tool-failure-rates', selectionKey]` | `fetchToolFailureRates({ ...selection, repositoryUrl })` → `GET /api/tool-activity/failure-rates?…` |
+| `ToolReliabilityPage` (`useQuery`) | `['tool-repeats', selectionKey]`       | `fetchToolRepeats({ ...selection, repositoryUrl })` → `GET /api/tool-activity/repeats?…` |
 
 `selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'` — same pattern as every
 other page. Both queries share the same `refetchInterval` (60 s when `autoRefresh && kind
@@ -101,9 +101,15 @@ container.
 
 ## Data flow and semantics
 
-- `ToolReliabilityPage` reads `selection` and `autoRefresh` from `useSectionContext()`.
-  It runs both queries, derives the four KPI values in a `useMemo`, and passes everything as
-  typed props to `ToolReliabilityPageView`. The view is pure props in, JSX out.
+- `ToolReliabilityPage` reads `selection`, `autoRefresh`, and `repositoryUrl` from
+  `useSectionContext()`. It runs both queries, derives the four KPI values in a `useMemo`, and
+  passes everything as typed props to `ToolReliabilityPageView`. The view is pure props in,
+  JSX out.
+- **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
+  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl }` — the `CostPage`
+  Phase 4 template. The `RepositorySelector` renders once in `SectionLayoutView`, shared by all
+  five Tool Usage tabs (see `ToolCallsPage/CLAUDE.md`'s note on that shared plumbing); this page
+  never renders one itself.
 - **Failure rates** (`ToolFailureRateRow[]`): each row is one tool name with `calls`,
   `failures`, and a pre-computed `failureRate` ratio. The endpoint counts only
   `tool_result` events that actually fired — denied-at-hook invocations are excluded.

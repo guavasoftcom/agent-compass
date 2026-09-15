@@ -120,6 +120,8 @@ const buildContextValue = (
   autoRefresh: false,
   onAutoRefreshChange: vi.fn(),
   isPolling: false,
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
 
   ...overrides,
 });
@@ -157,6 +159,17 @@ describe('TracesPageView', () => {
     renderView({ error: new Error('trace explorer boom') });
 
     expect(screen.getByText('trace explorer boom')).toBeInTheDocument();
+  });
+
+  it('renders the repository selector wired to the context value and change handler', () => {
+    const value = renderView({ repositoryUrl: 'https://github.com/example/repo-a' });
+
+    // RepositorySelectorView's button label is derived from `value` — this proves
+    // TracesPageView actually threads context.repositoryUrl into PageActions rather
+    // than dropping it (PageActions only renders the selector when a change handler
+    // is passed, so this also proves onRepositoryUrlChange reached it).
+    expect(screen.getByRole('button', { name: /repo-a/i })).toBeInTheDocument();
+    expect(value.onRepositoryUrlChange).toBeDefined();
   });
 
   it('switches to the table view when the view toggle changes', async () => {

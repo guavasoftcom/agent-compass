@@ -84,6 +84,8 @@ export interface TokensPageViewProps {
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
   isPolling: boolean;
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (next: string | null) => void;
 }
 
 // The gauge's bands are the shared cache-efficiency bands (lib/cacheEfficiency),
@@ -123,6 +125,8 @@ const TokensPageView = ({
   autoRefresh,
   onAutoRefreshChange,
   isPolling,
+  repositoryUrl,
+  onRepositoryUrlChange,
 }: TokensPageViewProps) => {
   const theme = useTheme();
   // The gauge's denominator is the ratio's own denominator — all input-side
@@ -364,6 +368,7 @@ const TokensPageView = ({
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}
           isPolling={isPolling}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
         />
       }
     >

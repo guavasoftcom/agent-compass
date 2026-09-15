@@ -131,27 +131,29 @@ public class TraceService {
     return Optional.ofNullable(spanRepository.findLatestEndTimestampForTrace(traceId));
   }
 
-  public List<ToolLatency> aggregateToolLatency(int minutes) {
+  public List<ToolLatency> aggregateToolLatency(int minutes, String repositoryUrl) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = spanRepository.aggregateToolLatency(
         tuningProperties.getToolSpanScope(),
         tuningProperties.getToolSpanName(),
         tuningProperties.getToolAttribute(),
         tuningProperties.getMcpSpanToolPrefix(),
-        since);
+        since,
+        repositoryUrl);
     return rows.stream()
         .map(TraceService::toToolLatency)
         .toList();
   }
 
-  public List<ToolLatency> aggregateToolLatencyInRange(Instant start, Instant end) {
+  public List<ToolLatency> aggregateToolLatencyInRange(Instant start, Instant end, String repositoryUrl) {
     List<Object[]> rows = spanRepository.aggregateToolLatencyInRange(
         tuningProperties.getToolSpanScope(),
         tuningProperties.getToolSpanName(),
         tuningProperties.getToolAttribute(),
         tuningProperties.getMcpSpanToolPrefix(),
         start,
-        end);
+        end,
+        repositoryUrl);
     return rows.stream()
         .map(TraceService::toToolLatency)
         .toList();

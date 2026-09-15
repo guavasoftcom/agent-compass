@@ -90,4 +90,23 @@ describe('resolveTrendReportSelection', () => {
     };
     expect(resolveTrendReportSelection(selection)).toEqual(selection);
   });
+
+  it('carries repositoryUrl through day-snapping of a preset selection', () => {
+    const result = resolveTrendReportSelection({
+      kind: 'preset',
+      minutes: 60 * 24 * 7,
+      repositoryUrl: 'https://github.com/guavasoftcom/coding-agent-tuning',
+    });
+    expect(result.repositoryUrl).toBe('https://github.com/guavasoftcom/coding-agent-tuning');
+  });
+
+  it('carries repositoryUrl through day-snapping of a custom selection', () => {
+    const result = resolveTrendReportSelection({
+      kind: 'custom',
+      startTimestamp: new Date(2026, 7, 1, 8, 15, 0, 0).toISOString(),
+      endTimestamp: new Date(2026, 7, 5, 14, 45, 0, 0).toISOString(),
+      repositoryUrl: 'https://github.com/guavasoftcom/coding-agent-tuning',
+    });
+    expect(result.repositoryUrl).toBe('https://github.com/guavasoftcom/coding-agent-tuning');
+  });
 });

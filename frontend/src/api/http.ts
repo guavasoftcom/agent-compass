@@ -93,5 +93,11 @@ export const windowQueryParams = (
     params.set('startTimestamp', selection.startTimestamp);
     params.set('endTimestamp', selection.endTimestamp);
   }
+  // Omitted/null means "all repositories" — today's behavior, unchanged. Only a
+  // real repository URL or the reserved UNATTRIBUTED_REPOSITORY sentinel sets
+  // the param, matching the backend's `:repositoryUrl IS NULL OR ...` contract.
+  if (selection.repositoryUrl != null) {
+    params.set('repositoryUrl', selection.repositoryUrl);
+  }
   return params;
 };

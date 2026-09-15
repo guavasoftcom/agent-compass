@@ -33,10 +33,17 @@ export interface MetricsQueryParams {
   /** ISO-8601 start / end of the selected window. */
   from: string;
   to: string;
+  /** Restrict to one repository's telemetry; omit (or null) for all repositories. */
+  repositoryUrl?: string | null;
 }
 
-const toQuery = (params: MetricsQueryParams): string =>
-  new URLSearchParams({ from: params.from, to: params.to }).toString();
+const toQuery = (params: MetricsQueryParams): string => {
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.repositoryUrl) {
+    query.set('repositoryUrl', params.repositoryUrl);
+  }
+  return query.toString();
+};
 
 const getJSON = async <T>(url: string): Promise<T> => {
   const res = await fetch(url, { headers: { Accept: 'application/json' } });

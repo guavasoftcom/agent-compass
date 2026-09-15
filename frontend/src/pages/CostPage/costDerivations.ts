@@ -33,12 +33,18 @@ export const CATEGORY_ORDER: CostCategory[] = ['MAIN_LOOP', 'SUBAGENT', 'SKILL',
  * Shared caveat for every KPI on this page derived from `totalCostUsd` (Total spend, Burn
  * rate, Projected 30d, Cost per 1k tokens). Explains why this figure won't match the
  * similarly-named "Total cost" KPI on the Tokens page for the same window — the two read
- * from different pipelines that don't reconcile, not from a bug in either one.
+ * from different pipelines that don't reconcile, not from a bug in either one — and, on
+ * top of that, that `cost_usd` itself is Claude Code's own client-side estimate rather
+ * than an authoritative bill: it's computed locally from a bundled price table and can
+ * drift from what an account is actually billed (pricing changes, an unrecognized model,
+ * billing rules the client can't model). See the Claude Agent SDK's cost-tracking docs.
  */
 export const COST_SOURCE_INFO_TOOLTIP =
   'Based on the exact cost of each request, not the running cost counter used on the Tokens '
   + 'and Sessions pages. The two don\'t line up exactly — expect this total to read a few '
-  + 'percent lower than "Total cost" on Tokens for the same window.';
+  + 'percent lower than "Total cost" on Tokens for the same window. Both figures are Claude '
+  + 'Code\'s own client-side cost estimate, not an authoritative bill — for exact billing, use '
+  + 'the Claude Console\'s Usage & Cost page.';
 
 export const CATEGORY_LABELS: Record<CostCategory, string> = {
   MAIN_LOOP: 'Main loop',

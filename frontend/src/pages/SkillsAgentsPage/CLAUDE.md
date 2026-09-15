@@ -72,8 +72,8 @@ Both fetchers live in `api/endpoints.ts` (the shared barrel, not a page-local mo
 
 | Container hook    | Query key                       | Fetcher → endpoint |
 |-------------------|---------------------------------|--------------------|
-| `useQuery`        | `['skill-usage', selectionKey]` | `fetchSkillUsage(selection)` → `GET /api/tool-activity/skill-usage?…` |
-| `useQuery`        | `['subagent-usage', selectionKey]` | `fetchSubagentUsage(selection)` → `GET /api/tool-activity/subagent-usage?…` |
+| `useQuery`        | `['skill-usage', selectionKey]` | `fetchSkillUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/skill-usage?…` |
+| `useQuery`        | `['subagent-usage', selectionKey]` | `fetchSubagentUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/subagent-usage?…` |
 
 Both return `IdentifierUsageRow[]` (imported from `../../api`). The `tool` field on each row
 carries the skill or subagent identifier; `calls` is the invocation count; `byModel` maps model
@@ -85,10 +85,15 @@ no third query.
 
 ## Data flow and semantics
 
-- **Section tab, not a top-level page.** The container reads `selection` and `autoRefresh` from
-  `useSectionContext()` (not `useWindowContext()`). The `WindowSelector`, reload button, and
-  auto-refresh toggle all live in `SectionLayout`'s `PageActions`; this page renders no chrome
-  of its own.
+- **Section tab, not a top-level page.** The container reads `selection`, `autoRefresh`, and
+  `repositoryUrl` from `useSectionContext()` (not `useWindowContext()`). The `WindowSelector`,
+  `RepositorySelector`, reload button, and auto-refresh toggle all live in `SectionLayout`'s
+  `PageActions`; this page renders no chrome of its own.
+- **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
+  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl }` — the `CostPage`
+  Phase 4 template, applied here through the section's shared `useSectionContext()` rather than
+  `useWindowContext()` directly (see `ToolCallsPage/CLAUDE.md`'s note on the `SectionLayout`
+  plumbing this required).
 - **`selectionKey`** is built in the container: `preset:<minutes>` or
   `custom:<startTimestamp>:<endTimestamp>`. It is placed in both query keys so the TanStack cache
   splits cleanly per window selection.

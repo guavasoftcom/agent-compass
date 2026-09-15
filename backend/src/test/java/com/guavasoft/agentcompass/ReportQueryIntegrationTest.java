@@ -66,6 +66,10 @@ class ReportQueryIntegrationTest {
     private static final String ATTR_ERROR = "error";
     private static final String ATTR_SESSION_ID = "session.id";
     private static final String ATTR_TOOL_PARAMETERS = "tool_parameters";
+    private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
+
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     private static final String EVENT_TOOL_RESULT = "tool_result";
     private static final String TOOL_BASH = "Bash";
@@ -137,7 +141,7 @@ class ReportQueryIntegrationTest {
 
     @Test
     void renderMarkdownInRangeRendersBashHotspotsForTheWindow() {
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // Two in-window git calls collapse onto the 'git' command prefix; the row after
         // windowEnd must not bump the count to 3 (the upper bound is real, not cosmetic).
@@ -148,7 +152,7 @@ class ReportQueryIntegrationTest {
 
     @Test
     void renderMarkdownInRangeCountsOnlyInWindowCallsInTheToolMix() {
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         assertThat(markdown)
                 .contains("| `Bash` | 2 |")
@@ -158,7 +162,7 @@ class ReportQueryIntegrationTest {
     @Test
     void renderMarkdownForMinutesWindowIncludesAllSeededCalls() {
         // The ?minutes= form ends at now, so all four seeded rows fall inside it.
-        String markdown = reportService.renderMarkdown(WINDOW_MINUTES * 24);
+        String markdown = reportService.renderMarkdown(WINDOW_MINUTES * 24, null);
 
         assertThat(markdown)
                 .contains("## Bash command hotspots")
@@ -173,7 +177,7 @@ class ReportQueryIntegrationTest {
         saveToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), TOOL_BASH,
                 "{\"command\":\"cd frontend\\nyarn build\"}");
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // Both chained forms must bucket as the real command, not a 'cd' row, and the
         // coverage blurb must surface how many commands carried the stripped prefix.
@@ -189,7 +193,7 @@ class ReportQueryIntegrationTest {
         saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL), TOOL_BASH,
                 "{\"command\":\"cd backend && ./mvnw verify\"}", CD_PREFIXED_RESULT_BYTES);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // The oversized row and the slow-and-large suggestion must both show the command
         // that actually ran; the raw cd-prefixed form must not appear anywhere.
@@ -207,7 +211,7 @@ class ReportQueryIntegrationTest {
         saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), TOOL_READ,
                 "{\"file_path\":\"" + dumpPath + "\"}", GROUPED_RESULT_BYTES);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // Two identical reads collapse into one oversized row with an occurrence count,
         // and the suggestions section carries exactly one bullet for the path.
@@ -224,7 +228,7 @@ class ReportQueryIntegrationTest {
         saveFailedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), TOOL_READ,
                 "{\"file_path\":\"/repo/missing.txt\"}", "File does not exist.", SESSION_A);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         assertThat(markdown)
                 .contains("## Failures")
@@ -241,7 +245,7 @@ class ReportQueryIntegrationTest {
         saveToolResultForSession(windowStart.plusSeconds(OFFSET_READ_CALL + 5), TOOL_READ,
                 "{\"file_path\":\"" + realPath + "\"}", SESSION_A);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         assertThat(markdown)
                 .contains("## Path near-misses (likely typos)")
@@ -256,7 +260,7 @@ class ReportQueryIntegrationTest {
         saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), TOOL_READ,
                 "{\"file_path\":\"/repo/screenshot.png\"}", IMAGE_RESULT_BYTES);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // The tools still appear in the performance/mix tables (that's correct); only
         // their oversized-table rows must be gone. Match the exact row shapes.
@@ -272,7 +276,7 @@ class ReportQueryIntegrationTest {
         saveOversizedToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), TOOL_READ,
                 "{\"file_path\":\"/repo/screenshot.png\"}", IMAGE_RESULT_BYTES);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // Seeded window: two Bash calls and one Read at SEEDED_RESULT_BYTES each. The Agent
         // result and the image read must not reach the ranking, which the total proves —
@@ -292,7 +296,7 @@ class ReportQueryIntegrationTest {
         saveMcpToolResult(windowStart.plusSeconds(OFFSET_READ_CALL + 1), MCP_SERVER_CODE_GRAPH,
                 MCP_TOOL_SEARCH, true, MCP_CODE_GRAPH_DURATION_MS, MCP_CODE_GRAPH_RESULT_BYTES);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // One row per (server, tool) collapses to one row per server here since each server has
         // exactly one tool in this fixture; p95 of a single-row group is that row's own duration.
@@ -320,7 +324,7 @@ class ReportQueryIntegrationTest {
                     MCP_TOOL_BROWSE, true, MCP_SUGGESTION_FIXTURE_DURATION_MS, MCP_SUGGESTION_FIXTURE_RESULT_BYTES);
         }
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // 30% failures trips MCP_SERVER_HIGH_FAILURE_RATE_THRESHOLD (10%); the all-success
         // control server, seeded with the same call volume and byte size, must not trip either
@@ -346,7 +350,7 @@ class ReportQueryIntegrationTest {
                     GIT_STATUS_TOOL_INPUT, UNIFORMLY_LARGE_RESULT_BYTES);
         }
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // Read's total is carried by two blowouts among many small calls, so its p95 runs
         // an order of magnitude past its mean and the tail rule fires. Bash returns roughly
@@ -371,7 +375,7 @@ class ReportQueryIntegrationTest {
         saveToolResultForSession(windowStart.plusSeconds(SPREAD_GAP_SECONDS), TOOL_READ,
                 "{\"file_path\":\"" + spreadPath + "\"}", SESSION_A);
 
-        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd);
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
 
         // Both files appear in the redundant-reads table, but only the hunting loop may
         // generate a suggestion bullet.
@@ -379,6 +383,56 @@ class ReportQueryIntegrationTest {
                 .contains("| `" + spreadPath + "` |")
                 .contains("`" + huntedPath + "` was re-read 3 times")
                 .doesNotContain("`" + spreadPath + "` was re-read");
+    }
+
+    @Test
+    void renderMarkdownWithNullRepositoryUrlIncludesRowsFromEveryRepository() {
+        saveToolResultRow(windowStart.plusSeconds(700), TOOL_BASH, GIT_STATUS_TOOL_INPUT, true, null, null, 4096,
+                REPOSITORY_A);
+        saveMcpToolResult(windowStart.plusSeconds(710), MCP_SERVER_PLAYWRIGHT, MCP_TOOL_BROWSER_EVALUATE, true,
+                MCP_PLAYWRIGHT_DURATION_MS, MCP_PLAYWRIGHT_RESULT_BYTES, REPOSITORY_B);
+
+        // repositoryUrl = null is "show all repositories" -- both the pre-existing unattributed
+        // seed() rows and the newly repository-tagged ones must be counted together, the same as
+        // before this feature existed (renderMarkdown's calls all hardcoded null).
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, null);
+
+        assertThat(markdown)
+                .contains("## Tool call mix")
+                .contains("| `Bash` | 3 | 60.0% |")
+                .contains("Total tool calls: **5**.")
+                .contains("## MCP servers")
+                .contains("| `" + MCP_SERVER_PLAYWRIGHT + "` | 1 |");
+    }
+
+    @Test
+    void renderMarkdownScopedToRepositoryUrlExcludesOtherRepositorysToolCallsAndMcpUsage() {
+        saveToolResultRow(windowStart.plusSeconds(700), TOOL_BASH, GIT_STATUS_TOOL_INPUT, true, null, null, 4096,
+                REPOSITORY_A);
+        saveToolResultRow(windowStart.plusSeconds(710), "Grep", null, true, null, null, 4096, REPOSITORY_B);
+        saveMcpToolResult(windowStart.plusSeconds(720), MCP_SERVER_PLAYWRIGHT, MCP_TOOL_BROWSER_EVALUATE, true,
+                MCP_PLAYWRIGHT_DURATION_MS, MCP_PLAYWRIGHT_RESULT_BYTES, REPOSITORY_A);
+        saveMcpToolResult(windowStart.plusSeconds(730), MCP_SERVER_CODE_GRAPH, MCP_TOOL_SEARCH, true,
+                MCP_CODE_GRAPH_DURATION_MS, MCP_CODE_GRAPH_RESULT_BYTES, REPOSITORY_B);
+
+        // Binding a real repositoryUrl also excludes seed()'s own unattributed rows -- once
+        // :repositoryUrl is non-null, "(:repositoryUrl IS NULL OR repository_url = :repositoryUrl)"
+        // drops every NULL repository_url row too, so only repository A's own Bash/MCP calls count.
+        // Some sections below (oversized results, context footprint, bash hotspots) are a
+        // documented gap -- their queries were never given a repositoryUrl parameter by any prior
+        // slice -- so they still list every repository's rows; this test only asserts on the two
+        // sections that DO filter (Tool call mix, MCP servers), not on the whole document.
+        String markdown = reportService.renderMarkdownInRange(windowStart, windowEnd, REPOSITORY_A);
+
+        assertThat(markdown)
+                .contains("## Tool call mix")
+                .contains("| `Bash` | 1 | 50.0% |")
+                .contains("| `mcp:" + MCP_SERVER_PLAYWRIGHT + "` | 1 | 50.0% |")
+                .contains("Total tool calls: **2**.")
+                .contains("## MCP servers")
+                .contains("| `" + MCP_SERVER_PLAYWRIGHT + "` | 1 | 0.0% | " + MCP_PLAYWRIGHT_DURATION_MS
+                        + " | " + MCP_PLAYWRIGHT_RESULT_BYTES + " | 100.0% |")
+                .contains("Total: **" + MCP_PLAYWRIGHT_RESULT_BYTES + "** bytes");
     }
 
     private void saveToolResult(Instant timestamp, String toolName, String toolInputJson) {
@@ -408,6 +462,11 @@ class ReportQueryIntegrationTest {
      */
     private void saveMcpToolResult(Instant timestamp, String server, String tool, boolean success,
             long durationMs, long resultBytes) {
+        saveMcpToolResult(timestamp, server, tool, success, durationMs, resultBytes, null);
+    }
+
+    private void saveMcpToolResult(Instant timestamp, String server, String tool, boolean success,
+            long durationMs, long resultBytes, String repositoryUrl) {
         LogRecordEntity entity = new LogRecordEntity();
         entity.setTimestamp(timestamp);
         entity.setObservedTimestamp(timestamp);
@@ -423,6 +482,9 @@ class ReportQueryIntegrationTest {
         attributes.put(ATTR_SUCCESS, String.valueOf(success));
         attributes.put(ATTR_DURATION_MS, durationMs);
         attributes.put(ATTR_RESULT_SIZE_BYTES, resultBytes);
+        if (repositoryUrl != null) {
+            attributes.put(ATTR_REPOSITORY_URL, repositoryUrl);
+        }
         entity.setAttributes(attributes);
         entity.setResourceAttributes(Map.of("service.name", "claude-code"));
         logRecordRepository.save(entity);
@@ -430,6 +492,11 @@ class ReportQueryIntegrationTest {
 
     private void saveToolResultRow(Instant timestamp, String toolName, String toolInputJson, boolean success,
             String errorMessage, String sessionId, long resultBytes) {
+        saveToolResultRow(timestamp, toolName, toolInputJson, success, errorMessage, sessionId, resultBytes, null);
+    }
+
+    private void saveToolResultRow(Instant timestamp, String toolName, String toolInputJson, boolean success,
+            String errorMessage, String sessionId, long resultBytes, String repositoryUrl) {
         LogRecordEntity entity = new LogRecordEntity();
         entity.setTimestamp(timestamp);
         entity.setObservedTimestamp(timestamp);
@@ -451,6 +518,9 @@ class ReportQueryIntegrationTest {
         }
         if (sessionId != null) {
             attributes.put(ATTR_SESSION_ID, sessionId);
+        }
+        if (repositoryUrl != null) {
+            attributes.put(ATTR_REPOSITORY_URL, repositoryUrl);
         }
         entity.setAttributes(attributes);
         entity.setResourceAttributes(Map.of("service.name", "claude-code"));

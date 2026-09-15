@@ -52,8 +52,18 @@ In `App.tsx` the section is a React Router 7 nested route:
 ```
 
 `SectionLayout` renders `<SectionLayoutView>`, which renders the tab strip and then
-`<Outlet context={context} />`. Child pages read `selection` and `autoRefresh` via
-`useSectionContext()` (exported from `SectionLayout`), not `useWindowContext()`.
+`<Outlet context={context} />`. Child pages read `selection`, `autoRefresh`, and
+`repositoryUrl` via `useSectionContext()` (exported from `SectionLayout`), not
+`useWindowContext()`.
+
+`SectionContextValue.repositoryUrl` was added 2026-09 as part of the repository-attribution
+rollout (`.design-docs/repository-attribution-plan.md` Phase 4) — `SectionLayout` reads
+`repositoryUrl`/`setRepositoryUrl` off `useWindowContext()` (the same values `CostPage` and
+`SessionsPage` read directly) and threads `repositoryUrl` through the outlet context, while
+`setRepositoryUrl` goes straight to `SectionLayoutView`'s `PageActions`, rendering one
+`RepositorySelector` beside the `WindowSelector` shared by all five tabs. Every child page's
+`selectionKey` appends `:repository:<repositoryUrl ?? 'all'>` and spreads
+`{ ...selection, repositoryUrl }` into its fetchers — see each child page's own CLAUDE.md.
 
 Legacy redirects in `App.tsx` preserve old paths:
 `/tool-calls`, `/tool-reliability`, `/skills-agents` each redirect to their
@@ -88,3 +98,8 @@ queries are invisible to section reload.
 - Child pages call `useSectionContext()`, **not** `useWindowContext()`. Top-level pages
   (outside a section) use `useWindowContext()`. Mixing them up compiles but silently
   ignores the section's shared selection state.
+- **`SectionContextValue` now carries `repositoryUrl` alongside `selection`/`autoRefresh`.**
+  A new field added to `SectionContextValue` must be threaded through `SectionLayout.tsx`
+  (assembling `context`) and `SectionLayoutView.tsx` (props in, `Outlet context={context}`
+  out) — both live in `components/SectionLayout/`, not this folder — or a child page reading
+  it via `useSectionContext()` gets `undefined` at runtime despite typechecking.

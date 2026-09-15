@@ -24,6 +24,15 @@ import type {
 } from '../../api';
 import { WINDOWS } from '../../lib/constants';
 
+// TokensPageView always passes onRepositoryUrlChange, so PageActions renders
+// RepositorySelector, which fetches the repository list itself (it is not
+// window-scoped and has no page-level query to stub via props). Stub the
+// fetcher rather than let it hit the network in jsdom.
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+});
+
 const summary: TokenUsageSummary = {
   inputTokens: 1_000_000,
   outputTokens: 200_000,
@@ -95,6 +104,8 @@ const baseProps: TokensPageViewProps = {
   autoRefresh: false,
   onAutoRefreshChange: vi.fn(),
   isPolling: false,
+  repositoryUrl: null,
+  onRepositoryUrlChange: vi.fn(),
 };
 
 describe('TokensPageView', () => {

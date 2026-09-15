@@ -38,14 +38,23 @@ import java.util.Map;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * Dispatch tests for {@code /api/tool-activity/*}, including {@code repositoryUrl} binding off
+ * {@link com.guavasoft.agentcompass.model.TimeWindowParams} -- see backend/CLAUDE.md's dual-window
+ * dispatch shape and {@code CostControllerTest} for the pattern this mirrors.
+ */
 @WebMvcTest(ToolActivityController.class)
 class ToolActivityControllerTest {
+
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
 
     @Autowired
     MockMvc mockMvc;
@@ -58,7 +67,7 @@ class ToolActivityControllerTest {
 
     @Test
     void toolCallsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateToolCalls(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolCalls(anyInt(), isNull())).thenReturn(List.of(
                 ToolCallCount.builder().tool("Read").calls(8L).build(),
                 ToolCallCount.builder().tool("Bash").calls(1L).build()));
 
@@ -69,12 +78,38 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].calls").value(8))
                 .andExpect(jsonPath("$[1].tool").value("Bash"));
 
-        verify(logService).aggregateToolCalls(1440);
+        verify(logService).aggregateToolCalls(1440, null);
+    }
+
+    @Test
+    void toolCallsDispatchesSuppliedRepositoryUrlOnTheMinutesForm() throws Exception {
+        when(logService.aggregateToolCalls(anyInt(), eq(REPOSITORY_URL)))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/calls").param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(logService).aggregateToolCalls(1440, REPOSITORY_URL);
+    }
+
+    @Test
+    void toolCallsDispatchesSuppliedRepositoryUrlOnTheCustomRangeForm() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(logService.aggregateToolCallsInRange(rangeStart, rangeEnd, REPOSITORY_URL)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/calls")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString())
+                .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(logService).aggregateToolCallsInRange(rangeStart, rangeEnd, REPOSITORY_URL);
     }
 
     @Test
     void skillUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateSkillUsage(anyInt())).thenReturn(List.of(
+        when(logService.aggregateSkillUsage(anyInt(), isNull())).thenReturn(List.of(
                 new IdentifierUsageCount("verify", 4L, Map.of("claude-opus-4-8", 3L, "claude-sonnet-4-6", 1L),
                         4.20, Map.of("claude-opus-4-8", 3.15, "claude-sonnet-4-6", 1.05)),
                 new IdentifierUsageCount("ship", 1L, Map.of("claude-opus-4-8", 1L),
@@ -93,12 +128,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[1].byModel.['claude-opus-4-8']").value(1))
                 .andExpect(jsonPath("$[1].costUsd").value(0.75));
 
-        verify(logService).aggregateSkillUsage(1440);
+        verify(logService).aggregateSkillUsage(1440, null);
     }
 
     @Test
     void subagentUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateSubagentUsage(anyInt())).thenReturn(List.of(
+        when(logService.aggregateSubagentUsage(anyInt(), isNull())).thenReturn(List.of(
                 new IdentifierUsageCount("Explore", 7L, Map.of("claude-opus-4-8", 7L),
                         2.45, Map.of("claude-opus-4-8", 2.45))));
 
@@ -111,12 +146,27 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].costUsd").value(2.45))
                 .andExpect(jsonPath("$[0].costByModel.['claude-opus-4-8']").value(2.45));
 
-        verify(logService).aggregateSubagentUsage(1440);
+        verify(logService).aggregateSubagentUsage(1440, null);
+    }
+
+    @Test
+    void subagentUsageDispatchesSuppliedRepositoryUrlOnTheCustomRangeForm() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(logService.aggregateSubagentUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/subagent-usage")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString())
+                .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(logService).aggregateSubagentUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL);
     }
 
     @Test
     void toolFailureRatesReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateToolFailureRates(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolFailureRates(anyInt(), isNull())).thenReturn(List.of(
                 new ToolFailureRate("Bash", 20L, 5L, 0.25),
                 new ToolFailureRate("Read", 100L, 1L, 0.01)));
 
@@ -129,12 +179,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].failureRate").value(0.25))
                 .andExpect(jsonPath("$[1].tool").value("Read"));
 
-        verify(logService).aggregateToolFailureRates(1440);
+        verify(logService).aggregateToolFailureRates(1440, null);
     }
 
     @Test
     void toolRepeatsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateToolRepeats(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolRepeats(anyInt(), isNull())).thenReturn(List.of(
                 new ToolRepeatStat("Edit", "/repo/src/foo.ts", 4L, 8L, 3L),
                 new ToolRepeatStat("Bash", "grep", 2L, 3L, 1L)));
 
@@ -148,17 +198,32 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].sessions").value(3))
                 .andExpect(jsonPath("$[1].tool").value("Bash"));
 
-        verify(logService).aggregateToolRepeats(1440);
+        verify(logService).aggregateToolRepeats(1440, null);
+    }
+
+    @Test
+    void toolRepeatsDispatchesSuppliedRepositoryUrlOnTheCustomRangeForm() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(logService.aggregateToolRepeatsInRange(rangeStart, rangeEnd, REPOSITORY_URL)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/repeats")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString())
+                .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+
+        verify(logService).aggregateToolRepeatsInRange(rangeStart, rangeEnd, REPOSITORY_URL);
     }
 
     @Test
     void toolCallsPropagatesExplicitMinutesParam() throws Exception {
-        when(logService.aggregateToolCalls(anyInt())).thenReturn(List.of());
+        when(logService.aggregateToolCalls(anyInt(), isNull())).thenReturn(List.of());
 
         mockMvc.perform(get("/api/tool-activity/calls").param("minutes", "4320"))
                 .andExpect(status().isOk());
 
-        verify(logService).aggregateToolCalls(4320);
+        verify(logService).aggregateToolCalls(4320, null);
     }
 
     @Test
@@ -173,7 +238,7 @@ class ToolActivityControllerTest {
     void toolCallsAcceptsDateRangeOfExactlyThirtyDays() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-31T00:00:00Z");
-        when(logService.aggregateToolCallsInRange(rangeStart, rangeEnd)).thenReturn(List.of());
+        when(logService.aggregateToolCallsInRange(rangeStart, rangeEnd, null)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/tool-activity/calls")
                 .param("startTimestamp", rangeStart.toString())
@@ -183,7 +248,7 @@ class ToolActivityControllerTest {
 
     @Test
     void contextFootprintReturnsPerToolRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateToolContextFootprint(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolContextFootprint(anyInt(), isNull())).thenReturn(List.of(
                 new ToolContextFootprint("Bash", 412L, 18_432_000L, 4_608_000L, 96_000L),
                 new ToolContextFootprint("Read", 120L, 4_096_000L, 1_024_000L, 51_200L)));
 
@@ -197,14 +262,14 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].p95Bytes").value(96000))
                 .andExpect(jsonPath("$[1].tool").value("Read"));
 
-        verify(logService).aggregateToolContextFootprint(1440);
+        verify(logService).aggregateToolContextFootprint(1440, null);
     }
 
     @Test
     void contextFootprintDelegatesToTheRangeFormWhenBothBoundsArePresent() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(logService.aggregateToolContextFootprintInRange(rangeStart, rangeEnd)).thenReturn(List.of());
+        when(logService.aggregateToolContextFootprintInRange(rangeStart, rangeEnd, null)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/tool-activity/context-footprint")
                 .param("startTimestamp", rangeStart.toString())
@@ -212,12 +277,12 @@ class ToolActivityControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(0)));
 
-        verify(logService).aggregateToolContextFootprintInRange(rangeStart, rangeEnd);
+        verify(logService).aggregateToolContextFootprintInRange(rangeStart, rangeEnd, null);
     }
 
     @Test
     void toolDenialsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateToolDenials(anyInt())).thenReturn(List.of(
+        when(logService.aggregateToolDenials(anyInt(), isNull())).thenReturn(List.of(
                 new ToolDenialCount("Bash", "config", 12L),
                 new ToolDenialCount("Edit", "hook", 3L)));
 
@@ -229,12 +294,12 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].count").value(12))
                 .andExpect(jsonPath("$[1].tool").value("Edit"));
 
-        verify(logService).aggregateToolDenials(1440);
+        verify(logService).aggregateToolDenials(1440, null);
     }
 
     @Test
     void mcpUsageReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateMcpServerUsage(anyInt())).thenReturn(List.of(
+        when(logService.aggregateMcpServerUsage(anyInt(), isNull())).thenReturn(List.of(
                 new McpServerUsage("playwright", "browser_evaluate", 460L, 54L, 0.1174, 1820L, 13100L,
                         6_500_000L, 1_625_000L, 180_000L),
                 new McpServerUsage("CodeGraphContext", "query", 8L, 2L, 0.25, 200L, 400L, 5_000L, 1_250L, 900L)));
@@ -253,14 +318,14 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].estimatedTokens").value(1_625_000))
                 .andExpect(jsonPath("$[1].server").value("CodeGraphContext"));
 
-        verify(logService).aggregateMcpServerUsage(1440);
+        verify(logService).aggregateMcpServerUsage(1440, null);
     }
 
     @Test
     void mcpUsageDelegatesToTheRangeFormWhenBothBoundsArePresent() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(logService.aggregateMcpServerUsageInRange(rangeStart, rangeEnd)).thenReturn(List.of());
+        when(logService.aggregateMcpServerUsageInRange(rangeStart, rangeEnd, null)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/tool-activity/mcp-usage")
                 .param("startTimestamp", rangeStart.toString())
@@ -268,7 +333,23 @@ class ToolActivityControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(0)));
 
-        verify(logService).aggregateMcpServerUsageInRange(rangeStart, rangeEnd);
+        verify(logService).aggregateMcpServerUsageInRange(rangeStart, rangeEnd, null);
+    }
+
+    @Test
+    void mcpUsageDispatchesSuppliedRepositoryUrlOnTheCustomRangeForm() throws Exception {
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(logService.aggregateMcpServerUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/tool-activity/mcp-usage")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString())
+                .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        verify(logService).aggregateMcpServerUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL);
     }
 
     @Test
@@ -281,7 +362,7 @@ class ToolActivityControllerTest {
 
     @Test
     void hookExecutionsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(logService.aggregateHookExecutions(anyInt())).thenReturn(List.of(
+        when(logService.aggregateHookExecutions(anyInt(), isNull())).thenReturn(List.of(
                 new HookExecutionSummary("PreToolUse", "PreToolUse:Write", 45L, 40L, 3L, 2L, 0L)));
 
         mockMvc.perform(get("/api/tool-activity/hook-executions"))
@@ -291,6 +372,25 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].hookName").value("PreToolUse:Write"))
                 .andExpect(jsonPath("$[0].blockingErrors").value(3));
 
-        verify(logService).aggregateHookExecutions(1440);
+        verify(logService).aggregateHookExecutions(1440, null);
+    }
+
+    @Test
+    void toolCallLatencyDispatchesSuppliedRepositoryUrlOnBothForms() throws Exception {
+        when(traceService.aggregateToolLatency(anyInt(), eq(REPOSITORY_URL)))
+                .thenReturn(List.of());
+        mockMvc.perform(get("/api/tool-activity/calls/latency").param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+        verify(traceService).aggregateToolLatency(1440, REPOSITORY_URL);
+
+        Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
+        when(traceService.aggregateToolLatencyInRange(rangeStart, rangeEnd, REPOSITORY_URL)).thenReturn(List.of());
+        mockMvc.perform(get("/api/tool-activity/calls/latency")
+                .param("startTimestamp", rangeStart.toString())
+                .param("endTimestamp", rangeEnd.toString())
+                .param("repositoryUrl", REPOSITORY_URL))
+                .andExpect(status().isOk());
+        verify(traceService).aggregateToolLatencyInRange(rangeStart, rangeEnd, REPOSITORY_URL);
     }
 }

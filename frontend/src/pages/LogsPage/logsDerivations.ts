@@ -35,6 +35,11 @@ export const buildLogsQuery = (f: LogsFilters): URLSearchParams => {
   if (f.q) {
     p.set('q', f.q);
   }
+  // Omitted/null means "all repositories" — matches windowQueryParams' and the
+  // backend LogQueryCriteria's `:repositoryUrl IS NULL OR ...` contract.
+  if (f.repositoryUrl != null) {
+    p.set('repositoryUrl', f.repositoryUrl);
+  }
   return p;
 };
 

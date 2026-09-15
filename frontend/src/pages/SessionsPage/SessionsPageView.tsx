@@ -48,6 +48,8 @@ export interface SessionsPageViewProps {
   selection: WindowSelection;
   onSelectionChange: (next: WindowSelection) => void;
   windows: readonly WindowOption[];
+  repositoryUrl: string | null;
+  onRepositoryUrlChange: (next: string | null) => void;
   rows: SessionSummaryRow[];
   rowCount: number;
   paginationModel: PaginationModel;
@@ -79,6 +81,8 @@ const SessionsPageView = ({
   selection,
   onSelectionChange,
   windows,
+  repositoryUrl,
+  onRepositoryUrlChange,
   rows,
   rowCount,
   paginationModel,
@@ -133,6 +137,7 @@ const SessionsPageView = ({
           selection={selection}
           onSelectionChange={onSelectionChange}
           windows={windows}
+          repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
           onReload={onReload}
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}

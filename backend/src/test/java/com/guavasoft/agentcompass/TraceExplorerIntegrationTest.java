@@ -220,6 +220,137 @@ class TraceExplorerIntegrationTest {
         addApiRequestLog(null, null, SEED_UNCORRELATED_REQUEST_COST, t1Start.plusSeconds(4));
 
         addEffortFixture();
+        addRepositoryAttributionFixture();
+    }
+
+    // -------------------------------------------------------------------------
+    // Repository attribution (repository_url, V34) — slice 6 of the multi-slice
+    // rollout in .design-docs/repository-attribution-plan.md.
+    //
+    // Seeded in its own window (well after the effort fixture's) so it never
+    // perturbs the shared four-trace window every other test in this class
+    // depends on. repository_url is a stored generated column read off
+    // resource_attributes ->> 'vcs.repository.url.full' on spans (V34), so the
+    // fixture sets resourceAttributes rather than a settable field.
+    // -------------------------------------------------------------------------
+
+    private static final String TRACE_REPO_A = "1111000000000000111100000000a001";
+    private static final String TRACE_REPO_B = "2222000000000000222200000000b001";
+    private static final String TRACE_REPO_UNATTRIBUTED = "3333000000000000333300000000c001";
+    private static final String VCS_REPOSITORY_URL_ATTRIBUTE = "vcs.repository.url.full";
+    private static final String REPOSITORY_URL_A = "https://github.com/guavasoftcom/repo-a";
+    private static final String REPOSITORY_URL_B = "https://github.com/guavasoftcom/repo-b";
+
+    private Instant repositoryWindowStart;
+    private Instant repositoryWindowEnd;
+
+    private void addRepositoryAttributionFixture() {
+        repositoryWindowStart = windowEnd.plusSeconds(3600);
+        repositoryWindowEnd = repositoryWindowStart.plusSeconds(3600);
+
+        addTraceWithResourceAttributes(TRACE_REPO_A, "session.turn",
+                repositoryWindowStart.plusSeconds(60), repositoryWindowStart.plusSeconds(61),
+                REPOSITORY_URL_A);
+        addTraceWithResourceAttributes(TRACE_REPO_B, "session.turn",
+                repositoryWindowStart.plusSeconds(120), repositoryWindowStart.plusSeconds(121),
+                REPOSITORY_URL_B);
+        addTraceWithResourceAttributes(TRACE_REPO_UNATTRIBUTED, "session.turn",
+                repositoryWindowStart.plusSeconds(180), repositoryWindowStart.plusSeconds(181),
+                null);
+    }
+
+    /**
+     * Seeds one trace whose root span's {@code resource_attributes} carry
+     * {@code vcs.repository.url.full}, the attribute {@code repository_url} (V34) is
+     * generated from on {@code spans}. A null {@code repositoryUrl} models a
+     * pre-cutover row (or one with no git origin) and leaves resourceAttributes null,
+     * so the generated column reads NULL.
+     */
+    private void addTraceWithResourceAttributes(
+            String traceId, String rootSpanName, Instant start, Instant end, String repositoryUrl) {
+        Map<String, Object> resourceAttributes = repositoryUrl == null
+                ? null
+                : Map.of(VCS_REPOSITORY_URL_ATTRIBUTE, repositoryUrl);
+
+        SpanEntity rootSpan = new SpanEntity();
+        rootSpan.setTraceId(traceId);
+        rootSpan.setSpanId(traceId.substring(0, 16));
+        rootSpan.setParentSpanId(null);
+        rootSpan.setName(rootSpanName);
+        rootSpan.setKind("server");
+        rootSpan.setStartTimestamp(start);
+        rootSpan.setEndTimestamp(end);
+        rootSpan.setDurationNanos((end.toEpochMilli() - start.toEpochMilli()) * 1_000_000L);
+        rootSpan.setStatusCode("ok");
+        rootSpan.setAttributes(null);
+        rootSpan.setScopeAttributes(null);
+        rootSpan.setResourceAttributes(resourceAttributes);
+        rootSpan.setEvents(null);
+        rootSpan.setReceivedAt(Instant.now());
+        spanRepository.save(rootSpan);
+    }
+
+    private TraceQueryCriteria repositoryWindowCriteria(String repositoryUrl) {
+        return TraceQueryCriteria.of(
+                repositoryWindowStart, repositoryWindowEnd,
+                null, null, null, null, null, null, repositoryUrl);
+    }
+
+    @Test
+    void repositoryUrlNullReturnsEveryTraceRegardlessOfRepository() {
+        TracePage page = service.offsetPage(repositoryWindowCriteria(null), "new", 0, 25);
+
+        assertThat(page.totalCount()).isEqualTo(3);
+        List<String> traceIds = page.items().stream().map(TraceSummary::getTraceId).toList();
+        assertThat(traceIds).containsExactlyInAnyOrder(
+                TRACE_REPO_A, TRACE_REPO_B, TRACE_REPO_UNATTRIBUTED);
+    }
+
+    @Test
+    void repositoryUrlFilterScopesOffsetPageToTheMatchingRepositoryOnly() {
+        TracePage page = service.offsetPage(repositoryWindowCriteria(REPOSITORY_URL_A), "new", 0, 25);
+
+        assertThat(page.totalCount()).isEqualTo(1);
+        assertThat(page.items()).hasSize(1);
+        assertThat(page.items().get(0).getTraceId()).isEqualTo(TRACE_REPO_A);
+    }
+
+    @Test
+    void repositoryUrlFilterExcludesOtherRepositoriesAndUnattributedRows() {
+        TracePage page = service.offsetPage(repositoryWindowCriteria(REPOSITORY_URL_B), "new", 0, 25);
+
+        List<String> traceIds = page.items().stream().map(TraceSummary::getTraceId).toList();
+        assertThat(traceIds).containsExactly(TRACE_REPO_B);
+        assertThat(traceIds).doesNotContain(TRACE_REPO_A, TRACE_REPO_UNATTRIBUTED);
+    }
+
+    @Test
+    void repositoryUrlFilterScopesTheCursorPage() {
+        TraceCursorPage page = service.cursorPage(repositoryWindowCriteria(REPOSITORY_URL_A), "new", null, null, 60);
+
+        assertThat(page.totalCount()).isEqualTo(1);
+        assertThat(page.items()).hasSize(1);
+        assertThat(page.items().get(0).getTraceId()).isEqualTo(TRACE_REPO_A);
+    }
+
+    @Test
+    void repositoryUrlFilterScopesTheHistogram() {
+        TraceHistogram histogramAll = service.histogram(repositoryWindowCriteria(null), 48);
+        TraceHistogram histogramScoped = service.histogram(repositoryWindowCriteria(REPOSITORY_URL_A), 48);
+
+        assertThat(histogramAll.total()).isEqualTo(3);
+        assertThat(histogramScoped.total()).isEqualTo(1);
+    }
+
+    @Test
+    void repositoryUrlFilterScopesTheFacets() {
+        TraceFacets facetsAll = service.facets(repositoryWindowCriteria(null));
+        TraceFacets facetsScoped = service.facets(repositoryWindowCriteria(REPOSITORY_URL_A));
+
+        long totalFromAllFacets = facetsAll.status().stream().mapToLong(FacetValue::count).sum();
+        long totalFromScopedFacets = facetsScoped.status().stream().mapToLong(FacetValue::count).sum();
+        assertThat(totalFromAllFacets).isEqualTo(3);
+        assertThat(totalFromScopedFacets).isEqualTo(1);
     }
 
     /**
@@ -339,7 +470,7 @@ class TraceExplorerIntegrationTest {
         // normalized to the same precision or every bucket comes back zero.
         TraceQueryCriteria subMicrosecondWindow = TraceQueryCriteria.of(
                 windowStart.plusNanos(SUB_MICROSECOND_NANOS), windowEnd,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
         TraceHistogram histogram = service.histogram(subMicrosecondWindow, 48);
 
         long bucketSum = histogram.buckets().stream()
@@ -1324,13 +1455,19 @@ class TraceExplorerIntegrationTest {
     private TraceQueryCriteria fullWindowCriteria() {
         return TraceQueryCriteria.of(
                 windowStart, windowEnd,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     private TraceQueryCriteria criteriaWithStatuses(List<String> statuses) {
         return TraceQueryCriteria.of(
                 windowStart, windowEnd,
-                statuses, null, null, null, null, null);
+                statuses, null, null, null, null, null, null);
+    }
+
+    private TraceQueryCriteria criteriaWithRepositoryUrl(String repositoryUrl) {
+        return TraceQueryCriteria.of(
+                windowStart, windowEnd,
+                null, null, null, null, null, null, repositoryUrl);
     }
 
     private static long durationCount(List<FacetValue> duration, String bucketId) {

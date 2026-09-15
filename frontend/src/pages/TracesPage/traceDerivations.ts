@@ -165,5 +165,10 @@ export const buildTracesQuery = (f: TracesFilters): URLSearchParams => {
   if (f.q) {
     p.set('q', f.q);
   }
+  // Omitted/null means "all repositories" — matches windowQueryParams' and the
+  // backend TraceQueryCriteria's `:repositoryUrl IS NULL OR ...` contract.
+  if (f.repositoryUrl != null) {
+    p.set('repositoryUrl', f.repositoryUrl);
+  }
   return p;
 };

@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchSkillUsage, fetchSubagentUsage } from '../../api';
 import { useSectionContext } from '../../components/SectionLayout';
 import { AUTO_REFRESH_INTERVAL_MS } from '../../lib/constants';
+import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import SkillsAgentsPageView from './SkillsAgentsPageView';
 import {
   buildModelColorIndexes,
@@ -27,24 +28,21 @@ import {
 } from './skillsAgentsDerivations';
 
 export default function SkillsAgentsPage() {
-  const { selection, autoRefresh } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
 
-  const selectionKey =
-    selection.kind === 'preset'
-      ? `preset:${selection.minutes}`
-      : `custom:${selection.startTimestamp}:${selection.endTimestamp}`;
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const skillsQuery = useQuery({
     queryKey: ['skill-usage', selectionKey],
-    queryFn: () => fetchSkillUsage(selection),
+    queryFn: () => fetchSkillUsage({ ...selection, repositoryUrl }),
     refetchInterval,
   });
   const subagentsQuery = useQuery({
     queryKey: ['subagent-usage', selectionKey],
-    queryFn: () => fetchSubagentUsage(selection),
+    queryFn: () => fetchSubagentUsage({ ...selection, repositoryUrl }),
     refetchInterval,
   });
 

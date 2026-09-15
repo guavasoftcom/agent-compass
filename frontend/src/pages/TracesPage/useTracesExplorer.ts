@@ -65,6 +65,7 @@ export interface UseTracesExplorerParams {
   endTimestamp: string;
   autoRefresh: boolean;
   onAutoRefreshChange: (next: boolean) => void;
+  repositoryUrl: string | null;
 }
 
 const useTracesExplorer = ({
@@ -72,6 +73,7 @@ const useTracesExplorer = ({
   endTimestamp,
   autoRefresh,
   onAutoRefreshChange,
+  repositoryUrl,
 }: UseTracesExplorerParams) => {
   const [search, setSearch] = useState('');
   const [facetSelections, setFacetSelections] = useState<TraceFacetSelections>(emptySelections);
@@ -103,6 +105,10 @@ const useTracesExplorer = ({
   // user stops typing instead of on every keystroke.
   const debouncedSearch = useDebouncedValue(search);
 
+  // repositoryUrl rides this same filters object (not a second fetcher argument), so a
+  // repository change falls into `filtersKey` exactly like a window/facet/search change
+  // already does — that's what drives the stream-reset effect below to reset the
+  // live-tail cursor on a repository change too, mirroring LogsPageView's `filters`.
   const filters = useMemo<TracesFilters>(
     () => ({
       startTimestamp: zoom ? zoom.startTimestamp : startTimestamp,
@@ -113,8 +119,9 @@ const useTracesExplorer = ({
       duration: [...facetSelections.duration],
       session: [...facetSelections.session],
       q: debouncedSearch || undefined,
+      repositoryUrl,
     }),
-    [zoom, startTimestamp, endTimestamp, facetSelections, debouncedSearch],
+    [zoom, startTimestamp, endTimestamp, facetSelections, debouncedSearch, repositoryUrl],
   );
   const filtersKey = JSON.stringify(filters);
 

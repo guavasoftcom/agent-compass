@@ -79,6 +79,22 @@ export const shortModelName = (model: string): string => {
   return [family.charAt(0).toUpperCase() + family.slice(1), ...rest].join(' ');
 };
 
+// Short, human display label for a repository URL, e.g.
+// "https://github.com/guavasoftcom/coding-agent-tuning.git" → "guavasoftcom/coding-agent-tuning".
+// Shared by RepositorySelector (and anywhere else a full git URL would be too
+// long to show inline) so a repository reads identically wherever it appears.
+// Falls back to the raw URL when it doesn't parse into at least an owner/repo
+// pair (e.g. a malformed or unusual remote), rather than showing nothing.
+export const shortRepositoryLabel = (repositoryUrl: string): string => {
+  const withoutTrailingSlash = repositoryUrl.replace(/\/+$/, '');
+  const withoutGitSuffix = withoutTrailingSlash.replace(/\.git$/, '');
+  const segments = withoutGitSuffix.split(/[/:]+/).filter(Boolean);
+  if (segments.length < 2) {
+    return repositoryUrl;
+  }
+  return segments.slice(-2).join('/');
+};
+
 // Full locale timestamp, e.g. "5/27/2026, 1:07:15 AM" — shared by the Sessions
 // grid and the Tokens page's cache-efficiency rank card/dialog so a session's
 // absolute timestamp reads identically wherever it's shown. `sessionsFormat.ts`

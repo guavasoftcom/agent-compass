@@ -398,6 +398,47 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
   String findPostgresVersion();
 
   /**
+   * Every distinct {@code repository_url} seen across the three signal tables, with its newest
+   * timestamp and total row count — feeds the repository picker's real-repo entries. Rows with no
+   * repository attribution are deliberately excluded ({@code WHERE repository_url IS NOT NULL} on
+   * every leg); the "All repositories" / "Unattributed" entries the picker also offers are synthetic
+   * ones the frontend adds around this list, not rows this query emits.
+   *
+   * <p>Each leg is a plain {@code GROUP BY repository_url} riding that table's
+   * {@code idx_*_repository_url_*} index (V34) — an index-only scan, the same shape
+   * {@link #findIngestHealth} uses per-signal. The outer re-aggregation re-groups the three legs'
+   * {@code UNION ALL} by {@code repository_url} so one repository seen on more than one table comes
+   * back as a single row with the max of the three last-seen timestamps and the sum of the three row
+   * counts, rather than one row per table.
+   *
+   * <p>Returns {@code (repository_url, last_seen, row_count)}, newest first.
+   */
+  @Query(value = """
+      SELECT repository_url,
+             max(last_seen) AS last_seen,
+             sum(row_count) AS row_count
+      FROM (
+        SELECT repository_url, max(start_timestamp) AS last_seen, count(*) AS row_count
+        FROM spans
+        WHERE repository_url IS NOT NULL
+        GROUP BY repository_url
+        UNION ALL
+        SELECT repository_url, max(timestamp), count(*)
+        FROM log_records
+        WHERE repository_url IS NOT NULL
+        GROUP BY repository_url
+        UNION ALL
+        SELECT repository_url, max(timestamp), count(*)
+        FROM metric_points
+        WHERE repository_url IS NOT NULL
+        GROUP BY repository_url
+      ) AS perTableUsage
+      GROUP BY repository_url
+      ORDER BY last_seen DESC
+      """, nativeQuery = true)
+  List<Object[]> findRepositoryUsage();
+
+  /**
    * Exact rows older than a cutoff, the rows a purge would nevertheless keep, and the totals needed
    * to turn all that into a proportional byte estimate.
    *

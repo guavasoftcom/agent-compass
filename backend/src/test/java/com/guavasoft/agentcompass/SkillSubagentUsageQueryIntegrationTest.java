@@ -93,6 +93,7 @@ class SkillSubagentUsageQueryIntegrationTest {
     private static final String ATTR_COST_USD      = "cost_usd";
     private static final String ATTR_TOOL_USE_ID   = "tool_use_id";
     private static final String ATTR_REQUEST_ID    = "request_id";
+    private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
 
     private static final String EVENT_API_REQUEST = "api_request";
     private static final String EVENT_TOOL_RESULT = "tool_result";
@@ -165,6 +166,14 @@ class SkillSubagentUsageQueryIntegrationTest {
     private static final int OFFSET_COST_CORRELATED_DISPATCH = 600;
     private static final int OFFSET_ORPHAN_DISPATCHES         = 660;
     private static final double COST_CORRELATED_SUBAGENT_CALL = 1.23;
+
+    // Repository-attribution fixture -- a dispatch whose log rows carry vcs.repository.url.full
+    // but whose spans do NOT, proving repositoryUrl is applied on the spans join independently of
+    // the log-side filter (see aggregateSubagentCostByModelInRange's own comment).
+    private static final int OFFSET_REPOSITORY_SCOPED_DISPATCH = 720;
+    private static final double COST_REPOSITORY_SCOPED_SUBAGENT_CALL = 2.50;
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     @BeforeEach
     void seed() {
@@ -271,7 +280,7 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void skillUsageSplitsCallsByTheModelThatRanTheSkill() {
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows).extracting(IdentifierUsageCount::tool).containsExactly(SKILL_SHIP, SKILL_VERIFY);
         assertThat(rows.get(0).calls()).isEqualTo(2L);
@@ -291,7 +300,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 .count();
         assertThat(shipTurnsInWindow).isEqualTo(4L);
 
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows)
                 .filteredOn(row -> SKILL_SHIP.equals(row.tool()))
@@ -304,7 +313,7 @@ class SkillSubagentUsageQueryIntegrationTest {
         // That turn carries its own prompt id, so the prompt-level dedup does not
         // absorb it: without the agent.name check ship gains a third call and a
         // Haiku bucket it never ran on.
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows)
                 .filteredOn(row -> SKILL_SHIP.equals(row.tool()))
@@ -319,7 +328,7 @@ class SkillSubagentUsageQueryIntegrationTest {
     void skillInvocationSpanningModelsIsAttributedToItsEarliestTurn() {
         // PROMPT_FIRST_SHIP starts on Opus and later runs on Sonnet. Attributing
         // it to the latest turn instead would read {Sonnet: 2} and lose Opus.
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows)
                 .filteredOn(row -> SKILL_SHIP.equals(row.tool()))
@@ -342,7 +351,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_MODEL, MODEL_OPUS,
                 ATTR_SKILL_NAME, "unprompted"));
 
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows)
                 .filteredOn(row -> "unprompted".equals(row.tool()))
@@ -360,7 +369,7 @@ class SkillSubagentUsageQueryIntegrationTest {
         // that ran while the skill was active spent real money, including that one -- so
         // the two queries deliberately disagree about which turns they cover. calls()
         // stays 2 for ship; costUsd sums all four of its turns.
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
 
         IdentifierUsageCount ship = rows.stream()
                 .filter(row -> SKILL_SHIP.equals(row.tool()))
@@ -383,7 +392,7 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void subagentUsageAttributesCallsToTheDispatchingMainLoopTurnNotTheSubagentsOwnTurns() {
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows).extracting(IdentifierUsageCount::tool)
                 .containsExactly(SUBAGENT_EXPLORE, SUBAGENT_GENERAL_PURPOSE);
@@ -401,7 +410,7 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void subagentDispatchWithNoTypeIsCreditedToTheDefaultAgentNotAnUnknownBucket() {
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows).extracting(IdentifierUsageCount::tool).doesNotContain("unknown");
         assertThat(rows)
@@ -412,8 +421,8 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void perModelCallsAlwaysSumToTheRowTotal() {
-        List<IdentifierUsageCount> rows = new ArrayList<>(service.aggregateSkillUsageInRange(windowStart, windowEnd));
-        rows.addAll(service.aggregateSubagentUsageInRange(windowStart, windowEnd));
+        List<IdentifierUsageCount> rows = new ArrayList<>(service.aggregateSkillUsageInRange(windowStart, windowEnd, null));
+        rows.addAll(service.aggregateSubagentUsageInRange(windowStart, windowEnd, null));
 
         assertThat(rows).isNotEmpty().allSatisfy(row ->
                 assertThat(row.byModel().values().stream().mapToLong(Long::longValue).sum())
@@ -430,7 +439,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_TOOL_NAME, TOOL_AGENT,
                 ATTR_SUBAGENT_TYPE, "orphaned"));
 
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows)
                 .filteredOn(row -> "orphaned".equals(row.tool()))
@@ -487,7 +496,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_MODEL, MODEL_SONNET,
                 ATTR_COST_USD, COST_CORRELATED_SUBAGENT_CALL));
 
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
 
         IdentifierUsageCount subagent = rows.stream()
                 .filter(row -> subagentType.equals(row.tool()))
@@ -532,7 +541,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 Map.of(ATTR_TOOL_USE_ID, "toolu_orphan_childless"));
         // Deliberately no llm_request span beneath e000000000000002.
 
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
 
         assertThat(rows)
                 .filteredOn(row -> subagentTypeNoSpanAtAll.equals(row.tool()))
@@ -551,11 +560,91 @@ class SkillSubagentUsageQueryIntegrationTest {
     }
 
     @Test
+    void subagentUsageIsScopedToItsOwnRepositoryOnBothTheLogAndSpanSides() {
+        String subagentType = "repository-scoped-agent";
+        String toolUseId = "toolu_repository_scoped";
+        String requestId = "req_repository_scoped";
+        String session = "session-repository-scoped";
+        String traceId = "trace-repository-scoped";
+
+        // Dispatch: main-loop turn plus its tool_result, both stamped with REPOSITORY_A --
+        // this is the log-side aggregateToolInvocationsByInnerAttributeAndModelInRange scan and
+        // the subagent_dispatches CTE inside aggregateSubagentCostByModelInRange.
+        saveLog(OFFSET_REPOSITORY_SCOPED_DISPATCH, mapWithRepository(Map.of(
+                ATTR_EVENT_NAME, EVENT_API_REQUEST,
+                ATTR_SESSION_ID, session,
+                ATTR_MODEL, MODEL_OPUS), REPOSITORY_A));
+        saveLog(OFFSET_REPOSITORY_SCOPED_DISPATCH, mapWithRepository(Map.of(
+                ATTR_EVENT_NAME, EVENT_TOOL_RESULT,
+                ATTR_SESSION_ID, session,
+                ATTR_TOOL_NAME, TOOL_AGENT,
+                ATTR_SUBAGENT_TYPE, subagentType,
+                ATTR_TOOL_USE_ID, toolUseId), REPOSITORY_A));
+
+        // Its execution span deliberately carries NO repository_url at all (resource_attributes
+        // has no vcs.* key) -- proving the spans join's own repositoryUrl filter is what excludes
+        // this dispatch's cost when scoped to REPOSITORY_A, independent of the log-side filter
+        // that already let the dispatch itself through.
+        String rootSpanId = "r000000000000003";
+        String toolWrapperSpanId = "w000000000000003";
+        String toolExecutionSpanId = "e000000000000003";
+        String llmRequestSpanId = "l000000000000003";
+        saveSpan(traceId, rootSpanId, null, SPAN_NAME_ROOT, Map.of());
+        saveSpan(traceId, toolWrapperSpanId, rootSpanId, SPAN_NAME_TOOL_WRAPPER,
+                Map.of(ATTR_TOOL_USE_ID, toolUseId));
+        saveSpan(traceId, toolExecutionSpanId, toolWrapperSpanId, SPAN_NAME_TOOL_EXECUTION,
+                Map.of(ATTR_TOOL_USE_ID, toolUseId));
+        saveSpan(traceId, llmRequestSpanId, toolExecutionSpanId, SPAN_NAME_LLM_REQUEST,
+                Map.of(ATTR_REQUEST_ID, requestId));
+
+        saveLog(OFFSET_REPOSITORY_SCOPED_DISPATCH, Map.of(
+                ATTR_EVENT_NAME, EVENT_API_REQUEST,
+                ATTR_REQUEST_ID, requestId,
+                ATTR_MODEL, MODEL_SONNET,
+                ATTR_COST_USD, COST_REPOSITORY_SCOPED_SUBAGENT_CALL));
+
+        List<IdentifierUsageCount> unscoped = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> scopedToRepositoryA =
+                service.aggregateSubagentUsageInRange(windowStart, windowEnd, REPOSITORY_A);
+        List<IdentifierUsageCount> scopedToRepositoryB =
+                service.aggregateSubagentUsageInRange(windowStart, windowEnd, REPOSITORY_B);
+
+        // Unscoped: the dispatch is counted and its cost resolves normally.
+        IdentifierUsageCount unscopedRow = rowFor(unscoped, subagentType);
+        assertThat(unscopedRow.calls()).isEqualTo(1L);
+        assertThat(unscopedRow.costUsd())
+                .isCloseTo(COST_REPOSITORY_SCOPED_SUBAGENT_CALL, offset(COST_ASSERTION_TOLERANCE));
+
+        // Scoped to REPOSITORY_A: the dispatch is still counted (its log rows carry
+        // REPOSITORY_A), but its cost is 0 -- the execution span carries no repository_url at
+        // all, so (:repositoryUrl IS NULL OR dispatch_execution.repository_url = :repositoryUrl)
+        // excludes it once :repositoryUrl is bound to a real value.
+        IdentifierUsageCount scopedRow = rowFor(scopedToRepositoryA, subagentType);
+        assertThat(scopedRow.calls()).isEqualTo(1L);
+        assertThat(scopedRow.costUsd()).isEqualTo(0.0);
+        assertThat(scopedRow.costByModel()).isEmpty();
+
+        // Scoped to a DIFFERENT repository: the dispatch's own log rows carry REPOSITORY_A, not
+        // REPOSITORY_B, so the subagent_dispatches CTE excludes it entirely -- no row at all.
+        assertThat(scopedToRepositoryB).noneSatisfy(row -> assertThat(row.tool()).isEqualTo(subagentType));
+    }
+
+    @Test
     void emptyWindowReturnsNoRowsRatherThanAnUnknownBucket() {
         Instant beforeAnySeededRow = windowStart.minus(10, ChronoUnit.MINUTES);
 
-        assertThat(service.aggregateSkillUsageInRange(beforeAnySeededRow, windowStart)).isEmpty();
-        assertThat(service.aggregateSubagentUsageInRange(beforeAnySeededRow, windowStart)).isEmpty();
+        assertThat(service.aggregateSkillUsageInRange(beforeAnySeededRow, windowStart, null)).isEmpty();
+        assertThat(service.aggregateSubagentUsageInRange(beforeAnySeededRow, windowStart, null)).isEmpty();
+    }
+
+    private static Map<String, Object> mapWithRepository(Map<String, Object> attributes, String repositoryUrl) {
+        Map<String, Object> withRepository = new HashMap<>(attributes);
+        withRepository.put(ATTR_REPOSITORY_URL, repositoryUrl);
+        return withRepository;
+    }
+
+    private static IdentifierUsageCount rowFor(List<IdentifierUsageCount> rows, String identifier) {
+        return rows.stream().filter(row -> identifier.equals(row.tool())).findFirst().orElseThrow();
     }
 
     private void saveLog(int offsetSeconds, Map<String, Object> attributes) {

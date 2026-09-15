@@ -222,17 +222,17 @@ public class MetricService {
         toFilterArray(activeFilters), startTimestamp, endTimestamp);
   }
 
-  public TokenUsageSummary aggregateTokenUsage(int minutes) {
+  public TokenUsageSummary aggregateTokenUsage(int minutes, String repositoryUrl) {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
-    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds);
+    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds, repositoryUrl);
   }
 
-  public TokenUsageSummary aggregateTokenUsageInRange(Instant start, Instant end) {
+  public TokenUsageSummary aggregateTokenUsageInRange(Instant start, Instant end, String repositoryUrl) {
     long windowSeconds = Math.max(1L, Duration.between(start, end).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / TARGET_BUCKETS_PER_WINDOW);
-    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds);
+    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds, repositoryUrl);
   }
 
   // Perf: aggregateTokenUsageBreakdown replaces what used to be three separate
@@ -253,17 +253,19 @@ public class MetricService {
   // series solely to throw it away. aggregateCostSummary itself is unchanged
   // and still backs GET /api/metrics/cost, which is the endpoint that actually
   // needs the trend.
-  private TokenUsageSummary buildTokenUsageSummaryForWindow(Instant start, Instant end, long bucketSeconds) {
+  private TokenUsageSummary buildTokenUsageSummaryForWindow(
+      Instant start, Instant end, long bucketSeconds, String repositoryUrl) {
     List<Object[]> breakdownRows = metricPointRepository.aggregateTokenUsageBreakdown(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
         MODEL_ATTRIBUTE,
         start,
         end,
-        bucketSeconds);
+        bucketSeconds,
+        repositoryUrl);
     List<ModelTokenShare> byModel = buildTokensByModel(breakdownRows);
     long totalTokens = extractTokenGrandTotal(breakdownRows);
-    CostSummary cost = aggregateCostTotalsAndByModel(start, end, totalTokens);
+    CostSummary cost = aggregateCostTotalsAndByModel(start, end, totalTokens, repositoryUrl);
     return buildTokenUsageSummary(breakdownRows, bucketSeconds, byModel, cost);
   }
 
@@ -375,32 +377,34 @@ public class MetricService {
   }
 
   public SessionSummaryPage sessionsSummary(
-      int minutes, String sortField, String sortDirection, int page, int size) {
+      int minutes, String sortField, String sortDirection, int page, int size, String repositoryUrl) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    return querySessionsPage(since, null, sortField, sortDirection, page, size);
+    return querySessionsPage(since, null, sortField, sortDirection, page, size, repositoryUrl);
   }
 
   public SessionSummaryPage sessionsSummaryInRange(
-      Instant start, Instant end, String sortField, String sortDirection, int page, int size) {
-    return querySessionsPage(start, end, sortField, sortDirection, page, size);
+      Instant start, Instant end, String sortField, String sortDirection, int page, int size,
+      String repositoryUrl) {
+    return querySessionsPage(start, end, sortField, sortDirection, page, size, repositoryUrl);
   }
 
-  public SessionKpis sessionsKpis(int minutes) {
+  public SessionKpis sessionsKpis(int minutes, String repositoryUrl) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    return buildSessionKpis(since, null);
+    return buildSessionKpis(since, null, repositoryUrl);
   }
 
-  public SessionKpis sessionsKpisInRange(Instant start, Instant end) {
-    return buildSessionKpis(start, end);
+  public SessionKpis sessionsKpisInRange(Instant start, Instant end, String repositoryUrl) {
+    return buildSessionKpis(start, end, repositoryUrl);
   }
 
-  public List<SessionCacheEfficiency> worstCacheEfficiencySessions(int minutes, int limit) {
+  public List<SessionCacheEfficiency> worstCacheEfficiencySessions(int minutes, int limit, String repositoryUrl) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    return buildWorstCacheEfficiencySessions(since, null, limit);
+    return buildWorstCacheEfficiencySessions(since, null, limit, repositoryUrl);
   }
 
-  public List<SessionCacheEfficiency> worstCacheEfficiencySessionsInRange(Instant start, Instant end, int limit) {
-    return buildWorstCacheEfficiencySessions(start, end, limit);
+  public List<SessionCacheEfficiency> worstCacheEfficiencySessionsInRange(
+      Instant start, Instant end, int limit, String repositoryUrl) {
+    return buildWorstCacheEfficiencySessions(start, end, limit, repositoryUrl);
   }
 
   // Sessions with the lowest share of input-side tokens served from cache, worst
@@ -409,7 +413,8 @@ public class MetricService {
   // misconfigured tuning.cache-efficiency-minimum-input-tokens=0 must not be able
   // to reach the SQL. The result limit goes through the same PageBounds clamp
   // every other list endpoint uses.
-  private List<SessionCacheEfficiency> buildWorstCacheEfficiencySessions(Instant start, Instant end, int limit) {
+  private List<SessionCacheEfficiency> buildWorstCacheEfficiencySessions(
+      Instant start, Instant end, int limit, String repositoryUrl) {
     long minimumInputSideTokens =
         Math.max(MINIMUM_CACHE_EFFICIENCY_TOKEN_FLOOR, tuningProperties.getCacheEfficiencyMinimumInputTokens());
     List<Object[]> rows = metricPointRepository.aggregateWorstCacheEfficiencySessions(
@@ -424,7 +429,8 @@ public class MetricService {
         start,
         end,
         minimumInputSideTokens,
-        PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT));
+        PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT),
+        repositoryUrl);
 
     // A lookup keyed on the ranking's own session ids -- it already comes back one
     // row per session, so there is no second aggregation to write.
@@ -467,18 +473,20 @@ public class MetricService {
     return sessions;
   }
 
-  private SessionKpis buildSessionKpis(Instant start, Instant end) {
+  private SessionKpis buildSessionKpis(Instant start, Instant end, String repositoryUrl) {
     List<Object[]> kpiRows = metricPointRepository.aggregateSessionKpis(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
         start,
-        end);
+        end,
+        repositoryUrl);
     // The trend needs a concrete upper bound for date_bin; the ?minutes= form leaves
     // end null, so close the window at "now".
     Instant trendEnd = end != null ? end : Instant.now();
     long windowSeconds = Math.max(1L, Duration.between(start, trendEnd).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / SESSIONS_TREND_BUCKETS);
-    List<Long> sessionsTrend = buildSessionsTrend(start, trendEnd, windowSeconds, bucketSeconds);
+    List<Long> sessionsTrend =
+        buildSessionsTrend(start, trendEnd, windowSeconds, bucketSeconds, repositoryUrl);
     return mapSessionKpis(kpiRows, sessionsTrend);
   }
 
@@ -487,7 +495,7 @@ public class MetricService {
   // that fits in the window) and drop the rare boundary index == bucketCount for a
   // session landing exactly on the window's upper edge.
   private List<Long> buildSessionsTrend(
-      Instant start, Instant end, long windowSeconds, long bucketSeconds) {
+      Instant start, Instant end, long windowSeconds, long bucketSeconds, String repositoryUrl) {
     int bucketCount = (int) Math.max(1L, (windowSeconds + bucketSeconds - 1) / bucketSeconds);
     long[] dense = new long[bucketCount];
     List<Object[]> trendRows = metricPointRepository.aggregateNewSessionsTrend(
@@ -495,7 +503,8 @@ public class MetricService {
         tuningProperties.getActiveTimeMetric(),
         start,
         end,
-        bucketSeconds);
+        bucketSeconds,
+        repositoryUrl);
     for (Object[] trendRow : trendRows) {
       int bucketIndex = ((Number) trendRow[0]).intValue();
       long newSessions = trendRow[1] == null ? 0L : ((Number) trendRow[1]).longValue();
@@ -511,7 +520,8 @@ public class MetricService {
   }
 
   private SessionSummaryPage querySessionsPage(
-      Instant start, Instant end, String sortField, String sortDirection, int page, int size) {
+      Instant start, Instant end, String sortField, String sortDirection, int page, int size,
+      String repositoryUrl) {
     int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
     int pageOffset = PageBounds.computeOffset(page, pageSize);
     List<Object[]> rows = metricPointRepository.aggregateSessionSummaries(
@@ -529,7 +539,8 @@ public class MetricService {
         normalizeSortColumn(sortField),
         normalizeSortDirection(sortDirection),
         pageSize,
-        pageOffset);
+        pageOffset,
+        repositoryUrl);
     long totalCount = rows.isEmpty() || rows.get(0)[SESSION_TOTAL_COUNT_INDEX] == null
         ? 0L
         : ((Number) rows.get(0)[SESSION_TOTAL_COUNT_INDEX]).longValue();
@@ -717,7 +728,7 @@ public class MetricService {
     String costMetricName = tuningProperties.getCostUsageMetric();
     String tokenMetricName = tuningProperties.getTokenUsageMetric();
 
-    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart);
+    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart, null);
     double currentSpend = costTotals.currentTotal();
     double priorSpend = costTotals.priorTotal();
     double deltaPct = priorSpend == 0.0 ? 0.0 : (currentSpend - priorSpend) / priorSpend * 100.0;
@@ -730,7 +741,7 @@ public class MetricService {
 
     long trendBucketSeconds = Math.max(1L, (long) windowSeconds / COST_TREND_BUCKETS);
     List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
-        costMetricName, from, to, trendBucketSeconds);
+        costMetricName, from, to, trendBucketSeconds, null);
     List<Double> trend = buildCostTrend(breakdownRows);
     List<CostModelShare> byModel = buildCostByModel(breakdownRows, currentSpend);
 
@@ -757,14 +768,15 @@ public class MetricService {
   // paying for a trend series nothing here reads. trend comes back empty -- not
   // wrong, just not computed -- so this must never back an endpoint whose
   // caller reads it.
-  private CostSummary aggregateCostTotalsAndByModel(Instant from, Instant to, long totalTokens) {
+  private CostSummary aggregateCostTotalsAndByModel(
+      Instant from, Instant to, long totalTokens, String repositoryUrl) {
     double windowSeconds = Math.max(1.0, Duration.between(from, to).getSeconds());
     double windowHours = windowSeconds / SECONDS_PER_HOUR;
     Duration windowDuration = Duration.ofSeconds((long) windowSeconds);
     Instant priorWindowStart = from.minus(windowDuration);
     String costMetricName = tuningProperties.getCostUsageMetric();
 
-    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart);
+    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart, repositoryUrl);
     double currentSpend = costTotals.currentTotal();
     double priorSpend = costTotals.priorTotal();
     double deltaPct = priorSpend == 0.0 ? 0.0 : (currentSpend - priorSpend) / priorSpend * 100.0;
@@ -774,7 +786,7 @@ public class MetricService {
     double costPer1k = totalTokens == 0L ? 0.0 : currentSpend / (totalTokens / TOKENS_PER_COST_UNIT);
 
     List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
-        costMetricName, from, to, (long) windowSeconds);
+        costMetricName, from, to, (long) windowSeconds, repositoryUrl);
     List<CostModelShare> byModel = buildCostByModel(breakdownRows, currentSpend);
 
     return new CostSummary(
@@ -793,9 +805,10 @@ public class MetricService {
   // B4 perf: current-period and prior-period totals now come from ONE scan (see
   // MetricPointRepository#aggregateCostCurrentAndPriorTotals's FILTER-based
   // query) instead of two.
-  private CostTotals queryCostTotals(String metricName, Instant from, Instant to, Instant priorFrom) {
+  private CostTotals queryCostTotals(
+      String metricName, Instant from, Instant to, Instant priorFrom, String repositoryUrl) {
     Object[] totalsRow = firstRow(metricPointRepository.aggregateCostCurrentAndPriorTotals(
-        metricName, from, to, priorFrom));
+        metricName, from, to, priorFrom, repositoryUrl));
     if (totalsRow == null) {
       return new CostTotals(0.0, 0.0);
     }
