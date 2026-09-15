@@ -16,6 +16,7 @@ set -euo pipefail
 
 installationDirectory="${AGENT_COMPASS_HOME:-$HOME/.agent-compass}"
 composeFile=""
+skipSettingsCheck="false"
 
 usage() {
   cat <<'USAGE'
@@ -24,10 +25,11 @@ Agent Compass updater.
 Usage: update.sh [options]
 
 Options:
-  --dir <path>   Directory holding docker-compose.yml (default: ~/.agent-compass,
-                 or $AGENT_COMPASS_HOME).
-  --file <path>  Compose file to use directly, instead of --dir/docker-compose.yml.
-  -h, --help     Show this help.
+  --dir <path>        Directory holding docker-compose.yml (default: ~/.agent-compass,
+                      or $AGENT_COMPASS_HOME).
+  --file <path>       Compose file to use directly, instead of --dir/docker-compose.yml.
+  --skip-settings     Do not check or update Claude Code settings.
+  -h, --help          Show this help.
 
 Environment:
   AGENT_COMPASS_HOME    Same as --dir.
@@ -42,6 +44,7 @@ USAGE
 
 logStep() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
 logInfo() { printf '    %s\n' "$1"; }
+logWarn() { printf '\033[1;33mwarning:\033[0m %s\n' "$1" >&2; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
@@ -52,6 +55,7 @@ while [ $# -gt 0 ]; do
     --file)
       [ $# -ge 2 ] || fail "--file needs a path"
       composeFile="$2"; shift 2 ;;
+    --skip-settings) skipSettingsCheck="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown option: $1 (try --help)" ;;
   esac
@@ -71,6 +75,76 @@ docker info >/dev/null 2>&1 \
   || fail "the Docker daemon is not running - start Docker Desktop and try again"
 
 composeCommand=(docker compose --project-directory "$(dirname "$composeFile")" -f "$composeFile")
+
+# --- Claude Code settings check ------------------------------------------------
+
+if [ "$skipSettingsCheck" != "true" ]; then
+  # Determine settings file to check
+  settingsFile="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+
+  if [ -f "$settingsFile" ]; then
+    # Check if OTEL_METRICS_INCLUDE_REPOSITORY is already set
+    if ! grep -q '"OTEL_METRICS_INCLUDE_REPOSITORY"' "$settingsFile"; then
+      logStep "Claude Code settings update available"
+      logInfo "The repository filtering feature requires: OTEL_METRICS_INCLUDE_REPOSITORY=true"
+      logInfo "Settings file: $settingsFile"
+
+      if [ -t 0 ]; then
+        printf 'Add this setting now? [Y/n] '
+        read -r confirmation
+        case "$confirmation" in
+          ''|y|Y|yes|YES)
+            # Check for Python
+            pythonBinary=""
+            for candidate in python3 python; do
+              if command -v "$candidate" >/dev/null 2>&1; then
+                pythonBinary="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$pythonBinary" ]; then
+              logWarn "python3 is required to update settings — skipping"
+            else
+              # Add the setting using Python
+              if SETTINGS_FILE="$settingsFile" "$pythonBinary" <<'PYTHON'
+import json
+import os
+
+settings_path = os.environ["SETTINGS_FILE"]
+
+settings = {}
+if os.path.exists(settings_path) and os.path.getsize(settings_path) > 0:
+    with open(settings_path, encoding="utf-8") as handle:
+        settings = json.loads(handle.read())
+
+env_block = settings.setdefault("env", {})
+if "OTEL_METRICS_INCLUDE_REPOSITORY" not in env_block:
+    env_block["OTEL_METRICS_INCLUDE_REPOSITORY"] = "true"
+    with open(settings_path, "w", encoding="utf-8") as handle:
+        json.dump(settings, handle, indent=2)
+        handle.write("\n")
+    print("    added OTEL_METRICS_INCLUDE_REPOSITORY=true")
+else:
+    print("    setting already present")
+PYTHON
+              then
+                logInfo "Restart Claude Code for the change to take effect"
+              fi
+            fi
+            ;;
+          *)
+            logInfo "Skipped — you can add it manually later by editing $settingsFile"
+            ;;
+        esac
+      else
+        logInfo "Running non-interactively — use --skip-settings to suppress this check"
+      fi
+    fi
+  fi
+fi
+
+# --- update stack ---------------------------------------------------------------
 
 logStep "Pulling the latest app image"
 if [ -n "${AGENT_COMPASS_IMAGE:-}" ]; then
