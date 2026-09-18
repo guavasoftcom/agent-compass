@@ -21,6 +21,7 @@ import type { LogRow, SpanRow } from '../../api';
 import { formatDuration } from '../TracesPage/tracesApi';
 import { tokenBreakdownForSpan } from '../TracesPage/tokenBreakdown';
 import { costOfSelectedSpan, costOfSpan } from './spanCost';
+import type { AgentDispatchLegendEntry } from './agentDispatch';
 import { type SpanTree, type TraceWindow } from './spanTree';
 import { type TraceAnalysisResult } from './traceAnalysisApi';
 import {
@@ -50,6 +51,17 @@ export interface TraceDetailPageViewProps {
   // Spans "Collapse all" folds: tool-call spans with children (see the
   // container). Empty for a trace with no tool calls, which hides the button.
   collapsibleToolSpanIds: string[];
+  // Per-span subagent-dispatch color: every span belonging to an Agent-tool dispatch (the
+  // dispatch span itself and its whole subtree) resolved to the color its dispatch was assigned;
+  // absent for a main-loop span. See agentDispatch.ts for the color-assignment rule.
+  agentColorBySpanId: Map<string, string>;
+  // The matching label (subagent_type, or the generic fallback) for the same span set —
+  // SpanInspectorDrawer pairs this with agentColorBySpanId to render the drawer header's
+  // "which subagent" name chip for the selected span.
+  agentLabelBySpanId: Map<string, string>;
+  // Distinct dispatch labels paired with their color, first-seen order — what WaterfallToolbar
+  // renders as extra legend swatches. Empty when the trace dispatched no subagent.
+  agentLegend: AgentDispatchLegendEntry[];
   descendantErrorCounts: Map<string, number>;
   selfTimeNanosBySpanId: Map<string, number>;
   logsBySpanId: Map<string, LogRow[]>;
@@ -88,6 +100,9 @@ const TraceDetailPageView = ({
   depthBySpanId,
   traceWindow,
   collapsibleToolSpanIds,
+  agentColorBySpanId,
+  agentLabelBySpanId,
+  agentLegend,
   descendantErrorCounts,
   selfTimeNanosBySpanId,
   logsBySpanId,
@@ -139,6 +154,12 @@ const TraceDetailPageView = ({
     [spans],
   );
   const errorIndexRef = useRef(-1);
+
+  // One cycling position per agent-dispatch legend label, mirroring errorIndexRef/nextError above:
+  // a legend swatch can name several same-type dispatches, so repeat clicks step through all of
+  // them rather than only ever landing on the first. Keyed by label (not a single shared index)
+  // because each label's own click cycles independently of the others.
+  const agentDispatchCycleIndexByLabelRef = useRef<Map<string, number>>(new Map());
 
   // visible spans (respect collapse) then drop those entirely outside the zoom view
   const visible = useMemo(() => {
@@ -312,6 +333,23 @@ const TraceDetailPageView = ({
       scrollToSpan(spanId);
     }
   }, [pendingRevealTick, scrollToSpan]);
+
+  // Clicking a WaterfallToolbar agent-dispatch legend swatch jumps to one of that label's dispatch
+  // spans via revealSpan, same idiom as nextError/errorIndexRef above: a ref-held index per label,
+  // incremented mod the dispatch count on each press so repeat clicks cycle through every dispatch
+  // of that type rather than only ever landing on the first.
+  const revealNextAgentDispatch = useCallback(
+    (label: string, dispatchSpanIds: string[]) => {
+      if (dispatchSpanIds.length === 0) {
+        return;
+      }
+      const previousIndex = agentDispatchCycleIndexByLabelRef.current.get(label) ?? -1;
+      const nextIndex = (previousIndex + 1) % dispatchSpanIds.length;
+      agentDispatchCycleIndexByLabelRef.current.set(label, nextIndex);
+      revealSpan(dispatchSpanIds[nextIndex]);
+    },
+    [revealSpan],
+  );
 
   const [analyzeTraceDialogOpen, setAnalyzeTraceDialogOpen] = useState(false);
 
@@ -505,6 +543,8 @@ const TraceDetailPageView = ({
             hasAnalysis={traceAnalysis !== null}
             analysisOutdated={traceAnalysis?.outdated ?? false}
             ollamaAnalysisEnabled={ollamaAnalysisEnabled}
+            agentLegend={agentLegend}
+            onAgentLegendClick={revealNextAgentDispatch}
           />
 
           <TraceMinimap
@@ -583,6 +623,7 @@ const TraceDetailPageView = ({
                   descendantErrorCount={descendantErrorCounts.get(s.spanId) ?? 0}
                   costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
                   isRollupCost={costOfSpan(s) > 0}
+                  agentColor={agentColorBySpanId.get(s.spanId)}
                   chipsOff={chipsOff}
                   logs={logsBySpanId.get(s.spanId)}
                   gridColumns={gridColumns}
@@ -601,6 +642,8 @@ const TraceDetailPageView = ({
           selection={drawerSelection}
           spans={spans}
           logsBySpanId={logsBySpanId}
+          agentColorBySpanId={agentColorBySpanId}
+          agentLabelBySpanId={agentLabelBySpanId}
           onRevealSpan={revealSpan}
           onClose={() => setSelected(null)}
           onPreviousSpan={() => selectAdjacentSpan(-1)}

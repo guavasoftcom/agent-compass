@@ -468,6 +468,7 @@ public class LogService {
     applyTraceCorrelatedActivity(promptRows, costByTurn, toolsByTurn, backgroundCostByTurn, backgroundToolsByTurn,
         traceTokensByTurn, traceModelByTurn);
     Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
+    Map<Integer, String> dispatchingTraceByTurn = resolveDispatchingTraceByTurn(sessionId, promptRows);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
@@ -496,7 +497,8 @@ public class LogService {
               requestRollup.requestCount(),
               SessionPrompt.TurnAttribution.REQUEST,
               backgroundCostUsd,
-              backgroundTools)
+              backgroundTools,
+              dispatchingTraceByTurn.get(turnIndex))
           : new SessionPrompt(
               (Instant) row[0],
               (String) row[1],
@@ -509,9 +511,70 @@ public class LogService {
               0L,
               SessionPrompt.TurnAttribution.INTERVAL,
               backgroundCostUsd,
-              backgroundTools));
+              backgroundTools,
+              dispatchingTraceByTurn.get(turnIndex)));
     }
     return prompts;
+  }
+
+  /**
+   * The trace id of the turn that dispatched this one, resolved in bulk over every notification
+   * turn in {@code promptRows} rather than looping {@link #dispatchingToolCall} once per row --
+   * that method maps a whole {@link LogRecordEntity} (jsonb attributes and all) when this only
+   * needs one column, and looping a per-id lookup defeats the bulk-query invariant every other
+   * enrichment in {@link #promptsForSession} follows.
+   *
+   * <p>Scans each row's prompt text for a {@code <task-notification>} envelope's {@code
+   * tool-use-id} ({@link TaskNotificationEnvelope#toolUseId}), then resolves every id found with
+   * one query. A resolved trace id equal to the row's own trace id is dropped as a self-reference,
+   * and an id that resolves to nothing (the dispatching turn purged, or malformed) is left absent
+   * rather than defaulted -- the same "cannot tell" discipline the purge and staleness checks in
+   * this codebase follow elsewhere.
+   */
+  private Map<Integer, String> resolveDispatchingTraceByTurn(String sessionId, List<Object[]> promptRows) {
+    Map<Integer, String> toolUseIdByTurn = new HashMap<>();
+    for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
+      String promptText = (String) promptRows.get(turnIndex)[PROMPT_ROW_PROMPT_TEXT];
+      if (promptText == null) {
+        continue;
+      }
+      String toolUseId = TaskNotificationEnvelope.toolUseId(promptText);
+      if (toolUseId != null) {
+        toolUseIdByTurn.put(turnIndex, toolUseId);
+      }
+    }
+    if (toolUseIdByTurn.isEmpty()) {
+      return Map.of();
+    }
+
+    Instant newestNotificationTimestamp = toolUseIdByTurn.keySet().stream()
+        .map(turnIndex -> (Instant) promptRows.get(turnIndex)[0])
+        .max(Comparator.naturalOrder())
+        .orElseThrow();
+
+    Map<String, String> traceIdByToolUseId = new HashMap<>();
+    for (Object[] row : logRecordRepository.findDispatchingTraceIdsByToolUseIds(
+        tuningProperties.getToolEventName(),
+        sessionId,
+        newestNotificationTimestamp,
+        tuningProperties.getToolCallIdAttribute(),
+        toolUseIdByTurn.values())) {
+      traceIdByToolUseId.put((String) row[0], (String) row[1]);
+    }
+
+    Map<Integer, String> dispatchingTraceByTurn = new HashMap<>();
+    for (Map.Entry<Integer, String> entry : toolUseIdByTurn.entrySet()) {
+      String dispatchingTraceId = traceIdByToolUseId.get(entry.getValue());
+      if (dispatchingTraceId == null) {
+        continue;
+      }
+      String ownTraceId = (String) promptRows.get(entry.getKey())[PROMPT_ROW_TRACE_ID];
+      if (dispatchingTraceId.equals(ownTraceId)) {
+        continue;
+      }
+      dispatchingTraceByTurn.put(entry.getKey(), dispatchingTraceId);
+    }
+    return dispatchingTraceByTurn;
   }
 
   // Exact per-turn rollup summed from a session's api_request logs, keyed by the
@@ -612,6 +675,7 @@ public class LogService {
   }
 
   // Column indexes on a findPromptsForSession row.
+  private static final int PROMPT_ROW_PROMPT_TEXT = 1;
   private static final int PROMPT_ROW_TRACE_ID = 2;
   private static final int PROMPT_ROW_PROMPT_ID = 3;
 

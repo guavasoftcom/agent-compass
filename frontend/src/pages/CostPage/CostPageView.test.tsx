@@ -18,7 +18,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import CostPageView, { type CostPageViewProps } from './CostPageView';
-import type { CostBreakdown, CostSessionShare, WindowSelection } from '../../api';
+import type { CostBreakdown, CostSessionShare, IdentifierUsageRow, WindowSelection } from '../../api';
 import { WINDOWS } from '../../lib/constants';
 
 // CostPageView always passes onRepositoryUrlChange, so PageActions renders
@@ -122,6 +122,14 @@ const emptyBreakdown: CostBreakdown = {
   bucketSeconds: 3600,
 };
 
+const skillUsage: IdentifierUsageRow[] = [
+  { tool: 'pdf-fill', calls: 4, byModel: { 'claude-sonnet-4-5': 4 }, costUsd: 13.82, costByModel: { 'claude-sonnet-4-5': 13.82 } },
+];
+
+const subagentUsage: IdentifierUsageRow[] = [
+  { tool: 'code-reviewer', calls: 10, byModel: { 'claude-sonnet-4-5': 10 }, costUsd: 82.43, costByModel: { 'claude-sonnet-4-5': 82.43 } },
+];
+
 const baseProps: CostPageViewProps = {
   selection,
   onSelectionChange: vi.fn(),
@@ -129,6 +137,8 @@ const baseProps: CostPageViewProps = {
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
   breakdown,
+  skillUsage,
+  subagentUsage,
   activeTab: 'overview',
   onActiveTabChange: vi.fn(),
   selectedSession: null,

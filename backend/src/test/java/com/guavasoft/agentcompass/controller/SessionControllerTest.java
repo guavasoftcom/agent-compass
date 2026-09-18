@@ -286,7 +286,8 @@ class SessionControllerTest {
                         11L,
                         SessionPrompt.TurnAttribution.REQUEST,
                         9.99,
-                        List.of(new SessionPromptToolCount("Bash", 3L)))));
+                        List.of(new SessionPromptToolCount("Bash", 3L)),
+                        "aabbccddeeff00112233445566778899")));
 
         mockMvc.perform(get("/api/sessions/{sessionId}/prompts", sessionId))
                 .andExpect(status().isOk())
@@ -327,7 +328,11 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[1].backgroundCostUsd").value(9.99))
                 .andExpect(jsonPath("$[1].backgroundTools", hasSize(1)))
                 .andExpect(jsonPath("$[1].backgroundTools[0].name").value("Bash"))
-                .andExpect(jsonPath("$[1].backgroundTools[0].count").value(3));
+                .andExpect(jsonPath("$[1].backgroundTools[0].count").value(3))
+                // dispatchingTraceId is null on the 3-arg compatibility constructor (an ordinary
+                // turn) and carries the dispatcher's trace id on the notification turn.
+                .andExpect(jsonPath("$[0].dispatchingTraceId").value(nullValue()))
+                .andExpect(jsonPath("$[1].dispatchingTraceId").value("aabbccddeeff00112233445566778899"));
 
         verify(logService).promptsForSession(sessionId);
     }

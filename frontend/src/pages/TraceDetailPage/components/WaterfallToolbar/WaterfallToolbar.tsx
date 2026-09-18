@@ -13,11 +13,13 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
+import type { KeyboardEvent } from 'react';
 import { Box, useTheme } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import GhostButton from '../../../../components/GhostButton';
 import { tokenFigureColor } from '../../../../theme/colors';
+import type { AgentDispatchLegendEntry } from '../../agentDispatch';
 import type { ChipFamily } from '../../chipVisibility';
 
 interface Props {
@@ -42,16 +44,34 @@ interface Props {
   // Effective Ollama `enabled` setting — hides "Analyze trace" entirely when
   // false, the same way "Collapse all" hides when canToggleAll is false.
   ollamaAnalysisEnabled: boolean;
+  // Extra, non-toggling legend swatches for the trace's dispatched subagents (agentDispatch.ts),
+  // one per distinct agent type — empty when the trace dispatched none, which renders nothing new.
+  agentLegend?: AgentDispatchLegendEntry[];
+  // Clicking an agent-dispatch legend swatch jumps the waterfall to one of that label's dispatch
+  // spans, cycling through them on repeat clicks when a type was dispatched more than once. Absent
+  // (or agentLegend absent/empty) means those swatches render inert, same as 'error' always has.
+  onAgentLegendClick?: (label: string, dispatchSpanIds: string[]) => void;
 }
 
 interface LegendKey {
-  // Absent for 'error': it names the row's status (the red bar), not an
-  // optional figure, so it's the one key that isn't a toggle.
+  // Absent for 'error' and for an agent-dispatch entry: both name a status/identity rather than
+  // an optional figure, so neither is a toggle.
   family?: ChipFamily;
   label: string;
   // Longer noun used in the toggle's title/aria text; falls back to 'label'.
   toggleNoun?: string;
   color: string;
+  // React list key. Falls back to `label` — safe for the six fixed keys, which never collide with
+  // each other — but an agent-dispatch entry's label is a subagent_type string from live data, so
+  // it's given an `agent:`-prefixed key instead to rule out a collision rather than trust one won't
+  // happen.
+  reactKey?: string;
+  // Set only on agent-dispatch-derived entries — makes that swatch clickable (jump-to-dispatch);
+  // 'error' and the five toggle keys never set this, so they keep their existing rendering exactly.
+  onClick?: () => void;
+  // Hover text for a clickable entry, naming the target and, when there is more than one dispatch
+  // of that type, that the click cycles through them.
+  title?: string;
 }
 
 const WaterfallToolbar = ({
@@ -66,6 +86,8 @@ const WaterfallToolbar = ({
   hasAnalysis,
   analysisOutdated,
   ollamaAnalysisEnabled,
+  agentLegend,
+  onAgentLegendClick,
 }: Props) => {
   const theme = useTheme();
 
@@ -92,6 +114,19 @@ const WaterfallToolbar = ({
     { family: 'cost', label: 'cost', color: theme.palette.warning.main },
     { family: 'mdl', label: 'model', color: theme.palette.primary.main },
     { family: 'tool', label: 'tool', color: theme.palette.info.main },
+    // Extra, non-toggling swatches for the trace's dispatched subagents — one per distinct
+    // agent type (agentDispatch.ts), rendered through the same !key.family branch as 'error'
+    // below. Nothing is added when the trace dispatched no subagent.
+    ...(agentLegend ?? []).map((entry) => ({
+      label: entry.label,
+      color: entry.color,
+      reactKey: `agent:${entry.label}`,
+      title:
+        entry.dispatchSpanIds.length > 1
+          ? `Jump to ${entry.label} — cycles through ${entry.dispatchSpanIds.length} dispatches`
+          : `Jump to ${entry.label} dispatch`,
+      onClick: () => onAgentLegendClick?.(entry.label, entry.dispatchSpanIds),
+    })),
   ];
 
   return (
@@ -142,11 +177,51 @@ const WaterfallToolbar = ({
       >
         {legendKeys.map((key) => {
           if (!key.family) {
+            // 'error' (inert — names the bar's status, not an optional
+            // figure) and an agent-dispatch entry (clickable — jumps to that
+            // type's dispatch spans) share the same dot+label content; only
+            // the latter needs the interactive role/keyboard/hover treatment,
+            // so it's spread onto one shared Box rather than duplicated
+            // across two parallel JSX blocks.
+            const activate = key.onClick;
             return (
               <Box
-                key={key.label}
+                key={key.reactKey ?? key.label}
                 component="span"
-                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.6 }}
+                title={key.title}
+                {...(activate
+                  ? {
+                      role: 'button' as const,
+                      tabIndex: 0,
+                      onClick: activate,
+                      onKeyDown: (event: KeyboardEvent) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          activate();
+                        }
+                      },
+                    }
+                  : {})}
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.6,
+                  ...(activate && {
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    borderRadius: '6px',
+                    px: 0.75,
+                    py: 0.25,
+                    mx: -0.75,
+                    my: -0.25,
+                    transition: 'background .12s',
+                    '&:hover': { bgcolor: 'action.hover' },
+                    '&:focus-visible': {
+                      outline: (t) => `2px solid ${t.palette.primary.main}`,
+                      outlineOffset: '1px',
+                    },
+                  }),
+                }}
               >
                 <Box
                   sx={{

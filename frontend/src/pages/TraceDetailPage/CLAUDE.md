@@ -32,8 +32,8 @@ zoom window) and renders the full layout directly — it does not use a page-sco
 ```
 TraceDetailPage.tsx          container — useParams, two useQuery calls, five useMemo
                              derivations (span tree, indices, depths, trace window,
-                             descendant error counts, self time, log bucketing, sessionId),
-                             passes ~13 plain props to the view
+                             descendant error counts, self time, log bucketing, sessionId,
+                             agent-dispatch coloring), passes ~15 plain props to the view
 TraceDetailPageView.tsx      view — owns all UI state (collapsed set, selected span,
                              zoom ZoomView), derives visible row list per-render,
                              computes bar geometry, and composes all sub-components
@@ -107,6 +107,35 @@ TraceDetailPage/
 │                               and MUI chip color; used by LogEntry and SpanInspectorDrawer
 ├── attrFormat.ts               attrValueAsString(v) — objects → JSON, null/undefined →
 │                               literal string, primitives → String()
+├── agentDispatch.ts             buildAgentDispatchColoring(tree, spans) → per-span coloring for the
+│                               waterfall's subagent-dispatch highlight: a dispatch span (tool_name
+│                               === 'Agent') and its whole subtree share one color, keyed by
+│                               subagent_type — two "Explore" dispatches share a color, "Explore" and
+│                               "Plan" don't. Colors come from colorForAgentDispatchIndex (theme.ts)
+│                               — a dedicated palette, disjoint from the waterfall toolbar's six
+│                               fixed legend colors, not colorForIndex/CHART_PALETTE — assigned in
+│                               first-seen DFS order over DISTINCT labels (the same order
+│                               buildSpanIndices walks for the row index badge), not per dispatch
+│                               instance. A dispatch with no readable subagent_type falls back to the
+│                               generic label "Subagent" and still gets a color. One DFS walk over
+│                               the tree resolves every span directly to `colorBySpanId.get(spanId):
+│                               string | undefined` (absent for a main-loop span), a parallel
+│                               `labelBySpanId.get(spanId): string | undefined` with the identical
+│                               key set (same dispatch's label, not color — SpanInspectorDrawer
+│                               pairs the two to render the header's "which subagent" name chip for
+│                               the selected span), plus an ordered `legend:
+│                               AgentDispatchLegendEntry[]` (`{ label, color, dispatchSpanIds }`)
+│                               for the toolbar — `dispatchSpanIds` is every dispatch span sharing
+│                               that label, first-seen order, what lets a legend click jump to (and
+│                               cycle through) each one — see the gotcha below for the
+│                               innermost-dispatch-wins rule on nested dispatches
+├── agentDispatch.test.ts        vitest coverage: no dispatches (empty legend, nothing colored), a
+│                               dispatch's subtree colored (and labeled) while a sibling main-loop
+│                               span isn't, two same-type dispatches sharing a color and one legend
+│                               entry whose dispatchSpanIds lists both in DFS order, two
+│                               different-type dispatches not sharing one, the generic-label
+│                               fallback, and nested dispatches resolving to the innermost (color
+│                               and label both)
 ├── spanRelations.ts            buildSpanRelations(span, spans, sortedToolCalls) → the related calls
 │                               the drawer shows for the selected span, plus resolveToolCall, the
 │                               rule for whether a row is a call at all. `sortedToolCalls` is every
@@ -287,9 +316,26 @@ TraceDetailPage/
     │   │                             own query and IdentityPill's count query, so by the time this opens
     │   │                             the data is almost always already in cache) filtered through the
     │   │                             same `hasTraceAndPrompt` predicate IdentityPill counts with
-    │   │                             (exported from SwitchTraceModalView, single source of truth for
-    │   │                             "is this row a switchable trace"), and on a non-current row click
-    │   │                             closes the modal and navigates to `/traces/:traceId`
+    │   │                             (single source of truth for "is this row a switchable trace"),
+    │   │                             then run through `nestSwitchTraceRows` to nest a background-
+    │   │                             dispatched subagent's trace under its dispatcher (both now live in
+    │   │                             switchTraceRows.ts — see the nesting gotcha below), and on a
+    │   │                             non-current row click closes the modal and navigates to
+    │   │                             `/traces/:traceId`
+    │   ├── switchTraceRows.ts         SwitchTraceRow/NestedSwitchTraceRow types + hasTraceAndPrompt +
+    │   │                             nestSwitchTraceRows — pure, no React, colocated (this modal is
+    │   │                             the only consumer). nestSwitchTraceRows is a thin wrapper
+    │   │                             around the shared ../../../lib/nestDispatchedRows.ts core (see
+    │   │                             that module's own doc comment) — this file's wrapper supplies
+    │   │                             the traceId/dispatchingTraceId accessors and strips the core's
+    │   │                             originalIndex field, which this modal has no use for. Re-exported
+    │   │                             from SwitchTraceModalView.tsx for existing import sites
+    │   │                             (IdentityPill, tests) — see the nesting gotcha below
+    │   ├── switchTraceRows.test.ts    vitest coverage: fast path (no dispatches), one reordered child,
+    │   │                             two children kept chronological with only the last clearing
+    │   │                             railBelow[0], a chained depth-2 grandchild, an absent/self-
+    │   │                             referencing/out-of-order dispatcher all staying top-level, and the
+    │   │                             earliest-of-two-shared-trace-ids resolution rule
     │   ├── SwitchTraceModalView.tsx   view — MUI Dialog, `min(800px, 92vw)` wide, `64vh` max height with
     │   │                             internal scroll. Header: "Switch trace · session <mono id>" +
     │   │                             GhostButton Close. Body: one SwitchTraceModalRow per turn, wrapped
@@ -345,7 +391,18 @@ TraceDetailPage/
     │   │                             is not a toggle) + GhostButton "Expand all / Collapse all"
     │   │                             (hidden when there is nothing to fold — see Collapse and
     │   │                             expand) + "Analyze trace" (AutoAwesomeIcon, always shown —
-    │   │                             opens AnalyzeTraceDialog) + "Next error" (when errors > 0)
+    │   │                             opens AnalyzeTraceDialog) + "Next error" (when errors > 0).
+    │   │                             Optional `agentLegend` prop (agentDispatch.ts) appends one
+    │   │                             swatch per distinct dispatched agent type through the same
+    │   │                             `!key.family` branch 'error' already renders through — reactKey
+    │   │                             `agent:<label>` rather than the label itself, since a
+    │   │                             subagent_type is live data and the fixed six keys' bare `label`
+    │   │                             react-key is only safe because none of them collide with each
+    │   │                             other. Empty/absent renders nothing new. Unlike 'error', these
+    │   │                             entries are clickable (`onAgentLegendClick` prop) — jump to
+    │   │                             (and, via the entry's own `dispatchSpanIds`, cycle through) that
+    │   │                             agent type's dispatch spans; see the Subagent-dispatch coloring
+    │   │                             section's click-to-jump addendum below
     │   └── index.ts
     ├── AnalyzeTraceDialog/
     │   ├── AnalyzeTraceDialog.tsx      container — `useQuery(['trace-analysis', traceId])`
@@ -464,13 +521,26 @@ TraceDetailPage/
     │   │                             the call number and error/descendant-error is gated on the
     │   │                             chipsOff prop (see Badge visibility) — the toolbar legend's
     │   │                             per-family mute toggle; those three name the row rather than
-    │   │                             report an optional figure, so they are never hidden
+    │   │                             report an optional figure, so they are never hidden. Optional
+    │   │                             `agentColor` prop (agentDispatch.ts) tints the timeline bar
+    │   │                             (`linear-gradient(90deg, agentColor, alpha(agentColor, 0.6))`,
+    │   │                             replacing the default primary gradient) and washes the row's
+    │   │                             own background at low opacity — see the agent-dispatch color
+    │   │                             gotcha below for why error still overrides the bar and why the
+    │   │                             wash is a second, independent property rather than fighting the
+    │   │                             selected row's own `inset 2px 0 0 primary.main` accent
     │   └── index.ts
     └── SpanInspectorDrawer/
         ├── SpanInspectorDrawer.tsx    right-side drawer, a flex sibling of the waterfall card (no
         │                             scrim — the waterfall stays visible/scrollable): left-edge
-        │                             resize grip + header (span name, waterfall prev/next nav
-        │                             ↑ "n / N" ↓ when >1 row is rendered, close ×) + one
+        │                             resize grip + a two-row header — row 1: span name + waterfall
+        │                             prev/next nav ↑ "n / N" ↓ when >1 row is rendered + close ×
+        │                             (unchanged layout from before the subagent chip); row 2, only
+        │                             when the selected span belongs to a dispatch: a colored
+        │                             subagent-name chip (agentColorBySpanId/agentLabelBySpanId,
+        │                             agentDispatch.ts, same color the waterfall row's bar/wash
+        │                             already uses), on its own row so a long subagent_type can
+        │                             never crowd the name column into wrapping — plus one
         │                             scrolling column — meta grid (cost row, amber bold, after
         │                             duration when costUsd > 0), self-time bar, ErrorSection,
         │                             CallContextSection, then the Tokens/Tool/Attributes/Events/
@@ -540,7 +610,16 @@ TraceDetailPage/
         │                             puts all of it on the clipboard as plain text; replaced the
         │                             old inline statusMessage-only red box
         ├── SpanAttributeSections.tsx  filters redundant keys; renders a collapsible "Tool" section
-        │                             (info-tinted, wrench icon) + collapsible "Attributes" section
+        │                             (info-tinted, wrench icon) + collapsible "Attributes" section,
+        │                             each sorted alphabetically by key (byKey, localeCompare) --
+        │                             a flat attribute bag has no meaningful emission order, so
+        │                             alphabetical is what puts the same key in the same relative
+        │                             spot across different spans instead of wherever the OTLP
+        │                             payload happened to serialize it
+        ├── SpanAttributeSections.test.tsx  vitest coverage: Attributes-section rows sorted
+        │                             alphabetically regardless of input order, and the Tool section
+        │                             sorted independently of Attributes (each section has its own
+        │                             sort, not one global sort before the Tool/Attributes split)
         ├── SpanEventsList.tsx         collapsible Events section: timestamped cards (T+offset from
         │                             span start) with each event's attribute grid, values clamped
         │                             through LongAttrValue (a process.exit event carries the whole
@@ -721,6 +800,114 @@ result drives the self-time progress bar in the drawer.
 
 `sessionId` is extracted from the root span's `attributes['session.id']` or
 `resourceAttributes['session.id']`, surfaced as plain text in the Overview panel's meta footer.
+
+### Subagent-dispatch coloring
+
+`buildAgentDispatchColoring(tree, spans)` (`agentDispatch.ts`) is the fourth `useMemo` built on
+`tree`, alongside `spanIndices`/`depthBySpanId`/`descendantErrorCounts` above. A dispatch span —
+`attributes?.['tool_name'] === 'Agent'`, the identical check `SpanWaterfallRow`'s `SpanToolBadge`
+already special-cases for its own tooltip — and every span in its subtree get colored the same,
+so a reader can see at a glance which rows belong to which dispatched subagent while scanning the
+waterfall.
+
+**Colored by agent TYPE, not by dispatch instance.** The color key is the dispatch's own
+`subagent_type` attribute (same `hasSubagentType`-style presence/non-null/non-empty guard
+`SpanToolBadge` uses before trusting it), so two "Explore" dispatches in one trace share a color
+and an "Explore" dispatch and a "Plan" dispatch don't. A dispatch with no readable `subagent_type`
+falls back to the generic label `"Subagent"` and is still colored — it is a real dispatch, just an
+unnamed one. Colors come from `colorForAgentDispatchIndex` (`theme/theme.ts`), assigned in
+**first-seen DFS order over distinct labels** — the same traversal order `buildSpanIndices` walks
+for the row index badge — not one index per dispatch span. **This is a dedicated palette, not
+`colorForIndex`/`CHART_PALETTE`** (the general chart palette every other categorical coloring on
+this page uses — see `traceInsightsDerivations.ts`'s `PHASE_KIND_COLOR_INDEX` for that sibling
+case): `CHART_PALETTE` leads with violet and pink, which are exactly the waterfall toolbar's
+"model" and "tokens" legend colors (`theme.palette.primary.main` and `tokenFigureColor`), so the
+first two agent types dispatched in a trace would otherwise silently take on the same colors as
+two of the six fixed badge-family swatches rendered in the same legend row. The dedicated palette
+(`greenDeep`/`gold`/`teal`/`purple`) is chosen to also stay clear of the other four fixed keys —
+error (red), cache (`text.disabled` gray), cost (`warning.main` amber), tool (`info.main` blue) —
+and to keep its own four hues mutually distinguishable: `green` and `cyan` were dropped because
+each sits right next to `greenDeep`/`teal` respectively (near-duplicate hues), which used to make
+a 4th dispatched agent type's color collide with the 1st once the cycle wrapped. `legend` is that same first-seen list as `AgentDispatchLegendEntry`
+(`{ label, color, dispatchSpanIds }`) pairs, which `WaterfallToolbar` renders as extra swatches (see
+that component's own Files entry).
+
+**Legend swatches are clickable — jump to (and cycle through) that agent type's dispatches.**
+Because color is per label, not per instance, `dispatchSpanIds` carries every dispatch span sharing
+that label/color (first-seen DFS order, pushed onto the entry's array on every dispatch-span visit —
+a `Map<string, AgentDispatchLegendEntry>` keyed by label, not the old create-once-per-label object).
+`WaterfallToolbar` wires each non-`error` `!key.family` entry's `onClick` to the new
+`onAgentLegendClick(label, dispatchSpanIds)` prop; `TraceDetailPageView`'s `revealNextAgentDispatch`
+implements it with the same ref-indexed cycling idiom as `nextError`/`errorIndexRef` (`nextError`
+above), but keyed per label in one `agentDispatchCycleIndexByLabelRef: Map<string, number>` rather
+than a single index, since each label cycles independently — the entry starts at -1 so the first
+click lands on dispatch 1 of N, and calls the page's existing `revealSpan(spanId)` unmodified — the
+same function `CallContextSection`'s related-call links use (expands any collapsed ancestor, widens
+the zoom window only if the target sits outside it, selects the span, scrolls it into view; see
+`TraceDetailPageView.tsx`'s own comment above `revealSpan`). `error` stays inert — only
+agent-dispatch entries set `LegendKey.onClick`/`title`.
+
+**Nested dispatches resolve to the innermost one**, mirroring the backend's
+`SubagentCostAttributor#enclosingDispatchChain` (`backend/.../service/SubagentCostAttributor.java`),
+which aggregates a call's cost and call counts onto the innermost enclosing dispatch for the
+identical reason: the subagent that actually made the call is the one whose work it is, and any
+dispatch chain above it is identity, not ownership. The module's one DFS walk implements this by
+carrying the current enclosing dispatch's color down from parent to child and overriding it
+whenever it enters a (possibly nested) dispatch span, so every descendant under the inner dispatch
+takes the inner color rather than the outer one. Dispatches never nest in real Claude Code data
+today (confirmed on the backend side too — see `SubagentCostAttributor`'s own doc comment), so
+this is currently unreachable in practice; it is implemented anyway because it is cheap to get
+right in one pass and silently wrong dispatch attribution is a worse failure mode than an unused
+branch.
+
+**Error still overrides the bar's color unconditionally, and the row background wash is a second,
+independent property rather than a competing accent.** `SpanWaterfallRow`'s `barBackground` checks
+`isError` before `agentColor` — one hue means one thing on the timeline bar, and this page's own
+rule (see the token/cost color gotchas below) is that error is never shared with anything else, so
+an errored span inside a dispatch still shows a plain red bar like any other error. What keeps that
+span visibly part of its dispatch anyway is a second, independent per-row identity cue: a faint
+`alpha(agentColor, 0.08)` (`0.16` in dark mode) background wash on the row itself, applied only when
+unselected and not hovered. It is a different CSS property from both the bar (a separate track
+column) and the selected row's own inset box-shadow accent, so it never has to compete with either
+for the same visual slot — an errored dispatched row still shows both the red bar and the wash.
+
+**Hover and selection on a dispatched row reuse `agentColor` too, at progressively brighter
+alphas, rather than falling back to the generic `action.hover`/`primary.main` treatment.** Hovering
+a dispatched row's background jumps to `alpha(agentColor, 0.18)` (`0.28` dark); selecting one jumps
+further to `alpha(agentColor, 0.28)` (`0.4` dark), and the left-edge `inset 2px 0 0` accent switches
+from `primary.main` to `agentColor` as well — so interacting with a dispatched row keeps reading as
+"this subagent" instead of switching to an unrelated highlight hue partway through the interaction.
+A non-dispatched (main-loop) row is unaffected: `agentColor` is `undefined` there, so it falls
+through to the original `action.hover`/`primary.main` behavior unchanged. A bolder per-row treatment
+(a dedicated colored left-edge stripe, matching the selected row's own inset-accent idiom more
+literally) was considered and set aside for the first version of this feature: it would have needed
+either a second inset box-shadow slot stacked against the selected accent's, or an absolutely
+positioned overlay competing for paint order with it, and the CLAUDE.md's own instructions call out
+that exact risk. Reusing the existing `bgcolor`/`boxShadow` slots at brighter alphas (rather than a
+new stripe) gets the "clearly belongs to it, more so on hover/select" requirement with no new
+box-shadow slot and no stacking-order reasoning.
+
+**The drawer repeats the identity as a name chip, not just a color — and it gets its own row.**
+`SpanInspectorDrawer`'s header renders a small pill (colored text on an `alpha(agentColor, 0.16)`
+fill, same treatment as `SpanWaterfallRow`'s badges) naming the dispatch's `subagent_type` — or the
+generic `"Subagent"` fallback — whenever the selected span resolves in both `agentColorBySpanId`
+and the parallel `agentLabelBySpanId` (agentDispatch.ts). This exists because the row-level
+wash/bar tint only communicates "same color as some other rows" — useful for scanning the
+waterfall, useless once you've opened the drawer and the rest of the waterfall (and the toolbar
+legend that decodes the color) may be scrolled out of view. The chip's own `title` spells out the
+label in words (`Part of a dispatched "Explore" subagent`) for the same reason. Absent (renders
+nothing) for a main-loop span — both maps miss it, the same "no entry means not dispatched"
+convention `colorBySpanId` already documents.
+**The chip is a second row under the name+nav+close row, not inline with it.** A first version put
+it inline, sharing the row with the span-name `Typography` (`flex: 1, minWidth: 0`) and the
+fixed-width nav/close controls. At a narrow drawer width a long `subagent_type` (e.g.
+`expert-java-spring-boot-engineer`) left too little room for the name's flex basis, and
+`wordBreak: 'break-all'` then wrapped every character of the name onto its own line — a resizable
+drawer can be dragged this narrow, so this wasn't an edge case. The header is now a column: the
+name+nav+close row is unchanged from before this feature (nothing new competes with the name for
+width), and the chip sits alone on the row below it, `alignSelf: 'flex-start'` with `maxWidth:
+'100%'` and its own ellipsis truncation against the drawer's current width. Don't move the chip
+back inline with the name.
 
 ### Cost
 
@@ -1458,6 +1645,49 @@ so the edge tracks the cursor 1:1.
   Doing that lookup per row here would turn every modal open into an N+1 burst of
   `trace-summary`-style requests; left as an explicit gap for a future backend field
   (e.g. an `errorCount` or `hasError` column on `SessionPromptRow`) rather than adding it.
+- **A background-dispatched subagent's trace nests under its dispatcher in the switch-trace
+  modal, scoped to this modal only.** `SessionPromptRow.dispatchingTraceId` names the trace whose
+  turn background-dispatched a row's own trace (an Agent tool call whose subagent's conversation
+  became its own trace). `SwitchTraceModal`'s `rows` `useMemo` runs the filtered rows through
+  `nestSwitchTraceRows` (`switchTraceRows.ts`) — a pure, no-React module colocated here (same idiom
+  as `components/AnalyzeTraceDialog/callCitations.ts`) that REORDERS rows so a child sits directly
+  beneath its dispatcher (chronological order — the input's own order — wins wherever the two would
+  conflict) and returns `NestedSwitchTraceRow[]` (`{ row, depth, railBelow }`). Nesting is
+  recursive (a chained dispatch nests to depth 2+), resolves a shared trace id to its EARLIEST row
+  (several turns can legitimately share one trace id), and treats every edge case — dispatcher
+  absent from the row list, a self-referencing `dispatchingTraceId`, a dispatcher appearing AFTER
+  its claimed child in array order — as "stay top-level, in place" rather than dropping/crashing.
+  **This documentation previously said `SessionsPage`'s `PromptTimelinePanel` "adopted the
+  identical algorithm in its own colocated file rather than importing from here" — that's now
+  stale.** The two independent copies were de-duplicated: `nestSwitchTraceRows` here and
+  `nestPromptRows` (`SessionsPage/.../promptTimelineRows.ts`) are both thin wrappers around one
+  shared core, `../../../lib/nestDispatchedRows.ts#nestDispatchedRows` (see that module's own doc
+  comment for the full reordering/depth/edge-case contract — identical to what was inlined in each
+  file before). Each wrapper supplies its own row shape's `traceId`/`dispatchingTraceId` accessors
+  and maps the shared result back into its own existing type/export (`NestedSwitchTraceRow` here
+  has no `originalIndex` field, so this wrapper drops the one the shared core always returns;
+  `SessionsPage`'s wrapper keeps it, since `windowBoundariesByOriginalIndex` there needs it). The
+  reason the two call sites were never merged into a single function — this modal's rows are
+  pre-filtered to `SwitchTraceRow`'s non-null `traceId`/`prompt` shape by `hasTraceAndPrompt`
+  before nesting, while `PromptTimelinePanel` nests the full, unfiltered turn list (a turn's
+  `traceId`/`prompt` can be null there) — still stands; only the duplicated algorithm itself moved
+  into `lib/`. `SwitchTraceRow` and `hasTraceAndPrompt` still live in `switchTraceRows.ts` and are
+  re-exported from `SwitchTraceModalView.tsx` unchanged, so `IdentityPill.tsx`'s import of
+  `hasTraceAndPrompt` didn't need to move. `SwitchTraceModalRow` takes `depth`/`railBelow` and
+  renders the connector (elbow + optional continuation line, per ancestor depth) via the shared
+  `components/NestingConnector` — also de-duplicated against `PromptTimelinePanel`'s own
+  independent elbow/rail implementation; see that component's doc comment and this file's own
+  `SWITCH_TRACE_CONNECTOR_GEOMETRY` for the geometry this row passes it
+  (`indentAppliedViaMargin: false`, since this row indents via `pl`, not a margin shift) — as
+  separate `aria-hidden` absolutely-positioned `Box` elements painted IN FRONT OF the row's
+  existing selection treatment — **never folded into the current row's `inset 2px 0 0
+  primary.main` box-shadow accent**, the same separation `SpanWaterfallRow`'s own agent-dispatch
+  wash already uses against that same accent (see the Subagent-dispatch coloring section). The
+  row's horizontal padding split from one `px: 2.5` into `pr: 2.5` + a per-depth `pl` (`20 + depth
+  * 18`px, `20` being `2.5 * 8`, so depth 0 renders pixel-identical to before); `GRID_COLUMNS`
+  stays one constant regardless of depth — the `1fr` prompt column absorbs the extra left padding,
+  keeping the fixed-width cost/tokens/current columns aligned in a straight line down the modal
+  regardless of nesting depth.
 - **`kind` is deliberately not on the waterfall row.** Nearly every real Claude Code span is
   `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace

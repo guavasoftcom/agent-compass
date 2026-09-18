@@ -28,8 +28,9 @@ import java.util.regex.Pattern;
 /**
  * Reading call citations out of a review, and the claims about them this application checks on the
  * generation path: a sameness claim two calls do not support ({@link #unsupportedSamenessViolations}),
- * a call cited as the wrong kind ({@link #miscitedKindViolations}), and a call cited as touching the
- * wrong file ({@link #miscitedFileViolations}).
+ * a call cited as the wrong kind ({@link #miscitedKindViolations}), a call cited as touching the
+ * wrong file ({@link #miscitedFileViolations}), and a cost charged to a call that cannot carry one
+ * ({@link #miscitedMetricViolations}).
  *
  * <p><b>The oracle is always the rendered prompt, never the spans.</b> That is the same choice
  * {@code TraceAnalysisRegressionHarness} makes and for the same reason: a second reconstruction of
@@ -162,6 +163,18 @@ final class TimelineCitations {
     // Deliberately permissive on the name (`[\w.\-]+`) and the extension (1-10 alphanumerics), since
     // the point is finding the ONE such token in a sentence, not validating it as a real path.
     private static final Pattern BACKTICKED_FILE_TOKEN = Pattern.compile("`([\\w.\\-]+\\.[A-Za-z0-9]{1,10})`");
+
+    // A dollar figure, as this application renders one and as a review quotes one back: "$0.0658".
+    //
+    // The decimal point is REQUIRED, not optional, and that is load-bearing rather than tidy.
+    // TraceAnalysisPromptBuilder's COST_FORMAT is "%.4f", so every cost the prompt renders carries
+    // one -- while a shell fragment quoted verbatim inside a finding does not, and findings do quote
+    // them: trace 1635329e1e7db7f934b007d90aba7d61's review contains `grep "Tests run" "$f"`, and a
+    // positional parameter ("awk '{print $2}'") would otherwise read as a cost of $2 charged to
+    // whichever call the sentence cites. Measured across every stored review, requiring the decimal
+    // costs nothing -- no real citation quotes a whole-dollar cost -- and removes that whole class of
+    // false positive.
+    private static final Pattern COST_FIGURE = Pattern.compile("\\$(\\d+\\.\\d+)");
 
     // "model call" is how the answer contract asks for an llm_request to be described in prose, so it
     // names that kind even though the raw label never appears in a written sentence -- see claimedKind.
@@ -431,6 +444,46 @@ final class TimelineCitations {
     }
 
     /**
+     * Every call whose own rendered line carries a dollar figure — read the same way
+     * {@link #callKindsIn} and {@link #callTargetsIn} read their facts, off the rendered prompt.
+     *
+     * <p>Exactly two things write one, and the second is why this is read off the line rather than
+     * inferred from a call's kind. {@code TraceAnalysisPromptBuilder#renderLlmRequestLine} appends
+     * {@code cost=$0.0658} to a model call; {@code dispatchSummary} appends
+     * {@code [ran Explore: 12 model calls, 30 tool calls, $4.1200]} to the {@code Agent} <b>tool</b>
+     * call that opened a subagent run. A dispatch is therefore a tool call that legitimately carries
+     * a cost, and real reviews cite one that way without the {@code "dispatched at "} wording
+     * {@link #namesADispatchRatherThanEvidence} already skips — trace
+     * {@code 569e6beda9578c7a6d53ee06fe8249de}'s <i>"Subagent general-purpose (call 15) used model
+     * claude-sonnet-5 with a high cost of $0.5799"</i> and trace
+     * {@code d0c952b9e070c6d571b26db2e704fea0}'s <i>"The agent spent $0.6385 across 21 model calls
+     * and 37 tool calls in the subagent [Explore] (call 4)"</i>. Both are correct findings that a
+     * kind-only rule would have accused.
+     *
+     * <p>Only the figure's <b>presence</b> is recorded, never its value: the dispatch summary renders
+     * {@code $4.1200} and a review quotes it back as {@code $4.12}, so comparing values here would
+     * need a precision rule to avoid faulting a correct rounding. Matching a cited figure against the
+     * one its call actually carries is the separate, broader check this leaves open — see
+     * {@link #miscitedMetricViolations}.
+     */
+    static Set<Integer> callsWithRenderedCostIn(String prompt) {
+        String timeline = timelineSectionOf(prompt);
+        Set<Integer> callsWithRenderedCost = new LinkedHashSet<>();
+        Matcher lines = TIMELINE_LINE.matcher(timeline);
+        while (lines.find()) {
+            if (!COST_FIGURE.matcher(lineFrom(timeline, lines.start())).find()) {
+                continue;
+            }
+            int firstCall = Integer.parseInt(lines.group(1));
+            int lastCall = lines.group(2) == null ? firstCall : Integer.parseInt(lines.group(2));
+            for (int callNumber = firstCall; callNumber <= lastCall; callNumber++) {
+                callsWithRenderedCost.add(callNumber);
+            }
+        }
+        return callsWithRenderedCost;
+    }
+
+    /**
      * The rest of the sentence a citation sits in, capped at {@link #CALL_KIND_WINDOW_CHARS}. A
      * newline ends it too: the next bullet is a different finding about a different call.
      */
@@ -625,6 +678,97 @@ final class TimelineCitations {
     private static String lastPathSegment(String filePath) {
         int lastSeparator = filePath.lastIndexOf('/');
         return lastSeparator < 0 ? filePath : filePath.substring(lastSeparator + 1);
+    }
+
+    /**
+     * A cost charged to a call that cannot carry one — the review reads a model call's figures off
+     * the timeline and pins them on the tool call rendered next to it.
+     *
+     * <p><b>Trace {@code 1975031e2963758c815c4b218f11adad} is the bill, twice in one review.</b> It
+     * reported <i>"Call 52 (Edit) had a duration of 15.7s and cost $0.0658, which is higher than
+     * typical for an edit operation"</i> and the same shape again for call 89. Call 52 is an
+     * {@code Edit} that ran in <b>11ms</b> and carries no {@code request_id} at all; the 15.656s and
+     * $0.0658474 are call <b>51</b>'s, the model call rendered on the line directly above it, matched
+     * to four decimal places. Every existing check was silent, and correctly so: the sentence calls
+     * 52 an {@code Edit} and it <i>is</i> an {@code Edit}, so {@link #miscitedKindViolations} passes;
+     * it quotes no backticked filename, so {@link #miscitedFileViolations} has nothing to compare;
+     * it claims no sameness, so {@link #unsupportedSamenessViolations} declines. Nothing here read a
+     * <b>figure</b> cited next to a call number, which is the whole of the error.
+     *
+     * <p><b>What makes this provable rather than a judgment.</b> {@code cost=$} is written in exactly
+     * one place, {@code TraceAnalysisPromptBuilder#renderLlmRequestLine}, and a tool call's line is
+     * built by a different method that never writes one — at <i>every</i> {@code TimelineDetail}
+     * level, since the cost sits behind {@code rendersModelCallBreakdown} on the model line and has
+     * no tool-line equivalent to drop. So a tool call carrying a cost is a claim the prompt supports
+     * in no way at all, the same argument {@link #unsupportedSamenessViolations} rests on. Note this
+     * reasoning does <b>not</b> transfer to durations: a tool line does render one, at the looser
+     * detail levels only, so absence there would mean "not rendered" rather than "cannot exist" —
+     * which is why this checks costs alone and the general figure-matching version is left open.
+     *
+     * <p><b>Conservative in four ways, and the set was chosen by measurement rather than guesswork.</b>
+     * Run against all 17 stored reviews on the live database that cite a call and mention a dollar
+     * figure, it fires on exactly the two bullets above and nothing else. Each guard earns its place
+     * against a real sentence in that corpus: a model call is skipped outright (the large majority —
+     * every legitimate "call 1 cost $0.1770" finding); a call whose own line carries a figure is
+     * skipped (the two subagent dispatches named on {@link #callsWithRenderedCostIn}); a sentence
+     * carrying more than one figure is unscored, the same ambiguity rule {@link #soleQuotedFileToken}
+     * applies, which is what spares trace {@code 9ab1feeebdd15a449bbc4c9983dcb79d}'s <i>"Call 1 cost
+     * $0.1770, 25.1% of the $0.7056 this trace's 11 model calls account for"</i> and trace
+     * {@code 73590130fdbec1b4f2c89217103fb3db}'s two-call "e.g." sentence; and {@link #COST_FIGURE}'s
+     * required decimal point keeps a quoted shell parameter from reading as a figure.
+     *
+     * <p><b>Known gap, deliberately not closed here</b>: a finding that cites only tool calls while
+     * quoting the <i>trace's</i> total ("the `find` calls at 2, 30, 76 added nothing to a trace that
+     * cost $2.7168") would be faulted, since the figure is real but belongs to no call. No such
+     * sentence exists in the measured corpus, and the fix — skipping a figure the prompt renders as a
+     * total outside the timeline — is better built alongside per-call figure matching than guessed at
+     * now. {@link #sentenceAround} is used rather than {@link #clauseAfter} because a cost can be
+     * stated before its citation as easily as after it, the same reason the file check reads
+     * bidirectionally.
+     */
+    static List<String> miscitedMetricViolations(
+            String answer, Map<Integer, String> callKinds, Set<Integer> callsWithRenderedCost) {
+        if (callKinds.isEmpty()) {
+            return List.of();
+        }
+        List<String> violations = new ArrayList<>();
+        Matcher phrases = CITATION_PHRASE.matcher(answer);
+        while (phrases.find()) {
+            if (namesADispatchRatherThanEvidence(answer, phrases.start())) {
+                continue;
+            }
+            String claimedCost = soleCostFigure(sentenceAround(answer, phrases.start(), phrases.end()));
+            if (claimedCost == null) {
+                continue;
+            }
+            Matcher numbers = CALL_NUMBER.matcher(phrases.group());
+            while (numbers.find()) {
+                int citedCall = Integer.parseInt(numbers.group());
+                String actualKind = callKinds.get(citedCall);
+                if (actualKind == null || MODEL_CALL_LABEL.equals(actualKind)
+                        || callsWithRenderedCost.contains(citedCall)) {
+                    continue;
+                }
+                violations.add("charges $" + claimedCost + " to call " + citedCall
+                        + "; the timeline says call " + citedCall + " is a tool call (" + actualKind
+                        + "), which carries no cost");
+            }
+        }
+        return violations;
+    }
+
+    // The one dollar figure in the sentence, or null when there are zero or several -- see
+    // miscitedMetricViolations for why ambiguity is deliberately not scored.
+    private static String soleCostFigure(String sentence) {
+        Matcher figures = COST_FIGURE.matcher(sentence);
+        String found = null;
+        while (figures.find()) {
+            if (found != null) {
+                return null;
+            }
+            found = figures.group(1);
+        }
+        return found;
     }
 
     /**

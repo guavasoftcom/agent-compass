@@ -17,13 +17,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../../../test/renderWithProviders';
-import SwitchTraceModalView, {
-  hasTraceAndPrompt,
-  type SwitchTraceRow,
-} from './SwitchTraceModalView';
-import type { SessionPromptRow } from '../../../../api';
+import SwitchTraceModalView from './SwitchTraceModalView';
+import type { NestedSwitchTraceRow, SwitchTraceRow } from './switchTraceRows';
 
-const rows: SwitchTraceRow[] = [
+const flatRows: SwitchTraceRow[] = [
   {
     timestamp: '2026-08-30T10:00:00.000Z',
     prompt: 'Refactor the Aurora theme overlay.',
@@ -41,6 +38,8 @@ const rows: SwitchTraceRow[] = [
     tokens: { input: 200, output: 80, cacheCreation: 20, cacheRead: 900 },
   },
 ];
+
+const rows: NestedSwitchTraceRow[] = flatRows.map((row) => ({ row, depth: 0, railBelow: [] }));
 
 describe('SwitchTraceModalView', () => {
   it('renders the session id, one row per turn, and flags the current trace', () => {
@@ -118,30 +117,39 @@ describe('SwitchTraceModalView', () => {
     await user.click(screen.getByText('Close'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
-});
 
-describe('hasTraceAndPrompt', () => {
-  it('keeps rows with both a traceId and a prompt', () => {
-    const row: SessionPromptRow = {
-      timestamp: '2026-08-30T10:00:00.000Z',
-      prompt: 'hello',
-      traceId: 'trace-1',
+  it('renders a child row after (visually beneath) its dispatcher row', () => {
+    const dispatcher: SwitchTraceRow = flatRows[0];
+    const child: SwitchTraceRow = {
+      ...flatRows[1],
+      traceId: 'trace-child',
+      prompt: 'Background subagent turn.',
+      dispatchingTraceId: dispatcher.traceId,
     };
-    expect(hasTraceAndPrompt(row)).toBe(true);
-  });
+    const nestedRows: NestedSwitchTraceRow[] = [
+      { row: dispatcher, depth: 0, railBelow: [] },
+      { row: child, depth: 1, railBelow: [false] },
+    ];
 
-  it('drops rows missing a traceId or a prompt', () => {
-    const noTrace: SessionPromptRow = {
-      timestamp: '2026-08-30T10:00:00.000Z',
-      prompt: 'hello',
-      traceId: null,
-    };
-    const noPrompt: SessionPromptRow = {
-      timestamp: '2026-08-30T10:00:00.000Z',
-      prompt: null,
-      traceId: 'trace-1',
-    };
-    expect(hasTraceAndPrompt(noTrace)).toBe(false);
-    expect(hasTraceAndPrompt(noPrompt)).toBe(false);
+    renderWithProviders(
+      <SwitchTraceModalView
+        open
+        onClose={vi.fn()}
+        sessionId="session-abc"
+        currentTraceId="trace-child"
+        rows={nestedRows}
+        isLoading={false}
+        onSelectTrace={vi.fn()}
+      />,
+    );
+
+    const renderedPrompts = screen
+      .getAllByText(/Refactor the Aurora theme overlay\.|Background subagent turn\./)
+      .map((element) => element.textContent);
+
+    expect(renderedPrompts).toEqual([
+      'Refactor the Aurora theme overlay.',
+      'Background subagent turn.',
+    ]);
   });
 });

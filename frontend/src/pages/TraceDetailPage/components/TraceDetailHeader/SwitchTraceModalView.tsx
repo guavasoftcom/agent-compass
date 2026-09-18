@@ -14,34 +14,23 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { Box, Dialog, DialogContent, Typography } from '@mui/material';
-import type { SessionPromptRow } from '../../../../api';
 import GhostButton from '../../../../components/GhostButton';
 import { radii } from '../../../../theme/theme';
 import { LongValueModalProvider } from '../SpanInspectorDrawer/longValue';
 import SwitchTraceModalRow from './SwitchTraceModalRow';
+import type { NestedSwitchTraceRow } from './switchTraceRows';
 
-// A SessionPromptRow known to carry both a trace and a prompt — the two
-// fields SwitchTraceModal filters the raw timeline down to before this view
-// ever sees a row.
-export type SwitchTraceRow = SessionPromptRow & {
-  traceId: string;
-  prompt: string;
-};
-
-// Rows without a trace (pre-tracing sessions) or a prompt (capture disabled)
-// aren't traces a reader can jump to. Shared by SwitchTraceModal (the row
-// list) and IdentityPill (which needs the same filter to count distinct
-// traces before deciding whether switching is worth offering at all).
-export const hasTraceAndPrompt = (
-  row: SessionPromptRow,
-): row is SwitchTraceRow => row.traceId !== null && row.prompt !== null;
+// Re-exported so `IdentityPill.tsx` and existing test imports keep working
+// unchanged — the definitions themselves now live in `switchTraceRows.ts`
+// alongside the nesting algorithm that also depends on them.
+export { hasTraceAndPrompt, type SwitchTraceRow } from './switchTraceRows';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   sessionId: string;
   currentTraceId: string;
-  rows: SwitchTraceRow[];
+  rows: NestedSwitchTraceRow[];
   isLoading: boolean;
   onSelectTrace: (traceId: string) => void;
 }
@@ -122,12 +111,14 @@ const SwitchTraceModalView = ({
         </Box>
       ) : (
         <LongValueModalProvider>
-          {rows.map((row) => (
+          {rows.map(({ row, depth, railBelow }) => (
             <SwitchTraceModalRow
               key={row.traceId}
               row={row}
               isCurrent={row.traceId === currentTraceId}
               onSelect={() => onSelectTrace(row.traceId)}
+              depth={depth}
+              railBelow={railBelow}
             />
           ))}
         </LongValueModalProvider>

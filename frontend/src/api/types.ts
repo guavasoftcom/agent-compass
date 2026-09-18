@@ -443,6 +443,15 @@ export interface SessionPromptRow {
    * Empty/null when none.
    */
   backgroundTools?: { name: string; count: number }[] | null;
+  /**
+   * Trace id of the turn that background-dispatched this row's trace (an Agent
+   * tool call whose subagent's own conversation became its own trace). Null for
+   * the overwhelming majority of rows — an ordinary foreground turn, or a
+   * subagent trace whose dispatcher isn't known. Used only by the Trace Detail
+   * page's Switch-trace modal to nest a subagent's trace under its dispatcher
+   * (`SwitchTraceModal`/`switchTraceRows.ts`) — not consumed elsewhere yet.
+   */
+  dispatchingTraceId?: string | null;
 }
 
 export type TurnAttribution = 'REQUEST' | 'INTERVAL';

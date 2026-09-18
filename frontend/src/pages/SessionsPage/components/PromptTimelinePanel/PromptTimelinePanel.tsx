@@ -13,7 +13,7 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { Fragment, useState, type ReactElement } from 'react';
+import { Fragment, useMemo, useState, type ReactElement } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
@@ -32,6 +32,9 @@ import {
 } from '../../../../components/AttributeList/AttributeValue';
 import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
+import NestingConnector, {
+  type NestingConnectorGeometry,
+} from '../../../../components/NestingConnector';
 import {
   auroraColors,
   gradients,
@@ -44,8 +47,58 @@ import {
   formatTimestamp,
   formatTokens,
 } from '../sessionsFormat';
+import {
+  nestPromptRows,
+  windowBoundariesByOriginalIndex,
+} from './promptTimelineRows';
 
 const NUM_FORMATTER = new Intl.NumberFormat('en-US');
+
+// Pixels a nested turn card shifts right, per depth level, via `ml` — the
+// whole bubble (border/background included) moves, not just its content, so
+// a nested subagent turn reads as visually inset rather than merely
+// re-padded. Fed into PROMPT_TIMELINE_CONNECTOR_GEOMETRY below as
+// `indentStepPx`, with `indentAppliedViaMargin: true` telling the shared
+// NestingConnector to compensate for this same margin shift when it
+// computes each connector segment's position.
+const CHILD_INDENT = 18;
+// The elbow's horizontal (bottom-border) segment is widened by this many
+// extra pixels past the card's own left edge, so it visibly crosses into the
+// border rather than stopping just short of it — cheaper and more robust
+// than hairline-precision alignment with the card's actual border position.
+const CONNECTOR_BORDER_OVERLAP = 0;
+// Same idea, vertically: the `gap: 1.25` (10px) between cards is exactly
+// enough to reach the card above with zero overlap, which in practice reads
+// as a visible sliver of dead space rather than a touching line — so every
+// connector segment that bridges a gap reaches a few extra pixels PAST the
+// neighboring card's edge instead of stopping flush with it.
+const CONNECTOR_GAP_OVERLAP = 7;
+
+// Geometry config for the shared NestingConnector (components/NestingConnector)
+// — the elbow/rail drawing itself is shared with the Trace Detail page's
+// SwitchTraceModalRow; this object is what tells the shared component to
+// compensate for THIS panel's own margin-based indent (ml: depth *
+// CHILD_INDENT on the card, rather than SwitchTraceModalRow's `pl`) and
+// carries the card-specific visual tuning (gap overlap, border weight)
+// that connector's own doc comment explains is deliberately per-caller.
+const PROMPT_TIMELINE_CONNECTOR_GEOMETRY: NestingConnectorGeometry = {
+  indentStepPx: CHILD_INDENT,
+  indentAppliedViaMargin: true,
+  originOffsetPx: 4,
+  elbow: {
+    top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+    height: `calc(50% + ${10 + CONNECTOR_GAP_OVERLAP}px)`,
+    width: CHILD_INDENT - 4 + CONNECTOR_BORDER_OVERLAP,
+    borderWidth: 2,
+    borderRadius: 6,
+  },
+  immediateRail: { top: '47%', bottom: '5px', borderWidth: 2 },
+  ancestorRail: {
+    top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+    bottom: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+    borderWidth: 2,
+  },
+};
 
 const formatPromptTimestamp = (value: string): string =>
   value
@@ -643,6 +696,21 @@ const PromptTimelinePanel = ({
     null,
   );
 
+  // A background-dispatched subagent's own turn nests directly beneath the
+  // turn that dispatched it (see promptTimelineRows.ts) — same reordering
+  // rule the Trace Detail page's Switch-trace modal already applies.
+  // Memoized (not recomputed inline in the render body) since a full
+  // re-nesting pass over every turn is otherwise redone on every render,
+  // including ones triggered by state this component owns that have nothing
+  // to do with `prompts` (e.g. `expandedValue`/dialog open-close). Computed
+  // above the loading/error/empty-state early returns below so the hook
+  // still runs unconditionally on every render.
+  const nestedRows = useMemo(() => nestPromptRows(prompts ?? []), [prompts]);
+  const boundaryByOriginalIndex = useMemo(
+    () => windowBoundariesByOriginalIndex(nestedRows, windowStartMs, windowEndMs),
+    [nestedRows, windowStartMs, windowEndMs],
+  );
+
   // No height cap and no scroll of its own: the panel fills its container (the
   // detail drawer's body), which owns the scrolling. Session identity lives in
   // the drawer header, so the panel header carries only the prompt count.
@@ -757,7 +825,7 @@ const PromptTimelinePanel = ({
           },
         }}
       >
-        {prompts.map((turn, index) => {
+        {nestedRows.map(({ row: turn, depth, railBelow, originalIndex }) => {
           const turnMs = turn.timestamp
             ? new Date(turn.timestamp).getTime()
             : NaN;
@@ -765,25 +833,9 @@ const PromptTimelinePanel = ({
             windowStartMs == null || windowEndMs == null || Number.isNaN(turnMs)
               ? true
               : turnMs >= windowStartMs && turnMs <= windowEndMs;
-          const previousTurn = prompts[index - 1];
-          const previousTurnMs = previousTurn?.timestamp
-            ? new Date(previousTurn.timestamp).getTime()
-            : NaN;
-          const previousTurnInWindow =
-            windowStartMs == null ||
-            windowEndMs == null ||
-            Number.isNaN(previousTurnMs)
-              ? true
-              : previousTurnMs >= windowStartMs &&
-                previousTurnMs <= windowEndMs;
-          let boundary: string | null = null;
-          if (index > 0 && !previousTurnInWindow && inWindow) {
-            boundary = 'selected window starts';
-          } else if (index > 0 && previousTurnInWindow && !inWindow) {
-            boundary = 'selected window ends';
-          }
+          const boundary = boundaryByOriginalIndex.get(originalIndex) ?? null;
           return (
-            <Fragment key={`${turn.timestamp}-${index}`}>
+            <Fragment key={`${turn.timestamp}-${originalIndex}`}>
               {boundary ? (
                 <Box
                   sx={{
@@ -825,6 +877,12 @@ const PromptTimelinePanel = ({
                   boxShadow: 1,
                   px: 1.75,
                   py: 1.25,
+                  // Depth 0 renders pixel-identical to before (ml: 0). A nested
+                  // child's whole card — border, background, everything — shifts
+                  // right by CHILD_INDENT per depth, so the bubble itself reads as
+                  // nested, not just its text; the connector below is drawn in the
+                  // margin/gap band this creates to the card's upper-left.
+                  ml: depth > 0 ? `${depth * CHILD_INDENT}px` : 0,
                   opacity: inWindow ? 1 : 0.45,
                   display: 'flex',
                   flexDirection: 'column',
@@ -833,23 +891,33 @@ const PromptTimelinePanel = ({
                   '&:hover': {
                     borderColor: (t) => alpha(t.palette.primary.main, 0.32),
                   },
-                  '&::before': {
-                    content: '""',
-                    position: 'absolute',
-                    left: '-21px',
-                    top: '16px',
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    // Rail dot picks up the turn's model accent (opus/sonnet) instead
-                    // of always being primary.main — the ring stays primary-tinted
-                    // regardless, matching the design handoff.
-                    bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
-                    boxShadow: (t) =>
-                      `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
-                  },
+                  // The rail dot only marks top-level turns — a nested child
+                  // isn't part of the main rail's flow, so it renders the
+                  // elbow connector below instead.
+                  ...(depth === 0 && {
+                    '&::before': {
+                      content: '""',
+                      position: 'absolute',
+                      left: '-21px',
+                      top: '16px',
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      // Rail dot picks up the turn's model accent (opus/sonnet) instead
+                      // of always being primary.main — the ring stays primary-tinted
+                      // regardless, matching the design handoff.
+                      bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
+                      boxShadow: (t) =>
+                        `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
+                    },
+                  }),
                 }}
               >
+                <NestingConnector
+                  depth={depth}
+                  railBelow={railBelow}
+                  geometry={PROMPT_TIMELINE_CONNECTOR_GEOMETRY}
+                />
                 <Box
                   sx={{
                     display: 'flex',

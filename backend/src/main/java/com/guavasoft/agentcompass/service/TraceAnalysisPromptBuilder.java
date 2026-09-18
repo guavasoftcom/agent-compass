@@ -117,10 +117,10 @@ class TraceAnalysisPromptBuilder {
 
     private static final String ACCEPTED_DECISION = "accept";
     private static final String ERROR_STATUS_CODE = "error";
-    private static final String TASK_NOTIFICATION_OPENING_TAG = "<task-notification>";
 
-    // Fields read back out of that envelope -- see backgroundTaskToolUseId and putContinuation.
-    private static final String TOOL_USE_ID_TAG = "tool-use-id";
+    // Fields read back out of the <task-notification> envelope -- see backgroundTaskToolUseId and
+    // putContinuation. The opening tag and tool-use-id tag live on TaskNotificationEnvelope, which
+    // also owns detection -- see TaskNotificationEnvelope#isMachineAuthored.
     private static final String STATUS_TAG = "status";
     private static final String SUMMARY_TAG = "summary";
 
@@ -679,8 +679,15 @@ class TraceAnalysisPromptBuilder {
         // never cost anything. See focusedResolutionHolds' own javadoc for the measured population
         // behind FOCUSED_RESOLUTION_CHAIN_WINDOW_CALLS and why Drift and "Unnamed target" do not read
         // this flag.
-        context.put("focusedResolutionHolds",
-                focusedResolutionHolds(spans, toolResultsByUseId, callAttribution));
+        //
+        // Two verdicts, one flag, and they are mutually exclusive by construction: the chain verdict
+        // ends on hasMutatingFileCall, the read-only one returns at the first mutating call it sees.
+        // A trace that changed nothing could never clear the first however focused it was, which on
+        // measurement is 45% of the traces this review runs on -- see readOnlyResolutionHolds.
+        boolean chainResolutionHolds = focusedResolutionHolds(spans, toolResultsByUseId, callAttribution);
+        boolean readOnlyResolutionHolds = readOnlyResolutionHolds(spans, toolResultsByUseId, callAttribution);
+        context.put("focusedResolutionHolds", chainResolutionHolds || readOnlyResolutionHolds);
+        context.put("focusedResolutionReason", focusedResolutionReason(readOnlyResolutionHolds));
         // Bound to a renderer rather than rendered once, because partitionToBudget re-renders the
         // timeline at tighter detail levels when the prompt overflows -- it thins the lines instead
         // of dropping calls. See TimelineDetail.
@@ -1651,7 +1658,7 @@ class TraceAnalysisPromptBuilder {
         for (LogRecord logRecord : logRecords) {
             if (JsonAttributeReaders.isEvent(logRecord, tuningProperties.getUserPromptEventName())) {
                 Object promptValue = JsonAttributeReaders.attribute(logRecord.getAttributes(), tuningProperties.getPromptAttribute());
-                if (promptValue != null && !isMachineAuthoredPrompt(String.valueOf(promptValue))) {
+                if (promptValue != null && !TaskNotificationEnvelope.isMachineAuthored(String.valueOf(promptValue))) {
                     return logRecord;
                 }
             }
@@ -1702,7 +1709,8 @@ class TraceAnalysisPromptBuilder {
      * The slash command behind a {@code user_prompt}, or null when a person actually typed the text.
      *
      * <p>This is the second shape of "a {@code user_prompt} record whose text nobody wrote as a
-     * request" — see {@link #isMachineAuthoredPrompt} for the first. A slash command's prompt text is
+     * request" — see {@link TaskNotificationEnvelope#isMachineAuthored} for the first. A slash
+     * command's prompt text is
      * the command itself: {@code /ship} is five characters standing in for a skill definition that
      * lives in a file this trace does not contain. Measured here, 57 of 796 prompt-bearing traces
      * over 30 days are slash commands and 51 of those are 30 characters or shorter.
@@ -1728,68 +1736,36 @@ class TraceAnalysisPromptBuilder {
     }
 
     /**
-     * A {@code user_prompt} record whose text nobody typed. The harness delivers a
-     * {@code <task-notification>} envelope when a background subagent finishes, and it lands on a
-     * {@code user_prompt} log like any other — 101 of 773 (13.1%) over 30 days here. Feeding one to
-     * the prompt-quality half asks the model to critique the phrasing of a machine-generated status
-     * message and suggest a better-worded version of it, which is exactly what produced a fabricated
-     * "the prompt said 'I'm not sure if this is the right file'" finding on a trace whose prompt was
-     * an envelope. Treating it as "no prompt" instead degrades to the execution-quality half, which
-     * is the honest read of such a trace.
-     *
-     * <p>Mirrors {@code frontend/src/lib/promptSummary.ts}, deliberately including its
-     * <b>starts-with</b> test rather than a contains: a real envelope always opens with the tag,
-     * while a human prompt that merely quotes one further in is genuine text worth judging. Keep the
-     * two in step — another non-authored prompt shape needs adding in both places.
-     */
-    private static boolean isMachineAuthoredPrompt(String promptText) {
-        return promptText.stripLeading().startsWith(TASK_NOTIFICATION_OPENING_TAG);
-    }
-
-    /**
      * The {@code tool_use_id} a {@code <task-notification>} envelope quotes back, naming the call
      * that launched the background task whose completion woke this trace — or null when the trace
      * was not started by one. Read by {@link TraceAnalysisService} to fetch that call, which lives
      * in the dispatching trace and so is not among this trace's own logs.
      *
      * <p>Measured over 30 days: 103 of 106 notification traces carry an id, and every one of those
-     * resolves to a real {@code tool_result}.
+     * resolves to a real {@code tool_result}. A thin wrapper over
+     * {@link TaskNotificationEnvelope#toolUseId} — it needs {@link #tuningProperties} to find the
+     * envelope among this trace's logs, which is what {@link TaskNotificationEnvelope} deliberately
+     * stays free of.
      */
     String backgroundTaskToolUseId(List<LogRecord> logRecords) {
         String notificationText = notificationPromptText(logRecords);
-        return notificationText == null ? null : tagValue(notificationText, TOOL_USE_ID_TAG);
+        return notificationText == null ? null : TaskNotificationEnvelope.toolUseId(notificationText);
     }
 
+    // A user_prompt record whose text nobody typed -- see TaskNotificationEnvelope#isMachineAuthored
+    // for what makes it one. Mirrors frontend/src/lib/promptSummary.ts; keep the two in step --
+    // another non-authored prompt shape needs adding in both places.
     private String notificationPromptText(List<LogRecord> logRecords) {
         for (LogRecord logRecord : logRecords) {
             if (!JsonAttributeReaders.isEvent(logRecord, tuningProperties.getUserPromptEventName())) {
                 continue;
             }
             Object promptValue = JsonAttributeReaders.attribute(logRecord.getAttributes(), tuningProperties.getPromptAttribute());
-            if (promptValue != null && isMachineAuthoredPrompt(String.valueOf(promptValue))) {
+            if (promptValue != null && TaskNotificationEnvelope.isMachineAuthored(String.valueOf(promptValue))) {
                 return String.valueOf(promptValue);
             }
         }
         return null;
-    }
-
-    // Plain substring extraction rather than a regex or an XML parse: the envelope is written by the
-    // harness to a fixed shape, and a malformed one has to degrade to "no continuation section"
-    // rather than throw on a dialog the reader is waiting on.
-    private static String tagValue(String text, String tagName) {
-        String openingTag = "<" + tagName + ">";
-        String closingTag = "</" + tagName + ">";
-        int valueStart = text.indexOf(openingTag);
-        if (valueStart < 0) {
-            return null;
-        }
-        valueStart += openingTag.length();
-        int valueEnd = text.indexOf(closingTag, valueStart);
-        if (valueEnd < 0) {
-            return null;
-        }
-        String value = text.substring(valueStart, valueEnd).strip();
-        return value.isEmpty() ? null : value;
     }
 
     /**
@@ -1814,8 +1790,8 @@ class TraceAnalysisPromptBuilder {
             return;
         }
         context.put("isContinuation", true);
-        context.put("continuationStatus", nullToUnknown(tagValue(notificationText, STATUS_TAG)));
-        context.put("continuationSummary", nullToUnknown(tagValue(notificationText, SUMMARY_TAG)));
+        context.put("continuationStatus", nullToUnknown(TaskNotificationEnvelope.tagValue(notificationText, STATUS_TAG)));
+        context.put("continuationSummary", nullToUnknown(TaskNotificationEnvelope.tagValue(notificationText, SUMMARY_TAG)));
         context.put("hasDispatchingCall", dispatchingToolCall != null);
         if (dispatchingToolCall == null) {
             return;
@@ -2818,7 +2794,8 @@ class TraceAnalysisPromptBuilder {
      * <p>{@code promptText} is null unless the trace carries a genuine human-written request — never
      * for a slash command, a {@code <task-notification>} envelope, or a subagent run — which is what
      * keeps this from crediting request wording that nobody wrote, the same trap
-     * {@link #slashCommandName} and {@link #isMachineAuthoredPrompt} close for the fault half.
+     * {@link #slashCommandName} and {@link TaskNotificationEnvelope#isMachineAuthored} close for the
+     * fault half.
      */
     private String directedStartObservation(
             List<Span> spans, String promptText, CallAttribution callAttribution) {
@@ -2975,6 +2952,101 @@ class TraceAnalysisPromptBuilder {
             }
         }
         return hasMutatingFileCall && revisitedFiles(spans, callAttribution).isEmpty();
+    }
+
+    /**
+     * Whether a trace that changed nothing still proves an unnamed, non-question request cost it
+     * nothing — the read-only sibling of {@link #focusedResolutionHolds}, feeding the same flag and
+     * suppressing the same single bullet.
+     *
+     * <p><b>Why a second verdict exists at all.</b> {@code focusedResolutionHolds} ends on
+     * {@code hasMutatingFileCall}, so a trace that never wrote a file cannot clear it however
+     * focused it was: review, audit, fact-check and "explain this" work is structurally locked out
+     * of the only gate that suppresses "Ambiguity that cost work". That is not a corner — measured
+     * over 30 days, of 667 traces carrying a judgeable request and at least one tool call,
+     * <b>300 (45.0%) made no mutating call at all</b>, and on every one of them the bullet is
+     * unfalsifiable by construction. Trace {@code 1c428d417f2e6f6ec1ae6ccc0f8b2ed9} is the bill:
+     * request "review the plan and let me know if there are any improvments that can be made", first
+     * tool call a {@code Read} of exactly the plan the request meant, then twenty Bash calls
+     * fact-checking its claims one at a time and a genuinely specific five-point answer — and a
+     * review reporting that the wording "did not specify the exact target or scope, leading the
+     * agent to perform broad exploratory work".
+     *
+     * <p><b>What is checked.</b> The trace makes no {@link #MUTATING_TOOL_NAMES} call (otherwise the
+     * chain verdict is the one that applies); its <b>first</b> tool call carries
+     * {@link #FILE_PATH_ATTRIBUTE}, so it arrived at a named file rather than searching for one;
+     * that call succeeded; and {@link #revisitedFiles} reports nothing, the same "different intent"
+     * exclusion the chain verdict makes for the same reason.
+     *
+     * <p><b>Only {@code file_path} counts as an arrival, and dropping the {@code full_command}
+     * fallback is the point rather than an oversight.</b> {@link #directedStartTarget} reads a Bash
+     * span's command when no file path is present, which is right THERE because
+     * {@link #directedStartObservation} then requires the request to name that same path — without
+     * that cross-check, a command means only "was a shell command", equally true of every
+     * {@code grep}/{@code find} search and every {@code cat}/{@code ls} arrival, and crediting a
+     * search as a directed start is the one thing this verdict must never do. It costs most of the
+     * population: of the 300 read-only traces 219 have an addressable first call, but only
+     * <b>22</b> name a file — and all 22 of those are a {@code Read}.
+     *
+     * <p><b>A failure disqualifies the first call only, not the whole trace</b> — the one place this
+     * is looser than its sibling, and the reason is structural rather than a concession. The chain
+     * verdict reaches back up to {@link #FOCUSED_RESOLUTION_CHAIN_WINDOW_CALLS} calls, so a failure
+     * anywhere inside that span can be the very search whose retry it would otherwise credit; this
+     * verdict rests on a single call, so the matching integrity requirement is that THAT call
+     * succeeded. A later failure is a fact about execution, which is section A's to report and which
+     * the answer contract already makes a named obligation — on the trace above it fired, correctly,
+     * on the Bash call that died at call 21. Suppressing the ambiguity bullet hides none of it.
+     *
+     * <p><b>Measured funnel</b>, same window and population: 667 judgeable-request traces with tool
+     * calls → 300 read-only → 22 whose first call names a file → 20 where that call succeeded →
+     * <b>19</b> also free of a revisit group. That is 2.8% of the judgeable population and 6.3% of
+     * the read-only half, tighter than {@link #focusedResolutionHolds} (7.5%) and in the same range
+     * as {@link #requestWellAimed} (4.9%) before either is allowed to remove a fault from the
+     * model's reach. A trace failing any one check is left exactly as it was.
+     *
+     * <p>Like its sibling, this says nothing about whether the file it arrived at was the one the
+     * request was actually about — so {@code Drift} does not read it — and nothing about whether an
+     * unnamed target is itself a fault, so that bullet stays open.
+     */
+    private boolean readOnlyResolutionHolds(
+            List<Span> spans, Map<String, LogRecord> toolResultsByUseId, CallAttribution callAttribution) {
+        Span firstToolCall = null;
+        for (Span span : spans) {
+            if (!tuningProperties.getToolSpanName().equals(span.getName())) {
+                continue;
+            }
+            if (MUTATING_TOOL_NAMES.contains(toolNameOf(span))) {
+                return false;
+            }
+            if (firstToolCall == null) {
+                firstToolCall = span;
+            }
+        }
+        if (firstToolCall == null
+                || JsonAttributeReaders.attribute(firstToolCall.getAttributes(), FILE_PATH_ATTRIBUTE) == null
+                || isFailedToolCall(firstToolCall, toolResultsByUseId)) {
+            return false;
+        }
+        return revisitedFiles(spans, callAttribution).isEmpty();
+    }
+
+    /**
+     * Which execution shape settled the ambiguity bullet, rendered into the template so the sentence
+     * the model is shown describes the evidence that actually held — the same reason
+     * {@link #wordingSettledReason} exists for its own gate. One flag with two verdicts behind it
+     * cannot share one sentence: telling a model that "every call that changed a file followed a
+     * search of that same file" on a trace that changed no file states a fact it can check and find
+     * false, in the one block asking it to trust a verdict it did not reach itself.
+     */
+    private static String focusedResolutionReason(boolean readOnlyResolutionHolds) {
+        if (readOnlyResolutionHolds) {
+            return "the trace changed nothing, its very first tool call went straight to a named file and "
+                    + "succeeded, and nothing was revisited with a different intent — the execution shows the "
+                    + "agent never had to search for what the request meant, whatever the wording left open.";
+        }
+        return "every call that changed a file followed a search or read of that same file, nothing failed, "
+                + "and nothing was revisited with a different intent — the execution shows the agent was "
+                + "never actually confused about what to do, whatever the wording left open.";
     }
 
     /**
