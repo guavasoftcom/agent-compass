@@ -46,6 +46,10 @@ interface Props {
   // True when costUsd is the stamped span_costs rollup (requests made under
   // this span) rather than the span's own call — drives the badge tooltip.
   isRollupCost: boolean;
+  // Color this span's dispatched subagent was assigned (agentDispatch.ts), when it belongs to
+  // one — undefined for a main-loop span. Tints the timeline bar and a quiet left-edge accent so
+  // a dispatch's whole subtree reads as one thing scanning down the waterfall.
+  agentColor?: string;
   // Badge families the toolbar legend has muted — gates every badge below
   // except error/descendant-error, which name the row's status rather than an
   // optional figure and are never hidden.
@@ -472,6 +476,7 @@ const SpanWaterfallRow = ({
   descendantErrorCount,
   costUsd,
   isRollupCost,
+  agentColor,
   chipsOff,
   logs,
   gridColumns,
@@ -501,9 +506,15 @@ const SpanWaterfallRow = ({
   // a span attribute.
   const effort = span.effort ?? '';
   const isError = span.statusCode === 'error';
+  // Error always wins the bar's color — one hue means one thing on this row, and error is never
+  // shared with anything else (see this page's CLAUDE.md). A dispatched subagent's own color is
+  // the next priority, so its whole subtree reads as one thing scanning down the waterfall; the
+  // plain primary gradient is the default for a main-loop span.
   const barBackground = isError
     ? theme.palette.error.main
-    : `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.primary.light})`;
+    : agentColor
+      ? `linear-gradient(90deg, ${agentColor}, ${alpha(agentColor, 0.6)})`
+      : `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.primary.light})`;
 
   // Duration-label placement, kept inside the track so it can never force a
   // horizontal scrollbar: after the bar when it ends with room to spare, just
@@ -528,18 +539,38 @@ const SpanWaterfallRow = ({
         borderColor: 'divider',
         cursor: 'pointer',
         opacity: 1,
+        // The selected tint always wins the row background — it's a different property from the
+        // bar's own color, so a dispatch's quiet wash and the selected highlight never compete
+        // for the same slot. Unselected, a dispatched span gets a faint wash of its own agent
+        // color: independent of the timeline bar, so an errored span (bar forced to red) still
+        // visibly belongs to its subagent's rows above and below it. A dispatched span's
+        // selected/hover tints reuse that same agent color rather than the generic
+        // primary/action.hover ones — just brighter, so hovering or selecting a row still reads
+        // as "this subagent" instead of switching to an unrelated highlight color. The left-edge
+        // accent follows suit: agentColor when the selected row belongs to a dispatch, primary.main
+        // otherwise.
         bgcolor: isSelected
-          ? (t) =>
-              alpha(
-                t.palette.primary.main,
-                t.palette.mode === 'dark' ? 0.22 : 0.12,
-              )
-          : 'transparent',
+          ? agentColor
+            ? (t) => alpha(agentColor, t.palette.mode === 'dark' ? 0.4 : 0.28)
+            : (t) =>
+                alpha(
+                  t.palette.primary.main,
+                  t.palette.mode === 'dark' ? 0.22 : 0.12,
+                )
+          : agentColor
+            ? (t) => alpha(agentColor, t.palette.mode === 'dark' ? 0.16 : 0.08)
+            : 'transparent',
         boxShadow: isSelected
-          ? (t) => `inset 2px 0 0 ${t.palette.primary.main}`
+          ? agentColor
+            ? `inset 2px 0 0 ${agentColor}`
+            : (t) => `inset 2px 0 0 ${t.palette.primary.main}`
           : 'none',
         transition: 'opacity .14s, background .1s',
-        '&:hover': { bgcolor: 'action.hover' },
+        '&:hover': {
+          bgcolor: agentColor
+            ? (t) => alpha(agentColor, t.palette.mode === 'dark' ? 0.28 : 0.18)
+            : 'action.hover',
+        },
       }}
     >
       <Box

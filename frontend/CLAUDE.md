@@ -29,7 +29,11 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
     ring on top, legend below; `'horizontal'` — ring left, legend flexes right, for a card that
     isn't paired 2-up) and `showBars` (adds a full-width progress bar under each ranked-list row,
     replacing the row divider) are both opt-in, added for the Cost page's Model mix card — see that
-    page's CLAUDE.md gotcha for why `BreakdownList` wasn't the fit instead.
+    page's CLAUDE.md gotcha for why `BreakdownList` wasn't the fit instead. A slice's optional
+    `detail` (`ReactNode`) renders as a light-weight caption on its own line beneath the legend
+    label — for a metric that doesn't fit alongside the row's own value/percentage (the Cost
+    page's Skill/Subagent mix donuts use it for "N calls · $X.XX avg/run"); omit it and the row
+    renders as a single line, same as before the prop existed.
   - `TablePager` — shared offset-pager footer (rows-per-page `SegmentedToggle` + range label + prev/next); used by Sessions, Logs, and Traces tables.
   - `StreamTableToggle` — shared Stream|Table view-mode `SegmentedToggle`; used by Logs and (via `TraceViewToggle`) Traces.
   - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.

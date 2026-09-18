@@ -41,12 +41,17 @@ const wrenchIcon = (
   </Box>
 );
 
+const byKey = ([left]: [string, unknown], [right]: [string, unknown]) => left.localeCompare(right);
+
 // Span attributes split into a collapsible Tool section and a collapsible
-// Attributes section, with redundant keys filtered out.
+// Attributes section, with redundant keys filtered out. Each section's rows
+// are sorted alphabetically by key -- there's no meaningful emission order to
+// a flat attribute bag, so alphabetical is what lets a reader find the same
+// key in the same relative spot across different spans.
 const SpanAttributeSections = ({ attributes }: { attributes: Record<string, unknown> | undefined }) => {
   const kept = Object.entries(attributes ?? {}).filter(([key]) => !isRedundant(key));
-  const toolEntries = kept.filter(([key]) => isToolAttr(key));
-  const otherEntries = kept.filter(([key]) => !isToolAttr(key));
+  const toolEntries = kept.filter(([key]) => isToolAttr(key)).sort(byKey);
+  const otherEntries = kept.filter(([key]) => !isToolAttr(key)).sort(byKey);
   return (
     <>
       {toolEntries.length ? (

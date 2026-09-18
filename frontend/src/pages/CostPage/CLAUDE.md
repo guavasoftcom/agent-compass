@@ -110,13 +110,14 @@ CostPage/
 | Container hook | Query key | Fetcher → endpoint |
 |---|---|---|
 | `useQuery` | `['cost-breakdown', selectionKey]` | `fetchCostBreakdown({ ...selection, repositoryUrl })` → `GET /api/cost/breakdown?…` |
-| `useQuery` | `['skill-usage', selectionKey]` | `fetchSkillUsage(selection)` → `GET /api/tool-activity/skill-usage?…` (reused from Skills & Subagents) |
-| `useQuery` | `['subagent-usage', selectionKey]` | `fetchSubagentUsage(selection)` → `GET /api/tool-activity/subagent-usage?…` (reused) |
+| `useQuery` | `['skill-usage', selectionKey]` | `fetchSkillUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/skill-usage?…` (reused from Skills & Subagents) |
+| `useQuery` | `['subagent-usage', selectionKey]` | `fetchSubagentUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/subagent-usage?…` (reused) |
 
 `fetchCostBreakdown` is the page's spine — its error wins `PageLayout`'s error slot; the other
-two queries back the Skill/Subagent mix donuts and fall back to an empty array on failure rather
-than blanking the page. `onReload` refetches all three. No page-local API module — all three
-fetchers already live in the shared `api/endpoints.ts` barrel.
+two queries back the Skill mix / Subagent mix donuts' per-row hover detail (calls and average
+cost per run — see below) and fall back to an empty array on failure rather than blanking the
+page. `onReload` refetches all three. No page-local API module — all three fetchers already live
+in the shared `api/endpoints.ts` barrel.
 
 The `tool-context-footprint` query (`fetchToolContextFootprint`) that used to back the deleted
 `McpContextPanel` is gone from this page entirely — see the gotcha below. Don't re-add it here;
@@ -172,10 +173,17 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
   color independently in more than one place (and don't substring-match on a model name like the
   design mockup's own JS does — that's mockup-only convenience data, not a generalizable rule).
 - **The Skill/Subagent donuts are dollar-valued, not call-valued** — `toDonutSlices` (in the view)
-  reads `row.costUsd` off the same `IdentifierUsageRow[]` the Skills & Subagents page renders as
-  calls, filtering to rows with `costUsd > 0`. This page adds no new backend query for them; it
-  reuses `/api/tool-activity/skill-usage` and `/subagent-usage` purely for their existing cost
-  fields.
+  slices on `CostIdentifierShare.costUsd` (the money-map drilldown, from `breakdown.categories`),
+  filtering to rows with `costUsd > 0`. Calls and average cost per run come from a *second* source
+  joined in by identifier: the `skill-usage`/`subagent-usage` `IdentifierUsageRow[]` responses
+  (`row.tool` matches `CostIdentifierShare.identifier` exactly — both ultimately read the same
+  `aggregateSkillCostByModelInRange`/`aggregateSubagentCostByModelInRange` cost rows on the
+  backend, so the join is exact, not a fuzzy name match). `donutSliceDetail` renders "N calls ·
+  $X.XX avg/run" as each row's `DonutSlice.detail` — a light-weight caption `DonutCard` renders on
+  its own line beneath the legend label (`DonutCard`'s generic `detail` prop), always visible
+  rather than hidden behind a hover tooltip, since the label already has its own line to itself
+  and the value/percentage stay on the row's first line. A row absent from the usage response, or
+  reporting zero calls, gets no caption rather than a misleading "0 calls".
 - **`CostDriversCard` never derives a per-token-kind dollar figure.** `cost_usd` is one number per
   request; an earlier revision of this dashboard's cost model tried a token-rate-table estimate
   and measured it running 2–3× off real spend (see `V14`'s migration header). The grid shows

@@ -15,7 +15,7 @@ see <https://www.gnu.org/licenses/>.
 */
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
+import { Box, Typography, alpha, useTheme } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -68,6 +68,11 @@ interface Props {
   // selected call's own tool_result / tool_decision out of this to state what the call did --
   // see spanCallFacts.ts.
   logsBySpanId: Map<string, LogRow[]>;
+  // Per-span subagent-dispatch color/label (agentDispatch.ts), keyed identically -- both absent
+  // for a main-loop span. Drives the header's "which subagent" name chip: present only when the
+  // selected span belongs to a dispatched subagent's subtree.
+  agentColorBySpanId: Map<string, string>;
+  agentLabelBySpanId: Map<string, string>;
   // Reveals a related call the reader clicked in CallContextSection: expands collapsed ancestors,
   // widens the zoom if needed, then selects and scrolls. TraceDetailPageView#revealSpan.
   onRevealSpan: (spanId: string) => void;
@@ -237,6 +242,8 @@ const SpanInspectorDrawer = ({
   selection,
   spans,
   logsBySpanId,
+  agentColorBySpanId,
+  agentLabelBySpanId,
   onRevealSpan,
   onClose,
   onPreviousSpan,
@@ -261,6 +268,11 @@ const SpanInspectorDrawer = ({
     setLastSelection(selection);
   }
   const rendered = selection ?? lastSelection;
+  // Undefined for a main-loop span (not part of any dispatch) -- the chip below renders nothing
+  // in that case, same "absent Map key means not dispatched" convention agentDispatch.ts documents
+  // for colorBySpanId.
+  const agentColor = rendered ? agentColorBySpanId.get(rendered.span.spanId) : undefined;
+  const agentLabel = rendered ? agentLabelBySpanId.get(rendered.span.spanId) : undefined;
 
   return (
     <Box
@@ -327,8 +339,8 @@ const SpanInspectorDrawer = ({
           <Box
             sx={{
               display: 'flex',
-              alignItems: 'flex-start',
-              gap: 1.25,
+              flexDirection: 'column',
+              gap: 0.75,
               px: 2,
               py: 1.75,
               borderBottom: 1,
@@ -336,112 +348,168 @@ const SpanInspectorDrawer = ({
               flexShrink: 0,
             }}
           >
-            <Typography
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                typography: 'mono',
-                fontSize: 13,
-                fontWeight: 600,
-                wordBreak: 'break-all',
-              }}
-            >
-              {rendered.span.name}
-            </Typography>
-            {rendered.waterfallCount > 1 ? (
-              <Box
+            {/* Name + nav + close on their own row, unchanged from before the subagent chip
+                existed. The chip renders on a SEPARATE row below rather than inline here: an
+                earlier version put it in this row, and a long subagent_type (e.g.
+                "expert-java-spring-boot-engineer") combined with the nav/close controls' fixed
+                width left too little room for the name's flex:1 basis at a narrow drawer width --
+                wordBreak:'break-all' then wrapped every character onto its own line. A second row
+                has nothing else competing for its width, so the chip can truncate against the
+                drawer's own width without ever taking space from the name. */}
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.25 }}>
+              <Typography
                 sx={{
-                  display: 'flex',
+                  flex: 1,
+                  minWidth: 0,
+                  typography: 'mono',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  wordBreak: 'break-all',
+                }}
+              >
+                {rendered.span.name}
+              </Typography>
+              {rendered.waterfallCount > 1 ? (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                    flexShrink: 0,
+                  }}
+                >
+                  <Box
+                    component="button"
+                    disabled={rendered.waterfallIndex <= 0}
+                    onClick={onPreviousSpan}
+                    title="Previous span (↑)"
+                    sx={{
+                      display: 'grid',
+                      placeItems: 'center',
+                      width: 24,
+                      height: 24,
+                      border: 1,
+                      borderColor: 'divider',
+                      borderRadius: radii.xs,
+                      bgcolor: 'background.paper',
+                      cursor: 'pointer',
+                      color: 'text.secondary',
+                      '&:hover:not(:disabled)': {
+                        color: 'primary.main',
+                        borderColor: 'primary.main',
+                      },
+                      '&:disabled': { opacity: 0.4, cursor: 'default' },
+                    }}
+                  >
+                    <ExpandLessIcon sx={{ fontSize: 15 }} />
+                  </Box>
+                  <Typography
+                    sx={{
+                      typography: 'mono',
+                      fontSize: 10,
+                      color: 'text.disabled',
+                      whiteSpace: 'nowrap',
+                      px: 0.25,
+                    }}
+                  >
+                    {rendered.waterfallIndex + 1} / {rendered.waterfallCount}
+                  </Typography>
+                  <Box
+                    component="button"
+                    disabled={
+                      rendered.waterfallIndex >= rendered.waterfallCount - 1
+                    }
+                    onClick={onNextSpan}
+                    title="Next span (↓)"
+                    sx={{
+                      display: 'grid',
+                      placeItems: 'center',
+                      width: 24,
+                      height: 24,
+                      border: 1,
+                      borderColor: 'divider',
+                      borderRadius: radii.xs,
+                      bgcolor: 'background.paper',
+                      cursor: 'pointer',
+                      color: 'text.secondary',
+                      '&:hover:not(:disabled)': {
+                        color: 'primary.main',
+                        borderColor: 'primary.main',
+                      },
+                      '&:disabled': { opacity: 0.4, cursor: 'default' },
+                    }}
+                  >
+                    <ExpandMoreIcon sx={{ fontSize: 15 }} />
+                  </Box>
+                </Box>
+              ) : null}
+              <Box
+                component="button"
+                onClick={onClose}
+                sx={{
+                  display: 'grid',
+                  placeItems: 'center',
+                  width: 28,
+                  height: 28,
+                  flexShrink: 0,
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: radii.xs,
+                  bgcolor: 'background.paper',
+                  cursor: 'pointer',
+                  color: 'text.secondary',
+                  '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
+                }}
+              >
+                <CloseIcon sx={{ fontSize: 16 }} />
+              </Box>
+            </Box>
+            {agentLabel && agentColor ? (
+              <Box
+                component="span"
+                title={`Part of a dispatched "${agentLabel}" subagent`}
+                sx={{
+                  display: 'inline-flex',
+                  alignSelf: 'flex-start',
                   alignItems: 'center',
                   gap: 0.5,
-                  flexShrink: 0,
+                  // Full-width-capped rather than a fixed pixel max: this chip now has its own row
+                  // with nothing else in it, so the only thing it needs to stay clear of is the
+                  // drawer's own edge at whatever width the reader has resized it to.
+                  maxWidth: '100%',
+                  height: 20,
+                  px: 0.9,
+                  borderRadius: '5px',
+                  typography: 'mono',
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  color: agentColor,
+                  bgcolor: alpha(agentColor, 0.16),
                 }}
               >
                 <Box
-                  component="button"
-                  disabled={rendered.waterfallIndex <= 0}
-                  onClick={onPreviousSpan}
-                  title="Previous span (↑)"
+                  component="span"
                   sx={{
-                    display: 'grid',
-                    placeItems: 'center',
-                    width: 24,
-                    height: 24,
-                    border: 1,
-                    borderColor: 'divider',
-                    borderRadius: radii.xs,
-                    bgcolor: 'background.paper',
-                    cursor: 'pointer',
-                    color: 'text.secondary',
-                    '&:hover:not(:disabled)': {
-                      color: 'primary.main',
-                      borderColor: 'primary.main',
-                    },
-                    '&:disabled': { opacity: 0.4, cursor: 'default' },
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    bgcolor: agentColor,
+                    flexShrink: 0,
                   }}
-                >
-                  <ExpandLessIcon sx={{ fontSize: 15 }} />
-                </Box>
-                <Typography
-                  sx={{
-                    typography: 'mono',
-                    fontSize: 10,
-                    color: 'text.disabled',
-                    whiteSpace: 'nowrap',
-                    px: 0.25,
-                  }}
-                >
-                  {rendered.waterfallIndex + 1} / {rendered.waterfallCount}
-                </Typography>
+                />
                 <Box
-                  component="button"
-                  disabled={
-                    rendered.waterfallIndex >= rendered.waterfallCount - 1
-                  }
-                  onClick={onNextSpan}
-                  title="Next span (↓)"
+                  component="span"
                   sx={{
-                    display: 'grid',
-                    placeItems: 'center',
-                    width: 24,
-                    height: 24,
-                    border: 1,
-                    borderColor: 'divider',
-                    borderRadius: radii.xs,
-                    bgcolor: 'background.paper',
-                    cursor: 'pointer',
-                    color: 'text.secondary',
-                    '&:hover:not(:disabled)': {
-                      color: 'primary.main',
-                      borderColor: 'primary.main',
-                    },
-                    '&:disabled': { opacity: 0.4, cursor: 'default' },
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  <ExpandMoreIcon sx={{ fontSize: 15 }} />
+                  {agentLabel}
                 </Box>
               </Box>
             ) : null}
-            <Box
-              component="button"
-              onClick={onClose}
-              sx={{
-                display: 'grid',
-                placeItems: 'center',
-                width: 28,
-                height: 28,
-                flexShrink: 0,
-                border: 1,
-                borderColor: 'divider',
-                borderRadius: radii.xs,
-                bgcolor: 'background.paper',
-                cursor: 'pointer',
-                color: 'text.secondary',
-                '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
-              }}
-            >
-              <CloseIcon sx={{ fontSize: 16 }} />
-            </Box>
           </Box>
           <Box
             // Marks the drawer's own scroll container: the page's ArrowUp/

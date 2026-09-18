@@ -1047,6 +1047,77 @@ class TraceAnalysisPromptBuilderTest {
     }
 
     /**
+     * The read-only half of the same gate, and the trace that forced it. On
+     * {@code 1c428d417f2e6f6ec1ae6ccc0f8b2ed9} — "review the plan and let me know if there are any
+     * improvments that can be made" — the first tool call read exactly the plan the request meant
+     * and nothing after it wrote a file, so {@code focusedResolutionHolds} could never fire
+     * (it ends on {@code hasMutatingFileCall}) and the review faulted the wording for "not
+     * specifying the exact target or scope". A later failure must NOT veto the verdict: the
+     * evidence is the first call, and the failure has its own bullet.
+     */
+    @Test
+    void aReadOnlyTraceThatWentStraightToItsFileSuppressesTheAmbiguityBulletDespiteALaterFailure() {
+        List<Span> spans = List.of(
+                toolSpanForFile("Read", "use-1", "/a/b/.design-docs/agent-compass-mcp-server-plan.md"),
+                toolSpan("Bash", "use-2"),
+                toolSpan("Bash", "use-3"));
+
+        String prompt = buildPrompt(spans, List.of(
+                userPromptLog("review the plan and let me know if there are any improvments that can be made"),
+                toolResultLog("Read", "use-1", "{\"file_path\":\"/a/b/plan.md\"}", true, 5, null),
+                toolResultLog("Bash", "use-2", "{}", true, 20, null),
+                toolResultLog("Bash", "use-3", "{}", false, 62, "Shell command failed")));
+
+        assertThat(prompt)
+                .as("a trace that changed nothing can never clear the chain verdict, however focused it was")
+                .doesNotContain("wording open enough that the agent had to guess")
+                .contains("Ambiguity that cost work** does not apply here")
+                .contains("the trace changed nothing, its very first tool call went straight to a named file");
+        assertThat(prompt)
+                .as("the sentence must describe the verdict that actually held -- the chain wording states a "
+                        + "fact this trace can check and find false")
+                .doesNotContain("every call that changed a file followed a search");
+        assertThat(prompt)
+                .as("suppressing the wording bullet hides neither the failure nor the unnamed target")
+                .contains("Shell command failed")
+                .contains("Unnamed target");
+    }
+
+    /**
+     * The negative case this verdict needs most. A first call carrying no {@code file_path} is a
+     * search — the agent working out where to look — which is exactly the cost the ambiguity bullet
+     * exists to report, so it must not be credited as an arrival.
+     */
+    @Test
+    void aReadOnlyTraceThatOpenedWithASearchDoesNotSuppressTheAmbiguityBullet() {
+        List<Span> spans = List.of(
+                toolSpan("Bash", "use-1"),
+                toolSpanForFile("Read", "use-2", "/a/b/ReportService.java"));
+
+        String prompt = buildPrompt(spans, List.of(
+                userPromptLog("review the plan and let me know if there are any improvments that can be made")));
+
+        assertThat(prompt).contains("wording open enough that the agent had to guess");
+    }
+
+    /**
+     * The whole verdict rests on one call, so that call having failed leaves it with no evidence at
+     * all — the read-only analogue of the sibling gate's no-failed-search rule.
+     */
+    @Test
+    void aReadOnlyTraceWhoseFirstCallFailedDoesNotSuppressTheAmbiguityBullet() {
+        List<Span> spans = List.of(
+                toolSpanForFile("Read", "use-1", "/a/b/.design-docs/agent-compass-mcp-server-plan.md"),
+                toolSpan("Bash", "use-2"));
+
+        String prompt = buildPrompt(spans, List.of(
+                userPromptLog("review the plan and let me know if there are any improvments that can be made"),
+                toolResultLog("Read", "use-1", "{}", false, 3, "File does not exist")));
+
+        assertThat(prompt).contains("wording open enough that the agent had to guess");
+    }
+
+    /**
      * The same fence the fault half already has: {@code /ship} is a command name, not wording
      * anyone chose, so it can no more earn credit for naming a target than it can be called vague.
      */

@@ -744,8 +744,15 @@ public class TraceAnalysisService {
     }
 
     /**
-     * Removes any fault whose citation names the wrong kind of call or the wrong file — see
-     * {@link TimelineCitations#miscitedKindViolations} and {@link TimelineCitations#miscitedFileViolations}.
+     * Removes any fault whose citation names the wrong kind of call, the wrong file, or a cost the
+     * cited call cannot carry — see {@link TimelineCitations#miscitedKindViolations},
+     * {@link TimelineCitations#miscitedFileViolations} and
+     * {@link TimelineCitations#miscitedMetricViolations}.
+     *
+     * <p>Trace {@code 1975031e2963758c815c4b218f11adad} is why the third one joined them: two of its
+     * five bullets read <i>"Call 52 (Edit) had a duration of 15.7s and cost $0.0658"</i>, figures
+     * belonging to call 51, the model call rendered on the line above. The first two checks ran on
+     * that review and passed it, correctly — neither reads a figure.
      *
      * <p>Trace {@code 299f2704e7161e2271a5c3749cdf3551} is why this exists: its stored review claimed
      * "Used `grep -n` for file searches at calls 22 and 155, which could be more efficiently handled
@@ -776,12 +783,14 @@ public class TraceAnalysisService {
         }
         Map<Integer, String> callKinds = TimelineCitations.callKindsIn(prompt);
         Map<Integer, String> callTargets = TimelineCitations.callTargetsIn(prompt);
+        Set<Integer> callsWithRenderedCost = TimelineCitations.callsWithRenderedCostIn(prompt);
         List<TraceAnalysisAnswer.Finding> keptFaults = new ArrayList<>();
         for (TraceAnalysisAnswer.Finding fault : faults) {
             String text = findingText(fault);
             List<String> violations = new ArrayList<>();
             violations.addAll(TimelineCitations.miscitedKindViolations(text, callKinds, false));
             violations.addAll(TimelineCitations.miscitedFileViolations(text, callTargets));
+            violations.addAll(TimelineCitations.miscitedMetricViolations(text, callKinds, callsWithRenderedCost));
             if (violations.isEmpty()) {
                 keptFaults.add(fault);
             } else {

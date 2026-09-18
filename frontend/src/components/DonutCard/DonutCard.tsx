@@ -31,6 +31,14 @@ export interface DonutSlice {
    * Omit (or leave a model out) when the row carries no per-model split.
    */
   coverageByModel?: Record<string, number>;
+  /**
+   * Light-weight caption rendered on its own line beneath the legend label —
+   * for a metric that doesn't fit alongside the row's own value/percentage
+   * (e.g. "12 calls · $3.42 avg per run"). Omit for a row with nothing to
+   * add; the row then renders as a single line, exactly as before this prop
+   * existed.
+   */
+  detail?: ReactNode;
 }
 
 /** One model in the fixed left-to-right order shared by `coverageTicks` and `legendCaption`. */
@@ -313,16 +321,7 @@ const DonutCard = ({
           >
             {slices.map((slice, index) => {
               const pct = sum > 0 ? (slice.value / sum) * 100 : 0;
-              return (
-                <Box
-                  key={slice.label}
-                  sx={{
-                    py: showBars ? 0 : 0.9,
-                    mb: showBars ? 1.25 : 0,
-                    borderBottom: !showBars && index < slices.length - 1 ? '1px solid' : 'none',
-                    borderColor: 'divider',
-                  }}
-                >
+              const row = (
                 <Stack
                   direction="row"
                   spacing={1.25}
@@ -349,18 +348,27 @@ const DonutCard = ({
                       bgcolor: slice.color,
                     }}
                   />
-                  <Typography
-                    variant="body2"
-                    noWrap
-                    sx={{
-                      flex: 1,
-                      minWidth: 0,
-                      fontWeight: 600,
-                      ...(slice.muted && { fontStyle: 'italic', color: 'text.disabled' }),
-                    }}
-                  >
-                    {slice.label}
-                  </Typography>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{
+                        fontWeight: 600,
+                        ...(slice.muted && { fontStyle: 'italic', color: 'text.disabled' }),
+                      }}
+                    >
+                      {slice.label}
+                    </Typography>
+                    {slice.detail && (
+                      <Typography
+                        variant="caption"
+                        noWrap
+                        sx={{ display: 'block', fontWeight: 300, color: 'text.secondary' }}
+                      >
+                        {slice.detail}
+                      </Typography>
+                    )}
+                  </Box>
                   {coverageTicks && coverageTicks.length > 0 && (
                     <Stack direction="row" spacing={0.6} sx={{ flexShrink: 0 }}>
                       {coverageTicks.map((model) => {
@@ -398,6 +406,18 @@ const DonutCard = ({
                     · {pct.toFixed(1)}%
                   </Typography>
                 </Stack>
+              );
+              return (
+                <Box
+                  key={slice.label}
+                  sx={{
+                    py: showBars ? 0 : 0.9,
+                    mb: showBars ? 1.25 : 0,
+                    borderBottom: !showBars && index < slices.length - 1 ? '1px solid' : 'none',
+                    borderColor: 'divider',
+                  }}
+                >
+                {row}
                 {showBars && (
                   <LinearProgress
                     variant="determinate"

@@ -242,6 +242,49 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolCallIdAttribute") String toolCallIdAttribute,
       @Param("toolUseId") String toolUseId);
 
+  // Bulk counterpart of findToolCallByToolUseId above, for resolving a whole page of prompt turns'
+  // dispatching trace ids at once (LogService#resolveDispatchingTraceByTurn) instead of looping the
+  // single-id lookup -- see that method's own comment for why the loop is the thing to avoid.
+  // Every predicate mirrors the single-id query verbatim: event_name pins tool_result specifically
+  // (the tool_decision row shares the id and carries no tool_input), the session predicate stays a
+  // literal jsonb extraction to match idx_log_records_session_id_ts (an EXPRESSION index -- see that
+  // query's own comment), and beforeTimestamp bounds the scan to the newest candidate notification's
+  // timestamp so it stays index-scoped rather than searching the whole session.
+  //
+  // DISTINCT ON (tool_use_id) takes the newest matching tool_result per id, mirroring the single-id
+  // query's ORDER BY timestamp DESC LIMIT 1; trace_id is the one extra column this bulk form needs
+  // over the entity-mapping original, so it selects only the two columns rather than the whole row.
+  //
+  // The jsonb extraction is materialized into a CTE column first rather than repeated inline in
+  // both DISTINCT ON and ORDER BY: Postgres binds each :toolCallIdAttribute placeholder to a
+  // separate Param node even though every occurrence carries the identical runtime string, so
+  // DISTINCT ON's expression and ORDER BY's would fail Postgres's syntactic (not value) equality
+  // check with "SELECT DISTINCT ON expressions must match initial ORDER BY expressions" -- the
+  // same repeated-parameterized-jsonb-expression trap findToolEventsSplitByTraceIds documents and
+  // works around the identical way, for GROUP BY rather than DISTINCT ON.
+  @Query(value = """
+      WITH candidate_tool_calls AS (
+        SELECT
+          attributes ->> :toolCallIdAttribute AS tool_use_id,
+          trace_id,
+          timestamp
+        FROM log_records
+        WHERE event_name = :toolResultEventName
+          AND attributes ->> 'session.id' = :sessionId
+          AND timestamp < :beforeTimestamp
+          AND attributes ->> :toolCallIdAttribute IN (:toolUseIds)
+      )
+      SELECT DISTINCT ON (tool_use_id) tool_use_id, trace_id
+      FROM candidate_tool_calls
+      ORDER BY tool_use_id, timestamp DESC
+      """, nativeQuery = true)
+  List<Object[]> findDispatchingTraceIdsByToolUseIds(
+      @Param("toolResultEventName") String toolResultEventName,
+      @Param("sessionId") String sessionId,
+      @Param("beforeTimestamp") Instant beforeTimestamp,
+      @Param("toolCallIdAttribute") String toolCallIdAttribute,
+      @Param("toolUseIds") Collection<String> toolUseIds);
+
   // Returns every distinct "key=value" pair across log_records.attributes,
   // narrowed to rows
   // that contain every entry in :filters and (optionally) fall within a

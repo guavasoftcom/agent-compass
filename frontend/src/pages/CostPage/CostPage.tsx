@@ -17,6 +17,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchCostBreakdown,
+  fetchSkillUsage,
+  fetchSubagentUsage,
   type CostBreakdown,
   type CostSessionShare,
 } from '../../api';
@@ -63,6 +65,21 @@ export default function CostPage() {
     refetchInterval,
   });
 
+  // Back the Skill mix / Subagent mix donuts' calls/avg-cost-per-run detail.
+  // Falls back to an empty array on failure rather than blanking the page,
+  // same idiom as the spine query's emptyBreakdown fallback.
+  const skillUsageQuery = useQuery({
+    queryKey: ['skill-usage', selectionKey],
+    queryFn: () => fetchSkillUsage({ ...selection, repositoryUrl }),
+    refetchInterval,
+  });
+
+  const subagentUsageQuery = useQuery({
+    queryKey: ['subagent-usage', selectionKey],
+    queryFn: () => fetchSubagentUsage({ ...selection, repositoryUrl }),
+    refetchInterval,
+  });
+
   const isPolling = autoRefresh && selection.kind === 'preset' && breakdownQuery.isFetching;
 
   const error = breakdownQuery.error as Error | null;
@@ -76,6 +93,8 @@ export default function CostPage() {
 
   const handleReload = (): void => {
     breakdownQuery.refetch();
+    skillUsageQuery.refetch();
+    subagentUsageQuery.refetch();
   };
 
   return (
@@ -86,6 +105,8 @@ export default function CostPage() {
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
       breakdown={breakdownQuery.data ?? emptyBreakdown}
+      skillUsage={skillUsageQuery.data ?? []}
+      subagentUsage={subagentUsageQuery.data ?? []}
       activeTab={activeTab}
       onActiveTabChange={handleActiveTabChange}
       selectedSession={selectedSession}

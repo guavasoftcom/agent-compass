@@ -44,8 +44,34 @@ import {
   formatTimestamp,
   formatTokens,
 } from '../sessionsFormat';
+import {
+  nestPromptRows,
+  windowBoundariesByOriginalIndex,
+} from './promptTimelineRows';
 
 const NUM_FORMATTER = new Intl.NumberFormat('en-US');
+
+// Pixels a nested turn card shifts right, per depth level, via `ml` — the
+// whole bubble (border/background included) moves, not just its content, so
+// a nested subagent turn reads as visually inset rather than merely
+// re-padded. `k` is how many depth levels back the connector reaches (1 for
+// the immediate dispatcher/sibling above, more for a shallower ancestor's
+// still-unbroken rail on a grandchild row) — the connector's `left` is always
+// negative, since it draws in the margin band a card's own indent opened up
+// to its left.
+const CHILD_INDENT = 18;
+const connectorLeftOffset = (k: number): number => -(k * CHILD_INDENT) + 4;
+// The elbow's horizontal (bottom-border) segment is widened by this many
+// extra pixels past the card's own left edge, so it visibly crosses into the
+// border rather than stopping just short of it — cheaper and more robust
+// than hairline-precision alignment with the card's actual border position.
+const CONNECTOR_BORDER_OVERLAP = 0;
+// Same idea, vertically: the `gap: 1.25` (10px) between cards is exactly
+// enough to reach the card above with zero overlap, which in practice reads
+// as a visible sliver of dead space rather than a touching line — so every
+// connector segment that bridges a gap reaches a few extra pixels PAST the
+// neighboring card's edge instead of stopping flush with it.
+const CONNECTOR_GAP_OVERLAP = 7;
 
 const formatPromptTimestamp = (value: string): string =>
   value
@@ -697,6 +723,16 @@ const PromptTimelinePanel = ({
     );
   }
 
+  // A background-dispatched subagent's own turn nests directly beneath the
+  // turn that dispatched it (see promptTimelineRows.ts) — same reordering
+  // rule the Trace Detail page's Switch-trace modal already applies.
+  const nestedRows = nestPromptRows(prompts);
+  const boundaryByOriginalIndex = windowBoundariesByOriginalIndex(
+    nestedRows,
+    windowStartMs,
+    windowEndMs,
+  );
+
   return (
     <Box sx={panelSx}>
       <Box
@@ -757,7 +793,7 @@ const PromptTimelinePanel = ({
           },
         }}
       >
-        {prompts.map((turn, index) => {
+        {nestedRows.map(({ row: turn, depth, railBelow, originalIndex }) => {
           const turnMs = turn.timestamp
             ? new Date(turn.timestamp).getTime()
             : NaN;
@@ -765,25 +801,9 @@ const PromptTimelinePanel = ({
             windowStartMs == null || windowEndMs == null || Number.isNaN(turnMs)
               ? true
               : turnMs >= windowStartMs && turnMs <= windowEndMs;
-          const previousTurn = prompts[index - 1];
-          const previousTurnMs = previousTurn?.timestamp
-            ? new Date(previousTurn.timestamp).getTime()
-            : NaN;
-          const previousTurnInWindow =
-            windowStartMs == null ||
-            windowEndMs == null ||
-            Number.isNaN(previousTurnMs)
-              ? true
-              : previousTurnMs >= windowStartMs &&
-                previousTurnMs <= windowEndMs;
-          let boundary: string | null = null;
-          if (index > 0 && !previousTurnInWindow && inWindow) {
-            boundary = 'selected window starts';
-          } else if (index > 0 && previousTurnInWindow && !inWindow) {
-            boundary = 'selected window ends';
-          }
+          const boundary = boundaryByOriginalIndex.get(originalIndex) ?? null;
           return (
-            <Fragment key={`${turn.timestamp}-${index}`}>
+            <Fragment key={`${turn.timestamp}-${originalIndex}`}>
               {boundary ? (
                 <Box
                   sx={{
@@ -825,6 +845,12 @@ const PromptTimelinePanel = ({
                   boxShadow: 1,
                   px: 1.75,
                   py: 1.25,
+                  // Depth 0 renders pixel-identical to before (ml: 0). A nested
+                  // child's whole card — border, background, everything — shifts
+                  // right by CHILD_INDENT per depth, so the bubble itself reads as
+                  // nested, not just its text; the connector below is drawn in the
+                  // margin/gap band this creates to the card's upper-left.
+                  ml: depth > 0 ? `${depth * CHILD_INDENT}px` : 0,
                   opacity: inWindow ? 1 : 0.45,
                   display: 'flex',
                   flexDirection: 'column',
@@ -833,23 +859,87 @@ const PromptTimelinePanel = ({
                   '&:hover': {
                     borderColor: (t) => alpha(t.palette.primary.main, 0.32),
                   },
-                  '&::before': {
-                    content: '""',
-                    position: 'absolute',
-                    left: '-21px',
-                    top: '16px',
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    // Rail dot picks up the turn's model accent (opus/sonnet) instead
-                    // of always being primary.main — the ring stays primary-tinted
-                    // regardless, matching the design handoff.
-                    bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
-                    boxShadow: (t) =>
-                      `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
-                  },
+                  // The rail dot only marks top-level turns — a nested child
+                  // isn't part of the main rail's flow, so it renders the
+                  // elbow connector below instead.
+                  ...(depth === 0 && {
+                    '&::before': {
+                      content: '""',
+                      position: 'absolute',
+                      left: '-21px',
+                      top: '16px',
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      // Rail dot picks up the turn's model accent (opus/sonnet) instead
+                      // of always being primary.main — the ring stays primary-tinted
+                      // regardless, matching the design handoff.
+                      bgcolor: (t) => modelAccentColor(modelKeyOf(turn.model), t),
+                      boxShadow: (t) =>
+                        `0 0 0 4px ${t.palette.background.default}, 0 0 0 5px ${alpha(t.palette.primary.main, 0.32)}`,
+                    },
+                  }),
                 }}
               >
+                {depth > 0 ? (
+                  <>
+                    {/* Elbow: sits in the margin band to this card's upper-left,
+                    reaching up through the gap above to the dispatcher (or an
+                    earlier sibling) directly above it, then curving right into
+                    this card's own left edge. */}
+                    <Box
+                      aria-hidden
+                      sx={{
+                        position: 'absolute',
+                        left: `${connectorLeftOffset(1)}px`,
+                        top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+                        height: `calc(50% + ${10 + CONNECTOR_GAP_OVERLAP}px)`,
+                        width: CHILD_INDENT - 4 + CONNECTOR_BORDER_OVERLAP,
+                        borderLeft: 2,
+                        borderBottom: 2,
+                        borderColor: 'divider',
+                        borderBottomLeftRadius: 6,
+                        pointerEvents: 'none',
+                      }}
+                    />
+                    {railBelow[depth - 1] ? (
+                      // A later sibling follows at this depth — continue the line
+                      // past this card's bottom edge into the next gap.
+                      <Box
+                        aria-hidden
+                        sx={{
+                          position: 'absolute',
+                          left: `${connectorLeftOffset(1)}px`,
+                          top: '47%',
+                          bottom: `${5}px`,
+                          borderLeft: 2,
+                          borderColor: 'divider',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    ) : null}
+                    {railBelow.slice(0, depth - 1).map((hasMoreBelow, ancestorDepth) =>
+                      hasMoreBelow ? (
+                        // Unbroken rail for a shallower ancestor that still has more
+                        // turns to come, so a grandchild's whole ancestor chain reads
+                        // as continuous lines, not just its immediate parent's.
+                        <Box
+                          key={ancestorDepth}
+                          aria-hidden
+                          sx={{
+                            position: 'absolute',
+                            left: `${connectorLeftOffset(depth - ancestorDepth)}px`,
+                            top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+                            bottom: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+                            borderLeft: 2,
+                            borderColor: 'divider',
+                            pointerEvents: 'none',
+                          }}
+                        />
+                      ) : null,
+                    )}
+                  </>
+                ) : null}
                 <Box
                   sx={{
                     display: 'flex',

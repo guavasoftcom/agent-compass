@@ -852,6 +852,129 @@ class SessionsQueryIntegrationTest {
     assertThat(lastReturnedTurn.tools()).containsExactly(new SessionPromptToolCount("Read", 1L));
   }
 
+  @Test
+  void promptsForSessionResolvesADispatchingTraceForANotificationTurn() {
+    Instant dispatchTurnStart = Instant.now().minus(40, ChronoUnit.MINUTES);
+    Instant notificationTurnStart = dispatchTurnStart.plusSeconds(600);
+    String toolUseId = "toolu_dispatch_01";
+
+    // An earlier turn dispatches a background task (its trace is TRACE_TURN_ZERO); the
+    // notification turn's prompt is the envelope quoting that dispatch's tool-use-id back.
+    saveUserPrompt("N1", "Run the full verify suite in the background", dispatchTurnStart, TRACE_TURN_ZERO);
+    saveDispatchingToolResult("N1", TRACE_TURN_ZERO, toolUseId, dispatchTurnStart.plusSeconds(5));
+    saveNotificationPrompt("N1", notificationTurnStart, TRACE_TURN_ONE, toolUseId, "completed");
+
+    List<SessionPrompt> prompts = logService.promptsForSession("N1");
+
+    assertThat(prompts).hasSize(2);
+    assertThat(prompts.get(0).dispatchingTraceId()).isNull();
+    assertThat(prompts.get(1).dispatchingTraceId()).isEqualTo(TRACE_TURN_ZERO);
+  }
+
+  @Test
+  void promptsForSessionLeavesDispatchingTraceNullWhenTheEnvelopeCarriesNoToolUseId() {
+    Instant notificationTurnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
+    saveUserPrompt("N2", taskNotification(null, "completed"), notificationTurnStart, TRACE_TURN_ONE);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("N2");
+
+    assertThat(prompts).hasSize(1);
+    assertThat(prompts.get(0).dispatchingTraceId()).isNull();
+  }
+
+  @Test
+  void promptsForSessionLeavesDispatchingTraceNullWhenTheDispatcherWasPurged() {
+    Instant notificationTurnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
+    saveNotificationPrompt("N3", notificationTurnStart, TRACE_TURN_ONE, "toolu_purged", "completed");
+
+    List<SessionPrompt> prompts = logService.promptsForSession("N3");
+
+    assertThat(prompts).hasSize(1);
+    assertThat(prompts.get(0).dispatchingTraceId()).isNull();
+  }
+
+  @Test
+  void promptsForSessionLeavesDispatchingTraceNullForAnOrdinaryPrompt() {
+    Instant turnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
+    saveUserPrompt("N4", "Refactor the widget", turnStart, TRACE_TURN_ZERO);
+
+    List<SessionPrompt> prompts = logService.promptsForSession("N4");
+
+    assertThat(prompts).hasSize(1);
+    assertThat(prompts.get(0).dispatchingTraceId()).isNull();
+  }
+
+  @Test
+  void promptsForSessionResolvesTwoNotificationTurnsThroughOneBulkQuery() {
+    Instant dispatchTurnStart = Instant.now().minus(50, ChronoUnit.MINUTES);
+    Instant firstNotificationStart = dispatchTurnStart.plusSeconds(600);
+    Instant secondDispatchTurnStart = dispatchTurnStart.plusSeconds(650);
+    Instant secondNotificationStart = dispatchTurnStart.plusSeconds(1200);
+    String firstToolUseId = "toolu_dispatch_a";
+    String secondToolUseId = "toolu_dispatch_b";
+    String secondDispatchTraceId = "3333000000000000333300000000000c";
+    String secondNotificationTraceId = "4444000000000000444400000000000d";
+
+    saveUserPrompt("N5", "Run suite A in the background", dispatchTurnStart, TRACE_TURN_ZERO);
+    saveDispatchingToolResult("N5", TRACE_TURN_ZERO, firstToolUseId, dispatchTurnStart.plusSeconds(5));
+    saveNotificationPrompt("N5", firstNotificationStart, TRACE_TURN_ONE, firstToolUseId, "completed");
+    saveUserPrompt("N5", "Run suite B in the background", secondDispatchTurnStart, secondDispatchTraceId);
+    saveDispatchingToolResult("N5", secondDispatchTraceId, secondToolUseId, secondDispatchTurnStart.plusSeconds(5));
+    saveNotificationPrompt("N5", secondNotificationStart, secondNotificationTraceId, secondToolUseId, "completed");
+
+    List<SessionPrompt> prompts = logService.promptsForSession("N5");
+
+    assertThat(prompts).hasSize(4);
+    assertThat(prompts.get(1).dispatchingTraceId()).isEqualTo(TRACE_TURN_ZERO);
+    assertThat(prompts.get(3).dispatchingTraceId()).isEqualTo(secondDispatchTraceId);
+  }
+
+  @Test
+  void promptsForSessionDropsADispatchingTraceThatEqualsTheRowsOwnTrace() {
+    Instant turnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
+    String toolUseId = "toolu_self_reference";
+
+    // The notification turn's own trace IS the trace the dispatching call resolves to -- a
+    // self-reference, which must be dropped rather than shown as though another turn dispatched
+    // this one.
+    saveDispatchingToolResult("N6", TRACE_TURN_ZERO, toolUseId, turnStart.minusSeconds(5));
+    saveNotificationPrompt("N6", turnStart, TRACE_TURN_ZERO, toolUseId, "completed");
+
+    List<SessionPrompt> prompts = logService.promptsForSession("N6");
+
+    assertThat(prompts).hasSize(1);
+    assertThat(prompts.get(0).dispatchingTraceId()).isNull();
+  }
+
+  /** The envelope the harness delivers when a background task finishes and wakes the session. */
+  private static String taskNotification(String toolUseId, String status) {
+    String toolUseIdTag = toolUseId == null ? "" : "<tool-use-id>" + toolUseId + "</tool-use-id>\n";
+    return "<task-notification>\n<task-id>b2w59xac5</task-id>\n" + toolUseIdTag
+        + "<status>" + status + "</status>\n"
+        + "<summary>Background command \"Run full backend verify\" completed</summary>\n</task-notification>";
+  }
+
+  private void saveNotificationPrompt(
+      String sessionId, Instant timestamp, String traceId, String toolUseId, String status) {
+    saveUserPrompt(sessionId, taskNotification(toolUseId, status), timestamp, traceId);
+  }
+
+  // A tool_result row carrying the tool_use_id the notification's envelope quotes back --
+  // the call that launched the background task.
+  private void saveDispatchingToolResult(String sessionId, String traceId, String toolUseId, Instant timestamp) {
+    LogRecordEntity entity = new LogRecordEntity();
+    entity.setTimestamp(timestamp);
+    entity.setObservedTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setTraceId(traceId);
+    entity.setAttributes(Map.of(
+        "event.name", TOOL_EVENT_NAME,
+        "session.id", sessionId,
+        TOOL_ATTRIBUTE, "Bash",
+        "tool_use_id", toolUseId));
+    logRecordRepository.save(entity);
+  }
+
   private void saveToolResult(String sessionId, String toolName, Instant timestamp) {
     saveToolResult(sessionId, toolName, null, timestamp);
   }

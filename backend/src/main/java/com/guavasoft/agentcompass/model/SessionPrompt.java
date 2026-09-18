@@ -99,7 +99,15 @@ public record SessionPrompt(
                 + "backgroundCostUsd. The tools list above already includes these calls (it too is the "
                 + "turn's trace total); this is the subset that ran as background/detached work. Empty "
                 + "(never null) when none.")
-        List<SessionPromptToolCount> backgroundTools) {
+        List<SessionPromptToolCount> backgroundTools,
+
+        @Schema(description = "The trace id of the turn that dispatched this one, when this turn's prompt is a "
+                + "<task-notification> envelope reporting a background subagent's completion and the dispatching "
+                + "call still resolves to a trace. Null for an ordinary turn, an envelope carrying no tool-use-id, "
+                + "an id that resolves to nothing (the dispatching turn was purged), or a resolved id equal to "
+                + "this turn's own traceId (a self-reference, dropped rather than shown).",
+                example = "0102030405060708090a0b0c0d0e0f10", nullable = true)
+        String dispatchingTraceId) {
 
     /** Where a turn's per-turn rollups came from. */
     @Schema(name = "SessionPrompt.TurnAttribution")
@@ -116,6 +124,6 @@ public record SessionPrompt(
      */
     public SessionPrompt(Instant timestamp, String prompt, String traceId) {
         this(timestamp, prompt, traceId, null, null, null, List.of(), null, 0L, TurnAttribution.INTERVAL,
-                null, List.of());
+                null, List.of(), null);
     }
 }

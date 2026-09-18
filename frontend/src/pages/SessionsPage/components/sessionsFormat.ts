@@ -84,7 +84,7 @@ export const COST_WARM_THRESHOLD_USD = 8;
 export type CostTier = 'plain' | 'warm' | 'hot';
 
 export const costTier = (costUsd: number, hotThresholdUsd: number): CostTier => {
-  if (costUsd >= hotThresholdUsd) {
+  if (hotThresholdUsd > 0 && costUsd >= hotThresholdUsd) {
     return 'hot';
   }
   if (costUsd >= COST_WARM_THRESHOLD_USD) {

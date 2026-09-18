@@ -387,6 +387,122 @@ class TimelineCitationsTest {
                 .isEmpty();
     }
 
+    // --- miscitedMetricViolations ---------------------------------------------------------------
+
+    /**
+     * The shape of trace 1975031e2963758c815c4b218f11adad's calls 51-52: a model call carrying the
+     * cost, and the Edit it decided rendered on the very next line carrying none. Call 53 is the
+     * other case that has to survive -- an Agent dispatch, a TOOL call whose line legitimately
+     * carries a cost -- and call 54 quotes a shell fragment whose "$2" must not read as one.
+     */
+    private static final String COST_TIMELINE = """
+            51. - llm_request model=claude-sonnet-5 effort=medium duration=15.7s output_tokens=1473 cost=$0.0658
+            52. Edit {"file_path":"/repo/frontend/src/components/DonutCard/DonutCard.tsx"} -> ok (12ms)
+            53. Agent {"subagent_type":"Explore"} -> ok (42.1s)   [ran Explore: 12 model calls, 30 tool calls, $4.1200]
+            54. Bash {"command":"awk '{print $2}' totals.txt"} -> ok (18ms)
+            """;
+
+    private static java.util.List<String> costViolations(String fault) {
+        return TimelineCitations.miscitedMetricViolations(
+                fault,
+                TimelineCitations.callKindsIn(COST_TIMELINE),
+                TimelineCitations.callsWithRenderedCostIn(COST_TIMELINE));
+    }
+
+    /** Only the model call and the dispatch carry a figure; the Edit and the Bash do not. */
+    @Test
+    void onlyTheLinesThatRenderADollarFigureAreRecordedAsCarryingACost() {
+        assertThat(TimelineCitations.callsWithRenderedCostIn(COST_TIMELINE)).containsExactly(51, 53);
+    }
+
+    /** The real bullet, verbatim: the 15.7s and $0.0658 are call 51's, and call 52 ran in 11ms. */
+    @Test
+    void aCostChargedToAToolCallIsFlagged() {
+        String fault = "Call 52 (Edit) had a duration of 15.7s and cost $0.0658, which is higher than "
+                + "typical for an edit operation.";
+
+        assertThat(costViolations(fault))
+                .singleElement(STRING)
+                .contains("charges $0.0658 to call 52")
+                .contains("call 52 is a tool call (Edit), which carries no cost");
+    }
+
+    /**
+     * Why this check had to be written rather than the existing two widened: all three are silent on
+     * the sentence above, each for its own correct reason -- it names the right kind, quotes no file,
+     * and claims no sameness.
+     */
+    @Test
+    void theExistingChecksAreSilentOnAMisattributedCost() {
+        String fault = "Call 52 (Edit) had a duration of 15.7s and cost $0.0658, which is higher than "
+                + "typical for an edit operation.";
+
+        assertThat(TimelineCitations.miscitedKindViolations(
+                fault, TimelineCitations.callKindsIn(COST_TIMELINE), true))
+                .as("the sentence calls 52 an Edit, and it is one")
+                .isEmpty();
+        assertThat(TimelineCitations.miscitedFileViolations(fault, TimelineCitations.callTargetsIn(COST_TIMELINE)))
+                .as("no backticked file token to compare against")
+                .isEmpty();
+        assertThat(TimelineCitations.unsupportedSamenessViolations(
+                fault, TimelineCitations.samenessIn(COST_TIMELINE)))
+                .as("no sameness claimed")
+                .isEmpty();
+    }
+
+    @Test
+    void aCostChargedToTheModelCallThatActuallyCarriedItIsNotFlagged() {
+        assertThat(costViolations("Call 51 cost $0.0658, the most of any call in this trace."))
+                .isEmpty();
+    }
+
+    /**
+     * The shape of trace 569e6beda9578c7a6d53ee06fe8249de ("Subagent general-purpose (call 15) used
+     * model claude-sonnet-5 with a high cost of $0.5799") -- a correct finding naming a dispatch as a
+     * plain citation rather than with the "dispatched at" wording that is skipped elsewhere. The
+     * rounding is deliberate: the line renders $4.1200 and the review writes $4.12, which is why
+     * callsWithRenderedCostIn records presence and never compares values.
+     */
+    @Test
+    void aDispatchsOwnCostIsNotFlaggedWhenTheAgentCallIsCitedDirectly() {
+        assertThat(costViolations("Subagent Explore (call 53) ran up a high cost of $4.12."))
+                .isEmpty();
+    }
+
+    /**
+     * Trace 9ab1feeebdd15a449bbc4c9983dcb79d's real bullet shape: a per-call cost stated against the
+     * trace total. Two figures in one sentence is ambiguity, and ambiguity is left unscored.
+     */
+    @Test
+    void aSentenceCarryingTwoCostFiguresIsNotScored() {
+        String fault = "Call 52 cost $0.0658, 25.1% of the $0.7056 this trace's 11 model calls account for.";
+
+        assertThat(costViolations(fault)).isEmpty();
+    }
+
+    /**
+     * Trace 1635329e1e7db7f934b007d90aba7d61's review quotes a shell command containing "$f"; the
+     * same shape with a positional parameter would read as a $2 cost without COST_FIGURE's required
+     * decimal point.
+     */
+    @Test
+    void aShellParameterInAQuotedCommandIsNotReadAsACost() {
+        assertThat(costViolations("Call 54 ran `awk '{print $2}'` where a dedicated tool exists."))
+                .isEmpty();
+    }
+
+    @Test
+    void aCostChargedToACallOutsideTheTimelineIsNotScored() {
+        assertThat(costViolations("Call 99 cost $0.0658.")).isEmpty();
+    }
+
+    @Test
+    void anEmptyCallKindMapScoresNoCostViolations() {
+        assertThat(TimelineCitations.miscitedMetricViolations(
+                "Call 52 cost $0.0658.", java.util.Map.of(), java.util.Set.of()))
+                .isEmpty();
+    }
+
     /**
      * The exact sentence {@code TraceAnalysisService#ensureFailedToolCallsReported} composes for an
      * uncited failure inside a subagent, and the false positive it produced for five straight harness

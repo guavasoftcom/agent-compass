@@ -23,9 +23,33 @@ interface Props {
   row: SwitchTraceRow;
   isCurrent: boolean;
   onSelect: () => void;
+  /** How many ancestor dispatchers sit above this row (0 = top-level). */
+  depth: number;
+  /**
+   * For each ancestor depth, whether that ancestor still has a later sibling
+   * to come after this row — the cue for whether the connector at that depth
+   * draws a continuing vertical line below the elbow, or stops there. Length
+   * equals `depth`; this row's own "am I the last child" is
+   * `!railBelow[depth - 1]`.
+   */
+  railBelow: boolean[];
 }
 
 export const GRID_COLUMNS = '58px 1fr 64px 76px 72px';
+
+// Pixel equivalent of the row's base horizontal padding (theme spacing unit
+// is 8px, so `px: 2.5` === 20px) — the left edge every depth-0 row already
+// renders at, and the base every deeper row's extra indent is added onto.
+const BASE_INDENT_PX = 20;
+// Per-depth indent step and the elbow/rail connector's own geometry. Kept as
+// named constants rather than inlined so the elbow's `left` offset (anchored
+// to the PARENT's indent band, one depth shallower than the row it belongs
+// to) and the indent itself can't drift apart.
+const INDENT_STEP_PX = 18;
+const CONNECTOR_WIDTH_PX = 9;
+const CONNECTOR_LEFT_OFFSET_PX = 4;
+
+const indentPxForDepth = (depth: number): number => BASE_INDENT_PX + depth * INDENT_STEP_PX;
 
 // Character budget before an ordinary prompt clamps in this row. The full
 // text is still reachable via the row's `title` tooltip — this modal lists
@@ -41,19 +65,26 @@ const clampPrompt = (prompt: string): string =>
 const tokenTotalOf = (tokens: SwitchTraceRow['tokens']): number | null =>
   tokens ? tokens.input + tokens.output + tokens.cacheCreation + tokens.cacheRead : null;
 
-// One row: time / prompt / cost / tokens / current flag.
-const SwitchTraceModalRow = ({ row, isCurrent, onSelect }: Props) => {
+// One row: time / prompt / cost / tokens / current flag. When nested under a
+// background-dispatching turn (depth > 0), also renders an elbow/rail
+// connector back to its ancestor(s) — see the connector-vs-selection-accent
+// gotcha in this page's CLAUDE.md: the connector paints as separate,
+// absolutely-positioned Box elements IN FRONT OF the current row's own inset
+// box-shadow selection accent, never folded into it.
+const SwitchTraceModalRow = ({ row, isCurrent, onSelect, depth, railBelow }: Props) => {
   const tokenTotal = tokenTotalOf(row.tokens ?? null);
 
   return (
     <Box
       onClick={isCurrent ? undefined : onSelect}
       sx={{
+        position: 'relative',
         display: 'grid',
         gridTemplateColumns: GRID_COLUMNS,
         alignItems: 'center',
         gap: 1.5,
-        px: 2.5,
+        pr: 2.5,
+        pl: `${indentPxForDepth(depth)}px`,
         py: 1.1,
         borderBottom: 1,
         borderColor: 'divider',
@@ -66,6 +97,57 @@ const SwitchTraceModalRow = ({ row, isCurrent, onSelect }: Props) => {
         '&:last-of-type': { borderBottom: 'none' },
       }}
     >
+      {/* Ancestor rail continuations: an unbroken vertical line for every
+          shallower ancestor (above the immediate parent) that still has a
+          later sibling to come, so a grandchild+ row shows unbroken lines
+          for all of its ancestors, not just its immediate parent. */}
+      {railBelow.slice(0, Math.max(depth - 1, 0)).map((hasMoreSiblings, ancestorDepth) =>
+        hasMoreSiblings ? (
+          <Box
+            key={ancestorDepth}
+            aria-hidden
+            sx={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: `${indentPxForDepth(ancestorDepth) + CONNECTOR_LEFT_OFFSET_PX}px`,
+              borderLeft: 1,
+              borderColor: 'divider',
+            }}
+          />
+        ) : null,
+      )}
+      {depth > 0 ? (
+        <>
+          <Box
+            aria-hidden
+            sx={{
+              position: 'absolute',
+              top: 0,
+              height: '50%',
+              left: `${indentPxForDepth(depth - 1) + CONNECTOR_LEFT_OFFSET_PX}px`,
+              width: `${CONNECTOR_WIDTH_PX}px`,
+              borderLeft: 1,
+              borderBottom: 1,
+              borderColor: 'divider',
+              borderBottomLeftRadius: '6px',
+            }}
+          />
+          {railBelow[depth - 1] ? (
+            <Box
+              aria-hidden
+              sx={{
+                position: 'absolute',
+                top: '50%',
+                bottom: 0,
+                left: `${indentPxForDepth(depth - 1) + CONNECTOR_LEFT_OFFSET_PX}px`,
+                borderLeft: 1,
+                borderColor: 'divider',
+              }}
+            />
+          ) : null}
+        </>
+      ) : null}
       <Box sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled' }}>
         {formatRelativeTime(row.timestamp)}
       </Box>

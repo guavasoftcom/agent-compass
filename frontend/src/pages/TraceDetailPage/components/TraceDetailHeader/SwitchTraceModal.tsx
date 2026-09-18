@@ -17,7 +17,8 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchSessionPrompts } from '../../../../api';
-import SwitchTraceModalView, { hasTraceAndPrompt } from './SwitchTraceModalView';
+import SwitchTraceModalView from './SwitchTraceModalView';
+import { hasTraceAndPrompt, nestSwitchTraceRows } from './switchTraceRows';
 
 interface Props {
   open: boolean;
@@ -43,7 +44,10 @@ const SwitchTraceModal = ({ open, onClose, sessionId, currentTraceId }: Props) =
     enabled: open,
   });
 
-  const rows = useMemo(() => (prompts ?? []).filter(hasTraceAndPrompt), [prompts]);
+  const rows = useMemo(
+    () => nestSwitchTraceRows((prompts ?? []).filter(hasTraceAndPrompt)),
+    [prompts],
+  );
 
   const onSelectTrace = (traceId: string) => {
     onClose();

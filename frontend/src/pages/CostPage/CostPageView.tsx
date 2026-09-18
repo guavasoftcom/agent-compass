@@ -24,6 +24,7 @@ import type {
   CostBreakdown,
   CostIdentifierShare,
   CostSessionShare,
+  IdentifierUsageRow,
   WindowSelection,
 } from '../../api';
 import type { WindowOption } from '../../lib/constants';
@@ -50,6 +51,11 @@ export interface CostPageViewProps {
   repositoryUrl: string | null;
   onRepositoryUrlChange: (repositoryUrl: string | null) => void;
   breakdown: CostBreakdown;
+  /** Backs the Skill mix donut's per-row calls/avg-cost-per-run tooltip — same
+   *  `/skill-usage` response the Skills & Subagents page renders as calls. */
+  skillUsage: IdentifierUsageRow[];
+  /** Backs the Subagent mix donut's per-row calls/avg-cost-per-run tooltip. */
+  subagentUsage: IdentifierUsageRow[];
   activeTab: CostPageTab;
   onActiveTabChange: (tab: CostPageTab) => void;
   /** Session whose cost detail dialog is open; null when it is closed. */
@@ -91,14 +97,36 @@ const COST_PER_1K_FORMATTER = new Intl.NumberFormat('en-US', {
 const costPer1kOrDash = (value: number): string =>
   (Number.isFinite(value) ? COST_PER_1K_FORMATTER.format(value) : '—');
 
-const toDonutSlices = (rows: CostIdentifierShare[]) =>
-  rows
+/** identifier → its usage row, for the calls/avg-cost-per-run caption below. */
+const usageByIdentifier = (rows: IdentifierUsageRow[]): Map<string, IdentifierUsageRow> =>
+  new Map(rows.map((row) => [row.tool, row]));
+
+/**
+ * "N calls · $X.XX avg/run", rendered as a light-weight caption under the
+ * slice's own legend label (`DonutCard`'s `detail` prop) — or undefined when
+ * the usage query carries no matching row (or reports zero calls) for this
+ * identifier, so `toDonutSlices` renders the row with no caption rather than
+ * a misleading "0 calls".
+ */
+const donutSliceDetail = (usage: IdentifierUsageRow | undefined): string | undefined => {
+  if (!usage || usage.calls <= 0) {
+    return undefined;
+  }
+  const callWord = usage.calls === 1 ? 'call' : 'calls';
+  return `${usage.calls.toLocaleString()} ${callWord} · ${usdOrDash(usage.costUsd / usage.calls)} avg/run`;
+};
+
+const toDonutSlices = (rows: CostIdentifierShare[], usageRows: IdentifierUsageRow[]) => {
+  const usageByRow = usageByIdentifier(usageRows);
+  return rows
     .filter((row) => row.costUsd > 0)
     .map((row, index) => ({
       label: row.identifier,
       value: row.costUsd,
       color: colorForIndex(index),
+      detail: donutSliceDetail(usageByRow.get(row.identifier)),
     }));
+};
 
 const CostPageView = ({
   selection,
@@ -107,6 +135,8 @@ const CostPageView = ({
   repositoryUrl,
   onRepositoryUrlChange,
   breakdown,
+  skillUsage,
+  subagentUsage,
   activeTab,
   onActiveTabChange,
   selectedSession,
@@ -261,7 +291,7 @@ const CostPageView = ({
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
             <DonutCard
               title="Skill mix"
-              slices={toDonutSlices(skillRows)}
+              slices={toDonutSlices(skillRows, skillUsage)}
               ranked
               centerValue={usdOrDash(skillTotal)}
               centerLabel="skill spend"
@@ -272,7 +302,7 @@ const CostPageView = ({
             />
             <DonutCard
               title="Subagent mix"
-              slices={toDonutSlices(subagentRows)}
+              slices={toDonutSlices(subagentRows, subagentUsage)}
               ranked
               centerValue={usdOrDash(subagentTotal)}
               centerLabel="subagent spend"

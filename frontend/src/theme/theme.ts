@@ -57,6 +57,33 @@ export const colorForIndex = (index: number): string => {
   return CHART_PALETTE[index % CHART_PALETTE.length];
 };
 
+// Dedicated palette for TraceDetailPage's subagent-dispatch coloring (agentDispatch.ts) — kept
+// disjoint from the hues the waterfall toolbar's six fixed legend keys already render, so an
+// agent-dispatch swatch never reads as the same color as an unrelated badge family:
+// error (theme.palette.error.main, red), tokens (tokenFigureColor, pink), cache
+// (theme.palette.text.disabled, gray), cost (theme.palette.warning.main, amber/orange), model
+// (theme.palette.primary.main, violet — CHART_PALETTE[0] exactly), tool (theme.palette.info.main,
+// blue). CHART_PALETTE leads with violet/pink for that reason and must not be reused here.
+//
+// Only four of the remaining aurora hues are actually distinguishable from each other:
+// `cyan` (#1aa7dd) sits right next to `teal` (#3aa6bd), and `green` (#22b08a) sits right next to
+// `greenDeep` (#1f9d6b) — two near-duplicate pairs. A prior revision of this palette picked both
+// `greenDeep` AND `green`, so with 4+ dispatched agent types the cycle wrapped dispatch #4 back
+// onto a green indistinguishable from dispatch #1's. Pick exactly one hue from each
+// near-duplicate pair (`greenDeep` over `green` — colors.ts tags it as "subagent-trace hue";
+// `teal` over `cyan`) plus `gold`, which no other pair collides with, giving four hues that are
+// each clearly separated on the color wheel.
+const AGENT_DISPATCH_PALETTE = [
+  auroraColors.greenDeep,
+  auroraColors.gold,
+  auroraColors.teal,
+  auroraColors.purple,
+];
+
+export const colorForAgentDispatchIndex = (index: number): string => {
+  return AGENT_DISPATCH_PALETTE[index % AGENT_DISPATCH_PALETTE.length];
+};
+
 // Corner-radius scale in MUI shape units (×12px base, see `shape.borderRadius` below).
 // Every `sx` borderRadius snaps to one of these so cards, controls, chips, and bars
 // share a consistent rounding rhythm. `lg` (18px) matches the MuiPaper.outlined card.

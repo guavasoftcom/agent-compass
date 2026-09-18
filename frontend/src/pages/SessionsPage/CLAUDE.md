@@ -94,7 +94,17 @@ SessionsPage/
         │                          to the cost figure) and a second, muted ToolChips row — both gated
         │                          on turn.backgroundCostUsd/.backgroundTools being non-empty — for
         │                          spend/tool calls a turn's trace picked up after its own root span
-        │                          closed (see the background-split gotcha below).
+        │                          closed (see the background-split gotcha below). Turns are run
+        │                          through promptTimelineRows.ts before rendering — see the
+        │                          nesting gotcha below
+        ├── promptTimelineRows.ts   nestPromptRows + windowBoundariesByOriginalIndex — pure, no
+        │                          React, colocated (this panel is the only consumer), same idiom
+        │                          as TraceDetailPage's switchTraceRows.ts
+        ├── promptTimelineRows.test.ts  vitest coverage: fast path, reordered child, two children
+        │                          kept chronological with railBelow, a chained depth-2
+        │                          grandchild, absent/self-referencing/out-of-order dispatcher all
+        │                          staying top-level, earliest-of-shared-trace-id resolution, and a
+        │                          null-traceId row never acting as a nesting parent
         └── index.ts
 ```
 
@@ -489,6 +499,52 @@ trace link for those rows, not a disabled placeholder.
   an empty muted row). Not a rare case worth ignoring: measured on the live database, 4.1% of
   traces in a 14-day window have request activity after their own root span closes, and those
   traces account for 22.6% of all spend in that window.
+- **A background-dispatched subagent's own turn nests directly beneath the turn that dispatched
+  it, mirroring the Trace Detail page's Switch-trace modal.** `PromptTimelinePanel` runs `prompts`
+  through `nestPromptRows` (`promptTimelineRows.ts`, this folder) before rendering — the same
+  algorithm as `TraceDetailPage/.../switchTraceRows.ts#nestSwitchTraceRows` (reorder so a child
+  sits directly under its dispatcher, chronological order wins on conflict, recursive to any
+  depth, resolves a shared trace id to its earliest row, every edge case — absent dispatcher,
+  self-reference, dispatcher appearing after its child — stays top-level rather than dropped or
+  thrown), adapted for this panel's full, unfiltered turn list: unlike `SwitchTraceRow`, a turn
+  here can have a null `traceId` (pre-tracing sessions) or a null `prompt` (capture disabled), and
+  a null-`traceId` row is simply never eligible as a nesting parent. **Unlike the Switch-trace
+  modal's table rows, indentation here shifts the whole card**, not just its content: a nested
+  child gets `ml: depth * CHILD_INDENT` (18px per level) on top of its ordinary `px: 1.75`, so the
+  bubble's own border and background move right — the modal's row indents by widening `pl`
+  instead, because a table row's border spans the full row width regardless of padding, while a
+  card's border box would otherwise sit flush with its dispatcher's and only its text would look
+  nested. A top-level turn (`depth: 0`, `ml: 0`) renders pixel-identical to before, including its
+  rail dot. A nested child (`depth > 0`) instead suppresses its own rail dot (`&::before`) — it
+  isn't part of the main rail's flow — and renders an elbow connector plus, per `railBelow[d]`, a
+  continuation line for each ancestor depth that still has more turns coming, as `aria-hidden`
+  absolutely-positioned `Box` children drawn in the negative-`left` margin band the card's own
+  shift opens up to its upper-left, reaching up through the `gap: 1.25` between cards into the row
+  above (`connectorLeftOffset(k)`, `k` = how many depth levels back the line reaches — 1 for the
+  immediate dispatcher/sibling, more for a shallower ancestor's unbroken rail on a grandchild row).
+  **A tree/single-continuous-border variant of this connector was tried and reverted** (each
+  dispatcher's children wrapped in one bordered `Box` instead of per-row fragments, which would
+  have sidestepped the fragment-alignment tuning below entirely) — reverted because the plain
+  vertical-rule-plus-indent look it produced wasn't the one wanted; the per-row elbow stayed, with
+  `CONNECTOR_GAP_OVERLAP` tuned instead. Don't rebuild the tree/wrapper version without checking
+  why it was backed out first. **Every connector segment deliberately overlaps the neighboring
+  card it bridges to, rather than stopping exactly flush with it** — `CONNECTOR_GAP_OVERLAP`
+  (vertically, into the `gap: 1.25` between cards) and `CONNECTOR_BORDER_OVERLAP` (horizontally,
+  into the child card's own border). An exact 0px touch reads as a visible sliver of dead space
+  rather than a joined line, so each segment reaches a few pixels past the edge it's aiming for
+  instead — tune `CONNECTOR_GAP_OVERLAP` first if the vertical line still looks disconnected on a
+  tall card, since card height varies with content and a value tuned against one card's height can
+  look different on another. **Window-boundary dividers ("selected window starts/ends") only
+  compare adjacent TOP-LEVEL turns** — a nested child was moved out of its natural chronological
+  slot, so it's no longer a meaningful place to mark a crossing; it still gets the dimming
+  (`opacity`), just no divider. That lookup is `windowBoundariesByOriginalIndex` (same file), a
+  pure function returning a `Map<originalIndex, label>` rather than a `let` reassigned across the
+  render loop's `.map` — the React Compiler's immutability lint rule rejects mutating a closure
+  variable inside a JSX-producing `.map`, which is why this isn't computed inline the way the
+  pre-nesting code did. `originalIndex` (each nested row's position in the still-chronological
+  `prompts` array) is also what backs the `Fragment` key now that render order and array order
+  diverge — the old `${turn.timestamp}-${index}` key used the render-order index, which would have
+  collided/shifted across reorders.
 - **A non-null turn prompt goes through `components/PromptSummaryText` first, before the
   `AttributeList` machinery below ever sees it.** A prompt that's really a `<task-notification>`
   envelope (the harness delivered it when a background subagent finished — see

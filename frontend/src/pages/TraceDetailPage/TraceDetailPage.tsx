@@ -23,6 +23,7 @@ import { NANOS_PER_MILLI } from '../TracesPage/tracesApi';
 import { isToolCallSpan } from '../TracesPage/traceDerivations';
 import { fetchOllamaSettings } from '../SettingsPage/settingsApi';
 import { fetchTraceAnalysis } from './traceAnalysisApi';
+import { buildAgentDispatchColoring } from './agentDispatch';
 import {
   buildSpanDepths,
   buildSpanIndices,
@@ -111,6 +112,11 @@ export default function TraceDetailPage() {
     }
     return computeTraceWindow(spans);
   }, [spans]);
+
+  const agentDispatchColoring = useMemo(
+    () => buildAgentDispatchColoring(tree, spans ?? []),
+    [tree, spans],
+  );
 
   const collapsibleToolSpanIds = useMemo(
     () =>
@@ -219,6 +225,9 @@ export default function TraceDetailPage() {
       depthBySpanId={depthBySpanId}
       traceWindow={traceWindow}
       collapsibleToolSpanIds={collapsibleToolSpanIds}
+      agentColorBySpanId={agentDispatchColoring.colorBySpanId}
+      agentLabelBySpanId={agentDispatchColoring.labelBySpanId}
+      agentLegend={agentDispatchColoring.legend}
       descendantErrorCounts={descendantErrorCounts}
       selfTimeNanosBySpanId={selfTimeNanosBySpanId}
       logsBySpanId={logsBySpanId}
