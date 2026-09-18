@@ -98,8 +98,14 @@ SessionsPage/
         │                          through promptTimelineRows.ts before rendering — see the
         │                          nesting gotcha below
         ├── promptTimelineRows.ts   nestPromptRows + windowBoundariesByOriginalIndex — pure, no
-        │                          React, colocated (this panel is the only consumer), same idiom
-        │                          as TraceDetailPage's switchTraceRows.ts
+        │                          React, colocated (this panel is the only consumer).
+        │                          nestPromptRows is now a thin wrapper around the shared
+        │                          lib/nestDispatchedRows.ts core (see that module's own doc
+        │                          comment) — it used to duplicate TraceDetailPage's
+        │                          nestSwitchTraceRows algorithm outright; the two now both call
+        │                          the same core, mapping their own row shape in/out (this file
+        │                          still owns windowBoundariesByOriginalIndex, which has no
+        │                          TraceDetailPage analog)
         ├── promptTimelineRows.test.ts  vitest coverage: fast path, reordered child, two children
         │                          kept chronological with railBelow, a chained depth-2
         │                          grandchild, absent/self-referencing/out-of-order dispatcher all
@@ -501,28 +507,36 @@ trace link for those rows, not a disabled placeholder.
   traces account for 22.6% of all spend in that window.
 - **A background-dispatched subagent's own turn nests directly beneath the turn that dispatched
   it, mirroring the Trace Detail page's Switch-trace modal.** `PromptTimelinePanel` runs `prompts`
-  through `nestPromptRows` (`promptTimelineRows.ts`, this folder) before rendering — the same
-  algorithm as `TraceDetailPage/.../switchTraceRows.ts#nestSwitchTraceRows` (reorder so a child
-  sits directly under its dispatcher, chronological order wins on conflict, recursive to any
-  depth, resolves a shared trace id to its earliest row, every edge case — absent dispatcher,
-  self-reference, dispatcher appearing after its child — stays top-level rather than dropped or
-  thrown), adapted for this panel's full, unfiltered turn list: unlike `SwitchTraceRow`, a turn
-  here can have a null `traceId` (pre-tracing sessions) or a null `prompt` (capture disabled), and
-  a null-`traceId` row is simply never eligible as a nesting parent. **Unlike the Switch-trace
-  modal's table rows, indentation here shifts the whole card**, not just its content: a nested
-  child gets `ml: depth * CHILD_INDENT` (18px per level) on top of its ordinary `px: 1.75`, so the
-  bubble's own border and background move right — the modal's row indents by widening `pl`
-  instead, because a table row's border spans the full row width regardless of padding, while a
-  card's border box would otherwise sit flush with its dispatcher's and only its text would look
-  nested. A top-level turn (`depth: 0`, `ml: 0`) renders pixel-identical to before, including its
-  rail dot. A nested child (`depth > 0`) instead suppresses its own rail dot (`&::before`) — it
-  isn't part of the main rail's flow — and renders an elbow connector plus, per `railBelow[d]`, a
-  continuation line for each ancestor depth that still has more turns coming, as `aria-hidden`
+  through `nestPromptRows` (`promptTimelineRows.ts`, this folder, memoized on `[prompts]` — see
+  the render-cost gotcha below) before rendering. `nestPromptRows` and
+  `TraceDetailPage/.../switchTraceRows.ts#nestSwitchTraceRows` used to be two hand-copies of the
+  identical reordering algorithm (reorder so a child sits directly under its dispatcher,
+  chronological order wins on conflict, recursive to any depth, resolves a shared trace id to its
+  earliest row, every edge case — absent dispatcher, self-reference, dispatcher appearing after
+  its child — stays top-level rather than dropped or thrown); both are now thin wrappers around
+  the shared core, `lib/nestDispatchedRows.ts#nestDispatchedRows` (see that module's own doc
+  comment for the full contract) — this file's wrapper is what adapts the core to this panel's
+  full, unfiltered turn list: unlike `SwitchTraceRow`, a turn here can have a null `traceId`
+  (pre-tracing sessions) or a null `prompt` (capture disabled), and a null-`traceId` row is simply
+  never eligible as a nesting parent (the shared core's own accessor functions express this, not a
+  post-hoc filter). **Unlike the Switch-trace modal's table rows, indentation here shifts the
+  whole card**, not just its content: a nested child gets `ml: depth * CHILD_INDENT` (18px per
+  level) on top of its ordinary `px: 1.75`, so the bubble's own border and background move right —
+  the modal's row indents by widening `pl` instead, because a table row's border spans the full
+  row width regardless of padding, while a card's border box would otherwise sit flush with its
+  dispatcher's and only its text would look nested. A top-level turn (`depth: 0`, `ml: 0`) renders
+  pixel-identical to before, including its rail dot. A nested child (`depth > 0`) instead
+  suppresses its own rail dot (`&::before`) — it isn't part of the main rail's flow — and renders
+  the shared `components/NestingConnector` (an elbow plus, per `railBelow[d]`, a continuation line
+  for each ancestor depth that still has more turns coming) as `aria-hidden`
   absolutely-positioned `Box` children drawn in the negative-`left` margin band the card's own
   shift opens up to its upper-left, reaching up through the `gap: 1.25` between cards into the row
-  above (`connectorLeftOffset(k)`, `k` = how many depth levels back the line reaches — 1 for the
-  immediate dispatcher/sibling, more for a shallower ancestor's unbroken rail on a grandchild row).
-  **A tree/single-continuous-border variant of this connector was tried and reverted** (each
+  above. `PROMPT_TIMELINE_CONNECTOR_GEOMETRY` (this file) is what tells that shared component
+  `indentAppliedViaMargin: true` — the connector still has to compensate for this panel's own
+  margin-based indent internally, since `NestingConnector` draws in each caller's own local
+  coordinate space (see that component's doc comment for the position formula) — while the modal's
+  own geometry (`SwitchTraceModalRow.tsx`) passes `false` for its padding-based one. **A
+  tree/single-continuous-border variant of this connector was tried and reverted** (each
   dispatcher's children wrapped in one bordered `Box` instead of per-row fragments, which would
   have sidestepped the fragment-alignment tuning below entirely) — reverted because the plain
   vertical-rule-plus-indent look it produced wasn't the one wanted; the per-row elbow stayed, with
@@ -530,7 +544,11 @@ trace link for those rows, not a disabled placeholder.
   why it was backed out first. **Every connector segment deliberately overlaps the neighboring
   card it bridges to, rather than stopping exactly flush with it** — `CONNECTOR_GAP_OVERLAP`
   (vertically, into the `gap: 1.25` between cards) and `CONNECTOR_BORDER_OVERLAP` (horizontally,
-  into the child card's own border). An exact 0px touch reads as a visible sliver of dead space
+  into the child card's own border), both folded into the `elbow`/`immediateRail`/`ancestorRail`
+  geometry this file passes to `NestingConnector` rather than owned by the shared component
+  itself — see that component's own doc comment for why the visual tuning (border weight, corner
+  radius, how far a segment reaches into the gap between rows) stays per-caller config while the
+  connector-drawing JSX is shared. An exact 0px touch reads as a visible sliver of dead space
   rather than a joined line, so each segment reaches a few pixels past the edge it's aiming for
   instead — tune `CONNECTOR_GAP_OVERLAP` first if the vertical line still looks disconnected on a
   tall card, since card height varies with content and a value tuned against one card's height can
@@ -545,6 +563,15 @@ trace link for those rows, not a disabled placeholder.
   `prompts` array) is also what backs the `Fragment` key now that render order and array order
   diverge — the old `${turn.timestamp}-${index}` key used the render-order index, which would have
   collided/shifted across reorders.
+- **`nestPromptRows`/`windowBoundariesByOriginalIndex` are memoized, computed above the
+  loading/error/empty-state early returns.** `PromptTimelinePanel` wraps both calls in `useMemo`
+  (`nestedRows` on `[prompts]`, `boundaryByOriginalIndex` on `[nestedRows, windowStartMs,
+  windowEndMs]`) rather than recomputing the full re-nesting pass inline in the render body on
+  every render — this component owns its own `expandedValue` dialog state, so opening/closing the
+  "View more" dialog used to re-run `nestPromptRows` over the whole turn list for no reason. Both
+  hooks sit above the `if (loading)` / `if (error)` / `if (!prompts.length)` early returns (guarded
+  internally with `prompts ?? []`) so they still run unconditionally on every render, satisfying
+  the rules of hooks — don't move them back below those checks.
 - **A non-null turn prompt goes through `components/PromptSummaryText` first, before the
   `AttributeList` machinery below ever sees it.** A prompt that's really a `<task-notification>`
   envelope (the harness delivered it when a background subagent finished — see

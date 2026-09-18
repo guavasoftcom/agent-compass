@@ -13,7 +13,7 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { Fragment, useState, type ReactElement } from 'react';
+import { Fragment, useMemo, useState, type ReactElement } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
@@ -32,6 +32,9 @@ import {
 } from '../../../../components/AttributeList/AttributeValue';
 import { ExpandedValueDialog } from '../../../../components/AttributeList/ExpandedValueDialog';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
+import NestingConnector, {
+  type NestingConnectorGeometry,
+} from '../../../../components/NestingConnector';
 import {
   auroraColors,
   gradients,
@@ -54,13 +57,11 @@ const NUM_FORMATTER = new Intl.NumberFormat('en-US');
 // Pixels a nested turn card shifts right, per depth level, via `ml` — the
 // whole bubble (border/background included) moves, not just its content, so
 // a nested subagent turn reads as visually inset rather than merely
-// re-padded. `k` is how many depth levels back the connector reaches (1 for
-// the immediate dispatcher/sibling above, more for a shallower ancestor's
-// still-unbroken rail on a grandchild row) — the connector's `left` is always
-// negative, since it draws in the margin band a card's own indent opened up
-// to its left.
+// re-padded. Fed into PROMPT_TIMELINE_CONNECTOR_GEOMETRY below as
+// `indentStepPx`, with `indentAppliedViaMargin: true` telling the shared
+// NestingConnector to compensate for this same margin shift when it
+// computes each connector segment's position.
 const CHILD_INDENT = 18;
-const connectorLeftOffset = (k: number): number => -(k * CHILD_INDENT) + 4;
 // The elbow's horizontal (bottom-border) segment is widened by this many
 // extra pixels past the card's own left edge, so it visibly crosses into the
 // border rather than stopping just short of it — cheaper and more robust
@@ -72,6 +73,32 @@ const CONNECTOR_BORDER_OVERLAP = 0;
 // connector segment that bridges a gap reaches a few extra pixels PAST the
 // neighboring card's edge instead of stopping flush with it.
 const CONNECTOR_GAP_OVERLAP = 7;
+
+// Geometry config for the shared NestingConnector (components/NestingConnector)
+// — the elbow/rail drawing itself is shared with the Trace Detail page's
+// SwitchTraceModalRow; this object is what tells the shared component to
+// compensate for THIS panel's own margin-based indent (ml: depth *
+// CHILD_INDENT on the card, rather than SwitchTraceModalRow's `pl`) and
+// carries the card-specific visual tuning (gap overlap, border weight)
+// that connector's own doc comment explains is deliberately per-caller.
+const PROMPT_TIMELINE_CONNECTOR_GEOMETRY: NestingConnectorGeometry = {
+  indentStepPx: CHILD_INDENT,
+  indentAppliedViaMargin: true,
+  originOffsetPx: 4,
+  elbow: {
+    top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+    height: `calc(50% + ${10 + CONNECTOR_GAP_OVERLAP}px)`,
+    width: CHILD_INDENT - 4 + CONNECTOR_BORDER_OVERLAP,
+    borderWidth: 2,
+    borderRadius: 6,
+  },
+  immediateRail: { top: '47%', bottom: '5px', borderWidth: 2 },
+  ancestorRail: {
+    top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+    bottom: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
+    borderWidth: 2,
+  },
+};
 
 const formatPromptTimestamp = (value: string): string =>
   value
@@ -669,6 +696,21 @@ const PromptTimelinePanel = ({
     null,
   );
 
+  // A background-dispatched subagent's own turn nests directly beneath the
+  // turn that dispatched it (see promptTimelineRows.ts) — same reordering
+  // rule the Trace Detail page's Switch-trace modal already applies.
+  // Memoized (not recomputed inline in the render body) since a full
+  // re-nesting pass over every turn is otherwise redone on every render,
+  // including ones triggered by state this component owns that have nothing
+  // to do with `prompts` (e.g. `expandedValue`/dialog open-close). Computed
+  // above the loading/error/empty-state early returns below so the hook
+  // still runs unconditionally on every render.
+  const nestedRows = useMemo(() => nestPromptRows(prompts ?? []), [prompts]);
+  const boundaryByOriginalIndex = useMemo(
+    () => windowBoundariesByOriginalIndex(nestedRows, windowStartMs, windowEndMs),
+    [nestedRows, windowStartMs, windowEndMs],
+  );
+
   // No height cap and no scroll of its own: the panel fills its container (the
   // detail drawer's body), which owns the scrolling. Session identity lives in
   // the drawer header, so the panel header carries only the prompt count.
@@ -722,16 +764,6 @@ const PromptTimelinePanel = ({
       </Box>
     );
   }
-
-  // A background-dispatched subagent's own turn nests directly beneath the
-  // turn that dispatched it (see promptTimelineRows.ts) — same reordering
-  // rule the Trace Detail page's Switch-trace modal already applies.
-  const nestedRows = nestPromptRows(prompts);
-  const boundaryByOriginalIndex = windowBoundariesByOriginalIndex(
-    nestedRows,
-    windowStartMs,
-    windowEndMs,
-  );
 
   return (
     <Box sx={panelSx}>
@@ -881,65 +913,11 @@ const PromptTimelinePanel = ({
                   }),
                 }}
               >
-                {depth > 0 ? (
-                  <>
-                    {/* Elbow: sits in the margin band to this card's upper-left,
-                    reaching up through the gap above to the dispatcher (or an
-                    earlier sibling) directly above it, then curving right into
-                    this card's own left edge. */}
-                    <Box
-                      aria-hidden
-                      sx={{
-                        position: 'absolute',
-                        left: `${connectorLeftOffset(1)}px`,
-                        top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
-                        height: `calc(50% + ${10 + CONNECTOR_GAP_OVERLAP}px)`,
-                        width: CHILD_INDENT - 4 + CONNECTOR_BORDER_OVERLAP,
-                        borderLeft: 2,
-                        borderBottom: 2,
-                        borderColor: 'divider',
-                        borderBottomLeftRadius: 6,
-                        pointerEvents: 'none',
-                      }}
-                    />
-                    {railBelow[depth - 1] ? (
-                      // A later sibling follows at this depth — continue the line
-                      // past this card's bottom edge into the next gap.
-                      <Box
-                        aria-hidden
-                        sx={{
-                          position: 'absolute',
-                          left: `${connectorLeftOffset(1)}px`,
-                          top: '47%',
-                          bottom: `${5}px`,
-                          borderLeft: 2,
-                          borderColor: 'divider',
-                          pointerEvents: 'none',
-                        }}
-                      />
-                    ) : null}
-                    {railBelow.slice(0, depth - 1).map((hasMoreBelow, ancestorDepth) =>
-                      hasMoreBelow ? (
-                        // Unbroken rail for a shallower ancestor that still has more
-                        // turns to come, so a grandchild's whole ancestor chain reads
-                        // as continuous lines, not just its immediate parent's.
-                        <Box
-                          key={ancestorDepth}
-                          aria-hidden
-                          sx={{
-                            position: 'absolute',
-                            left: `${connectorLeftOffset(depth - ancestorDepth)}px`,
-                            top: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
-                            bottom: `${-10 - CONNECTOR_GAP_OVERLAP}px`,
-                            borderLeft: 2,
-                            borderColor: 'divider',
-                            pointerEvents: 'none',
-                          }}
-                        />
-                      ) : null,
-                    )}
-                  </>
-                ) : null}
+                <NestingConnector
+                  depth={depth}
+                  railBelow={railBelow}
+                  geometry={PROMPT_TIMELINE_CONNECTOR_GEOMETRY}
+                />
                 <Box
                   sx={{
                     display: 'flex',

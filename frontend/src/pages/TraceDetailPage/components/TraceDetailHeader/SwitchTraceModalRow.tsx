@@ -17,6 +17,9 @@ import { Box, alpha } from '@mui/material';
 import { formatRelativeTime } from '../../../../lib/format';
 import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
+import NestingConnector, {
+  type NestingConnectorGeometry,
+} from '../../../../components/NestingConnector';
 import type { SwitchTraceRow } from './SwitchTraceModalView';
 
 interface Props {
@@ -50,6 +53,25 @@ const CONNECTOR_WIDTH_PX = 9;
 const CONNECTOR_LEFT_OFFSET_PX = 4;
 
 const indentPxForDepth = (depth: number): number => BASE_INDENT_PX + depth * INDENT_STEP_PX;
+
+// Geometry config for the shared NestingConnector (components/NestingConnector)
+// — the elbow/rail drawing itself is shared with the Sessions page's
+// PromptTimelinePanel; `indentAppliedViaMargin: false` tells the shared
+// component this row indents via `pl` (BASE_INDENT_PX + depth *
+// INDENT_STEP_PX above) rather than shifting its own box with a margin, so
+// its own left edge always sits at the shared depth-0 origin regardless of
+// depth. `originOffsetPx` folds in both BASE_INDENT_PX and
+// CONNECTOR_LEFT_OFFSET_PX since `indentPxForDepth(ancestorDepth) +
+// CONNECTOR_LEFT_OFFSET_PX` was the previous inline formula for each
+// segment's `left`.
+const SWITCH_TRACE_CONNECTOR_GEOMETRY: NestingConnectorGeometry = {
+  indentStepPx: INDENT_STEP_PX,
+  indentAppliedViaMargin: false,
+  originOffsetPx: BASE_INDENT_PX + CONNECTOR_LEFT_OFFSET_PX,
+  elbow: { top: '0', height: '50%', width: CONNECTOR_WIDTH_PX, borderWidth: 1, borderRadius: 6 },
+  immediateRail: { top: '50%', bottom: '0', borderWidth: 1 },
+  ancestorRail: { top: '0', bottom: '0', borderWidth: 1 },
+};
 
 // Character budget before an ordinary prompt clamps in this row. The full
 // text is still reachable via the row's `title` tooltip — this modal lists
@@ -97,57 +119,7 @@ const SwitchTraceModalRow = ({ row, isCurrent, onSelect, depth, railBelow }: Pro
         '&:last-of-type': { borderBottom: 'none' },
       }}
     >
-      {/* Ancestor rail continuations: an unbroken vertical line for every
-          shallower ancestor (above the immediate parent) that still has a
-          later sibling to come, so a grandchild+ row shows unbroken lines
-          for all of its ancestors, not just its immediate parent. */}
-      {railBelow.slice(0, Math.max(depth - 1, 0)).map((hasMoreSiblings, ancestorDepth) =>
-        hasMoreSiblings ? (
-          <Box
-            key={ancestorDepth}
-            aria-hidden
-            sx={{
-              position: 'absolute',
-              top: 0,
-              bottom: 0,
-              left: `${indentPxForDepth(ancestorDepth) + CONNECTOR_LEFT_OFFSET_PX}px`,
-              borderLeft: 1,
-              borderColor: 'divider',
-            }}
-          />
-        ) : null,
-      )}
-      {depth > 0 ? (
-        <>
-          <Box
-            aria-hidden
-            sx={{
-              position: 'absolute',
-              top: 0,
-              height: '50%',
-              left: `${indentPxForDepth(depth - 1) + CONNECTOR_LEFT_OFFSET_PX}px`,
-              width: `${CONNECTOR_WIDTH_PX}px`,
-              borderLeft: 1,
-              borderBottom: 1,
-              borderColor: 'divider',
-              borderBottomLeftRadius: '6px',
-            }}
-          />
-          {railBelow[depth - 1] ? (
-            <Box
-              aria-hidden
-              sx={{
-                position: 'absolute',
-                top: '50%',
-                bottom: 0,
-                left: `${indentPxForDepth(depth - 1) + CONNECTOR_LEFT_OFFSET_PX}px`,
-                borderLeft: 1,
-                borderColor: 'divider',
-              }}
-            />
-          ) : null}
-        </>
-      ) : null}
+      <NestingConnector depth={depth} railBelow={railBelow} geometry={SWITCH_TRACE_CONNECTOR_GEOMETRY} />
       <Box sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled' }}>
         {formatRelativeTime(row.timestamp)}
       </Box>

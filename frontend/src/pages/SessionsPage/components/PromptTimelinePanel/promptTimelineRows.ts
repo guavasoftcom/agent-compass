@@ -14,110 +14,33 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import type { SessionPromptRow } from '../../../../api';
+import { nestDispatchedRows, type NestedDispatchedRow } from '../../../../lib/nestDispatchedRows';
 
-// A turn positioned in the nested (indented) render order: `depth` is how many
-// ancestor dispatchers sit above it, `railBelow[d]` records whether the
-// ancestor at that depth still has a later sibling to come (the renderer's
-// cue for a continuing connector line vs. a bare elbow), and `originalIndex`
-// is the row's position in the chronological `prompts` array, kept because
-// reordering means the array index can no longer serve as a stable React key.
-export interface NestedPromptRow {
-  row: SessionPromptRow;
-  depth: number;
-  railBelow: boolean[];
-  originalIndex: number;
-}
+// A turn positioned in the nested (indented) render order — see
+// `NestedDispatchedRow` (`lib/nestDispatchedRows.ts`) for what `depth`,
+// `railBelow`, and `originalIndex` mean. Kept as a named alias since this
+// panel's render loop and its tests already spell out `NestedPromptRow`.
+export type NestedPromptRow = NestedDispatchedRow<SessionPromptRow>;
 
 /**
  * Groups a session's prompt-timeline turns so a background-dispatched
  * subagent's turn nests directly beneath the turn that dispatched it, instead
- * of rendering as an unrelated card further down the timeline. Rows are
- * REORDERED — a child is moved to sit directly beneath its dispatcher —
- * chronological order (the input array's own order, which
- * `fetchSessionPrompts` already returns chronologically) wins wherever the
- * two would conflict, since a connector can only "point back" to an adjacent
- * row. Same algorithm as `TraceDetailPage`'s `nestSwitchTraceRows`
- * (`switchTraceRows.ts`), adapted for the full, unfiltered turn list this
- * panel renders (a turn's `traceId`/`prompt` can be null here — pre-tracing
- * sessions and capture-disabled prompts are kept, not filtered).
- *
- * Nesting is recursive: a chained dispatch nests to depth 2 and beyond. Row
- * `i` is a child of row `p` iff `dispatchingTraceId` is non-null, differs
- * from the row's own `traceId`, and resolves — via first-occurrence-wins
- * trace-id lookup (several turns can share one trace id; the earliest is the
- * "owner") — to an index `p` strictly earlier than `i`. A row whose own
- * `traceId` is null never becomes a nesting parent, since there is nothing
- * for a later `dispatchingTraceId` to resolve to.
- *
- * Every edge case resolves to "stay top-level, in place": a dispatcher trace
- * absent from the timeline, a self-referencing `dispatchingTraceId`, a null
- * `dispatchingTraceId` (the overwhelming majority of turns), and a dispatcher
- * appearing AFTER its claimed child.
+ * of rendering as an unrelated card further down the timeline. Thin wrapper
+ * around the shared `nestDispatchedRows` core (`lib/nestDispatchedRows.ts`) —
+ * see that module's doc comment for the full reordering/depth/edge-case
+ * contract, identical here. Same algorithm as `TraceDetailPage`'s
+ * `nestSwitchTraceRows` (`switchTraceRows.ts`), adapted for the full,
+ * unfiltered turn list this panel renders (a turn's `traceId`/`prompt` can be
+ * null here — pre-tracing sessions and capture-disabled prompts are kept, not
+ * filtered) — `switchTraceRows.ts` operates on rows pre-filtered to a
+ * non-null `traceId`/`prompt`, which is the only reason the two aren't the
+ * same call site.
  */
-export const nestPromptRows = (rows: SessionPromptRow[]): NestedPromptRow[] => {
-  const hasAnyDispatch = rows.some((row) => Boolean(row.dispatchingTraceId));
-  if (!hasAnyDispatch) {
-    return rows.map((row, originalIndex) => ({
-      row,
-      depth: 0,
-      railBelow: [],
-      originalIndex,
-    }));
-  }
-
-  // First occurrence wins: the earliest row carrying a given trace id is that
-  // trace's "owner" for nesting purposes. Rows with no trace id are skipped —
-  // they can't be a dispatcher.
-  const firstIndexByTraceId = new Map<string, number>();
-  rows.forEach((row, index) => {
-    if (row.traceId && !firstIndexByTraceId.has(row.traceId)) {
-      firstIndexByTraceId.set(row.traceId, index);
-    }
+export const nestPromptRows = (rows: SessionPromptRow[]): NestedPromptRow[] =>
+  nestDispatchedRows(rows, {
+    traceIdOf: (row) => row.traceId,
+    dispatchingTraceIdOf: (row) => row.dispatchingTraceId,
   });
-
-  const parentIndexOf: (number | null)[] = rows.map((row, index) => {
-    if (!row.dispatchingTraceId || row.dispatchingTraceId === row.traceId) {
-      return null;
-    }
-    const parentIndex = firstIndexByTraceId.get(row.dispatchingTraceId);
-    if (parentIndex === undefined || parentIndex >= index) {
-      return null;
-    }
-    return parentIndex;
-  });
-
-  const childIndicesByParentIndex = new Map<number, number[]>();
-  parentIndexOf.forEach((parentIndex, index) => {
-    if (parentIndex === null) {
-      return;
-    }
-    const siblings = childIndicesByParentIndex.get(parentIndex) ?? [];
-    siblings.push(index);
-    childIndicesByParentIndex.set(parentIndex, siblings);
-  });
-
-  const emittedAsChild = new Set(
-    parentIndexOf.flatMap((parentIndex, index) => (parentIndex === null ? [] : [index])),
-  );
-
-  const result: NestedPromptRow[] = [];
-  const emit = (index: number, depth: number, railBelow: boolean[]) => {
-    result.push({ row: rows[index], depth, railBelow, originalIndex: index });
-    const children = childIndicesByParentIndex.get(index) ?? [];
-    children.forEach((childIndex, childPosition) => {
-      const isLastChild = childPosition === children.length - 1;
-      emit(childIndex, depth + 1, [...railBelow, !isLastChild]);
-    });
-  };
-
-  rows.forEach((_row, index) => {
-    if (!emittedAsChild.has(index)) {
-      emit(index, 0, []);
-    }
-  });
-
-  return result;
-};
 
 export type WindowBoundaryLabel = 'selected window starts' | 'selected window ends';
 

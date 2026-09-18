@@ -13,6 +13,7 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
+import type { KeyboardEvent } from 'react';
 import { Box, useTheme } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -176,26 +177,36 @@ const WaterfallToolbar = ({
       >
         {legendKeys.map((key) => {
           if (!key.family) {
-            if (key.onClick) {
-              const activate = key.onClick;
-              return (
-                <Box
-                  key={key.reactKey ?? key.label}
-                  component="span"
-                  role="button"
-                  tabIndex={0}
-                  title={key.title}
-                  onClick={activate}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      activate();
+            // 'error' (inert — names the bar's status, not an optional
+            // figure) and an agent-dispatch entry (clickable — jumps to that
+            // type's dispatch spans) share the same dot+label content; only
+            // the latter needs the interactive role/keyboard/hover treatment,
+            // so it's spread onto one shared Box rather than duplicated
+            // across two parallel JSX blocks.
+            const activate = key.onClick;
+            return (
+              <Box
+                key={key.reactKey ?? key.label}
+                component="span"
+                title={key.title}
+                {...(activate
+                  ? {
+                      role: 'button' as const,
+                      tabIndex: 0,
+                      onClick: activate,
+                      onKeyDown: (event: KeyboardEvent) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          activate();
+                        }
+                      },
                     }
-                  }}
-                  sx={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 0.6,
+                  : {})}
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.6,
+                  ...(activate && {
                     cursor: 'pointer',
                     userSelect: 'none',
                     borderRadius: '6px',
@@ -209,26 +220,8 @@ const WaterfallToolbar = ({
                       outline: (t) => `2px solid ${t.palette.primary.main}`,
                       outlineOffset: '1px',
                     },
-                  }}
-                >
-                  <Box
-                    sx={{
-                      width: 9,
-                      height: 9,
-                      borderRadius: '3px',
-                      bgcolor: key.color,
-                      flexShrink: 0,
-                    }}
-                  />
-                  {key.label}
-                </Box>
-              );
-            }
-            return (
-              <Box
-                key={key.reactKey ?? key.label}
-                component="span"
-                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.6 }}
+                  }),
+                }}
               >
                 <Box
                   sx={{

@@ -324,10 +324,13 @@ TraceDetailPage/
     │   │                             `/traces/:traceId`
     │   ├── switchTraceRows.ts         SwitchTraceRow/NestedSwitchTraceRow types + hasTraceAndPrompt +
     │   │                             nestSwitchTraceRows — pure, no React, colocated (this modal is
-    │   │                             the only consumer), same idiom as
-    │   │                             components/AnalyzeTraceDialog/callCitations.ts. Re-exported from
-    │   │                             SwitchTraceModalView.tsx for existing import sites (IdentityPill,
-    │   │                             tests) — see the nesting gotcha below
+    │   │                             the only consumer). nestSwitchTraceRows is a thin wrapper
+    │   │                             around the shared ../../../lib/nestDispatchedRows.ts core (see
+    │   │                             that module's own doc comment) — this file's wrapper supplies
+    │   │                             the traceId/dispatchingTraceId accessors and strips the core's
+    │   │                             originalIndex field, which this modal has no use for. Re-exported
+    │   │                             from SwitchTraceModalView.tsx for existing import sites
+    │   │                             (IdentityPill, tests) — see the nesting gotcha below
     │   ├── switchTraceRows.test.ts    vitest coverage: fast path (no dispatches), one reordered child,
     │   │                             two children kept chronological with only the last clearing
     │   │                             railBelow[0], a chained depth-2 grandchild, an absent/self-
@@ -1654,22 +1657,37 @@ so the edge tracks the cursor 1:1.
   (several turns can legitimately share one trace id), and treats every edge case — dispatcher
   absent from the row list, a self-referencing `dispatchingTraceId`, a dispatcher appearing AFTER
   its claimed child in array order — as "stay top-level, in place" rather than dropping/crashing.
-  This module is scoped to the Switch-trace modal — `SessionsPage`'s `PromptTimelinePanel` later
-  adopted the identical algorithm in its own colocated `promptTimelineRows.ts` (see that page's
-  CLAUDE.md) rather than importing from here, since its turn list isn't pre-filtered to
-  `SwitchTraceRow`'s non-null `traceId`/`prompt` shape. `SwitchTraceRow` and
-  `hasTraceAndPrompt` now live in `switchTraceRows.ts` and are re-exported from
-  `SwitchTraceModalView.tsx` unchanged, so `IdentityPill.tsx`'s import of `hasTraceAndPrompt` didn't
-  need to move. `SwitchTraceModalRow` takes `depth`/`railBelow` and renders the connector (elbow +
-  optional continuation line, per ancestor depth) as separate `aria-hidden` absolutely-positioned
-  `Box` elements painted IN FRONT OF the row's existing selection treatment — **never folded into
-  the current row's `inset 2px 0 0 primary.main` box-shadow accent**, the same separation
-  `SpanWaterfallRow`'s own agent-dispatch wash already uses against that same accent (see the
-  Subagent-dispatch coloring section). The row's horizontal padding split from one `px: 2.5` into
-  `pr: 2.5` + a per-depth `pl` (`20 + depth * 18`px, `20` being `2.5 * 8`, so depth 0 renders
-  pixel-identical to before); `GRID_COLUMNS` stays one constant regardless of depth — the `1fr`
-  prompt column absorbs the extra left padding, keeping the fixed-width cost/tokens/current columns
-  aligned in a straight line down the modal regardless of nesting depth.
+  **This documentation previously said `SessionsPage`'s `PromptTimelinePanel` "adopted the
+  identical algorithm in its own colocated file rather than importing from here" — that's now
+  stale.** The two independent copies were de-duplicated: `nestSwitchTraceRows` here and
+  `nestPromptRows` (`SessionsPage/.../promptTimelineRows.ts`) are both thin wrappers around one
+  shared core, `../../../lib/nestDispatchedRows.ts#nestDispatchedRows` (see that module's own doc
+  comment for the full reordering/depth/edge-case contract — identical to what was inlined in each
+  file before). Each wrapper supplies its own row shape's `traceId`/`dispatchingTraceId` accessors
+  and maps the shared result back into its own existing type/export (`NestedSwitchTraceRow` here
+  has no `originalIndex` field, so this wrapper drops the one the shared core always returns;
+  `SessionsPage`'s wrapper keeps it, since `windowBoundariesByOriginalIndex` there needs it). The
+  reason the two call sites were never merged into a single function — this modal's rows are
+  pre-filtered to `SwitchTraceRow`'s non-null `traceId`/`prompt` shape by `hasTraceAndPrompt`
+  before nesting, while `PromptTimelinePanel` nests the full, unfiltered turn list (a turn's
+  `traceId`/`prompt` can be null there) — still stands; only the duplicated algorithm itself moved
+  into `lib/`. `SwitchTraceRow` and `hasTraceAndPrompt` still live in `switchTraceRows.ts` and are
+  re-exported from `SwitchTraceModalView.tsx` unchanged, so `IdentityPill.tsx`'s import of
+  `hasTraceAndPrompt` didn't need to move. `SwitchTraceModalRow` takes `depth`/`railBelow` and
+  renders the connector (elbow + optional continuation line, per ancestor depth) via the shared
+  `components/NestingConnector` — also de-duplicated against `PromptTimelinePanel`'s own
+  independent elbow/rail implementation; see that component's doc comment and this file's own
+  `SWITCH_TRACE_CONNECTOR_GEOMETRY` for the geometry this row passes it
+  (`indentAppliedViaMargin: false`, since this row indents via `pl`, not a margin shift) — as
+  separate `aria-hidden` absolutely-positioned `Box` elements painted IN FRONT OF the row's
+  existing selection treatment — **never folded into the current row's `inset 2px 0 0
+  primary.main` box-shadow accent**, the same separation `SpanWaterfallRow`'s own agent-dispatch
+  wash already uses against that same accent (see the Subagent-dispatch coloring section). The
+  row's horizontal padding split from one `px: 2.5` into `pr: 2.5` + a per-depth `pl` (`20 + depth
+  * 18`px, `20` being `2.5 * 8`, so depth 0 renders pixel-identical to before); `GRID_COLUMNS`
+  stays one constant regardless of depth — the `1fr` prompt column absorbs the extra left padding,
+  keeping the fixed-width cost/tokens/current columns aligned in a straight line down the modal
+  regardless of nesting depth.
 - **`kind` is deliberately not on the waterfall row.** Nearly every real Claude Code span is
   `kind: internal` (tool calls, model sampling, MCP sub-spans) — only session / model /
   mcp-client spans differ — so a per-row pill repeated the same word down the whole trace
