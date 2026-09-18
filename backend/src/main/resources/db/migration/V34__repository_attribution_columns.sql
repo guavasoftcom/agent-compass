@@ -38,6 +38,17 @@
 -- trivial. As with V30, the rewrite resets the visibility map -- run VACUUM (ANALYZE) on all three
 -- tables immediately after this migration, or the new indexes will plan as heap-visiting scans
 -- until autovacuum eventually catches up.
+--
+-- FLYWAY SHARES THE APP'S 15s STATEMENT_TIMEOUT. Flyway has no dedicated datasource configured
+-- (see application.yml), so it migrates over the same Hikari pool as every dashboard query, and
+-- `connection-init-sql: SET statement_timeout = 15000` applies to that connection too. A full
+-- rewrite of a 12 GB table cannot finish in 15s, so without the override below this migration
+-- fails with SQL State 57014 ("canceling statement due to statement timeout") on the
+-- metric_points ALTER specifically -- reported against a database at that scale. SET LOCAL scopes
+-- the relief to this migration's own transaction (Postgres DDL here is all transactional -- no
+-- CONCURRENTLY), so it reverts automatically at commit and the connection returns to the pool with
+-- the normal 15s guardrail intact for every other query.
+SET LOCAL statement_timeout = 0;
 
 ALTER TABLE spans
     ADD COLUMN repository_url text
