@@ -35,8 +35,8 @@ export interface TokenSummaryCardsProps {
 
 /**
  * Top-row summary KPIs for the Token Usage page: four compact cards
- * (Total cost · Total tokens · Models used · Top model). Total cost is the
- * window's spend (not a clock-hour burn rate), painted as the accent hero.
+ * (Total tokens · Sessions flagged · Models used · Top model). Total tokens
+ * is painted as the accent hero.
  */
 const TokenSummaryCards = ({ cards }: TokenSummaryCardsProps) => {
   return (

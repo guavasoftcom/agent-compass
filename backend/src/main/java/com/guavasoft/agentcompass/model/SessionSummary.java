@@ -81,5 +81,14 @@ public record SessionSummary(
                 + "field is window-scoped while the prompt timeline is whole-session and drops points outside "
                 + "any captured turn's interval (pre-first-prompt, or beyond the 500-turn cap) -- the same "
                 + "accepted trade-off as costUsd there.")
-        SessionTokenBreakdown tokenBreakdown) {
+        SessionTokenBreakdown tokenBreakdown,
+
+        @Schema(description = "True while this session has a turn still running: its newest turn's trace has "
+                + "no exported claude_code.interaction root span yet, and the trace has shown activity within "
+                + "the last 20 minutes (an interrupted/abandoned turn is not running). Identical liveness "
+                + "definition to GET /api/sessions/{id}/prompts' per-turn inProgress -- see that endpoint's "
+                + "SessionPrompt.inProgress for the full rationale. Computed for every row on the returned "
+                + "page regardless of the requested window, since a session that began before the window can "
+                + "still be running right now.", example = "true")
+        boolean inProgress) {
 }

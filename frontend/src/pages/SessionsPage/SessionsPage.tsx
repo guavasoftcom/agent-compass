@@ -32,6 +32,12 @@ import SessionsPageView, {
 } from './SessionsPageView';
 
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
+
+// Open-drawer timeline poll cadence while a turn is still running. Fast enough
+// that a live turn's tool chips and cost visibly tick along; cheap because the
+// query only fires while that session's drawer is open (the endpoint measured
+// ~30 ms on a short session, ~0.6 s on a 100+-turn one).
+const RUNNING_TURN_POLL_INTERVAL_MS = 5_000;
 // Sessions land sorted by most-recent activity (recency = the operational default;
 // cost is one click away on its sortable column). Maps to the existing `endTimestamp`.
 const DEFAULT_SORT: SessionsSortModel = { field: 'endTimestamp', direction: 'desc' };
@@ -94,8 +100,8 @@ export default function SessionsPage() {
 
   const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
 
-  const refetchInterval =
-    autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
+  const isPresetAutoRefresh = autoRefresh && selection.kind === 'preset';
+  const refetchInterval = isPresetAutoRefresh ? AUTO_REFRESH_INTERVAL_MS : false;
 
   // Window-level KPIs are keyed on the window only, so paging or re-sorting the grid reuses the
   // cached summary instead of re-running the heavy percentile aggregation.
@@ -116,26 +122,58 @@ export default function SessionsPage() {
     ],
     queryFn: () =>
       fetchSessions({ ...selection, repositoryUrl }, { ...paginationModel, sort: sortModel }),
-    refetchInterval,
+    // Polls every RUNNING_TURN_POLL_INTERVAL_MS whenever the current page carries a running
+    // row (SessionSummaryRow.inProgress) — UNCONDITIONALLY, not gated on isPresetAutoRefresh
+    // like the plain interval below. autoRefresh defaults to false, so gating this on it (an
+    // earlier version of this code did) meant a row's running dot would show once and
+    // then never re-fetch to notice the session had actually finished — stuck showing
+    // "running" indefinitely for anyone who hadn't opted into auto-refresh, since nothing
+    // else on this page causes sessionsQuery to revalidate on its own. A displayed "running"
+    // state is a promise the UI has to keep regardless of the user's auto-refresh
+    // preference, which is the identical reasoning sessionPromptsQuery below already applies
+    // to the drawer's own per-turn dot (and, same as there, custom windows aren't
+    // excluded either — inProgress isn't window-scoped, so a session already listed under a
+    // fixed custom range can still flip from running to finished while that range stays put).
+    // Once the poll sees the row's inProgress flip to false, this falls through to the plain
+    // auto-refresh-gated interval on its own — no separate "stop polling" trigger needed.
+    refetchInterval: (query) => {
+      const hasRunningRow = query.state.data?.items.some((row) => row.inProgress) ?? false;
+      if (hasRunningRow) {
+        return RUNNING_TURN_POLL_INTERVAL_MS;
+      }
+      return isPresetAutoRefresh ? AUTO_REFRESH_INTERVAL_MS : false;
+    },
     placeholderData: keepPreviousData,
   });
 
   const rows = sessionsQuery.data?.items ?? [];
 
   // Full, untruncated prompt timeline for the open session. Fires only while a
-  // session is both open AND actually present in the currently loaded page (not
-  // polled; re-opening refetches past the global staleTime so a live session's
-  // growing timeline stays current). The second half of that gate matters for
-  // the `?sessionId=` deep link: it can name a session that isn't on the table's
-  // first page under the default sort, and without the `rows.some(...)` check
-  // this query would fire a wasted whole-session fetch for a drawer that can
-  // never open (the view resolves the header row from the same page).
+  // session is both open AND actually present in the currently loaded page. The
+  // second half of that gate matters for the `?sessionId=` deep link: it can
+  // name a session that isn't on the table's first page under the default sort,
+  // and without the `rows.some(...)` check this query would fire a wasted
+  // whole-session fetch for a drawer that can never open (the view resolves the
+  // header row from the same page).
+  //
+  // Polled while the drawer is open: every RUNNING_TURN_POLL_INTERVAL_MS while
+  // the backend reports a turn still running (so its dot clears and its
+  // figures fill in on their own), otherwise at the page's auto-refresh cadence
+  // when auto-refresh is on — which is how a brand-new prompt in an idle
+  // session shows up. Not gated on a preset window like the other two queries:
+  // this endpoint isn't window-scoped, so a custom range doesn't freeze it.
   const sessionPromptsQuery = useQuery({
     queryKey: ['session-prompts', openSessionId],
     queryFn: () => fetchSessionPrompts(openSessionId as string),
     enabled:
       openSessionId !== null
       && rows.some((row) => row.sessionId === openSessionId),
+    refetchInterval: (query) => {
+      if (query.state.data?.some((turn) => turn.inProgress)) {
+        return RUNNING_TURN_POLL_INTERVAL_MS;
+      }
+      return autoRefresh ? AUTO_REFRESH_INTERVAL_MS : false;
+    },
   });
 
   // Clicking the open session's row again closes its drawer; clicking another

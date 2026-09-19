@@ -15,6 +15,7 @@ see <https://www.gnu.org/licenses/>.
 */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Box, Drawer, Tooltip, alpha, useTheme } from '@mui/material';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import CloseIcon from '@mui/icons-material/Close';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type { SessionPromptRow, SessionSummaryRow } from '../../../../api';
@@ -44,6 +45,11 @@ import {
 // drawer easing, so the panel lands before the eye leaves the clicked row.
 const SLIDE_DURATION_MS = 260;
 const SLIDE_EASING = 'cubic-bezier(.22,.8,.24,1)';
+
+// How close to the bottom of the timeline (px) still counts as "following the
+// latest turn". A little slack so a sub-pixel scroll offset, or a card that grew
+// by a line on the last poll, doesn't read as the reader having scrolled away.
+const PINNED_TO_LATEST_SLACK_PX = 48;
 
 // Why the header's whole-session cost won't equal the sum of the turn costs shown
 // in the timeline below — same "two measurements, don't reconcile" situation as the
@@ -272,10 +278,26 @@ const SessionDetailDrawer = ({
   const [lastSession, setLastSession] = useState<SessionSummaryRow | null>(
     null,
   );
+  // Whether the reader is at the bottom of the timeline. The container polls
+  // the timeline while a turn is running, so `prompts` changes under the reader;
+  // following the newest turn is only right while they're already there —
+  // yanking them back down on every poll would make earlier turns unreadable.
+  const [pinnedToLatest, setPinnedToLatest] = useState(true);
+  // Turn count as of the last time the reader was at the bottom. A larger
+  // count while they're scrolled up means a new prompt arrived out of sight,
+  // which is what the "New prompt" pill below announces.
+  const [acknowledgedTurnCount, setAcknowledgedTurnCount] = useState(0);
   if (session != null && session.sessionId !== lastSession?.sessionId) {
     setLastSession(session);
+    setPinnedToLatest(true);
+  }
+  const turnCount = prompts?.length ?? 0;
+  if (pinnedToLatest && turnCount !== acknowledgedTurnCount) {
+    setAcknowledgedTurnCount(turnCount);
   }
   const rendered = session ?? lastSession;
+  const hasUnseenTurns =
+    open && !pinnedToLatest && turnCount > acknowledgedTurnCount;
 
   // Open on the most recent turn: a long session's interesting end is the
   // bottom of the timeline, and scrolling there by hand on every open gets old.
@@ -286,17 +308,28 @@ const SessionDetailDrawer = ({
     }
   };
 
+  const handleBodyScroll = () => {
+    const body = bodyRef.current;
+    if (body == null) {
+      return;
+    }
+    const distanceFromBottom =
+      body.scrollHeight - body.scrollTop - body.clientHeight;
+    setPinnedToLatest(distanceFromBottom <= PINNED_TO_LATEST_SLACK_PX);
+  };
+
   // Two triggers, because either one alone misses a case: the timeline usually
   // resolves after the drawer is already open (this effect catches it), but a
   // session opened a second time has its prompts cached and renders them during
   // the entering slide, when the panel isn't laid out yet and scrollTop won't
-  // take — the transition's onEntered below covers that one.
+  // take — the transition's onEntered below covers that one. A poll landing
+  // while the reader is scrolled up leaves them where they are.
   useEffect(() => {
-    if (!open) {
+    if (!open || !pinnedToLatest) {
       return;
     }
     scrollToLatestTurn();
-  }, [open, prompts]);
+  }, [open, prompts, pinnedToLatest]);
 
   return (
     <Drawer
@@ -352,14 +385,54 @@ const SessionDetailDrawer = ({
             onClose={onClose}
             hotCostThresholdUsd={hotCostThresholdUsd}
           />
-          <Box ref={bodyRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <PromptTimelinePanel
-              prompts={prompts}
-              loading={promptsLoading}
-              error={promptsError}
-              windowStartMs={windowStartMs}
-              windowEndMs={windowEndMs}
-            />
+          <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+            <Box
+              ref={bodyRef}
+              role="region"
+              aria-label="Session prompt timeline"
+              onScroll={handleBodyScroll}
+              sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
+            >
+              <PromptTimelinePanel
+                prompts={prompts}
+                loading={promptsLoading}
+                error={promptsError}
+                windowStartMs={windowStartMs}
+                windowEndMs={windowEndMs}
+              />
+            </Box>
+            {hasUnseenTurns ? (
+              <Box
+                component="button"
+                type="button"
+                onClick={scrollToLatestTurn}
+                sx={{
+                  position: 'absolute',
+                  bottom: 16,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  height: 28,
+                  px: 1.5,
+                  border: 1,
+                  borderColor: (t) => alpha(t.palette.primary.main, 0.4),
+                  borderRadius: 999,
+                  bgcolor: 'background.paper',
+                  boxShadow: 3,
+                  fontFamily: fontFamilies.display,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  color: 'primary.main',
+                  cursor: 'pointer',
+                  '&:hover': { borderColor: 'primary.main' },
+                }}
+              >
+                <ArrowDownwardIcon sx={{ fontSize: 14 }} />
+                {`New prompt${turnCount - acknowledgedTurnCount === 1 ? '' : 's'}`}
+              </Box>
+            ) : null}
           </Box>
         </>
       ) : null}

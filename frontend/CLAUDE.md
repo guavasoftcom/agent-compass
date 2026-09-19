@@ -74,7 +74,22 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
     `SessionsPage`'s `PromptTimelinePanel` (passes both `renderOrdinary` and `onViewFullPrompt`,
     wired to its existing `AttributeValue`/`ExpandedValueDialog` machinery). Also accepts
     `labelSx`/`summarySx` to retint or resize the "SUBAGENT" label and the summary text for a
-    caller's own surrounding typography.
+    caller's own surrounding typography. When `onViewFullPrompt`'s raw envelope text lands in
+    `ExpandedValueDialog`, that dialog also parses it (`lib/promptSummary.ts`'s
+    `parseTaskNotificationEnvelope`, a full-fields sibling of `promptSummaryRenderer`) rather than
+    falling through to its generic tryParseJson/raw-text handling — XML never parses as JSON, so
+    without this the dialog dumped the raw `<task-id>`/`<summary>`/... markup verbatim. It renders
+    only the envelope's `summary`/`result`/`note` prose, each as markdown (`react-markdown` +
+    `rehype-sanitize`, same sanitization approach `AnalyzeTraceDialogView` uses for model-authored
+    text); `result` — a dispatched task's own markdown-formatted answer/output, distinct from
+    `summary`'s one-line status — gets a fuller rule set (headings/lists/code) than the compact one
+    used for `summary`/`note`, since it can be a full report rather than a single sentence. The
+    remaining envelope tags (`task-id`, `tool-use-id`, `output-file`, `status`, `usage`, ...) are
+    deliberately **not shown at all** — harness bookkeeping a reader opening "view full prompt" has
+    no use for, not a fact about the work the subagent did — so `renderAttributeList` (the key/value
+    grid a plain JSON object gets in this same dialog) is never called for this branch. An envelope
+    with no summary/result/note prose (all harness bookkeeping, no narration) renders a plain
+    "carries no summary or result" placeholder rather than an empty dialog body.
   - `ErrorBoundary` — the one class component in the app (React only exposes
     `componentDidCatch`/`getDerivedStateFromError` on classes); renders a MUI `Alert` + reload
     button in place of a crashed subtree. Wired around `<Outlet />` in `App/AppShell.tsx` so the
@@ -106,7 +121,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
     sites were kept separate (different row shapes, different pre-filtering) even after the
     duplication was removed. Pure, no React. Pairs with `components/NestingConnector` above for the
     rendering side.
-  - `lib/promptSummary.ts` — `promptSummaryRenderer(prompt)`: null for an ordinary, human-authored prompt; for a prompt that is really a non-authored envelope, a short summary instead. Currently one case — a `<task-notification>` envelope the harness delivers when a background subagent finishes (not something a person typed) — detected by the prompt's exact opening tag (a real envelope always *starts* with it, so a human message that merely pastes one further in, e.g. as an example, isn't misclassified) and summarized from its own `<summary>` tag (or a generic fallback label when it has none). Named and structured generically on purpose: other non-authored prompt shapes needing the same "don't show this raw" treatment belong here as additional cases. Pure, no React — the display side (the "SUBAGENT · summary" styling) is `components/PromptSummaryText`, which wraps this function; reach for that component, not this function directly, wherever a raw prompt/message string is displayed to a reader.
+  - `lib/promptSummary.ts` — `promptSummaryRenderer(prompt)`: null for an ordinary, human-authored prompt; for a prompt that is really a non-authored envelope, a short summary instead. Currently one case — a `<task-notification>` envelope the harness delivers when a background subagent finishes (not something a person typed) — detected by the prompt's exact opening tag (a real envelope always *starts* with it, so a human message that merely pastes one further in, e.g. as an example, isn't misclassified) and summarized from its own `<summary>` tag (or a generic fallback label when it has none). Named and structured generically on purpose: other non-authored prompt shapes needing the same "don't show this raw" treatment belong here as additional cases. Pure, no React — the display side (the "SUBAGENT · summary" styling) is `components/PromptSummaryText`, which wraps this function; reach for that component, not this function directly, wherever a raw prompt/message string is displayed to a reader. `parseTaskNotificationEnvelope(prompt)` is a fuller sibling for a caller that needs more than the one-line summary — same "must open with the exact tag" detection, but returns every envelope tag split into `fields` (`task-id`/`tool-use-id`/`status`/... — structural metadata, in tag order) versus `summary`/`result`/`note` (prose — `result` being the dispatched task's own markdown-formatted answer/output, distinct from `summary`'s status line). `AttributeList/ExpandedValueDialog` is the one consumer, for its "view full prompt" dialog (see that component's own note below).
   - `lib/serverSentEvents.ts` — `readServerSentEvents(response, onFrame)` + `parseServerSentEvent(frame)` (+ the `FRAME_SEPARATOR` constant): a generic SSE frame reader/parser over a streamed `fetch` `Response`, with nothing endpoint-specific in it. `readServerSentEvents` reassembles frames split across chunk boundaries (a network splits an SSE body wherever it likes, including mid-JSON) and falls back to reading the whole body as text when `response.body` is missing (jsdom, not a real browser case). Pure, no React. `pages/TraceDetailPage/traceAnalysisApi.ts#streamTraceAnalysis` is currently the only consumer — this app's first SSE endpoint — but the module carries nothing trace-analysis-specific, so a second streamed endpoint should import from here rather than hand-rolling its own frame reader.
 
 ## Page structure (container/presentational)
@@ -199,7 +214,10 @@ declares 80% coverage thresholds that the suite doesn't meet yet, which is why C
 mount). Use the shared `renderWithProviders` helper (`src/test/renderWithProviders.tsx`) instead
 of RTL's bare `render()` — it wraps a component in the same provider stack `main.tsx` mounts the
 app under (`ColorModeProvider`, `QueryClientProvider`, a router), minus `WindowProvider` (only
-containers read `useWindowContext()`).
+containers read `useWindowContext()`). The stack is passed as RTL's `wrapper` option rather than
+wrapped around the element directly, so the returned `rerender` keeps the providers — needed by
+any test that re-renders a view with new props to simulate a polled query landing (e.g. the
+Sessions page's running-turn/`inProgress` timeline tests).
 
 Every `<Name>PageView.tsx` / `<Name>View.tsx` under `pages/` has a colocated `<Name>View.test.tsx`
 exercising it with `renderWithProviders` and prop fixtures — asserting rendered content and, via

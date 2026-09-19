@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { describe, expect, it } from 'vitest';
-import { promptSummaryRenderer } from './promptSummary';
+import { parseTaskNotificationEnvelope, promptSummaryRenderer } from './promptSummary';
 
 describe('promptSummaryRenderer', () => {
   it('extracts the <summary> text from a real task-notification envelope', () => {
@@ -60,5 +60,61 @@ describe('promptSummaryRenderer', () => {
     const prompt =
       '<task-notification><summary>first</summary></task-notification><task-notification><summary>second</summary></task-notification>';
     expect(promptSummaryRenderer(prompt)).toBe('first');
+  });
+});
+
+describe('parseTaskNotificationEnvelope', () => {
+  it('splits structural fields from summary/result/note prose', () => {
+    const prompt = [
+      '<task-notification>',
+      '<task-id>a176ba9b9d4d55fc0</task-id>',
+      '<tool-use-id>toolu_01UDxemrcp32b2Vf4AMBE3rF</tool-use-id>',
+      '<status>completed</status>',
+      '<summary>Agent "Angle E: simplification check" finished</summary>',
+      '<result>## Findings\n\n- Nothing to simplify</result>',
+      '<note>A task-notification fires each time this agent stops.</note>',
+      '</task-notification>',
+    ].join('\n');
+    expect(parseTaskNotificationEnvelope(prompt)).toEqual({
+      fields: {
+        'task-id': 'a176ba9b9d4d55fc0',
+        'tool-use-id': 'toolu_01UDxemrcp32b2Vf4AMBE3rF',
+        status: 'completed',
+      },
+      summary: 'Agent "Angle E: simplification check" finished',
+      result: '## Findings\n\n- Nothing to simplify',
+      note: 'A task-notification fires each time this agent stops.',
+    });
+  });
+
+  it('returns null prose fields when absent', () => {
+    const prompt = '<task-notification>\n<task-id>abc</task-id>\n</task-notification>';
+    expect(parseTaskNotificationEnvelope(prompt)).toEqual({
+      fields: { 'task-id': 'abc' },
+      summary: null,
+      result: null,
+      note: null,
+    });
+  });
+
+  it('returns null for an ordinary prompt', () => {
+    expect(parseTaskNotificationEnvelope('Refactor the auth middleware')).toBeNull();
+  });
+
+  it('returns null when the envelope appears later in the text rather than at the start', () => {
+    const prompt =
+      'Example:\n\n<task-notification>\n<summary>X</summary>\n</task-notification>';
+    expect(parseTaskNotificationEnvelope(prompt)).toBeNull();
+  });
+
+  it('parses only the first envelope when multiple are concatenated', () => {
+    const prompt =
+      '<task-notification><task-id>1</task-id><summary>first</summary></task-notification><task-notification><task-id>2</task-id><summary>second</summary></task-notification>';
+    expect(parseTaskNotificationEnvelope(prompt)).toEqual({
+      fields: { 'task-id': '1' },
+      summary: 'first',
+      result: null,
+      note: null,
+    });
   });
 });

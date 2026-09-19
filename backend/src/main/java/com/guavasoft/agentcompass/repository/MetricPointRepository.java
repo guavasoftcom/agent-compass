@@ -309,6 +309,13 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // stream advanced there — and the service fills gaps with zero; the total
   // grouping set always returns exactly one row (COALESCE guards a NULL SUM
   // when the window has no token data at all).
+  // The four FILTER columns below are only meaningful on the 'model' row (the
+  // per-model breakdown the Tokens page's "Tokens & cost by model" card
+  // renders); they compute to a same-kind-only sum on 'bucket' rows (already
+  // available unfiltered as token_type) and to the window grand total per kind
+  // on the lone 'total' row, both unused by any caller today. They ride the
+  // same GROUPING SETS pass rather than a second query, the same reasoning as
+  // aggregateSessionSummaries' identically-shaped token_per_session CTE.
   @Query(value = """
       SELECT
         CASE
@@ -319,7 +326,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         bucket,
         token_type,
         model,
-        COALESCE(SUM(value_delta), 0)::bigint AS total
+        COALESCE(SUM(value_delta), 0)::bigint AS total,
+        COALESCE(SUM(value_delta) FILTER (WHERE token_type = :inputTokenType), 0)::bigint AS input_tokens,
+        COALESCE(SUM(value_delta) FILTER (WHERE token_type = :outputTokenType), 0)::bigint AS output_tokens,
+        COALESCE(SUM(value_delta) FILTER (WHERE token_type = :cacheCreationTokenType), 0)::bigint
+          AS cache_creation_tokens,
+        COALESCE(SUM(value_delta) FILTER (WHERE token_type = :cacheReadTokenType), 0)::bigint AS cache_read_tokens
       FROM (
         SELECT
           date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
@@ -344,6 +356,10 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("metricName") String metricName,
       @Param("tokenTypeAttribute") String tokenTypeAttribute,
       @Param("modelAttribute") String modelAttribute,
+      @Param("inputTokenType") String inputTokenType,
+      @Param("outputTokenType") String outputTokenType,
+      @Param("cacheCreationTokenType") String cacheCreationTokenType,
+      @Param("cacheReadTokenType") String cacheReadTokenType,
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,

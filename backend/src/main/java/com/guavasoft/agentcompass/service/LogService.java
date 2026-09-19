@@ -141,6 +141,21 @@ public class LogService {
   // rather than introducing a new configurable property nothing else treats as one.
   private static final String INTERACTION_ROOT_SPAN_NAME_PATTERN = "claude_code.interaction%";
 
+  // How long a turn whose root span has not been exported may go without any span or log
+  // activity before it is treated as abandoned rather than running. A turn interrupted with
+  // Esc, or whose process exited, never exports its root span, so without this bound its
+  // spinner would never stop. Measured over 14 days and 364 completed turns, the longest
+  // quiet stretch inside a single live turn was 16 minutes (p99 6 minutes, p90 84 seconds).
+  // 20 minutes clears every one of them, at the cost of an abandoned newest turn reading as
+  // running for 20 minutes after it went quiet.
+  //
+  // Package-private (not private): MetricService reuses this exact value for the SAME
+  // liveness definition at session-row granularity (SessionSummary#inProgress on the
+  // Sessions grid) rather than defining a second constant that could drift from this one --
+  // "running" must mean the same thing whether the reader sees it on the grid row or inside
+  // that session's opened drawer.
+  static final Duration IN_PROGRESS_STALENESS_LIMIT = Duration.ofMinutes(20);
+
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
   private final MetricPointRepository metricPointRepository;
@@ -469,10 +484,12 @@ public class LogService {
         traceTokensByTurn, traceModelByTurn);
     Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
     Map<Integer, String> dispatchingTraceByTurn = resolveDispatchingTraceByTurn(sessionId, promptRows);
+    int runningTurnIndex = truncated ? -1 : resolveRunningTurnIndex(promptRows);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
       Object[] row = promptRows.get(turnIndex);
+      boolean inProgress = turnIndex == runningTurnIndex;
       String promptId = (String) row[PROMPT_ROW_PROMPT_ID];
       ApiRequestTurnRollup requestRollup =
           promptId == null ? null : requestRollupsByPromptId.get(promptId);
@@ -498,7 +515,8 @@ public class LogService {
               SessionPrompt.TurnAttribution.REQUEST,
               backgroundCostUsd,
               backgroundTools,
-              dispatchingTraceByTurn.get(turnIndex))
+              dispatchingTraceByTurn.get(turnIndex),
+              inProgress)
           : new SessionPrompt(
               (Instant) row[0],
               (String) row[1],
@@ -512,9 +530,38 @@ public class LogService {
               SessionPrompt.TurnAttribution.INTERVAL,
               backgroundCostUsd,
               backgroundTools,
-              dispatchingTraceByTurn.get(turnIndex)));
+              dispatchingTraceByTurn.get(turnIndex),
+              inProgress));
     }
     return prompts;
+  }
+
+  /**
+   * Index of the session's still-running turn, or -1 when there is none. Only the newest turn is
+   * a candidate: an older turn with no root span was interrupted (the session has moved on), not
+   * running. The newest turn is running when it has a trace, that trace's
+   * {@code claude_code.interaction} root span has not been exported yet, and the trace has shown
+   * activity within {@link #IN_PROGRESS_STALENESS_LIMIT} -- the user_prompt log itself carries the
+   * trace id, so a turn submitted moments ago counts even before its first model call lands.
+   */
+  private int resolveRunningTurnIndex(List<Object[]> promptRows) {
+    int newestTurnIndex = promptRows.size() - 1;
+    String traceId = (String) promptRows.get(newestTurnIndex)[PROMPT_ROW_TRACE_ID];
+    if (traceId == null) {
+      return -1;
+    }
+    List<Object[]> progressRows = spanRepository.findTurnProgressForTrace(traceId, INTERACTION_ROOT_SPAN_NAME_PATTERN);
+    if (progressRows.isEmpty()) {
+      return -1;
+    }
+    Object[] progress = progressRows.get(0);
+    boolean rootClosed = Boolean.TRUE.equals(progress[0]);
+    Instant lastActivity = (Instant) progress[1];
+    if (rootClosed || lastActivity == null) {
+      return -1;
+    }
+    boolean recentlyActive = lastActivity.isAfter(Instant.now().minus(IN_PROGRESS_STALENESS_LIMIT));
+    return recentlyActive ? newestTurnIndex : -1;
   }
 
   /**

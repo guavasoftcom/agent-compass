@@ -64,7 +64,8 @@ Add `tokens`, `terminalType`, `firstUserPrompt`, and `userPromptCount` to each r
       "wallSeconds": 4810,               // no longer rendered; keep or drop
       "terminalType": "non-interactive", // NEW — "interactive" | "non-interactive"
       "firstUserPrompt": "Refactor the Aurora theme overlay so it applies cleanly…", // NEW
-      "userPromptCount": 7               // NEW — total user prompts in the session
+      "userPromptCount": 7,              // NEW — total user prompts in the session
+      "inProgress": false                // NEW — true while this session's newest turn is running
     }
     // … page of rows …
   ],
@@ -143,6 +144,33 @@ the UI, so they need no sort support. Other existing sortable fields (`startTime
 > `endTimestamp` reflects the session's **latest captured activity** — the newest emission for
 > the `session.id` that carried a counter increment, not merely its newest emission — so live
 > sessions sort to the top while idle ones do not masquerade as live.
+
+### Running row (`inProgress`) — SHIPPED
+
+- **`inProgress`** *(NEW)* — `true` while this session has a turn still running. Same liveness
+  definition as the prompt timeline's per-turn `inProgress` below (identical staleness bound,
+  identical root-span check), just resolved at session-row granularity instead of per-turn: a
+  session is running exactly when its own newest turn would be.
+
+Computed as a **bulk, page-scoped enrichment** layered on top of the existing page of rows — for
+each session on the returned page (not the whole table, and not filtered by the request's
+window), find that session's newest `user_prompt`'s trace id, and flag the session running when
+that trace has no exported `claude_code.interaction` root span yet and has shown span/log
+activity within the last 20 minutes. `LogRecordRepository.findInProgressSessionIds` does this in
+one query per page via two staged CTEs (`MATERIALIZED`, so the expensive per-trace
+last-activity check only runs over the handful of sessions that already cleared the cheap
+"no root span yet" check, not every row on the page) — measured 31.8 ms against the 100
+most-recently-active real sessions, cf. 48.6 ms without staging. Deliberately **not** gated by
+the request's `from`/`to` window: a session that began well before the window can still be
+running right now, and the point of this field is telling the reader that regardless of which
+window they're looking at.
+
+The grid gives this its own visual weight rather than folding it into `Last activity`: a running
+row gets a small pulsing dot trailing the relative-time text and a primary-tinted row background
+(stronger than the normal zebra striping) — the Aurora Sessions design handoff's own treatment
+(a dot, not a spinner+label chip), matching the identical dot and the inset primary ring the
+prompt-timeline panel gives a running turn's card. The frontend also **polls faster** while any
+row on the current page is running — see the frontend seam section below.
 
 ---
 
@@ -300,6 +328,31 @@ case worth ignoring. The UI renders both as secondary, muted signals next to the
 `costUsd`/`tools` figures (`BackgroundCostBadge`, a muted second `ToolChips` row) rather than
 folding them into a separate KPI.
 
+### Running turn (`inProgress`) — SHIPPED
+
+- **`inProgress`** — `true` on at most one turn: the one still running. Always `false` on every
+  other turn.
+
+Claude Code exports a span only once it **ends**, so a turn's `claude_code.interaction` root span
+does not exist in `spans` until the turn finishes — while its `user_prompt`, `api_request` and
+`tool_result` logs (all stamped with the trace id) and its finished child spans arrive as it runs.
+`LogService.resolveRunningTurnIndex` marks the session's **newest** turn running when it has a
+`traceId`, that trace has no root span yet, and the trace's newest span end / log timestamp is
+within `IN_PROGRESS_STALENESS_LIMIT` (20 minutes) — one `SpanRepository.findTurnProgressForTrace`
+probe, 2.3 ms measured on a live running turn.
+
+The two extra conditions are both there because a missing root span alone is not enough:
+measured over 14 days, 4 of 363 prompt-bearing traces had no root span, and 3 of those were
+**orphans** — a turn interrupted with Esc, or whose process exited, never exports it at all. Two
+of them had a later prompt in the same session (hence "newest turn only"); the third was the
+session's last turn (hence the staleness bound, without which its running indicator would never
+stop). The
+20-minute bound is set above the longest quiet stretch measured *inside* a live turn — 16 minutes
+across 364 completed turns (p99 6 minutes, p90 84 seconds) — so a long tool call or approval wait
+does not flip a running turn to finished; the cost is that an abandoned newest turn reads as
+running for up to 20 minutes after it went quiet. A timeline truncated at the 500-turn cap never
+reports a running turn, since its real newest turn was not returned.
+
 ---
 
 ## `GET /api/sessions/{id}/requests` — NEW endpoint (per-request drill-down)
@@ -398,6 +451,7 @@ export interface SessionSummaryRow {
   terminalType: 'interactive' | 'non-interactive'; // NEW
   firstUserPrompt: string | null; // NEW — ≤200-char preview; null when capture disabled
   userPromptCount: number;        // NEW — drives the +N pill (count − 1)
+  inProgress: boolean;            // NEW — see "Running row" above; drives the grid's pulsing dot
 }
 
 // NEW — one row of GET /api/sessions/{id}/prompts. The base three fields are

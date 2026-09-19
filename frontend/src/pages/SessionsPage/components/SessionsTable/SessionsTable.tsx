@@ -24,7 +24,7 @@ import type {
 } from '../../../../api';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
-import { CostValue, TokenBreakdownTooltip } from '../PromptTimelinePanel';
+import { CostValue, RunningIndicator, TokenBreakdownTooltip } from '../PromptTimelinePanel';
 import {
   USD_PER_MINUTE_FORMATTER,
   formatDuration,
@@ -457,13 +457,19 @@ const SessionsTable = ({
                 '& > td': {
                   backgroundColor: isOpen
                     ? 'action.hover'
-                    : index % 2
-                      ? (t) =>
-                          alpha(
-                            t.palette.primary.main,
-                            t.palette.mode === 'dark' ? 0.04 : 0.022,
-                          )
-                      : 'transparent',
+                    // A running session's row gets its own primary-tinted wash — a
+                    // stronger, un-zebra-striped signal than the normal alternating
+                    // rows, matching the primary-tinted border PromptTimelinePanel
+                    // gives a running turn's card inside the drawer.
+                    : row.inProgress
+                      ? (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.1 : 0.06)
+                      : index % 2
+                        ? (t) =>
+                            alpha(
+                              t.palette.primary.main,
+                              t.palette.mode === 'dark' ? 0.04 : 0.022,
+                            )
+                        : 'transparent',
                 },
               }}
             >
@@ -471,9 +477,19 @@ const SessionsTable = ({
                 {formatTimestamp(row.startTimestamp)}
               </Box>
               <Box component="td" sx={{ whiteSpace: 'nowrap' }}>
-                <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
-                  <Box component="span">{formatRelativeTime(row.endTimestamp)}</Box>
-                </Tooltip>
+                {/* Design handoff: the dot trails the relative-time text, not the
+                reverse — reads as "2h ago •" rather than leading with the dot. */}
+                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                  <Tooltip title={formatTimestamp(row.endTimestamp)} placement="top" arrow>
+                    <Box component="span">{formatRelativeTime(row.endTimestamp)}</Box>
+                  </Tooltip>
+                  {row.inProgress ? (
+                    <RunningIndicator
+                      tooltip="This session has a turn still running. Its row updates automatically while it does."
+                      ariaLabel="Session still running"
+                    />
+                  ) : null}
+                </Box>
               </Box>
               <Box component="td" className="prompt">
                 <PromptCell

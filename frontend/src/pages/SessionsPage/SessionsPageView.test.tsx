@@ -14,13 +14,13 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import SessionsPageView, {
   type SessionsPageViewProps,
 } from './SessionsPageView';
-import type { SessionSummaryRow } from '../../api';
+import type { SessionPromptRow, SessionSummaryRow } from '../../api';
 import { WINDOWS } from '../../lib/constants';
 
 // SessionsPageView always passes onRepositoryUrlChange, so PageActions renders
@@ -53,8 +53,21 @@ const rows: SessionSummaryRow[] = [
     startType: 'fresh',
     firstUserPrompt: 'apply the design handoff to the sessions page',
     userPromptCount: 12,
+    inProgress: false,
   },
 ];
+
+const finishedTurn: SessionPromptRow = {
+  timestamp: '2026-08-29T20:26:55.000Z',
+  prompt: 'apply the design handoff to the sessions page',
+  traceId: '0102030405060708090a0b0c0d0e0f10',
+  model: 'claude-opus-5',
+  costUsd: 0.41,
+  tools: [{ name: 'Edit', count: 3 }],
+  attribution: 'REQUEST',
+  requestCount: 4,
+  inProgress: false,
+};
 
 const baseProps: SessionsPageViewProps = {
   selection: { kind: 'preset', minutes: 1440 },
@@ -99,6 +112,23 @@ describe('SessionsPageView', () => {
     expect(screen.getAllByText('42').length).toBeGreaterThan(0);
   });
 
+  it('shows a running indicator on the grid row of an in-progress session', () => {
+    renderWithProviders(
+      <SessionsPageView
+        {...baseProps}
+        rows={[{ ...rows[0], inProgress: true }]}
+      />,
+    );
+
+    expect(screen.getByRole('status', { name: 'Session still running' })).toBeInTheDocument();
+  });
+
+  it('shows no running indicator once the session has finished', () => {
+    renderWithProviders(<SessionsPageView {...baseProps} rows={rows} />);
+
+    expect(screen.queryByRole('status', { name: 'Session still running' })).not.toBeInTheDocument();
+  });
+
   it('shows an empty state when there are no sessions in the window', () => {
     renderWithProviders(
       <SessionsPageView
@@ -129,6 +159,65 @@ describe('SessionsPageView', () => {
     expect(onToggleSessionDetail).toHaveBeenCalledWith(
       '690cb902-1234-4e02-9a71-9ddc290d9200',
     );
+  });
+
+  it('marks only the turn the backend reports as still running with a running indicator', () => {
+    const promptTimeline: SessionPromptRow[] = [
+      finishedTurn,
+      { ...finishedTurn, timestamp: '2026-08-29T20:40:00.000Z', prompt: 'now fix the tests', inProgress: true },
+    ];
+    renderWithProviders(
+      <SessionsPageView
+        {...baseProps}
+        openSessionId={rows[0].sessionId}
+        promptTimeline={promptTimeline}
+      />,
+    );
+
+    expect(screen.getAllByRole('status', { name: 'Prompt still running' })).toHaveLength(1);
+  });
+
+  it('shows no running indicator once every turn has finished', () => {
+    renderWithProviders(
+      <SessionsPageView
+        {...baseProps}
+        openSessionId={rows[0].sessionId}
+        promptTimeline={[finishedTurn]}
+      />,
+    );
+
+    expect(screen.queryByRole('status', { name: 'Prompt still running' })).not.toBeInTheDocument();
+  });
+
+  it('offers a New prompt pill when a polled turn arrives while the reader is scrolled up', () => {
+    const openProps = {
+      ...baseProps,
+      openSessionId: rows[0].sessionId,
+      promptTimeline: [finishedTurn],
+    };
+    const { rerender } = renderWithProviders(<SessionsPageView {...openProps} />);
+
+    // Scroll the drawer body well away from the bottom (jsdom does no layout,
+    // so give the region real dimensions first).
+    const timelineRegion = screen.getByRole('region', { name: 'Session prompt timeline' });
+    Object.defineProperty(timelineRegion, 'scrollHeight', { configurable: true, value: 2000 });
+    Object.defineProperty(timelineRegion, 'clientHeight', { configurable: true, value: 500 });
+    timelineRegion.scrollTop = 0;
+    fireEvent.scroll(timelineRegion);
+
+    expect(screen.queryByRole('button', { name: /new prompt/i })).not.toBeInTheDocument();
+
+    rerender(
+      <SessionsPageView
+        {...openProps}
+        promptTimeline={[
+          finishedTurn,
+          { ...finishedTurn, timestamp: '2026-08-29T20:40:00.000Z', prompt: 'a brand new prompt', inProgress: true },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /new prompt/i })).toBeInTheDocument();
   });
 
   it('surfaces the PageLayout error slot when the query has failed', () => {
