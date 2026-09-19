@@ -70,6 +70,12 @@ export const isToolCallSpan = (spanName: string | null | undefined): boolean => 
   return operation === 'tool' || /^(tool|mcp)\./.test(operation);
 };
 
+// Poll cadence while a trace is still running (Table view's refetchInterval,
+// the Stream view's in-place patch effect, TraceSummaryInline's span query, and
+// TraceDetailPage's summary/spans queries) — mirrors Sessions'
+// RUNNING_TURN_POLL_INTERVAL_MS for the identical liveness definition.
+export const RUNNING_TRACE_POLL_INTERVAL_MS = 5_000;
+
 export const statusOf = (t: TraceRow): TraceStatus => (t.errorCount > 0 ? 'error' : 'ok');
 export const durationMsOf = (t: TraceRow): number => t.durationNanos / 1_000_000;
 

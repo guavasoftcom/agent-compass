@@ -27,6 +27,7 @@ import type { TraceRow } from '../../../../api';
 import { formatDuration, formatTokens } from '../../tracesApi';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
+import { RunningIndicator } from '../../../../components/RunningIndicator';
 
 export interface OpGroup {
   name: string;
@@ -95,9 +96,43 @@ const TraceSummaryInlineView = ({
           th.palette.mode === 'dark'
             ? alpha(neutralColors.white, 0.03)
             : alpha(neutralColors.inkLight, 0.025),
+        // Design handoff: a running trace's panel gets the same primary-tinted
+        // border + inset ring PromptTimelinePanel gives a running turn's card
+        // (see that component's `turn.inProgress` styling) — one token reused
+        // for both states rather than a one-off "live" shade.
+        border: trace.inProgress ? 1 : 'none',
+        borderColor: trace.inProgress
+          ? (th) => alpha(th.palette.primary.main, 0.32)
+          : undefined,
+        boxShadow: trace.inProgress
+          ? (th) => `inset 0 0 0 1px ${alpha(th.palette.primary.main, 0.32)}`
+          : 'none',
       }}
       onClick={(e) => e.stopPropagation()}
     >
+      {trace.inProgress ? (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            mb: 1.5,
+          }}
+        >
+          <RunningIndicator
+            tooltip="This trace is still running. Its summary updates automatically."
+            ariaLabel="Trace still running"
+          />
+          <Typography
+            sx={{
+              typography: 'eyebrowSm',
+              color: 'primary.main',
+            }}
+          >
+            Updating live
+          </Typography>
+        </Box>
+      ) : null}
       {isLoading || !model ? (
         <Box
           sx={{

@@ -13,14 +13,21 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-export {
-  default,
-  CostValue,
-  TokenBreakdownTitle,
-  TokenBreakdownTooltip,
-  TokenUsage,
-} from './PromptTimelinePanel';
-// RunningIndicator now lives in the shared components/RunningIndicator (both
-// this panel and the Traces page import it from there); re-exported here so
-// existing imports from this folder (e.g. SessionsTable.tsx) keep working.
-export { RunningIndicator } from '../../../../components/RunningIndicator';
+import { describe, expect, it } from 'vitest';
+import { screen } from '@testing-library/react';
+import { renderWithProviders } from '../../../../test/renderWithProviders';
+import LiveTailRow from './LiveTailRow';
+
+describe('LiveTailRow', () => {
+  it('renders the waiting label and the running-indicator status for a given left/right', () => {
+    renderWithProviders(
+      <LiveTailRow gridColumns="minmax(220px, 40%) 1fr" left={12} right={38} />,
+    );
+
+    expect(screen.getByText('waiting for more spans…')).toBeInTheDocument();
+    expect(
+      screen.getByRole('status', { name: 'More spans are still arriving' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('running…')).toBeInTheDocument();
+  });
+});

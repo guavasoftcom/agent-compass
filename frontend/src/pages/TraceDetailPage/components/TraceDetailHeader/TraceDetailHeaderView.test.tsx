@@ -53,6 +53,7 @@ const baseProps: TraceDetailHeaderViewProps = {
   shownOperations,
   opCount: 2,
   firstUserPrompt: 'Refactor the Aurora theme overlay so it applies cleanly.',
+  inProgress: false,
 };
 
 describe('TraceDetailHeaderView', () => {
@@ -93,5 +94,19 @@ describe('TraceDetailHeaderView', () => {
     expect(
       screen.queryByText('Refactor the Aurora theme overlay so it applies cleanly.'),
     ).not.toBeInTheDocument();
+  });
+
+  it('shows a live chip when the trace is in progress, and hides it otherwise', () => {
+    const { rerender } = renderWithProviders(
+      <TraceDetailHeaderView {...baseProps} inProgress />,
+    );
+
+    expect(screen.getByText('LIVE')).toBeInTheDocument();
+    expect(screen.getByLabelText('Trace still running')).toBeInTheDocument();
+
+    rerender(<TraceDetailHeaderView {...baseProps} inProgress={false} />);
+
+    expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Trace still running')).not.toBeInTheDocument();
   });
 });

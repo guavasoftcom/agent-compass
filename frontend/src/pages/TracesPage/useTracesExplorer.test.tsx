@@ -14,10 +14,12 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TraceCursorPage, TraceFacets, TraceHistogram, TracesListResult } from './tracesApi';
+import { RUNNING_TRACE_POLL_INTERVAL_MS } from './tracesApi';
+import type { TraceRow } from '../../api';
 
 const histogramFixture: TraceHistogram = {
   bucketMs: 60_000,
@@ -49,6 +51,7 @@ const fetchTraceHistogram = vi.fn().mockResolvedValue(histogramFixture);
 const fetchTraceFacets = vi.fn().mockResolvedValue(facetsFixture);
 const fetchTracesCursor = vi.fn().mockResolvedValue(cursorPageFixture);
 const fetchTracesPage = vi.fn().mockResolvedValue(tablePageFixture);
+const fetchTraceSummaryOrNull = vi.fn().mockResolvedValue(null);
 
 vi.mock('./tracesApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./tracesApi')>();
@@ -58,6 +61,7 @@ vi.mock('./tracesApi', async (importOriginal) => {
     fetchTraceFacets: (...args: unknown[]) => fetchTraceFacets(...args),
     fetchTracesCursor: (...args: unknown[]) => fetchTracesCursor(...args),
     fetchTracesPage: (...args: unknown[]) => fetchTracesPage(...args),
+    fetchTraceSummaryOrNull: (...args: unknown[]) => fetchTraceSummaryOrNull(...args),
   };
 });
 
@@ -79,7 +83,29 @@ const buildWrapper = (queryClient: QueryClient) => {
   return Wrapper;
 };
 
+const runningTraceRow: TraceRow = {
+  traceId: 'running-trace',
+  startTimestamp: '2026-08-30T10:00:00.000Z',
+  rootSpanName: 'session.turn',
+  rootSpanId: 'span-1',
+  sessionId: 'session-1',
+  spanCount: 4,
+  durationNanos: 1_000_000,
+  errorCount: 0,
+  totalTokens: 0,
+  totalCostUsd: 0,
+  firstUserPrompt: null,
+  inProgress: true,
+};
+
 describe('useTracesExplorer', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    fetchTracesPage.mockReset().mockResolvedValue(tablePageFixture);
+    fetchTraceSummaryOrNull.mockReset().mockResolvedValue(null);
+  });
+
+
   // Mirrors how a window-selection change already resets the stream cursor for LogsPageView:
   // both a window change and a repository change ride the same `filters` object, so both
   // produce a new `filtersKey` and re-trigger the "reset stream" effect, which starts the
@@ -129,5 +155,82 @@ describe('useTracesExplorer', () => {
       .getAll()
       .map((query) => JSON.stringify(query.queryKey));
     expect(queryKeys.some((key) => key.includes('repo-a'))).toBe(true);
+  });
+
+  it('polls the table query every RUNNING_TRACE_POLL_INTERVAL_MS while a returned row is inProgress, and stops once it is not', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fetchTracesPage.mockResolvedValue({ items: [runningTraceRow], totalCount: 1 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook((props) => useTracesExplorer(props), {
+      wrapper: buildWrapper(queryClient),
+      initialProps: baseParams,
+    });
+
+    act(() => {
+      result.current.onViewChange('table');
+    });
+
+    await waitFor(() => {
+      expect(fetchTracesPage).toHaveBeenCalled();
+    });
+    const callsWhileRunning = fetchTracesPage.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUNNING_TRACE_POLL_INTERVAL_MS);
+    });
+
+    // Unconditional on autoRefresh (baseParams.autoRefresh is false) — same
+    // reasoning as Sessions' running-row poll.
+    expect(fetchTracesPage.mock.calls.length).toBeGreaterThan(callsWhileRunning);
+
+    // The row finishes: the next resolved page carries no in-progress row, so
+    // the poll should stop scheduling further fetches.
+    fetchTracesPage.mockResolvedValue({
+      items: [{ ...runningTraceRow, inProgress: false }],
+      totalCount: 1,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUNNING_TRACE_POLL_INTERVAL_MS);
+    });
+    const callsAfterFinished = fetchTracesPage.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUNNING_TRACE_POLL_INTERVAL_MS * 3);
+    });
+
+    expect(fetchTracesPage.mock.calls.length).toBe(callsAfterFinished);
+  });
+
+  it('patches an already-loaded in-progress stream row in place via fetchTraceSummaryOrNull (Stream view only)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fetchTracesCursor.mockResolvedValueOnce({
+      items: [runningTraceRow],
+      nextCursor: null,
+      hasMore: false,
+      totalCount: 1,
+    });
+    fetchTraceSummaryOrNull.mockResolvedValue({ ...runningTraceRow, inProgress: false });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // autoRefresh: false — live tail stays off, so this exercises only the
+    // second, independent patch effect, not the tail-prepend effect.
+    const { result } = renderHook((props) => useTracesExplorer(props), {
+      wrapper: buildWrapper(queryClient),
+      initialProps: baseParams,
+    });
+
+    await waitFor(() => {
+      expect(result.current.streamRows).toHaveLength(1);
+      expect(result.current.streamRows[0].inProgress).toBe(true);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUNNING_TRACE_POLL_INTERVAL_MS);
+    });
+
+    expect(fetchTraceSummaryOrNull).toHaveBeenCalledWith('running-trace');
+    await waitFor(() => {
+      expect(result.current.streamRows[0].inProgress).toBe(false);
+    });
   });
 });

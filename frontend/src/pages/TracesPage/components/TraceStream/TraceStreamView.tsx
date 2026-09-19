@@ -37,6 +37,7 @@ import TraceSummaryInline from '../TraceSummaryInline';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
+import { RunningIndicator } from '../../../../components/RunningIndicator';
 
 // Aurora sync: inserted a Prompt column (minmax(180px,1fr)) between Operation
 // and Latency — the trace's initiating user prompt, via promptOf() →
@@ -236,6 +237,9 @@ const TraceStreamView = ({
                 />
                 <Box
                   sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.6,
                     typography: 'mono',
                     fontSize: 12,
                     color: 'text.secondary',
@@ -243,6 +247,12 @@ const TraceStreamView = ({
                   }}
                 >
                   {clockTime(trace.startTimestamp)}
+                  {trace.inProgress ? (
+                    <RunningIndicator
+                      tooltip="This trace is still running. Its row updates automatically."
+                      ariaLabel="Trace still running"
+                    />
+                  ) : null}
                 </Box>
                 <Box
                   sx={{

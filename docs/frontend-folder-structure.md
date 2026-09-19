@@ -107,6 +107,9 @@ frontend/src/
     PromptSummaryText/
       PromptSummaryText.tsx        // renders a prompt, substituting a muted subagent-notification summary for non-authored envelopes
       index.ts
+    RunningIndicator/
+      RunningIndicator.tsx         // shared pulsing "still running" dot (Sessions rows/turns, Traces rows/summary/detail)
+      index.ts
     SearchInput/
       SearchInput.tsx              // shared search box (Logs + Traces, via FacetRail)
       index.ts

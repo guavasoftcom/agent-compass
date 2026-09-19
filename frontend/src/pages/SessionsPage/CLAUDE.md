@@ -323,8 +323,9 @@ trace link for those rows, not a disabled placeholder.
   per-turn `inProgress` (newest turn, no exported root span yet, active within 20 minutes), just
   resolved at session-row granularity. Not window-scoped: a session that began before the
   requested window can still be flagged running. `SessionsTable` renders it as a small pulsing
-  dot (the shared `PromptTimelinePanel`-exported `RunningIndicator`, same component the drawer's
-  turn cards use, with a session-scoped tooltip/aria-label) trailing the relative-time text in
+  dot (the shared `components/RunningIndicator` — re-exported through `PromptTimelinePanel`'s
+  barrel for this page's existing imports, same component the drawer's turn cards use, with a
+  session-scoped tooltip/aria-label) trailing the relative-time text in
   the Last activity cell, plus a primary-tinted row background in place of the normal zebra
   stripe. Dot-not-spinner and trailing-not-leading placement both come from the Aurora Sessions
   design handoff (`Sessions Handoff/Aurora Sessions Mockup.html`) — an earlier revision used a

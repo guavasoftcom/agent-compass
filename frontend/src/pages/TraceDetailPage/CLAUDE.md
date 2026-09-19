@@ -757,8 +757,9 @@ Ollama configuration section for the enforcement detail), so a stale tab still c
 analysis even if this check is bypassed.
 
 All of the page's own `useQuery` calls (the first three) are enabled
-only when `traceId` is truthy (`enabled: Boolean(traceId)`). None of them poll — this page has no
-`WindowSelection`, no auto-refresh, and no `refetchInterval`. The logs query is intentionally
+only when `traceId` is truthy (`enabled: Boolean(traceId)`). Two of them poll conditionally —
+see the `inProgress` bullet immediately below; the third (`trace-logs`) and every
+`AnalyzeTraceDialog`/Ollama query still never poll. The logs query is intentionally
 eager (not gated on a span being selected)
 so the drawer's Logs section has data the moment the user first selects a span. The summary query
 feeds three things: the header's Prompt row (`firstUserPrompt`), the header's Cost KPI
@@ -766,6 +767,26 @@ feeds three things: the header's Prompt row (`firstUserPrompt`), the header's Co
 (`traceBackgroundCostUsd`, from `TraceRow.backgroundCostUsd`) — see Gotchas and the Cost section
 below. Every other header figure (tokens, span/tool counts, depth) stays derived from the spans
 query.
+
+**`TraceRow.inProgress` drives two conditional `refetchInterval`s, both keyed off the
+`trace-summary` query's own resolved data.** `traceSummaryQuery` (the container's name for the
+`['trace-summary', traceId]` query — declared FIRST in the container, ahead of the trace-spans
+query, specifically so its data can be referenced from both) sets `refetchInterval` as a function
+reading the query's own last result (`(query) => query.state.data?.inProgress ?
+RUNNING_TRACE_POLL_INTERVAL_MS : false`) rather than closing over the `traceSummaryQuery` variable
+itself, which isn't assigned yet at that point in the hook call (a real temporal-dead-zone
+hazard, not just a style preference). The `['trace-spans', traceId]` query then reads
+`traceSummaryQuery.data?.inProgress` directly (safe there — the variable is already fully
+assigned) for the identical `refetchInterval`, so a still-running trace's waterfall keeps picking
+up newly-emitted spans until the summary query itself observes the trace finishing.
+`RUNNING_TRACE_POLL_INTERVAL_MS` (5 s) is imported from `../TracesPage/tracesApi` — the same
+constant `useTracesExplorer`'s running-row polling and `TraceSummaryInline`'s spans query use (see
+`../TracesPage/CLAUDE.md`'s `inProgress` bullet). `traceInProgress` (`traceSummary?.inProgress ??
+false`) threads container → `TraceDetailPageView` → `TraceDetailHeader` → `TraceDetailHeaderView`
+as `inProgress`, rendered as a ticking `TraceDetailHeader/TraceLiveChip` right after the
+breadcrumb's `IdentityPill` (replacing the older full-width banner); `TraceDetailPageView` also
+appends a `components/LiveTailRow` after the waterfall's last row while `traceInProgress` is true,
+showing where the trace is still extending.
 
 `TraceSummaryInline` in `TracesPage` uses `['trace-inline-spans', traceId]` (a different key)
 for the same spans endpoint — the two caches are separate.

@@ -13,14 +13,5 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-export {
-  default,
-  CostValue,
-  TokenBreakdownTitle,
-  TokenBreakdownTooltip,
-  TokenUsage,
-} from './PromptTimelinePanel';
-// RunningIndicator now lives in the shared components/RunningIndicator (both
-// this panel and the Traces page import it from there); re-exported here so
-// existing imports from this folder (e.g. SessionsTable.tsx) keep working.
-export { RunningIndicator } from '../../../../components/RunningIndicator';
+export { default, RunningIndicator } from './RunningIndicator';
+export type { RunningIndicatorProps } from './RunningIndicator';

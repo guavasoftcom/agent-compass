@@ -41,6 +41,92 @@ export interface WindowContextValue {
 
 const DEFAULT_SELECTION: WindowSelection = { kind: 'preset', minutes: 60 * 24 };
 
+const SELECTION_STORAGE_KEY = 'ac-window-selection';
+const AUTO_REFRESH_STORAGE_KEY = 'ac-window-auto-refresh';
+const REPOSITORY_URL_STORAGE_KEY = 'ac-window-repository-url';
+
+const isWindowSelection = (value: unknown): value is WindowSelection => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind === 'preset') {
+    return typeof candidate.minutes === 'number';
+  }
+  if (candidate.kind === 'custom') {
+    return (
+      typeof candidate.startTimestamp === 'string' &&
+      typeof candidate.endTimestamp === 'string'
+    );
+  }
+  return false;
+};
+
+const readInitialSelection = (): WindowSelection => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_SELECTION;
+  }
+  try {
+    const stored = window.localStorage?.getItem(SELECTION_STORAGE_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : null;
+    return isWindowSelection(parsed) ? parsed : DEFAULT_SELECTION;
+  } catch {
+    return DEFAULT_SELECTION;
+  }
+};
+
+const readInitialAutoRefresh = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.localStorage?.getItem(AUTO_REFRESH_STORAGE_KEY) === 'true';
+};
+
+const readInitialRepositoryUrl = (): string | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage?.getItem(REPOSITORY_URL_STORAGE_KEY) ?? null;
+};
+
+const persistSelection = (selection: WindowSelection): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage?.setItem(SELECTION_STORAGE_KEY, JSON.stringify(selection));
+  } catch {
+    // ignore quota / disabled storage — the selection still works for the
+    // session, it just won't survive a reload
+  }
+};
+
+const persistAutoRefresh = (autoRefresh: boolean): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage?.setItem(AUTO_REFRESH_STORAGE_KEY, String(autoRefresh));
+  } catch {
+    // ignore quota / disabled storage
+  }
+};
+
+const persistRepositoryUrl = (repositoryUrl: string | null): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (repositoryUrl === null) {
+      window.localStorage?.removeItem(REPOSITORY_URL_STORAGE_KEY);
+    } else {
+      window.localStorage?.setItem(REPOSITORY_URL_STORAGE_KEY, repositoryUrl);
+    }
+  } catch {
+    // ignore quota / disabled storage
+  }
+};
+
 const WindowContext = createContext<WindowContextValue>({
   selection: DEFAULT_SELECTION,
   setSelection: () => {},
@@ -58,18 +144,27 @@ export interface WindowProviderProps {
 }
 
 export const WindowProvider = ({ children }: WindowProviderProps) => {
-  const [selection, setSelection] = useState<WindowSelection>(DEFAULT_SELECTION);
-  const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
-  const [repositoryUrl, setRepositoryUrl] = useState<string | null>(null);
+  const [selection, setSelectionState] = useState<WindowSelection>(() => readInitialSelection());
+  const [autoRefresh, setAutoRefreshState] = useState<boolean>(() => readInitialAutoRefresh());
+  const [repositoryUrl, setRepositoryUrlState] = useState<string | null>(() => readInitialRepositoryUrl());
 
   const value = useMemo<WindowContextValue>(
     () => ({
       selection,
-      setSelection,
+      setSelection: (next: WindowSelection) => {
+        persistSelection(next);
+        setSelectionState(next);
+      },
       autoRefresh,
-      setAutoRefresh,
+      setAutoRefresh: (next: boolean) => {
+        persistAutoRefresh(next);
+        setAutoRefreshState(next);
+      },
       repositoryUrl,
-      setRepositoryUrl,
+      setRepositoryUrl: (next: string | null) => {
+        persistRepositoryUrl(next);
+        setRepositoryUrlState(next);
+      },
     }),
     [selection, autoRefresh, repositoryUrl],
   );

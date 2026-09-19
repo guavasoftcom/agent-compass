@@ -17,8 +17,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { TraceRow } from '../../api';
 import {
+  RUNNING_TRACE_POLL_INTERVAL_MS,
   fetchTraceFacets,
   fetchTraceHistogram,
+  fetchTraceSummaryOrNull,
   fetchTracesCursor,
   fetchTracesPage,
   serviceOf,
@@ -137,6 +139,16 @@ const useTracesExplorer = ({
     queryKey: ['trace-table', filtersKey, sort, page, pageSize],
     queryFn: () => fetchTracesPage(filters, sort, page, pageSize),
     enabled: view === 'table',
+    // Unconditional on autoRefresh — same reasoning as Sessions' running-row
+    // poll (SessionsPage.tsx): a displayed "running" dot is a promise the UI
+    // has to keep regardless of the user's auto-refresh preference. Table
+    // view's "nothing running" refresh is already covered by the page's
+    // existing 60s preset-driven reload, so no extra fallback branch is needed
+    // here.
+    refetchInterval: (query) => {
+      const hasRunningRow = query.state.data?.items.some((row) => row.inProgress) ?? false;
+      return hasRunningRow ? RUNNING_TRACE_POLL_INTERVAL_MS : false;
+    },
   });
 
   // Mirror the latest values into refs so the stable stream callbacks below
@@ -253,6 +265,33 @@ const useTracesExplorer = ({
     // `streamRows`/`histogramQuery` here would clear and rebuild the interval on every render
     // and the 1.5s tick would never fire while the user is typing or toggling facets.
   }, [tail]);
+
+  // The tail effect above only prepends new rows; it never re-fetches a row already in
+  // streamRows, so an in-progress trace's dot would otherwise never clear once rendered.
+  // Patch already-loaded in-progress rows in place, unconditional on `tail`/autoRefresh —
+  // same reasoning as Sessions' running-row poll being unconditional on that toggle.
+  useEffect(() => {
+    if (view !== 'stream') {
+      return undefined;
+    }
+    const interval = window.setInterval(async () => {
+      const runningTraceIds = streamRowsRef.current.filter((row) => row.inProgress).map((row) => row.traceId);
+      if (runningTraceIds.length === 0) {
+        return;
+      }
+      const updates = await Promise.all(runningTraceIds.map((traceId) => fetchTraceSummaryOrNull(traceId)));
+      const updatesByTraceId = new Map(
+        updates.filter((row): row is TraceRow => row !== null).map((row) => [row.traceId, row]),
+      );
+      if (updatesByTraceId.size === 0) {
+        return;
+      }
+      setStreamRows((previous) => previous.map((row) => updatesByTraceId.get(row.traceId) ?? row));
+    }, RUNNING_TRACE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+    // Depends only on `[view]` — like the tail effect above, everything it reads comes from
+    // streamRowsRef, so it isn't torn down/recreated on every render.
+  }, [view]);
 
   const toggleFacet = (key: FacetKey, value: string) => {
     setFacetSelections((previous) => {

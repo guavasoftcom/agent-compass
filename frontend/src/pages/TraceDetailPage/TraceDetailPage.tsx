@@ -19,7 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchTraceLogs } from '../../api';
 import type { LogRow } from '../../api';
 import { fetchSpansForTrace, fetchTraceSummaryOrNull } from '../TracesPage/tracesApi';
-import { NANOS_PER_MILLI } from '../TracesPage/tracesApi';
+import { NANOS_PER_MILLI, RUNNING_TRACE_POLL_INTERVAL_MS } from '../TracesPage/tracesApi';
 import { isToolCallSpan } from '../TracesPage/traceDerivations';
 import { fetchOllamaSettings } from '../SettingsPage/settingsApi';
 import { fetchTraceAnalysis } from './traceAnalysisApi';
@@ -38,6 +38,23 @@ import TraceDetailPageView from './TraceDetailPageView';
 export default function TraceDetailPage() {
   const { traceId } = useParams<{ traceId: string }>();
 
+  // The trace's aggregate row — the spans response is an array and can't carry
+  // trace-level fields. Feeds firstUserPrompt and the header's authoritative
+  // totalCostUsd; the header's other numbers (tokens, span/tool counts,
+  // depth) stay derived from the spans already in hand. Declared first (ahead
+  // of the trace-spans query below) so its own resolved `data?.inProgress` can
+  // drive both this query's and the spans query's `refetchInterval`.
+  const traceSummaryQuery = useQuery({
+    queryKey: ['trace-summary', traceId],
+    queryFn: () => fetchTraceSummaryOrNull(traceId!),
+    enabled: Boolean(traceId),
+    // Function form (reads the query's own last result) rather than closing over
+    // `traceSummaryQuery` itself, which isn't assigned yet at this point in the
+    // hook call — same reasoning as useTracesExplorer's tableQuery.
+    refetchInterval: (query) => (query.state.data?.inProgress ? RUNNING_TRACE_POLL_INTERVAL_MS : false),
+  });
+  const traceSummary = traceSummaryQuery.data;
+
   const {
     data: spans,
     isLoading,
@@ -46,6 +63,10 @@ export default function TraceDetailPage() {
     queryKey: ['trace-spans', traceId],
     queryFn: () => fetchSpansForTrace(traceId!),
     enabled: Boolean(traceId),
+    // Keyed off the trace-summary query's own resolved inProgress, not a second
+    // liveness check — a still-running trace's waterfall keeps growing new
+    // spans until the summary query itself sees inProgress flip false.
+    refetchInterval: traceSummaryQuery.data?.inProgress ? RUNNING_TRACE_POLL_INTERVAL_MS : false,
   });
 
   // Logs load eagerly (not gated on the drawer) so the per-span "Logs" section in
@@ -53,16 +74,6 @@ export default function TraceDetailPage() {
   const { data: logsData } = useQuery({
     queryKey: ['trace-logs', traceId],
     queryFn: () => fetchTraceLogs(traceId!),
-    enabled: Boolean(traceId),
-  });
-
-  // The trace's aggregate row — the spans response is an array and can't carry
-  // trace-level fields. Feeds firstUserPrompt and the header's authoritative
-  // totalCostUsd; the header's other numbers (tokens, span/tool counts,
-  // depth) stay derived from the spans already in hand.
-  const { data: traceSummary } = useQuery({
-    queryKey: ['trace-summary', traceId],
-    queryFn: () => fetchTraceSummaryOrNull(traceId!),
     enabled: Boolean(traceId),
   });
 
@@ -235,6 +246,7 @@ export default function TraceDetailPage() {
       firstUserPrompt={traceSummary?.firstUserPrompt ?? null}
       traceCostUsd={traceSummary?.totalCostUsd ?? null}
       traceBackgroundCostUsd={traceSummary?.backgroundCostUsd ?? 0}
+      traceInProgress={traceSummary?.inProgress ?? false}
       traceAnalysis={traceAnalysis ?? null}
       ollamaAnalysisEnabled={ollamaSettings?.enabled ?? false}
     />

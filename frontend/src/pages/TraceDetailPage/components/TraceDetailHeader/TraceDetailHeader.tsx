@@ -52,6 +52,9 @@ interface Props {
   // Aurora sync: TraceRow.firstUserPrompt (pending backend field) — see
   // TraceDetailHeaderView's doc comment.
   firstUserPrompt?: string | null;
+  // TraceRow.inProgress — true while this trace is still running. Drives the
+  // RunningIndicator dot next to the breadcrumb's IdentityPill.
+  inProgress: boolean;
 }
 
 interface HeaderAggregates {
@@ -82,6 +85,7 @@ const TraceDetailHeader = ({
   traceCostUsd,
   traceBackgroundCostUsd,
   firstUserPrompt,
+  inProgress,
 }: Props) => {
   const aggregates = useMemo<HeaderAggregates>(() => {
     const serviceLabels = new Set<string>();
@@ -202,6 +206,7 @@ const TraceDetailHeader = ({
       shownOperations={opBreakdown.shownOperations}
       opCount={opBreakdown.opCount}
       firstUserPrompt={firstUserPrompt}
+      inProgress={inProgress}
     />
   );
 };

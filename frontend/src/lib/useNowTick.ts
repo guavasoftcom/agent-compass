@@ -13,14 +13,17 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-export {
-  default,
-  CostValue,
-  TokenBreakdownTitle,
-  TokenBreakdownTooltip,
-  TokenUsage,
-} from './PromptTimelinePanel';
-// RunningIndicator now lives in the shared components/RunningIndicator (both
-// this panel and the Traces page import it from there); re-exported here so
-// existing imports from this folder (e.g. SessionsTable.tsx) keep working.
-export { RunningIndicator } from '../../../../components/RunningIndicator';
+import { useEffect, useState } from 'react';
+
+// Re-renders every intervalMs by returning a fresh Date.now(); stops the interval-based
+// re-render pattern from spreading ad hoc across pages. Mount this only while the caller
+// actually needs a ticking clock (e.g. only while a trace is still in progress) — an unmounted
+// caller means no interval, no re-renders.
+export const useNowTick = (intervalMs = 1000): number => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+};

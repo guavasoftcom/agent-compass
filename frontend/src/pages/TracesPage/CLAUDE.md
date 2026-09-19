@@ -257,6 +257,41 @@ read `filters`-derived data from context as before.
 - **Preset polling**: separately, the provider runs a 60 s `reloadTraces` interval when
   `autoRefresh && selection.kind === 'preset'` — this refreshes histogram/facets (and table when
   mounted). So Stream view gets 1.5 s tail; Table view gets 60 s refetch.
+- **`TraceRow.inProgress`** — true while a trace has no exported `claude_code.interaction` root
+  span yet and has shown activity in the last 20 minutes; identical liveness definition to
+  `SessionSummaryRow.inProgress` / `SessionPromptRow.inProgress` (see `SessionsPage/CLAUDE.md`),
+  resolved at trace granularity. Present on the Table list, the Stream/cursor list, and the
+  single-trace `GET /api/traces/:id/summary` response alike. Rendered as the shared
+  `components/RunningIndicator` dot: right after the Start-column timestamp in both
+  `TraceTableView` and `TraceStreamView`, and as a small "Updating live" strip (plus a
+  primary-tinted border/glow on the panel, mirroring `PromptTimelinePanel`'s running-turn card
+  treatment) at the top of `TraceSummaryInlineView`; the Trace Detail page's header shows it next
+  to the breadcrumb's `IdentityPill`.
+  - **`tableQuery`'s `refetchInterval` is a function reading its own last result**
+    (`query.state.data?.items.some((row) => row.inProgress)`), exactly like `SessionsPage`'s
+    `sessionsQuery` — **unconditional on `autoRefresh`**, for the identical reason: a displayed
+    "running" dot is a promise the UI has to keep regardless of the user's auto-refresh
+    preference. Table view's own 60 s preset-driven `reloadTraces` interval already covers the
+    "nothing running" case, so there's no separate fallback branch.
+  - **Stream view needs a second, independent effect**, because the tail effect only ever
+    prepends new rows via an `after`-cursor poll — it never re-fetches a row already sitting in
+    `streamRows`, so an in-progress trace's dot would otherwise never clear once rendered even
+    with live tail on. `useTracesExplorer` runs a second `setInterval` effect (dep `[view]` only,
+    same ref-based reasoning as the tail effect) that finds every `streamRowsRef`-held row with
+    `inProgress: true`, re-fetches each via `fetchTraceSummaryOrNull`, and patches matching rows
+    in place (`setStreamRows((previous) => previous.map(...))`). Also unconditional on
+    `tail`/`autoRefresh`. `RUNNING_TRACE_POLL_INTERVAL_MS` (5 s, `traceDerivations.ts`, re-exported
+    through `tracesApi.ts`'s barrel) is the shared poll cadence for this effect, `tableQuery`,
+    `TraceSummaryInline`'s spans query, and both of `TraceDetailPage`'s conditional
+    `refetchInterval`s (see `TraceDetailPage/CLAUDE.md`).
+  - **`TraceSummaryInline`'s `['trace-inline-spans', traceId]` query** sets
+    `refetchInterval: trace.inProgress ? RUNNING_TRACE_POLL_INTERVAL_MS : false` — no fallback
+    branch, since a finished trace's spans are immutable and the query simply stops polling once
+    the trace itself does.
+  - **`RunningIndicator` moved to `components/RunningIndicator`** (was defined inline in
+    `SessionsPage/components/PromptTimelinePanel/PromptTimelinePanel.tsx`) so both pages import
+    the same dot component; that folder's `index.ts` re-exports it from the new location so
+    existing imports (`SessionsTable.tsx`) needed zero changes.
 - **Zoom**: clicking a histogram bar calls `zoomToBucket(bucket)` → sets a local `{t0,t1,label}`
   and force-disables auto-refresh. It never touches the global window context. Changing the window
   clears it two ways: `onSelectionChange` calls `clearZoom()` synchronously (no stale-range flash),

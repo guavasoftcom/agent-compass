@@ -36,8 +36,10 @@ import TraceDetailHeader from './components/TraceDetailHeader';
 import TraceMinimap, { type ZoomView } from './components/TraceMinimap';
 import WaterfallToolbar from './components/WaterfallToolbar';
 import SpanWaterfallRow from './components/SpanWaterfallRow';
+import LiveTailRow from './components/LiveTailRow';
 import AnalyzeTraceDialog from './components/AnalyzeTraceDialog';
 import { radii } from '../../theme/theme';
+import { useNowTick } from '../../lib/useNowTick';
 
 export interface TraceDetailPageViewProps {
   traceId: string;
@@ -79,6 +81,12 @@ export interface TraceDetailPageViewProps {
   // rather than null, since the header only needs to know whether to show the
   // background-cost caption at all.
   traceBackgroundCostUsd: number;
+  // TraceRow.inProgress from the same `['trace-summary', traceId]` query —
+  // true while this trace is still running (no exported root span yet, active
+  // in the last 20 minutes). Defaults to false while the query hasn't resolved
+  // yet. Drives the header's RunningIndicator dot and the two conditional
+  // `refetchInterval`s in TraceDetailPage (trace-summary and trace-spans).
+  traceInProgress: boolean;
   // Cached trace analysis result, hoisted from AnalyzeTraceDialog so the
   // toolbar can show a dot for "has a saved analysis" without opening the dialog.
   traceAnalysis: TraceAnalysisResult | null;
@@ -110,6 +118,7 @@ const TraceDetailPageView = ({
   firstUserPrompt,
   traceCostUsd,
   traceBackgroundCostUsd,
+  traceInProgress,
   traceAnalysis,
   ollamaAnalysisEnabled,
 }: TraceDetailPageViewProps) => {
@@ -182,6 +191,19 @@ const TraceDetailPageView = ({
   const visibleSpanMs = Math.max(1, view.e - view.s);
   const percentOf = (timeMs: number) =>
     ((timeMs - view.s) / visibleSpanMs) * 100;
+
+  // The live-tail row's geometry — see LiveTailRow's own doc comment for why this is a new
+  // trailing segment rather than an existing row's bar growing. useNowTick is mounted
+  // unconditionally (Rules of Hooks), but its return is only used while traceInProgress —
+  // a finished trace's row math never depends on the ticking clock.
+  const now = useNowTick();
+  const lastKnownEndMs = traceInProgress
+    ? Math.max(0, ...visible.map((s) => offMsOf(s) + durMsOf(s)))
+    : 0;
+  const liveTailLeft = traceInProgress ? Math.max(0, percentOf(lastKnownEndMs)) : 0;
+  const liveTailRight = traceInProgress
+    ? Math.min(100, percentOf(Math.min(view.e, now - earliest)))
+    : 0;
 
   // Bring a span's row into view, scrolling only as far as it takes and leaving
   // a couple of rows of context at whichever edge the row entered from. Rows
@@ -510,6 +532,7 @@ const TraceDetailPageView = ({
         traceCostUsd={traceCostUsd}
         traceBackgroundCostUsd={traceBackgroundCostUsd}
         firstUserPrompt={firstUserPrompt}
+        inProgress={traceInProgress}
       />
 
       {/* body row: waterfall card + inspector drawer as flex siblings, so the
@@ -635,6 +658,13 @@ const TraceDetailPageView = ({
                 />
               );
             })}
+            {traceInProgress ? (
+              <LiveTailRow
+                gridColumns={gridColumns}
+                left={liveTailLeft}
+                right={liveTailRight}
+              />
+            ) : null}
           </Box>
         </Box>
 

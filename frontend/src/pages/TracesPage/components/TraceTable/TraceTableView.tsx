@@ -33,6 +33,7 @@ import TablePager from '../../../../components/TablePager';
 import { fontFamilies } from '../../../../theme/typography';
 import { radii } from '../../../../theme/theme';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
+import { RunningIndicator } from '../../../../components/RunningIndicator';
 
 const TableHeaderCell = ({
   children,
@@ -180,6 +181,14 @@ const TraceTableView = ({
                         ›
                       </Box>
                       {new Date(trace.startTimestamp).toLocaleString()}
+                      {trace.inProgress ? (
+                        <Box component="span" sx={{ display: 'inline-flex', ml: 0.75, verticalAlign: 'middle' }}>
+                          <RunningIndicator
+                            tooltip="This trace is still running. Its row updates automatically."
+                            ariaLabel="Trace still running"
+                          />
+                        </Box>
+                      ) : null}
                     </Box>
                     <Box
                       component="td"

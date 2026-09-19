@@ -92,4 +92,11 @@ public class TraceSummary {
             + "exists but carries no prompt text).",
             example = "Add a firstUserPrompt field to the Traces API", nullable = true)
     private String firstUserPrompt;
+
+    @Schema(description = "True while this trace is still running: it has no exported "
+            + "claude_code.interaction root span yet, and the trace has shown activity within "
+            + "the last 20 minutes (an interrupted/abandoned trace is not running). Identical "
+            + "liveness definition to GET /api/sessions' per-row inProgress -- see that "
+            + "endpoint's SessionSummary.inProgress for the full rationale.", example = "true")
+    private boolean inProgress;
 }

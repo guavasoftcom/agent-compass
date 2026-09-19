@@ -147,6 +147,7 @@ const STORE: SampleTrace[] = (() => {
       totalTokens,
       totalCostUsd: totalTokens * BLENDED_USD_PER_TOKEN,
       firstUserPrompt,
+      inProgress: false,
       _ts: startMs,
       _ms: ms,
       _status: errorCount > 0 ? 'error' : 'ok',
@@ -154,6 +155,18 @@ const STORE: SampleTrace[] = (() => {
     });
   }
   rows.sort((a, b) => b._ts - a._ts);
+  // Mirror the backend's liveness definition on one sample row so
+  // VITE_TRACES_SAMPLE=1 exercises the RunningIndicator dot and the running-row
+  // poll: the newest row is forced to a few minutes ago (well inside the 20-min
+  // window) and flagged inProgress, matching a trace with no exported root span
+  // yet and recent activity.
+  if (rows.length > 0) {
+    const runningStartMs = NOW - 5 * MS_PER_MINUTE;
+    rows[0]._ts = runningStartMs;
+    rows[0].startTimestamp = new Date(runningStartMs).toISOString();
+    rows[0].inProgress = true;
+    rows.sort((a, b) => b._ts - a._ts);
+  }
   return rows;
 })();
 
