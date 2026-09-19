@@ -64,13 +64,21 @@ Don't ship an endpoint without at least the dispatch test.
 
 ## Commands
 
+Run everything from the repo root, path-scoped with `-f` — never `cd backend && …` (the prefix hides the
+real command from this project's own tuning report and can add a permission prompt):
+
 ```sh
-cd backend
-./mvnw spring-boot:run            # serves on :8080, auto-starts Postgres
-./mvnw -Dtest=ClassName test      # single class
-./mvnw test                       # unit tests
-./mvnw verify                     # full build incl. Testcontainers integration tests (needs Docker)
+./backend/mvnw -f backend/pom.xml -q -Dtest=ClassName test   # single class (IntegrationTests too — surefire runs them; needs Docker)
+./backend/mvnw -f backend/pom.xml test                       # all tests
+./backend/mvnw -f backend/pom.xml verify                     # full build (tens of seconds+ — run in the background)
 ```
+
+The user runs `spring-boot:run` in their own terminal — don't start it. On a test failure, read the
+failing class's `backend/target/surefire-reports/<Class>.txt` with `Read` instead of piping Maven output
+through `tail -200`.
+
+Read source with `Read` (use `offset`/`limit` for a slice), never `sed -n 'a,bp'`, `cat`, `head` or
+`tail`; locate files with `Glob`, never `find`.
 
 Never invoke a system `mvn`. Don't skip hooks (`--no-verify`) or amend prior commits when a hook fails — fix the issue and create a new commit.
 

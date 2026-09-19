@@ -59,20 +59,29 @@ You're working on the `frontend/` of Agent Compass: a React 19 + TypeScript SPA 
 3. Container: `useState<WindowSelection>(…)`, `useState(autoRefresh)`, build `selectionKey`, `useQuery({ queryKey: ['foo', selectionKey], queryFn: () => fetchFoo(selection), refetchInterval })`. Derive any rows-with-share in a `useMemo`. Pass everything as props to the view.
 4. View: `PageLayout` + `PageActions` + `StatCard` strip + `Paper` cards.
 5. Add one entry to [`src/App/navItems.tsx`](../../frontend/src/App/navItems.tsx) — `to`, `label`, `icon` (Material icon), `element`.
-6. Run `npm run build` from `frontend/` to confirm Vite compiles cleanly. (`npm run typecheck` exposes pre-existing tsc errors in other files; ignore those unless your work touches them.)
+6. Run `yarn --cwd frontend build` to confirm Vite compiles cleanly. (`yarn --cwd frontend typecheck` may expose pre-existing tsc errors in other files; ignore those unless your work touches them.)
 
 ## Commands
 
+Run everything from the repo root with `--cwd frontend` — never `cd frontend && …` (the prefix hides the
+real command from this project's own tuning report and can add a permission prompt):
+
 ```sh
-cd frontend
-npm install              # first time / after package.json changes
-npm run dev              # vite dev server on :5173, proxies /api → :8080
-npm run build            # production build
-npm run typecheck        # tsc --noEmit (legacy errors exist in some files)
-npm run lint             # eslint
+yarn --cwd frontend install                         # first time / after package.json changes
+yarn --cwd frontend typecheck
+yarn --cwd frontend lint
+yarn --cwd frontend test --run src/path/To.test.tsx # one file; bare `yarn test` is watch mode
+yarn --cwd frontend test --run                      # whole suite
+yarn --cwd frontend build                           # production build
 ```
 
-Never invoke a system `yarn`; the repo uses `npm`. For UI changes, start `npm run dev` and exercise the feature in a browser before reporting done — type-checking alone doesn't catch broken UI.
+The repo uses Yarn 4 (Corepack) — never `npm install`; `package-lock.json` is legacy. Adding a
+dependency: `yarn --cwd frontend add -E <pkg>` (versions are pinned exactly). Don't start the dev server
+yourself — the user runs `yarn dev` in their own terminal; for UI changes, drive the running app in a
+browser before reporting done, following AGENTS.md's locate-first/screenshot-last rule.
+
+Read source with `Read` (use `offset`/`limit` for a slice), never `sed -n 'a,bp'`, `cat`, `head` or
+`tail`; locate files with `Glob`, never `find`.
 
 ## Things to avoid
 

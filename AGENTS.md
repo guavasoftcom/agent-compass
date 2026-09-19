@@ -34,6 +34,10 @@ by `packageManager` and resolved through Corepack; the stray `package-lock.json`
 # Runs for tens of seconds to low minutes — background it rather than blocking on it.
 ./backend/mvnw -f backend/pom.xml verify
 
+# One backend test class (surefire runs *IntegrationTest classes too — no failsafe split).
+# On failure, Read target/surefire-reports/<Class>.txt rather than piping Maven through `tail`.
+./backend/mvnw -f backend/pom.xml -q -Dtest=ClassName test
+
 # Executable jar (spring-boot:repackage is bound to package). `clean` matters: a
 # stale jar from an earlier version leaves two in target/, which the release
 # workflow's single-jar resolver rejects.
@@ -49,6 +53,7 @@ yarn --cwd frontend lint
 
 # Frontend tests (Vitest; bare `yarn test` is watch mode).
 yarn --cwd frontend test --run
+yarn --cwd frontend test --run src/path/To.test.tsx   # one file
 yarn --cwd frontend test:coverage   # enforces the 80% thresholds in vite.config.js
 ```
 
@@ -76,7 +81,10 @@ the backend source tree.
 - **Charts and tables are hand-built SVG/CSS** — no `@mui/x-charts` / `@mui/x-data-grid` /
   `@mui/x-tree-view`. Extend the existing bespoke components; don't add a visualization library.
 - **Prefer the dedicated tool over a Bash equivalent**: `Read` instead of `cat`, `Edit` instead of
-  `sed`, `Glob` instead of `find`, `Write` instead of `echo >` / heredocs. This project's own tuning
+  `sed`, `Glob` instead of `find`, `Write` instead of `echo >` / heredocs. That includes the
+  *read-only* shell forms, which are the ones that actually keep recurring: `sed -n 'a,bp' file` is
+  `Read` with `offset`/`limit`, `tail -N build.log` is `Read` with an `offset`, and `cat`-ing a
+  `CLAUDE.md` is `Read`. This project's own tuning
   report has repeatedly flagged hundreds of `cat`/`sed`/`find`/`echo` calls per window — the dedicated
   tools give better diffs, avoid shell-quoting mistakes, and don't hide the real command's latency
   behind a pipeline.
@@ -89,6 +97,9 @@ the backend source tree.
   individual shots at ~270 KB — so take one only when the *user* needs to see the result, not to
   check your own work. A snapshot answers "did the card render the right number" at a twentieth of
   the bytes, and the browser console (`browser_console_messages`) answers "did it blow up".
+  The Playwright MCP server **blocks `file://` URLs**, so a `design_handoff_*/` mockup can't be opened
+  by path. `Read` the mockup's HTML source (paged; they run ~50 KB); if a rendered view is truly
+  needed, ask the user to serve it rather than retrying the `file://` navigation.
 
 ## Configuration the agent should know
 
