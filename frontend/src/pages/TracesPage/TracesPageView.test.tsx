@@ -34,6 +34,7 @@ const traceRows: TraceRow[] = [
     totalTokens: 1200,
     totalCostUsd: 0.42,
     firstUserPrompt: 'Fix the flaky test suite',
+    inProgress: false,
   },
 ];
 

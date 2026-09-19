@@ -17,7 +17,12 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import type { SpanRow, TraceRow } from '../../../../api';
-import { fetchSpansForTrace, isToolCallSpan, serviceOf } from '../../tracesApi';
+import {
+  RUNNING_TRACE_POLL_INTERVAL_MS,
+  fetchSpansForTrace,
+  isToolCallSpan,
+  serviceOf,
+} from '../../tracesApi';
 import { serviceColor } from '../traceColors';
 import { tokenBreakdownForSpan } from '../../tokenBreakdown';
 import TraceSummaryInlineView, {
@@ -34,6 +39,10 @@ const TraceSummaryInline = ({ trace }: TraceSummaryInlineProps) => {
   const { data: spans, isLoading } = useQuery({
     queryKey: ['trace-inline-spans', trace.traceId],
     queryFn: () => fetchSpansForTrace(trace.traceId),
+    // A finished trace's spans are immutable, so no fallback poll is needed —
+    // unlike the table/stream running-row polls, this one has nothing to stop
+    // and restart, it simply turns off once the trace itself finishes.
+    refetchInterval: trace.inProgress ? RUNNING_TRACE_POLL_INTERVAL_MS : false,
   });
 
   const model = useMemo<TraceSummaryModel | null>(() => {

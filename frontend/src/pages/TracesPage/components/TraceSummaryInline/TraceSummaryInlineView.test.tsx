@@ -35,6 +35,7 @@ const trace: TraceRow = {
   totalTokens: 42000,
   totalCostUsd: 0.83,
   firstUserPrompt: 'Refactor the theme overlay',
+  inProgress: false,
 };
 
 const model: TraceSummaryModel = {
@@ -97,6 +98,22 @@ describe('TraceSummaryInlineView', () => {
     expect(
       screen.getByText('No model tokens — this trace made no model calls.'),
     ).toBeInTheDocument();
+  });
+
+  it('renders the running-trace indicator and "Updating live" strip only when inProgress is true', () => {
+    renderWithProviders(
+      <TraceSummaryInlineView {...baseProps} trace={{ ...trace, inProgress: true }} />,
+    );
+
+    expect(screen.getByRole('status', { name: 'Trace still running' })).toBeInTheDocument();
+    expect(screen.getByText('Updating live')).toBeInTheDocument();
+  });
+
+  it('does not render the running-trace indicator when inProgress is false', () => {
+    renderWithProviders(<TraceSummaryInlineView {...baseProps} />);
+
+    expect(screen.queryByRole('status', { name: 'Trace still running' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Updating live')).not.toBeInTheDocument();
   });
 
   it('calls onOpenTrace when "Open full trace" is clicked', async () => {

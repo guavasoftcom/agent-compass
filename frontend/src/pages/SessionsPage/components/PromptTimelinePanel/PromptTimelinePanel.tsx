@@ -35,6 +35,7 @@ import PromptSummaryText from '../../../../components/PromptSummaryText';
 import NestingConnector, {
   type NestingConnectorGeometry,
 } from '../../../../components/NestingConnector';
+import { RunningIndicator } from '../../../../components/RunningIndicator';
 import {
   auroraColors,
   gradients,
@@ -677,49 +678,10 @@ const BackgroundCostBadge = ({
   );
 };
 
-// Marks the one turn the backend reports as still running (SessionPromptRow's
-// inProgress: newest turn, root span not yet exported, recently active). Its
-// cost/tokens/tools are partial until it finishes — the container polls the
-// timeline while this is showing, so they fill in without a manual reload.
-// Design handoff (Aurora Sessions mockup): a small pulsing dot, not a spinner+text
-// chip — the earlier revision of this component. Exported so the Sessions grid's
-// row-level indicator (SessionsTable) renders the identical dot rather than a
-// hand-rolled copy — same component, two tooltip/aria-label variants for the two
-// granularities (a turn inside the open drawer vs. a session row in the table) it
-// can describe. The pulse keyframes are inlined in `sx` rather than pulled from a
-// shared animation module, matching `LiveTailToggle`'s identical pattern (the
-// Traces page's own "is something live happening" dot) rather than introducing a
-// second way to write a CSS animation in this codebase.
-export const RunningIndicator = ({
-  tooltip = 'This turn is still running. It updates automatically.',
-  ariaLabel = 'Prompt still running',
-}: {
-  tooltip?: string;
-  ariaLabel?: string;
-}) => (
-  <Tooltip title={tooltip} placement="top" arrow>
-    <Box
-      component="span"
-      role="status"
-      aria-label={ariaLabel}
-      sx={{
-        display: 'inline-flex',
-        width: 8,
-        height: 8,
-        flexShrink: 0,
-        borderRadius: '50%',
-        bgcolor: 'primary.main',
-        boxShadow: (t) => `0 0 0 3px ${alpha(t.palette.primary.main, 0.32)}`,
-        cursor: 'help',
-        animation: 'sessionRunningPulse 1.6s ease-in-out infinite',
-        '@keyframes sessionRunningPulse': {
-          '0%, 100%': { opacity: 1, transform: 'scale(1)' },
-          '50%': { opacity: 0.45, transform: 'scale(0.82)' },
-        },
-      }}
-    />
-  </Tooltip>
-);
+// RunningIndicator (the small pulsing "still running" dot) moved to the shared
+// `components/RunningIndicator` so both this panel and the Traces page can
+// import the same component — re-exported below for `index.ts` and existing
+// consumers (e.g. `SessionsTable`) importing it from this folder.
 
 // Aurora glass timeline: a gradient rail with a glowing dot per turn, each turn
 // a translucent card carrying its timestamp, model chip, per-turn cost, prompt

@@ -33,6 +33,7 @@ const rows: TraceRow[] = [
     totalTokens: 42000,
     totalCostUsd: 0.83,
     firstUserPrompt: 'Refactor the theme overlay',
+    inProgress: false,
   },
   {
     traceId: 'b'.repeat(32),
@@ -46,6 +47,7 @@ const rows: TraceRow[] = [
     totalTokens: 0,
     totalCostUsd: 0,
     firstUserPrompt: null,
+    inProgress: false,
   },
 ];
 
@@ -81,6 +83,18 @@ describe('TraceStreamView', () => {
     renderWithProviders(<TraceStreamView {...baseProps} rows={[]} total={0} />);
 
     expect(screen.getByText('No traces match')).toBeInTheDocument();
+  });
+
+  it('renders the running-trace indicator only for a row with inProgress: true', () => {
+    renderWithProviders(
+      <TraceStreamView
+        {...baseProps}
+        rows={[{ ...rows[0], inProgress: true }, rows[1]]}
+      />,
+    );
+
+    expect(screen.getByRole('status', { name: 'Trace still running' })).toBeInTheDocument();
+    expect(screen.getAllByRole('status', { name: 'Trace still running' })).toHaveLength(1);
   });
 
   it('shows a loading indicator when loading is true', () => {

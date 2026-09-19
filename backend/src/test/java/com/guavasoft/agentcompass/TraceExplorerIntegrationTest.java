@@ -1387,6 +1387,55 @@ class TraceExplorerIntegrationTest {
         assertThat(summary.getRootSpanName()).isEqualTo("tool.partial");
     }
 
+    // -------------------------------------------------------------------------
+    // inProgress -- the Traces Explorer's "still running" indicator
+    // (TraceSummary#inProgress). Same liveness rule as SessionSummary#inProgress:
+    // no exported claude_code.interaction root span, and activity within
+    // LogService.IN_PROGRESS_STALENESS_LIMIT (20 minutes).
+    // -------------------------------------------------------------------------
+
+    private static final String TRACE_STILL_RUNNING = "4444000000000000444400000000d001";
+    private static final String TRACE_ROOT_SPAN_EXPORTED = "5555000000000000555500000000e001";
+    private static final String TRACE_STALE_NO_ROOT_SPAN = "6666000000000000666600000000f001";
+    private static final String INTERACTION_ROOT_SPAN_NAME = "claude_code.interaction";
+
+    @Test
+    void traceSummaryFlagsInProgressWhenNoRootSpanAndActivityIsRecent() {
+        // Same "no root span at all" shape as TRACE_IN_FLIGHT above: both spans carry a
+        // non-null parent_span_id, so NOT EXISTS finds no claude_code.interaction root.
+        Instant recentEnd = Instant.now().minus(2, ChronoUnit.MINUTES);
+        addInFlightTrace(TRACE_STILL_RUNNING, recentEnd.minusSeconds(5), recentEnd);
+
+        TraceSummary summary = service.traceSummary(TRACE_STILL_RUNNING).orElseThrow();
+
+        assertThat(summary.isInProgress()).isTrue();
+    }
+
+    @Test
+    void traceSummaryDoesNotFlagInProgressOnceTheRootSpanIsExported() {
+        // A closed/exported claude_code.interaction root span means the turn finished,
+        // even though its activity is well within the staleness window.
+        Instant recentEnd = Instant.now().minus(2, ChronoUnit.MINUTES);
+        addTrace(TRACE_ROOT_SPAN_EXPORTED, INTERACTION_ROOT_SPAN_NAME, null,
+                recentEnd.minusSeconds(5), recentEnd, false);
+
+        TraceSummary summary = service.traceSummary(TRACE_ROOT_SPAN_EXPORTED).orElseThrow();
+
+        assertThat(summary.isInProgress()).isFalse();
+    }
+
+    @Test
+    void traceSummaryDoesNotFlagInProgressWhenNoRootSpanButActivityIsStale() {
+        // No root span, but the last activity is well past the 20-minute staleness
+        // limit -- an abandoned/orphaned turn must not read as running forever.
+        Instant staleEnd = Instant.now().minus(30, ChronoUnit.MINUTES);
+        addInFlightTrace(TRACE_STALE_NO_ROOT_SPAN, staleEnd.minusSeconds(5), staleEnd);
+
+        TraceSummary summary = service.traceSummary(TRACE_STALE_NO_ROOT_SPAN).orElseThrow();
+
+        assertThat(summary.isInProgress()).isFalse();
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================

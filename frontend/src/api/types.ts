@@ -112,6 +112,16 @@ export interface TraceRow {
   // traces have no prompt of their own) or when prompt-body capture was disabled
   // while the trace was recorded.
   firstUserPrompt: string | null;
+  /**
+   * True while this trace is still running: it has no exported
+   * claude_code.interaction root span yet, and has shown activity in the last
+   * 20 minutes (so an interrupted trace doesn't spin forever). Identical
+   * liveness definition to `SessionSummaryRow.inProgress` /
+   * `SessionPromptRow.inProgress` above, resolved at trace granularity —
+   * computed on the Table list, the Stream/cursor list, and the single-trace
+   * summary endpoint alike.
+   */
+  inProgress: boolean;
 }
 
 export interface SpanEvent {

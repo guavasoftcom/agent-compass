@@ -40,6 +40,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Aggregation service for the Trace Explorer page: histogram, facets, cursor-paged
@@ -737,7 +738,8 @@ public class TraceExplorerService {
      */
     private List<TraceSummary> toTraceSummaries(List<Object[]> rows) {
         List<TraceSummary> summaries = rows.stream().map(TraceExplorerService::toTraceSummary).toList();
-        return withFirstUserPrompts(summaries);
+        summaries = withFirstUserPrompts(summaries);
+        return withInProgress(summaries);
     }
 
     /**
@@ -754,6 +756,31 @@ public class TraceExplorerService {
         Map<String, String> promptByTraceId = findFirstUserPrompts(traceIds);
         for (TraceSummary summary : summaries) {
             summary.setFirstUserPrompt(promptByTraceId.get(summary.getTraceId()));
+        }
+        return summaries;
+    }
+
+    /**
+     * Stamps {@link TraceSummary#setInProgress(boolean)} on every summary, batch-queried
+     * against {@link SpanRepository#findInProgressTraceIds} with the whole page's trace ids
+     * in one round trip -- the same batch-enrich shape {@link #withFirstUserPrompts} uses for
+     * {@code firstUserPrompt}, sharing this method's single call site across the offset-paged
+     * Table query, both cursor-paging directions (Stream), and the single-trace
+     * {@link #traceSummary(String)} endpoint. Same liveness definition as
+     * {@code LogService#resolveRunningTurnIndex} / {@code SessionSummary#inProgress}: no
+     * exported root span yet, and activity within {@code LogService.IN_PROGRESS_STALENESS_LIMIT}.
+     */
+    private List<TraceSummary> withInProgress(List<TraceSummary> summaries) {
+        if (summaries.isEmpty()) {
+            return summaries;
+        }
+        List<String> traceIds = summaries.stream().map(TraceSummary::getTraceId).toList();
+        Set<String> inProgressTraceIds = Set.copyOf(spanRepository.findInProgressTraceIds(
+                traceIds,
+                INTERACTION_ROOT_SPAN_NAME_PATTERN,
+                Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
+        for (TraceSummary summary : summaries) {
+            summary.setInProgress(inProgressTraceIds.contains(summary.getTraceId()));
         }
         return summaries;
     }

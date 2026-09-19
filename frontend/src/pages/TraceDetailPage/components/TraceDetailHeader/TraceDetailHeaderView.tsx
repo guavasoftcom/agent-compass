@@ -21,6 +21,7 @@ import { formatDuration, formatUsd } from '../../../TracesPage/tracesApi';
 import { spanColor } from '../../../TracesPage/components/traceColors';
 import SummaryStrip, { type OpGroup, type SummaryItem } from './SummaryStrip';
 import IdentityPill from './IdentityPill';
+import TraceLiveChip from './TraceLiveChip';
 import { fontFamilies } from '../../../../theme/typography';
 import type { TokenBreakdown } from '../../../TracesPage/tokenBreakdown';
 
@@ -50,6 +51,13 @@ export interface TraceDetailHeaderViewProps {
   // on TraceRow (populated from the root/first prompt-bearing span, mirroring
   // SessionSummaryRow.firstUserPrompt) — null/undefined hides the row.
   firstUserPrompt?: string | null;
+  // TraceRow.inProgress — true while this trace is still running (no exported
+  // root span yet, active in the last 20 minutes). Renders a ticking TraceLiveChip
+  // inline in the breadcrumb, right after IdentityPill, replacing the earlier
+  // full-width "still running" banner — the design handoff wanted a motion/progress
+  // signal (a chip that visibly ticks elapsed time) rather than a static status
+  // sentence.
+  inProgress: boolean;
 }
 
 // The breadcrumb carries copy-to-clipboard IdChips for the trace id, and the
@@ -79,6 +87,7 @@ const TraceDetailHeaderView = ({
   shownOperations,
   opCount,
   firstUserPrompt,
+  inProgress,
 }: TraceDetailHeaderViewProps) => {
   const durationLabel = formatDuration(totalMs * 1e6);
   const costLabel = formatUsd(totalCostUsd);
@@ -212,6 +221,7 @@ const TraceDetailHeaderView = ({
               Trace detail
             </Typography>
             <IdentityPill traceId={traceId} sessionId={sessionId} />
+            {inProgress ? <TraceLiveChip earliestStartMs={earliestStartMs} /> : null}
           </Box>
         </Box>
       </Box>

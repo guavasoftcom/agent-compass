@@ -37,6 +37,11 @@ export const auroraColors = {
   cyanGlow: '#42d6ff', // backdrop radial glow only
   green: '#22b08a', // chart green / output tokens
   greenDeep: '#1f9d6b', // subagent-trace hue + live-tail gradient
+  // Darkened, 4.5:1+-contrast variants of greenDeep/cyanBright for white text at small sizes —
+  // the raw gradients.liveTail pair fails contrast at the Trace Detail "LIVE" chip's 11.5px/700
+  // (see gradients.liveTailAccessible below).
+  greenDeepText: '#0d6b52',
+  cyanBrightText: '#0c6e86',
   gold: '#e6a33b', // chart gold
   orange: '#e6952b', // mcp-trace hue + warning severity
   blue: '#5d6ef0', // chart blue
@@ -117,5 +122,6 @@ export const gradients = {
   auroraAction: `linear-gradient(135deg, ${auroraColors.violetLight}, ${auroraColors.pinkBright})`,
   auroraActionSoft: `linear-gradient(120deg, ${auroraColors.violetLight}, ${auroraColors.pinkBright})`,
   liveTail: `linear-gradient(135deg, ${auroraColors.greenDeep}, ${auroraColors.cyanBright})`,
+  liveTailAccessible: `linear-gradient(135deg, ${auroraColors.greenDeepText}, ${auroraColors.cyanBrightText})`,
   error: `linear-gradient(90deg, ${auroraColors.red}, ${auroraColors.coral})`,
 } as const;

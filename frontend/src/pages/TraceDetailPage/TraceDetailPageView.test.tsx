@@ -123,6 +123,7 @@ const baseProps: TraceDetailPageViewProps = {
   firstUserPrompt: 'Refactor the Aurora theme overlay.',
   traceCostUsd: 0.42,
   traceBackgroundCostUsd: 0,
+  traceInProgress: false,
   traceAnalysis: null,
   ollamaAnalysisEnabled: true,
 };
@@ -270,5 +271,17 @@ describe('TraceDetailPageView', () => {
     expect(
       screen.queryByRole('button', { name: /analyze trace/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('renders the live-tail row when the trace is in progress, and hides it otherwise', () => {
+    const { rerender } = renderWithProviders(
+      <TraceDetailPageView {...baseProps} traceInProgress />,
+    );
+
+    expect(screen.getByText('waiting for more spans…')).toBeInTheDocument();
+
+    rerender(<TraceDetailPageView {...baseProps} traceInProgress={false} />);
+
+    expect(screen.queryByText('waiting for more spans…')).not.toBeInTheDocument();
   });
 });

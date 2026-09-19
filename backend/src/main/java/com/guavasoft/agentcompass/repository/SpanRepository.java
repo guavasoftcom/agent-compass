@@ -23,6 +23,7 @@ import com.guavasoft.agentcompass.entity.SpanEntity;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 
 public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
@@ -85,6 +86,46 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
     List<Object[]> findTurnProgressForTrace(
             @Param("traceId") String traceId,
             @Param("rootSpanNamePattern") String rootSpanNamePattern);
+
+    // Batch liveness probe for the Traces Explorer's per-row "still running" indicator
+    // (TraceSummary#inProgress). Same liveness definition as findTurnProgressForTrace above
+    // and LogRecordRepository#findInProgressSessionIds (no exported claude_code.interaction
+    // root span yet, and activity within :recentActivitySince), but scoped directly by the
+    // given trace ids rather than resolved through a session's newest turn -- the Sessions
+    // query needs its own latest_prompt CTE to first find which trace a session's latest turn
+    // even points at; here the caller (TraceExplorerService) already knows which traces are on
+    // the current page, so that resolution step disappears and this collapses to a plain
+    // filter over :traceIds. Mirrors findInProgressSessionIds' two-stage MATERIALIZED CTE
+    // staging for the same reason: NOT EXISTS is the cheap half and narrows the candidate set
+    // before the two per-trace MAX(...) subqueries -- the expensive half -- run only over
+    // traces still missing a root span, not every trace on the page.
+    @Query(value = """
+            WITH candidate_trace AS MATERIALIZED (
+              SELECT DISTINCT trace_id
+              FROM spans
+              WHERE trace_id IN :traceIds
+            ),
+            unresolved_trace AS MATERIALIZED (
+              SELECT ct.trace_id
+              FROM candidate_trace ct
+              WHERE NOT EXISTS (
+                SELECT 1 FROM spans s
+                WHERE s.trace_id = ct.trace_id
+                  AND s.parent_span_id IS NULL
+                  AND s.name LIKE :rootSpanNamePattern
+              )
+            )
+            SELECT ut.trace_id
+            FROM unresolved_trace ut
+            WHERE GREATEST(
+              (SELECT MAX(end_timestamp) FROM spans s2 WHERE s2.trace_id = ut.trace_id),
+              (SELECT MAX(timestamp) FROM log_records l2 WHERE l2.trace_id = ut.trace_id)
+            ) > :recentActivitySince
+            """, nativeQuery = true)
+    List<String> findInProgressTraceIds(
+            @Param("traceIds") Collection<String> traceIds,
+            @Param("rootSpanNamePattern") String rootSpanNamePattern,
+            @Param("recentActivitySince") Instant recentActivitySince);
 
     // For each (session_id, reference_timestamp) pair in the exemplar list, find
     // the span whose start_timestamp is closest to the reference timestamp and

@@ -39,6 +39,11 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.
   - `FacetRail` — shared filter-rail (search box + checkbox facet sections); Logs' `LogFacetRail` and Traces' `TraceFacetRail` build sections for it.
   - `LiveTailToggle` — shared live-tail pill; Traces' `TraceTailToggle` wraps it.
+  - `RunningIndicator` — shared pulsing "still running" dot for a row/card/panel whose figures are
+    partial until the backend flips its `inProgress` flag back to false; the caller supplies a
+    tooltip/aria-label and is responsible for polling while it shows. Used by Sessions (grid rows
+    and the drawer's turn cards, via `PromptTimelinePanel`'s barrel re-export) and Traces (table/
+    stream rows, the expanded summary panel, and the Trace Detail header).
   - `BreakdownList` — shared ranked-breakdown list (`'grid-row'` / `'stacked'` layouts); used by
     the Metrics breakdown and `ContextFootprintCard`. The leading marker on the `'stacked'` layout
     is a choice between `showColorDot` (a color the row shares with another chart) and `showRank`
