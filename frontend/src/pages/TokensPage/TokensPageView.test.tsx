@@ -57,7 +57,18 @@ const summary: TokenUsageSummary = {
     },
   ],
   byModel: [
-    { model: 'claude-sonnet-5', tokens: '9.5M', share: 95, colorIndex: 0 },
+    {
+      model: 'claude-sonnet-5',
+      tokens: '9.5M',
+      share: 95,
+      colorIndex: 0,
+      breakdown: {
+        input: 950_000,
+        output: 190_000,
+        cacheCreation: 285_000,
+        cacheRead: 7_600_000,
+      },
+    },
   ],
   cost: {
     spend24h: '$4.23',
@@ -112,8 +123,14 @@ describe('TokensPageView', () => {
   it('renders KPI cards and the by-model row on the Overview tab', () => {
     renderWithProviders(<TokensPageView {...baseProps} />);
 
-    expect(screen.getByText('Total cost')).toBeInTheDocument();
-    expect(screen.getAllByText('$4.23').length).toBeGreaterThan(0);
+    expect(screen.getByText('Sessions flagged')).toBeInTheDocument();
+    expect(screen.getByText('Cache read ratio')).toBeInTheDocument();
+    expect(screen.getByText('90.0%')).toBeInTheDocument();
+    expect(screen.getByText('Tokens by model')).toBeInTheDocument();
+    // claude-sonnet-5's seeded breakdown: 7.6M cache read of an 8.835M
+    // input-side total -> 86% cached, rendered by the by-model row's
+    // composition cell.
+    expect(screen.getByText('86%')).toBeInTheDocument();
     expect(screen.getAllByText(/Sonnet 5/).length).toBeGreaterThan(0);
   });
 

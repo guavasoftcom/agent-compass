@@ -245,6 +245,45 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void rowsFlagInProgressForASessionWhoseNewestTurnHasNoExportedRootSpanYet() {
+    Instant base = Instant.now().minus(5, ChronoUnit.MINUTES);
+    // Needs a cost emission to enter session_window at all (aggregateSessionSummaries'
+    // population is cost/active-time driven -- inProgress is a separate bulk
+    // enrichment layered on top of that page, same as promptContext's counts map).
+    saveCost("J", "opus", "main", 1.0, base);
+    saveUserPrompt("J", "Still going", base, TRACE_TURN_ZERO, "j-prompt-0");
+    // Live activity on the trace, no root span saved -- the turn has not finished.
+    saveApiRequest("J", TRACE_TURN_ZERO, "j-prompt-0", 0.1, base.plusSeconds(30));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummary sessionJ = page.items().stream()
+        .filter(item -> "J".equals(item.sessionId())).findFirst().orElseThrow();
+
+    assertThat(sessionJ.inProgress()).isTrue();
+    // A/B/C from the shared seed have no trace-bearing prompt at all, so they
+    // must never read as running just because SOME session on the page is.
+    SessionSummary sessionA = page.items().stream()
+        .filter(item -> "A".equals(item.sessionId())).findFirst().orElseThrow();
+    assertThat(sessionA.inProgress()).isFalse();
+  }
+
+  @Test
+  void rowsDoNotFlagInProgressOnceTheNewestTurnsRootSpanIsExported() {
+    Instant base = Instant.now().minus(5, ChronoUnit.MINUTES);
+    saveCost("K", "opus", "main", 1.0, base);
+    saveUserPrompt("K", "Finished", base, TRACE_TURN_ZERO, "k-prompt-0");
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-k", base, base.plusSeconds(40));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummary sessionK = page.items().stream()
+        .filter(item -> "K".equals(item.sessionId())).findFirst().orElseThrow();
+
+    assertThat(sessionK.inProgress()).isFalse();
+  }
+
+  @Test
   void tokenBreakdownSplitsByTypeWithResetAwareSumsAndSumsToTokens() {
     Instant base = Instant.now().minus(8, ChronoUnit.MINUTES);
     // Session I needs a cost/active-time emission to enter session_window at all
@@ -813,6 +852,46 @@ class SessionsQueryIntegrationTest {
     // The background-* fields isolate exactly the post-root-span portion.
     assertThat(turn.backgroundCostUsd()).isEqualTo(9.99);
     assertThat(turn.backgroundTools()).containsExactly(new SessionPromptToolCount("Bash", 2L));
+  }
+
+  @Test
+  void promptsForSessionMarksOnlyTheNewestTurnRunningWhileItsRootSpanIsUnexported() {
+    // Turn zero was interrupted (no root span ever exported) and the session moved
+    // on; turn one is live -- its prompt landed seconds ago and its root span has
+    // not closed yet. Only the newest turn is a running candidate.
+    Instant interruptedTurnStart = Instant.now().minus(3, ChronoUnit.MINUTES);
+    Instant liveTurnStart = Instant.now().minus(30, ChronoUnit.SECONDS);
+    saveUserPrompt("R1", "First request", interruptedTurnStart, TRACE_TURN_ZERO);
+    saveUserPrompt("R1", "Second request", liveTurnStart, TRACE_TURN_ONE);
+    saveApiRequest("R1", TRACE_TURN_ONE, 0.5, liveTurnStart.plusSeconds(10));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("R1");
+
+    assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false, true);
+  }
+
+  @Test
+  void promptsForSessionDoesNotMarkTheNewestTurnRunningOnceItsRootSpanIsExported() {
+    Instant turnStart = Instant.now().minus(2, ChronoUnit.MINUTES);
+    saveUserPrompt("R2", "Finished request", turnStart, TRACE_TURN_ZERO);
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-r2", turnStart, turnStart.plusSeconds(40));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("R2");
+
+    assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
+  }
+
+  @Test
+  void promptsForSessionTreatsARootlessNewestTurnThatWentQuietAsAbandonedRatherThanRunning() {
+    // Esc or a killed process never exports the root span; past the staleness
+    // limit the spinner must stop rather than spin forever.
+    Instant turnStart = Instant.now().minus(2, ChronoUnit.HOURS);
+    saveUserPrompt("R3", "Abandoned request", turnStart, TRACE_TURN_ZERO);
+    saveApiRequest("R3", TRACE_TURN_ZERO, 0.5, turnStart.plusSeconds(30));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("R3");
+
+    assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
   }
 
   @Test

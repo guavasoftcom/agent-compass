@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.ModelTokenShare;
 import com.guavasoft.agentcompass.model.SessionApiRequest;
 import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
 import com.guavasoft.agentcompass.model.SessionPrompt;
@@ -252,6 +253,43 @@ class TokenTelemetryQueryIntegrationTest {
     assertThat(summary.cacheReadRatio())
         .isEqualTo((double) summary.cacheReadTokens() / (double) inputSideTokens);
     assertThat(summary.outputTokens()).isPositive();
+  }
+
+  @Test
+  void perModelTokenSharesCarryTheirOwnFourWayBreakdown() {
+    // saveTokens (used by seed() above) carries no model attribute, so this
+    // seeds two distinct models directly with known, non-overlapping per-kind
+    // values -- proving the GROUPING SETS query's per-model FILTER columns
+    // rather than just the collapsed total the "model" row already carried.
+    saveMetric(TOKEN_METRIC,
+        Map.of("session.id", "model-a-session", "type", "input", "model", "claude-opus-5"),
+        111_000, seededBase);
+    saveMetric(TOKEN_METRIC,
+        Map.of("session.id", "model-a-session", "type", "cacheRead", "model", "claude-opus-5"),
+        222_000, seededBase);
+    saveMetric(TOKEN_METRIC,
+        Map.of("session.id", "model-b-session", "type", "output", "model", "claude-sonnet-5"),
+        50_000, seededBase);
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES, null);
+
+    ModelTokenShare opus = summary.byModel().stream()
+        .filter(share -> "claude-opus-5".equals(share.model()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(opus.breakdown().input()).isEqualTo(111_000L);
+    assertThat(opus.breakdown().cacheRead()).isEqualTo(222_000L);
+    assertThat(opus.breakdown().output()).isZero();
+    assertThat(opus.breakdown().cacheCreation()).isZero();
+    assertThat(opus.breakdown().total()).isEqualTo(333_000L);
+
+    ModelTokenShare sonnet = summary.byModel().stream()
+        .filter(share -> "claude-sonnet-5".equals(share.model()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(sonnet.breakdown().output()).isEqualTo(50_000L);
+    assertThat(sonnet.breakdown().input()).isZero();
   }
 
   // ---- T2: per-tool context footprint ---------------------------------------

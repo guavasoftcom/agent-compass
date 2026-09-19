@@ -36,12 +36,15 @@ TokensPage/
 │                               (TokensPageTab, TOKENS_PAGE_TABS)
 ├── TokensPageView.test.tsx     vitest coverage for the view (renderWithProviders, prop fixtures)
 ├── components/
-│   ├── TokenSummaryCards/      four-tile KPI strip (Total cost · Total tokens · Models used · Top model)
+│   ├── TokenSummaryCards/      four-tile KPI strip (Total tokens · Sessions flagged · Models used · Top model)
 │   │   ├── TokenSummaryCards.tsx
 │   │   └── index.ts
-│   ├── TokenCostByModelCard/   merged per-model table — Model | Tokens (value+share bar) | Cost
-│   │   ├── TokenCostByModelCard.tsx   (value+share, no bar); hand-built table (Box component=
-│   │   └── index.ts                  "table"), not BreakdownList — see gotcha below
+│   ├── TokenCostByModelCard/   "Tokens by model" table — color key row, then Model | Tokens
+│   │   ├── TokenCostByModelCard.tsx   (plain value+share) | Cache composition (cache-read %,
+│   │   └── index.ts                  4-segment kind bar, per-kind legend); hand-built table
+│   │                                 (Box component="table"), not BreakdownList — see gotcha
+│   │                                 below. Directory/component name is legacy — see the
+│   │                                 "no longer about cost" gotcha.
 │   ├── TokenCompositionCard/   token-mix donut (SVG hand-built) + cache-efficiency gauge
 │   │   ├── TokenCompositionCard.tsx
 │   │   └── index.ts
@@ -75,8 +78,8 @@ TokensPage/
 │ ( Overview ) ( Cache & Context )   ← PillTabs, in-page (no route change)    │
 ├─ tab: Overview ─────────────────────────────────────────────────────────────┤
 │ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐  │
-│ │ Total cost   │ │ Total tokens │ │ Models used  │ │ Top model          │  │
-│ │ (accent KPI) │ │              │ │              │ │ colour dot + name  │  │
+│ │ Total tokens │ │ Sessions     │ │ Models used  │ │ Top model          │  │
+│ │ (accent KPI) │ │ flagged      │ │              │ │ colour dot + name  │  │
 │ └──────────────┘ └──────────────┘ └──────────────┘ └────────────────────┘  │
 │  ← TokenSummaryCards: 4-column grid (xs:1, sm:2, lg:4) ──────────────────  │
 │                                                                             │
@@ -88,10 +91,12 @@ TokensPage/
 │ └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 │ ┌─ TokenCostByModelCard ────────────────────────────────────────────────┐  │
-│ │ "Tokens & cost by model"                                              │  │
-│ │ Model            │ Tokens                    │ Cost                  │  │
-│ │ ● claude-sonnet-5│ 15.2M · 95% ▇▇▇▇▇▇▇▇▇░░░  │ $4.62           94%   │  │
-│ │ ● claude-haiku…  │ 863.1K · 5%  ▇░░░░░░░░░░  │ $0.28            6%   │  │
+│ │ "Tokens by model"                                                     │  │
+│ │ ■ Cache read  ■ Input  ■ Cache creation  ■ Output   ← one-time key    │  │
+│ │ Model            │ Tokens        │ Cache composition                 │  │
+│ │ ● claude-sonnet-5│ 15.2M · 95%   │ 86% cached ▓▓▓▓▓▓▒▒░               │  │
+│ │                   │              │ ■3.3M ■350K ■150K ■100K  ← legend │  │
+│ │ ● claude-haiku…  │ 863.1K · 5%   │ 41% cached ▓▓▓▒▒▒▒▒▒               │  │
 │ └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 │ ┌─ Paper: Token usage over time ────────────────────────────────────────┐  │
@@ -189,23 +194,34 @@ spread `{ ...selection, repositoryUrl }`, and `TokensPageView` threads `reposito
     `cacheEfficiencyBand`, through the shared `cacheEfficiencyBandColor(band, theme)` (the same
     mapping `CacheEfficiencyRankCard`, `SessionCacheEfficiencyDialog`, and the Sessions grid's
     `CacheEfficiencyCell` all use) rather than a page-local color ternary.
-  - `summaryCards` — four `TokenSummaryCard` objects for `TokenSummaryCards`; cost card uses the
-    pre-formatted `summary.cost.spend24h` string (not a raw number), delta sign is read from
-    `summary.cost.deltaPct` prefix (`-` → green down-arrow, otherwise red up-arrow).
-  - `windowLabel` — derived from the current `selection` so cost captions read "vs. prev Last 24 h"
-    (not a hardcoded "24h").
-- `tokenCostRows` — the merged `TokenCostByModelCard` row set, built by zipping `summary.byModel`
-  (`TokenModelShare[]`) with `summary.cost.byModel` (`CostModelShare[]`) on `model` (a `Map` keyed
-  by model name for the cost lookup). Both source arrays are already pre-formatted by the backend
-  and independently ordered by their own metric (token share vs. cost share); the zip re-sorts by
-  token share so the merged table has one consistent row order regardless of how the two disagreed.
-  A model present in `byModel` but absent from `cost.byModel` (shouldn't happen — both come from
-  the same window — but not structurally guaranteed) falls back to `usd: '—'`, `costShare: 0`
-  rather than dropping the row. Backed by `MetricService.aggregateCostTotalsAndByModel` (formerly
-  `aggregateCostTotalsOnly`, which left `byModel` empty on purpose — see that method's Javadoc):
-  it still skips computing a cost trend (nothing on this page reads one), but now runs
-  `aggregateCostBreakdown`'s GROUPING SETS query with a single window-spanning bucket to get the
-  per-model rows at no extra scan cost.
+  - `summaryCards` — four `TokenSummaryCard` objects for `TokenSummaryCards`. The accent tile is
+    **Total tokens** (`formatCompact(totalTokens)`, subtitled with the token-type count) — not
+    Cache read ratio, which used to sit here but was dropped as a KPI tile because it just
+    repeated the composition card's gauge one card below with no added information. **Sessions
+    flagged** takes that slot instead: `cacheEfficiencyRows.length`, the same worst-cache-efficiency
+    ranking the Cache & Context tab renders, already fetched by the container regardless of which
+    tab is active (see the "All three queries run regardless of the active tab" gotcha below) — so
+    the tile costs no extra fetch and gives the Overview tab a reason to send a reader to Cache &
+    Context instead of just restating a number already on screen.
+- `tokenCostRows` — the `TokenCostByModelCard` row set, mapped straight off `summary.byModel`
+  (`TokenModelShare[]`), re-sorted by token share so the row order is explicit rather than assumed
+  to already match `share`'s own ordering. Each row's `breakdown` is `TokenModelShare.breakdown`
+  itself — a `SessionTokenBreakdown` (the same four-field shape `SessionCacheEfficiencyRow` and the
+  Sessions grid already use), computed server-side by the SAME `aggregateTokenUsageBreakdown`
+  GROUPING SETS query that produces the row's `tokens`/`share`, via four additional
+  `FILTER (WHERE token_type = ...)` sums on the query's `(model)` grouping set — see
+  `MetricPointRepository.aggregateTokenUsageBreakdown`'s own comment. No second query, no extra
+  scan: the FILTER columns ride every grouping set in the same pass, computed but unused on the
+  `bucket`/`total` rows.
+- **This page no longer zips in `summary.cost.byModel` at all, and `summary.cost` now has no reader
+  anywhere in this page's view.** Cost was removed from the by-model card (it duplicated what the
+  Cost page already answers) in favor of `breakdown`, which the Cost page cannot show — this page
+  is the only reader of `TokenModelShare`. `TokenUsageSummary.cost` is left in place on both the
+  Java DTO and the frontend type rather than stripped from the endpoint: it is a required field on
+  `CostSummary`/`TokenUsageSummary`, `MetricService.aggregateCostTotalsAndByModel` computes it as
+  a cheap side effect of the same window (see its own comment), and removing it from the wire
+  contract is a separate, larger decision than swapping one card's content — don't "clean this up"
+  by deleting it without checking whether anything besides this view will ever read it again.
 - `TokenCompositionCard` contains the only hand-built SVG on this page: a donut built from
   `<circle>` arcs using `strokeDasharray` / `strokeDashoffset` math. The ratio gauge uses a
   standard MUI `LinearProgress`.
@@ -360,26 +376,63 @@ spread `{ ...selection, repositoryUrl }`, and `TokensPageView` threads `reposito
   before ranking, because a session that made two small calls can sit at 0% without anything
   being wrong. `CACHE_EFFICIENCY_FLOOR_LABEL` in the view mirrors that default for the card's
   copy only — the server owns the real floor.
-- **`summary.cost.spend24h` is a pre-formatted string** (e.g. `"$4.23"`), not a raw number.
-  The field is named `spend24h` for historical reasons but always reflects the selected window's
-  spend — don't treat it as a 24-hour-only metric. The same applies to `deltaPct`, `burnRate`,
-  `projected30d`, and `costPer1k`.
-- **`summary.byModel[].tokens` and `summary.cost.byModel[].usd` are pre-formatted strings**
-  (e.g. `"7.8M"`, `"$380.80"`). `TokenCostByModelCard` renders both as-is; don't pass either
-  through `formatCompact` or a currency formatter.
+- **The KPI strip's accent tile is Total tokens, not cost.** `summary.cost.spend24h`,
+  `deltaPct`, `burnRate`, `projected30d`, and `costPer1k` are pre-formatted `CostSummary` strings
+  (e.g. `"$4.23"`, not a raw number; `spend24h` always reflects the selected window's spend despite
+  the name) — this page no longer surfaces any of them in its own JSX, so don't reintroduce a cost
+  KPI tile here as a shortcut for a "how much did this cost" question; that's the Cost page's job.
+  `TokensPage.tsx`'s `emptySummary` still has to populate all five (they're required `CostSummary`
+  fields) even though nothing on this page reads any of them, `cost.byModel` included — see the
+  `tokenCostRows` paragraph above.
+- **"Sessions flagged" counts, it doesn't rank — don't teach it the band colors.** It's a bare
+  `cacheEfficiencyRows.length`, deliberately uncolored (no `ratioColor` on the value the way the
+  composition card's gauge is): the KPI strip's job is to say "go check the other tab," and the
+  rank table it points to already owns the per-row coloring. Coloring the count itself (e.g. red
+  when non-zero) would imply a severity threshold on a raw count that has no such threshold — the
+  noise floor already decides what counts as "flagged," not this tile.
+- **`summary.byModel[].tokens` is a pre-formatted string** (e.g. `"7.8M"`). `TokenCostByModelCard`
+  renders it as-is — don't pass it through `formatCompact`. `breakdown`'s four fields are the
+  opposite: raw `number`s (reset-aware sums, same as `SessionTokenBreakdown` everywhere else), so
+  the card's composition cell formats them itself via `formatCompact` for the per-kind legend row
+  and via `lib/cacheEfficiency`'s `cacheEfficiencyRatio`/`formatCacheEfficiency` for the cached %.
+- **The composition cell's cache-read % is the SAME ratio the rest of the page uses, not a
+  page-local recomputation.** `cacheEfficiencyRatio(row.breakdown)` (from `lib/cacheEfficiency`,
+  which already accepts any `SessionTokenBreakdown`-shaped value) feeds `cacheEfficiencyBand` and
+  `cacheEfficiencyBandColor` exactly as `CacheEfficiencyRankCard` and `SessionCacheEfficiencyDialog`
+  do, so a model's own cached-% reads in the same color language as everything else on this page —
+  don't write a second `input/(input+cacheCreation+cacheRead)` expression here.
+- **The Tokens column has no share bar (2026-09 handoff, `design_handoff_token_usage/`) — it is
+  plain `<b>5.2M</b> · 40%` text.** A per-model share bar used to sit under it, but it was
+  redundant with the composition donut above (both answer "what share of the window's tokens did
+  this model use"); don't reintroduce it. The card gained a one-time color-key row under the title
+  instead (`KEY_ENTRIES`, same four kinds/colors as `tokenKindColors.ts`) so the composition cell's
+  per-row legend can show bare absolute values (`formatCompact`) without repeating "Cache read" /
+  "Input" / etc. on every row — that legend used to be a hover-only `title` tooltip
+  (`compositionTitle`) on the cell; it's now always visible, since hover-only hid the same figures
+  the legend now shows for free. Header label is "Cache composition", not "Composition".
 - **`TokenCostByModelCard` merged the old separate "Token sum by model" and "Cost by model" cards
   (2026-08 Aurora handoff, `Token Usage Handoff/`) and moved the trend chart to the end of the
-  Overview stack.** New order: Summary KPIs → Composition → **Tokens & cost by model** →
-  **Token usage over time** (previously the chart sat 3rd, between composition and the by-model
-  card). Only the Cost column skips the share bar — a second bar on the same row would compete
-  with the Tokens column's bar for attention, so Cost reads as a plain right-aligned figure
-  (value + share %). The handoff's own source (`Token Usage Handoff/source/TokensPage/`) is stale
-  relative to the shipped page — it predates the Cache & Context tab, the cache-efficiency ranking,
-  and the context-footprint card entirely, so `TokensPage.tsx` was **not** overwritten wholesale;
-  only the two described deltas (the merge, the reorder) were applied on top of the current
-  container/view. Applying such a handoff always means diffing its source against the live files
-  and porting the named deltas by hand, not copying files over — see
-  [[project_claude_design_regressions]] for the general pattern.
+  Overview stack; the Cost column was later replaced with Composition (dropping cost entirely —
+  see the `tokenCostRows` paragraph above for why).** Overview order: Summary KPIs → Composition →
+  **Tokens by model** → **Token usage over time** (previously the chart sat 3rd, between
+  composition and the by-model card). The Cache composition column is now the table's flexible
+  column (`table-layout: fixed`, unset `<col>` width) — Model (230px) and Tokens (130px, since the
+  2026-09 handoff swapped which of the two non-Model columns is fixed) are the sized ones, so
+  Cache composition absorbs whatever width they don't need, the same idiom
+  `CacheEfficiencyRankCard`'s Session column uses. Its own compact segmented bar is a second,
+  smaller visual next to the big `.cpct`-style percentage, deliberately kept to the
+  `COMPOSITION_BAR_HEIGHT` (10px) track. The handoff's own source
+  (`Token Usage Handoff/source/TokensPage/`) is stale relative to the shipped page — it predates the
+  Cache & Context tab, the cache-efficiency ranking, the context-footprint card, and the
+  cost-to-composition swap entirely, so `TokensPage.tsx` was **not** overwritten wholesale; only
+  the described deltas were applied on top of the current container/view. Applying such a handoff
+  always means diffing its source against the live files and porting the named deltas by hand, not
+  copying files over — see [[project_claude_design_regressions]] for the general pattern.
+- **The directory and component are still named `TokenCostByModelCard`/`TokenCostByModelRow` even
+  though cost is gone.** Renaming would touch four files (the directory, its `index.ts`, this
+  `CLAUDE.md`, and a cross-reference from `CostPage/CLAUDE.md`) for a cosmetic gain; left as a
+  known follow-up rather than done opportunistically alongside the content change. Don't be
+  surprised the identifier says "Cost" — read this gotcha instead of assuming a half-finished edit.
 - **`TokenCostByModelCard` uses the hand-built `Box component="table"` idiom, not MUI's `Table` /
   `TableRow` / `TableCell` components** — the handoff's own source used the latter, which this repo
   reserves for nothing (see `frontend/CLAUDE.md`'s Charts and grids section); `CacheEfficiencyRankCard`

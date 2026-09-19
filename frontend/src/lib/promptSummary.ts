@@ -31,3 +31,58 @@ export const promptSummaryRenderer = (prompt: string): string | null => {
   const summaryMatch = TASK_NOTIFICATION_SUMMARY_PATTERN.exec(prompt);
   return summaryMatch ? summaryMatch[1].trim() : 'Subagent task notification';
 };
+
+const TASK_NOTIFICATION_ENVELOPE_PATTERN =
+  /^<task-notification>([\s\S]*?)<\/task-notification>/;
+// Envelope tags are flat (no tag nests inside another), so a single
+// non-greedy match per tag is exact rather than heuristic.
+const TASK_NOTIFICATION_FIELD_PATTERN = /<([a-z][a-z-]*)>([\s\S]*?)<\/\1>/g;
+
+export interface TaskNotificationEnvelope {
+  /** Every envelope tag except `summary`/`result`/`note`, in the order they
+   *  appeared (e.g. `task-id`, `tool-use-id`, `status`, `output-file`) —
+   *  structural metadata, not prose, meant for a key/value display. */
+  fields: Record<string, string>;
+  summary: string | null;
+  /** The dispatched task's own answer/output — markdown-formatted prose from
+   *  whatever ran (a subagent's final report, a background command's
+   *  findings), distinct from `summary`'s one-line status line. */
+  result: string | null;
+  note: string | null;
+}
+
+// Full structured parse of a <task-notification> envelope, for a caller that
+// wants to render more than promptSummaryRenderer's one-line summary — e.g. a
+// "view full prompt" dialog that would otherwise dump the raw XML. Returns
+// null under the same "must open with the exact tag" rule promptSummaryRenderer
+// uses, so a human message that merely pastes an envelope further in still
+// isn't misparsed. Pure, no React.
+export const parseTaskNotificationEnvelope = (
+  prompt: string,
+): TaskNotificationEnvelope | null => {
+  const envelopeMatch = TASK_NOTIFICATION_ENVELOPE_PATTERN.exec(
+    prompt.trimStart(),
+  );
+  if (!envelopeMatch) {
+    return null;
+  }
+  const fields: Record<string, string> = {};
+  let summary: string | null = null;
+  let result: string | null = null;
+  let note: string | null = null;
+  for (const [, tag, value] of envelopeMatch[1].matchAll(
+    TASK_NOTIFICATION_FIELD_PATTERN,
+  )) {
+    const trimmedValue = value.trim();
+    if (tag === 'summary') {
+      summary = trimmedValue;
+    } else if (tag === 'result') {
+      result = trimmedValue;
+    } else if (tag === 'note') {
+      note = trimmedValue;
+    } else {
+      fields[tag] = trimmedValue;
+    }
+  }
+  return { fields, summary, result, note };
+};

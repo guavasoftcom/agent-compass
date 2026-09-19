@@ -61,6 +61,31 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
     @Query(value = "SELECT MAX(end_timestamp) FROM spans WHERE trace_id = :traceId", nativeQuery = true)
     Instant findLatestEndTimestampForTrace(@Param("traceId") String traceId);
 
+    // Liveness probe for the prompt timeline's newest turn (LogService#promptsForSession).
+    // Returns one row: (root_closed, last_activity). root_closed says whether the trace's
+    // claude_code.interaction root span has been exported -- spans are exported only once
+    // they end, so its absence means the turn has not finished (or was abandoned and never
+    // will). last_activity is the newest span end or log timestamp on the trace, which is
+    // what tells those two apart. Every leg is a trace_id index lookup; measured 2.3 ms against a
+    // live ~240-span / ~420-log running turn, which matters because the Sessions drawer re-reads
+    // the timeline every few seconds while a turn is running.
+    @Query(value = """
+            SELECT
+              EXISTS (
+                SELECT 1 FROM spans
+                WHERE trace_id = :traceId
+                  AND parent_span_id IS NULL
+                  AND name LIKE :rootSpanNamePattern
+              ) AS root_closed,
+              GREATEST(
+                (SELECT MAX(end_timestamp) FROM spans WHERE trace_id = :traceId),
+                (SELECT MAX(timestamp) FROM log_records WHERE trace_id = :traceId)
+              ) AS last_activity
+            """, nativeQuery = true)
+    List<Object[]> findTurnProgressForTrace(
+            @Param("traceId") String traceId,
+            @Param("rootSpanNamePattern") String rootSpanNamePattern);
+
     // For each (session_id, reference_timestamp) pair in the exemplar list, find
     // the span whose start_timestamp is closest to the reference timestamp and
     // whose attributes carry the same session_id. Used by the token-distribution

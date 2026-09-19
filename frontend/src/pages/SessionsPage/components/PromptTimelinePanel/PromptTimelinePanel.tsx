@@ -677,6 +677,50 @@ const BackgroundCostBadge = ({
   );
 };
 
+// Marks the one turn the backend reports as still running (SessionPromptRow's
+// inProgress: newest turn, root span not yet exported, recently active). Its
+// cost/tokens/tools are partial until it finishes — the container polls the
+// timeline while this is showing, so they fill in without a manual reload.
+// Design handoff (Aurora Sessions mockup): a small pulsing dot, not a spinner+text
+// chip — the earlier revision of this component. Exported so the Sessions grid's
+// row-level indicator (SessionsTable) renders the identical dot rather than a
+// hand-rolled copy — same component, two tooltip/aria-label variants for the two
+// granularities (a turn inside the open drawer vs. a session row in the table) it
+// can describe. The pulse keyframes are inlined in `sx` rather than pulled from a
+// shared animation module, matching `LiveTailToggle`'s identical pattern (the
+// Traces page's own "is something live happening" dot) rather than introducing a
+// second way to write a CSS animation in this codebase.
+export const RunningIndicator = ({
+  tooltip = 'This turn is still running. It updates automatically.',
+  ariaLabel = 'Prompt still running',
+}: {
+  tooltip?: string;
+  ariaLabel?: string;
+}) => (
+  <Tooltip title={tooltip} placement="top" arrow>
+    <Box
+      component="span"
+      role="status"
+      aria-label={ariaLabel}
+      sx={{
+        display: 'inline-flex',
+        width: 8,
+        height: 8,
+        flexShrink: 0,
+        borderRadius: '50%',
+        bgcolor: 'primary.main',
+        boxShadow: (t) => `0 0 0 3px ${alpha(t.palette.primary.main, 0.32)}`,
+        cursor: 'help',
+        animation: 'sessionRunningPulse 1.6s ease-in-out infinite',
+        '@keyframes sessionRunningPulse': {
+          '0%, 100%': { opacity: 1, transform: 'scale(1)' },
+          '50%': { opacity: 0.45, transform: 'scale(0.82)' },
+        },
+      }}
+    />
+  </Tooltip>
+);
+
 // Aurora glass timeline: a gradient rail with a glowing dot per turn, each turn
 // a translucent card carrying its timestamp, model chip, per-turn cost, prompt
 // text (or a placeholder for pre-capture rows), tool-call chips, and an optional
@@ -871,10 +915,18 @@ const PromptTimelinePanel = ({
                 sx={{
                   position: 'relative',
                   border: 1,
-                  borderColor: 'divider',
+                  // Design handoff: a running turn's border and an inset ring match
+                  // this same card's own hover border color (0.32 alpha) rather than
+                  // a one-off shade — the mockup's `.ptli.live` rule reuses its
+                  // `--selected-ring` token for both states for the same reason.
+                  borderColor: turn.inProgress
+                    ? (t) => alpha(t.palette.primary.main, 0.32)
+                    : 'divider',
                   borderRadius: 1.6,
                   bgcolor: 'background.paper',
-                  boxShadow: 1,
+                  boxShadow: turn.inProgress
+                    ? (t) => `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.32)}, ${t.shadows[1]}`
+                    : 1,
                   px: 1.75,
                   py: 1.25,
                   // Depth 0 renders pixel-identical to before (ml: 0). A nested
@@ -953,6 +1005,7 @@ const PromptTimelinePanel = ({
                     >
                       {formatPromptTimestamp(turn.timestamp)}
                     </Box>
+                    {turn.inProgress ? <RunningIndicator /> : null}
                     <ModelChip model={turn.model} />
                     {turn.costUsd != null ? (
                       <Box

@@ -17,7 +17,7 @@ package com.guavasoft.agentcompass.model;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
-@Schema(name = "ModelTokenShare", description = "Per-model token breakdown for the Token Usage page 'Token sum by model' card")
+@Schema(name = "ModelTokenShare", description = "Per-model token breakdown for the Token Usage page 'Tokens & cost by model' card")
 public record ModelTokenShare(
         @Schema(description = "Model identifier as stored in the attributes column",
                 example = "claude-opus-4") String model,
@@ -26,5 +26,8 @@ public record ModelTokenShare(
         @Schema(description = "Percentage share of total window tokens (0–100)",
                 example = "64") int share,
         @Schema(description = "Chart palette index for consistent colour assignment, 0 = highest token count",
-                example = "0") int colorIndex) {
+                example = "0") int colorIndex,
+        @Schema(description = "This model's own four-way token split, reusing SessionTokenBreakdown's shape "
+                + "— the same aggregation one dimension over, by model instead of by session")
+                SessionTokenBreakdown breakdown) {
 }

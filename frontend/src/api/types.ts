@@ -246,6 +246,8 @@ export interface TokenModelShare {
   tokens: string;
   share: number;
   colorIndex: number;
+  /** This model's own four-way token split — the same shape as SessionTokenBreakdown, one dimension over (by model instead of by session). */
+  breakdown: SessionTokenBreakdown;
 }
 
 export interface CostModelShare {
@@ -379,6 +381,14 @@ export interface SessionSummaryRow {
    */
   firstUserPrompt: string | null;
   userPromptCount: number;
+  /**
+   * True while this session has a turn still running: its newest turn's trace has no
+   * exported claude_code.interaction root span yet, and the trace has shown activity in
+   * the last 20 minutes. Identical liveness definition to `SessionPromptRow.inProgress`
+   * below — computed for every row on the returned page regardless of the requested
+   * window, since a session that began before the window can still be running right now.
+   */
+  inProgress: boolean;
 }
 
 /** One row of a session's full prompt timeline (`GET /api/sessions/{id}/prompts`). */
@@ -452,6 +462,14 @@ export interface SessionPromptRow {
    * (`SwitchTraceModal`/`switchTraceRows.ts`) — not consumed elsewhere yet.
    */
   dispatchingTraceId?: string | null;
+  /**
+   * True while this turn is still running: the session's newest turn, whose
+   * trace's claude_code.interaction root span hasn't been exported yet, and
+   * which has shown activity in the last 20 minutes (so an interrupted turn
+   * doesn't spin forever). Its cost/tokens/tools are partial until it finishes.
+   * The Sessions page polls the open drawer's timeline while any turn has it.
+   */
+  inProgress?: boolean;
 }
 
 export type TurnAttribution = 'REQUEST' | 'INTERVAL';

@@ -235,82 +235,39 @@ const TokensPageView = ({
   const modelRows = summary.byModel ?? [];
   const topModel = modelRows[0];
 
-  // Merged "Tokens & cost by model" table row set — zips summary.byModel
-  // (TokenModelShare[]) with summary.cost.byModel (CostModelShare[]) on
-  // `model`. Both halves are pre-formatted by the backend and already sorted
-  // by their own metric; re-sort by token share here so the table has one
-  // consistent order regardless of how the two arrays individually ordered
-  // themselves.
-  const tokenCostRows = useMemo(() => {
-    const costByModel = new Map(
-      summary.cost.byModel.map((row) => [row.model, row]),
-    );
-    return (summary.byModel ?? [])
-      .map((tokenRow) => {
-        const costRow = costByModel.get(tokenRow.model);
-        return {
-          model: tokenRow.model,
-          colorIndex: tokenRow.colorIndex,
-          tokens: tokenRow.tokens,
-          tokenShare: tokenRow.share,
-          usd: costRow?.usd ?? '—',
-          costShare: costRow?.share ?? 0,
-        };
-      })
-      .sort((left, right) => right.tokenShare - left.tokenShare);
-  }, [summary.byModel, summary.cost.byModel]);
-
-  // Window label for cost captions, derived from the selection (never hardcode "24h").
-  let windowLabel: string;
-  if (selection.kind === 'preset') {
-    windowLabel =
-      windows.find((option) => option.value === selection.minutes)?.label ??
-      'window';
-  } else {
-    windowLabel = 'selected range';
-  }
-
-  // Total cost reads the existing pre-formatted CostSummary strings (summary.cost.*) —
-  // NOT a flat number. Delta arrow/color is sign-aware: down + green when spend fell.
-  const costDecreased = summary.cost.deltaPct.trim().startsWith('-');
-  const costMagnitude = summary.cost.deltaPct.replace(/^[+-]/, '');
-  const costSub = (
-    <Box
-      component="span"
-      sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
-    >
-      <Box
-        component="span"
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.25,
-          fontWeight: 700,
-          color: costDecreased ? 'success.main' : 'text.primary',
-        }}
-      >
-        {costDecreased ? '↓' : '↑'} {costMagnitude}
-      </Box>
-      {`vs. prev ${windowLabel}`}
-    </Box>
+  // "Tokens by model" table row set. summary.byModel is already pre-formatted
+  // and sorted by token share by the backend; re-sort defensively so the
+  // table's order is explicit rather than assumed.
+  const tokenCostRows = useMemo(
+    () => (summary.byModel ?? [])
+      .map((tokenRow) => ({
+        model: tokenRow.model,
+        colorIndex: tokenRow.colorIndex,
+        tokens: tokenRow.tokens,
+        tokenShare: tokenRow.share,
+        breakdown: tokenRow.breakdown,
+      }))
+      .sort((left, right) => right.tokenShare - left.tokenShare),
+    [summary.byModel],
   );
 
   const summaryCards = [
     {
-      label: 'Total cost',
-      value: summary.cost.spend24h,
-      sub: costSub,
-      accent: true,
-      infoTooltip:
-        'Based on a running cost counter, not the exact per-call cost the Cost page uses. '
-        + 'The two don\'t line up exactly — expect "Total spend" on the Cost page to read a '
-        + 'few percent lower than this for the same window.',
-      infoTooltipSeverity: 'warning' as const,
-    },
-    {
       label: 'Total tokens',
       value: formatCompact(totalTokens),
       sub: `${tokenTypeCount} token types`,
+      accent: true,
+    },
+    {
+      label: 'Sessions flagged',
+      value: cacheEfficiencyRows.length,
+      sub:
+        cacheEfficiencyRows.length > 0
+          ? 'Worst cache efficiency — see Cache & Context'
+          : 'None below the efficiency floor',
+      infoTooltip:
+        `Sessions with at least ${CACHE_EFFICIENCY_FLOOR_LABEL} input-side tokens ranked by `
+        + 'worst cache-read ratio, same ranking as the Cache & Context tab.',
     },
     {
       label: 'Models used',

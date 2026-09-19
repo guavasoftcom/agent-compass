@@ -16,6 +16,7 @@ see <https://www.gnu.org/licenses/>.
 export {
   default,
   CostValue,
+  RunningIndicator,
   TokenBreakdownTitle,
   TokenBreakdownTooltip,
   TokenUsage,

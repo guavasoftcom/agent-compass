@@ -140,7 +140,8 @@ class SessionControllerTest {
                                 "resume",
                                 "Refactor the SessionSummary record",
                                 3L,
-                                new SessionTokenBreakdown(600_000L, 1_400_000L, 400_000L, 3_000_000L)),
+                                new SessionTokenBreakdown(600_000L, 1_400_000L, 400_000L, 3_000_000L),
+                                true),
                         new SessionSummary(
                                 "025a8c32-26ff-409d-b704-dc19dcecbb47",
                                 1.5,
@@ -155,7 +156,8 @@ class SessionControllerTest {
                                 "fresh",
                                 null,
                                 0L,
-                                new SessionTokenBreakdown(0L, 0L, 0L, 120_000L))),
+                                new SessionTokenBreakdown(0L, 0L, 0L, 120_000L),
+                                false)),
                         42L));
 
         mockMvc.perform(get("/api/sessions"))
@@ -175,11 +177,14 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[0].startType").value("resume"))
                 .andExpect(jsonPath("$[0].firstUserPrompt").value("Refactor the SessionSummary record"))
                 .andExpect(jsonPath("$[0].userPromptCount").value(3))
+                // inProgress drives the grid's per-row running indicator.
+                .andExpect(jsonPath("$[0].inProgress").value(true))
                 .andExpect(jsonPath("$[1].sessionId").value("025a8c32-26ff-409d-b704-dc19dcecbb47"))
                 .andExpect(jsonPath("$[1].startType").value("fresh"))
                 .andExpect(jsonPath("$[1].firstUserPrompt").value(nullValue()))
                 .andExpect(jsonPath("$[1].userPromptCount").value(0))
-                .andExpect(jsonPath("$[1].tokenBreakdown.cacheRead").value(120000));
+                .andExpect(jsonPath("$[1].tokenBreakdown.cacheRead").value(120000))
+                .andExpect(jsonPath("$[1].inProgress").value(false));
 
         verify(metricService).sessionsSummary(1440, null, null, 0, 25, null);
     }
@@ -287,7 +292,8 @@ class SessionControllerTest {
                         SessionPrompt.TurnAttribution.REQUEST,
                         9.99,
                         List.of(new SessionPromptToolCount("Bash", 3L)),
-                        "aabbccddeeff00112233445566778899")));
+                        "aabbccddeeff00112233445566778899",
+                        true)));
 
         mockMvc.perform(get("/api/sessions/{sessionId}/prompts", sessionId))
                 .andExpect(status().isOk())
@@ -332,7 +338,11 @@ class SessionControllerTest {
                 // dispatchingTraceId is null on the 3-arg compatibility constructor (an ordinary
                 // turn) and carries the dispatcher's trace id on the notification turn.
                 .andExpect(jsonPath("$[0].dispatchingTraceId").value(nullValue()))
-                .andExpect(jsonPath("$[1].dispatchingTraceId").value("aabbccddeeff00112233445566778899"));
+                .andExpect(jsonPath("$[1].dispatchingTraceId").value("aabbccddeeff00112233445566778899"))
+                // inProgress drives the timeline's running spinner; the compatibility
+                // constructor defaults it to false.
+                .andExpect(jsonPath("$[0].inProgress").value(false))
+                .andExpect(jsonPath("$[1].inProgress").value(true));
 
         verify(logService).promptsForSession(sessionId);
     }

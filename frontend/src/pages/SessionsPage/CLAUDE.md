@@ -173,8 +173,8 @@ Fetchers live in the shared `api/endpoints.ts` (not a page-local module) and use
 | Source                       | Query key                                                              | Fetcher → endpoint |
 |------------------------------|------------------------------------------------------------------------|--------------------|
 | `SessionsPage` (`useQuery`)  | `['sessions-summary', selectionKey]`                                   | `fetchSessionsSummary(selection)` → `GET /api/sessions/summary?…` |
-| `SessionsPage` (`useQuery`)  | `['sessions', selectionKey, page, pageSize, sortField, sortDirection]` | `fetchSessions(selection, { page, pageSize, sort })` → `GET /api/sessions?…&page=N&size=M&sort=field&direction=asc\|desc` |
-| `SessionsPage` (`useQuery`, `sessionPromptsQuery`) | `['session-prompts', openSessionId]`, `enabled: openSessionId !== null && rows.some((row) => row.sessionId === openSessionId)` | `fetchSessionPrompts(sessionId)` → `GET /api/sessions/{sessionId}/prompts` |
+| `SessionsPage` (`useQuery`)  | `['sessions', selectionKey, page, pageSize, sortField, sortDirection]`, `refetchInterval`: `RUNNING_TURN_POLL_INTERVAL_MS` (5s) whenever the current page has a row with `inProgress: true` — **unconditionally**, regardless of the auto-refresh toggle or window kind; otherwise the normal `AUTO_REFRESH_INTERVAL_MS`-or-`false` auto-refresh gate | `fetchSessions(selection, { page, pageSize, sort })` → `GET /api/sessions?…&page=N&size=M&sort=field&direction=asc\|desc` |
+| `SessionsPage` (`useQuery`, `sessionPromptsQuery`) | `['session-prompts', openSessionId]`, `enabled: openSessionId !== null && rows.some((row) => row.sessionId === openSessionId)`, `refetchInterval`: 5s while any turn is `inProgress`, else the auto-refresh cadence when auto-refresh is on | `fetchSessionPrompts(sessionId)` → `GET /api/sessions/{sessionId}/prompts` |
 
 `fetchSessions` uses `listWithTotalCount<SessionSummaryRow>` from `api/http.ts`, which reads the
 `X-Total-Count` response header and returns `{ items: SessionSummaryRow[], totalCount: number }`.
@@ -192,12 +192,15 @@ subset of `costUsd`/`tools` — see the background-split gotcha below) — see
 [SESSIONS-BACKEND.md](SESSIONS-BACKEND.md) for the exact per-field semantics. `SessionPromptRow` and `SessionTokenBreakdown` are the single canonical
 types (in `api/types.ts`) — `PromptTimelinePanel` imports them directly rather than declaring its
 own widening copies, so there is no cast anywhere in the data path from `fetchSessionPrompts` to
-the panel. It only fires while a session's drawer is open (`enabled` gate) and has no
-`refetchInterval` (not polled). It is **not** static, though: past the global 30s `staleTime`
-(`main.tsx`), re-opening the same session triggers a real refetch rather than only serving the
-TanStack cache — this matters because live sessions keep gaining prompts, so the timeline for an
-in-progress session can legitimately grow between openings. It also isn't invalidated by
-`onReload`/auto-refresh, since those target the summary/table queries, not this one. `prompt` is
+the panel. It only fires while a session's drawer is open (`enabled` gate), and **is polled while
+it is**: every `RUNNING_TURN_POLL_INTERVAL_MS` (5s) whenever any returned turn carries
+`inProgress: true`, otherwise at `AUTO_REFRESH_INTERVAL_MS` when the page's auto-refresh toggle is
+on, otherwise not at all. The function form of `refetchInterval` reads the query's own last result,
+so the fast cadence stops by itself on the poll that sees the turn finish. Unlike the summary/table
+queries it is not gated on a preset window — the endpoint isn't window-scoped, so a custom range
+doesn't freeze it. Past the global 30s `staleTime` (`main.tsx`), re-opening the same session also
+triggers a real refetch rather than only serving the TanStack cache. It still isn't invalidated
+by `onReload`, which targets the summary/table queries. `prompt` is
 null for pre-capture events (prompt_text wasn't recorded) — those rows are kept, not filtered, and
 render a placeholder client-side (see the `PromptTimelinePanel` gotcha below). `traceId` is null
 for prompts from sessions that predate tracing (~35% of existing data) — the timeline renders no
@@ -315,6 +318,18 @@ trace link for those rows, not a disabled placeholder.
   ingest-slack + `MAX_WINDOW_SPAN_MS` clamp those queries' window params get). LogsPage itself
   hasn't been migrated onto `resolveWindow` yet (separate tracked debt) — this page doesn't touch
   that.
+- **Grid-row running indicator (`SessionSummaryRow.inProgress`)**: bulk-computed backend-side for
+  every row on the returned page — identical liveness definition to the prompt timeline's
+  per-turn `inProgress` (newest turn, no exported root span yet, active within 20 minutes), just
+  resolved at session-row granularity. Not window-scoped: a session that began before the
+  requested window can still be flagged running. `SessionsTable` renders it as a small pulsing
+  dot (the shared `PromptTimelinePanel`-exported `RunningIndicator`, same component the drawer's
+  turn cards use, with a session-scoped tooltip/aria-label) trailing the relative-time text in
+  the Last activity cell, plus a primary-tinted row background in place of the normal zebra
+  stripe. Dot-not-spinner and trailing-not-leading placement both come from the Aurora Sessions
+  design handoff (`Sessions Handoff/Aurora Sessions Mockup.html`) — an earlier revision used a
+  `CircularProgress` spinner + "running" text label ahead of the time, before that handoff
+  landed. See the polling gotcha below for how the table keeps that flag fresh.
 
 ## Gotchas
 
@@ -322,6 +337,31 @@ trace link for those rows, not a disabled placeholder.
   the view re-names it `SessionsKpis` in its own exported interface. They share the same shape —
   the container passes `summaryQuery.data ?? EMPTY_KPIS` directly (no conversion needed because
   the shapes are identical fields).
+- **`sessionsQuery`'s fast-poll cadence is read off its own last result, not derived state.**
+  `refetchInterval` is a function (`(query) => ...`), and it checks
+  `query.state.data?.items.some((row) => row.inProgress)` rather than a `rows`/`hasRunningRow`
+  variable computed in the component body — TanStack Query calls this function on its own timer
+  independent of renders, so it needs to read the query's own cache, not a stale closure over the
+  last render's props. The fast cadence stops itself the poll after the running row's own
+  `inProgress` flips back to `false` — there is no separate "stop polling" trigger to wire up.
+- **The running-row fast poll deliberately ignores `isPresetAutoRefresh`, unlike every other
+  query on this page.** `autoRefresh` defaults to `false` (`lib/windowContext.tsx`), and an
+  earlier revision gated the fast cadence on it (`if (!isPresetAutoRefresh) return false;`
+  before even checking for a running row) — which meant a row's running dot would render once from
+  whichever fetch first saw `inProgress: true`, and then, for anyone who hadn't opted into
+  auto-refresh, never re-fetch to notice the session had actually finished: `sessionsQuery` has
+  no other revalidation trigger (no polling, no focus refetch — `refetchOnWindowFocus: false` in
+  `main.tsx`), so the row froze on "running" indefinitely, sometimes long after the session
+  ended. Fixed by checking `hasRunningRow` **before** falling back to the `isPresetAutoRefresh`
+  gate, so the fast poll fires unconditionally — same reasoning `sessionPromptsQuery` below
+  already applies to the drawer's own per-turn dot, and for the identical reason: a
+  displayed "running" state is a promise the UI has to keep regardless of the user's
+  auto-refresh preference or the window's kind (`inProgress` isn't window-scoped either, so a
+  session already listed under a fixed custom range can still flip from running to finished
+  while that range stays put). This is a deliberate, narrow exception to `frontend/CLAUDE.md`'s
+  "Auto-refresh is preset-only" rule, not a violation of it — the rule governs whether the
+  page's *data* refreshes for convenience; a stuck-forever liveness indicator is a correctness
+  bug the toggle was never meant to cover.
 - **`tokens` is reset-aware**: `SessionSummaryRow.tokens` is a backend-aggregated reset-aware
   total (MAX per stream then SUM across streams), not a plain SUM. The view formats it with
   `formatTokens` from `components/sessionsFormat.ts` (M/K compact) rather than the global
@@ -618,12 +658,32 @@ trace link for those rows, not a disabled placeholder.
   longer fit on one line — unwrapped, the marker overprinted the View-trace pill. Don't switch it
   back to a single nowrap row.
 - **The drawer's auto-scroll needs both of its triggers.** `SessionDetailDrawer` scrolls its body
-  to the newest turn from a `useEffect` on `[open, prompts]` *and* from the slide transition's
-  `onEntered`. Either alone misses a case: the timeline usually resolves after the drawer is
-  already open (the effect catches that), but a session opened a second time has its prompts
-  cached and renders them during the entering slide, when the panel isn't laid out yet and
+  to the newest turn from a `useEffect` on `[open, prompts, pinnedToLatest]` *and* from the slide
+  transition's `onEntered`. Either alone misses a case: the timeline usually resolves after the
+  drawer is already open (the effect catches that), but a session opened a second time has its
+  prompts cached and renders them during the entering slide, when the panel isn't laid out yet and
   `scrollTop` silently clamps back to 0 (`onEntered` catches that one). Verified both ways in the
   browser — if you collapse them into one, re-check the cached-reopen path.
+- **The effect only follows the newest turn while the reader is already at the bottom**
+  (`pinnedToLatest`, recomputed on every body scroll with `PINNED_TO_LATEST_SLACK_PX` of slack,
+  reset to `true` whenever a different session opens). Before polling existed the effect scrolled
+  unconditionally, which was harmless while `prompts` only changed on open; with a running turn
+  re-fetched every 5s it would drag the reader back down mid-read. When a poll adds a turn while
+  they're scrolled up, a floating "New prompt" pill (bottom-centre of the drawer body) offers the
+  jump instead — `acknowledgedTurnCount` is the turn count as of the last time they were pinned,
+  and the pill shows while `prompts.length` exceeds it. Both are guarded render-phase state, same
+  pattern as the slide-out session below, rather than refs read during render.
+- **A running turn is decided by the backend, not guessed client-side** (`SessionPromptRow.inProgress`,
+  see [SESSIONS-BACKEND.md](SESSIONS-BACKEND.md)). `PromptTimelinePanel` renders `RunningIndicator`
+  — a small 8px pulsing dot, `role="status"`, no visible text (design handoff: not a spinner or a
+  "running" text label, an earlier revision's shape) — right after the turn's timestamp, and gives
+  that card's border and an inset box-shadow ring the same primary-tinted color the card's own
+  hover state already uses (`alpha(primary.main, 0.32)` — the design handoff reuses one token for
+  both rather than a separate "live" shade). Its cost/tokens/tools are partial until the turn
+  finishes; they fill in on the next polls. The grid row behind the drawer has its own,
+  independently-computed `SessionSummaryRow.inProgress` (see the data-flow bullet above) — the two
+  can differ briefly (e.g. the row's bulk check hasn't re-polled yet while the open drawer's own
+  poll already has), and neither is derived from the other.
 - **MUI v9 drawer styling goes through `slotProps`, not `PaperProps`.** Paper (560px / `92vw`
   cap / `background.default` + the shared `backdropGradient(mode)` from `theme/theme.ts`, since a
   panel stacked over the fixed body glow would otherwise read as a flat slab), backdrop tint, and

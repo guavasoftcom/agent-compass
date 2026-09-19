@@ -107,7 +107,15 @@ public record SessionPrompt(
                 + "an id that resolves to nothing (the dispatching turn was purged), or a resolved id equal to "
                 + "this turn's own traceId (a self-reference, dropped rather than shown).",
                 example = "0102030405060708090a0b0c0d0e0f10", nullable = true)
-        String dispatchingTraceId) {
+        String dispatchingTraceId,
+
+        @Schema(description = "True while this turn is still running: it is the session's newest turn, its trace's "
+                + "claude_code.interaction root span has not been exported yet (spans are exported only once they "
+                + "end), and the trace has shown activity recently enough that it was not simply abandoned. "
+                + "Always false on every other turn, on a turn with no trace id, and on a session whose timeline "
+                + "was truncated at the row cap (its newest turn was not returned). costUsd / tokens / tools on a "
+                + "running turn are partial and grow on the next read.")
+        boolean inProgress) {
 
     /** Where a turn's per-turn rollups came from. */
     @Schema(name = "SessionPrompt.TurnAttribution")
@@ -124,6 +132,6 @@ public record SessionPrompt(
      */
     public SessionPrompt(Instant timestamp, String prompt, String traceId) {
         this(timestamp, prompt, traceId, null, null, null, List.of(), null, 0L, TurnAttribution.INTERVAL,
-                null, List.of(), null);
+                null, List.of(), null, false);
     }
 }

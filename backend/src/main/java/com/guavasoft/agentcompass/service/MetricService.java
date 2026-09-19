@@ -54,6 +54,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -101,6 +102,13 @@ public class MetricService {
   private static final String TERMINAL_INTERACTIVE = "interactive";
   private static final String TERMINAL_NON_INTERACTIVE = "non-interactive";
 
+  // Matches a trace's root claude_code.interaction span, for the Sessions grid's per-row
+  // running indicator (SessionSummary#inProgress -- see findInProgressSessionIds). Mirrors
+  // LogService.INTERACTION_ROOT_SPAN_NAME_PATTERN exactly; duplicated rather than shared for
+  // the same reason that constant gives for its own duplication of SpanRepository's ~40
+  // inline copies -- a structural span-name literal, not a deployment-tunable property.
+  private static final String INTERACTION_ROOT_SPAN_NAME_PATTERN = "claude_code.interaction%";
+
   private static final String SORT_DIRECTION_ASC = "asc";
   private static final String SORT_DIRECTION_DESC = "desc";
   private static final String DEFAULT_SORT_COLUMN = "cost";
@@ -146,6 +154,12 @@ public class MetricService {
   private static final int TOKEN_BREAKDOWN_TOKEN_TYPE_INDEX = 2;
   private static final int TOKEN_BREAKDOWN_MODEL_INDEX = 3;
   private static final int TOKEN_BREAKDOWN_AMOUNT_INDEX = 4;
+  // Per-kind FILTER columns, meaningful only on 'model' rows -- see the query's
+  // own comment for why they ride every grouping set rather than a second query.
+  private static final int TOKEN_BREAKDOWN_INPUT_INDEX = 5;
+  private static final int TOKEN_BREAKDOWN_OUTPUT_INDEX = 6;
+  private static final int TOKEN_BREAKDOWN_CACHE_CREATION_INDEX = 7;
+  private static final int TOKEN_BREAKDOWN_CACHE_READ_INDEX = 8;
 
   // Distribution
   private static final int DISTRIBUTION_COLUMNS = 24;
@@ -259,6 +273,10 @@ public class MetricService {
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
         MODEL_ATTRIBUTE,
+        INPUT_TYPE,
+        OUTPUT_TYPE,
+        CACHE_CREATION_TYPE,
+        CACHE_READ_TYPE,
         start,
         end,
         bucketSeconds,
@@ -286,9 +304,18 @@ public class MetricService {
       long modelTokens = modelRow[TOKEN_BREAKDOWN_AMOUNT_INDEX] == null
           ? 0L : ((Number) modelRow[TOKEN_BREAKDOWN_AMOUNT_INDEX]).longValue();
       int sharePercent = grandTotal == 0L ? 0 : (int) Math.round((double) modelTokens / grandTotal * HUNDRED_PERCENT);
-      shares.add(new ModelTokenShare(modelName, formatTokenCount(modelTokens), sharePercent, colorIndex));
+      SessionTokenBreakdown breakdown = new SessionTokenBreakdown(
+          longAt(modelRow, TOKEN_BREAKDOWN_INPUT_INDEX),
+          longAt(modelRow, TOKEN_BREAKDOWN_OUTPUT_INDEX),
+          longAt(modelRow, TOKEN_BREAKDOWN_CACHE_CREATION_INDEX),
+          longAt(modelRow, TOKEN_BREAKDOWN_CACHE_READ_INDEX));
+      shares.add(new ModelTokenShare(modelName, formatTokenCount(modelTokens), sharePercent, colorIndex, breakdown));
     }
     return shares;
+  }
+
+  private static long longAt(Object[] row, int index) {
+    return row[index] == null ? 0L : ((Number) row[index]).longValue();
   }
 
   private static long extractTokenGrandTotal(List<Object[]> breakdownRows) {
@@ -556,11 +583,22 @@ public class MetricService {
             tuningProperties.getToolDecisionEventName(),
             tuningProperties.getUserPromptEventName(),
             tuningProperties.getPromptAttribute()));
-    return new SessionSummaryPage(mapSessionSummaries(rows, countsBySessionId), totalCount);
+    // Bulk, page-scoped, not window-scoped: a session started long before the window can
+    // still be running right now, so this asks about EVERY row on the returned page rather
+    // than filtering by the window's own start/end. See LogService#resolveRunningTurnIndex
+    // for the identical single-session liveness definition this bulk query mirrors.
+    Set<String> inProgressSessionIds = sessionIds.isEmpty()
+        ? Set.of()
+        : Set.copyOf(logRecordRepository.findInProgressSessionIds(
+            sessionIds,
+            tuningProperties.getUserPromptEventName(),
+            INTERACTION_ROOT_SPAN_NAME_PATTERN,
+            Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
+    return new SessionSummaryPage(mapSessionSummaries(rows, countsBySessionId, inProgressSessionIds), totalCount);
   }
 
   private static List<SessionSummary> mapSessionSummaries(
-      List<Object[]> rows, Map<String, SessionCounts> countsBySessionId) {
+      List<Object[]> rows, Map<String, SessionCounts> countsBySessionId, Set<String> inProgressSessionIds) {
     SessionCounts zeroCounts = new SessionCounts(0L, 0L, 0L, null);
     return rows.stream()
         .map(row -> {
@@ -588,7 +626,8 @@ public class MetricService {
               normalizeStartType((String) row[SESSION_ROW_START_TYPE_INDEX]),
               counts.firstUserPrompt(),
               counts.userPromptCount(),
-              tokenBreakdown);
+              tokenBreakdown,
+              inProgressSessionIds.contains(sessionId));
         })
         .toList();
   }

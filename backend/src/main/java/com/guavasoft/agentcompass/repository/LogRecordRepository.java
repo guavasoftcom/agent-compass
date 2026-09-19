@@ -2027,6 +2027,60 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("userPromptEventName") String userPromptEventName,
       @Param("promptAttribute") String promptAttribute);
 
+  // Which of the given sessions currently has a turn still running, for the Sessions grid's
+  // per-row indicator (SessionSummary#inProgress). Same liveness definition as
+  // LogService#resolveRunningTurnIndex (the single-session prompt timeline): a session's
+  // NEWEST turn only, whose trace has no exported claude_code.interaction root span yet, and
+  // whose most recent span/log activity is within :recentActivitySince -- see that method's
+  // javadoc for why both extra conditions are load-bearing (an orphaned turn that never
+  // exports its root span at all, and the staleness bound that stops such an orphan from
+  // reading as running forever).
+  //
+  // Two CTEs, both MATERIALIZED on purpose, staged so the two per-trace last-activity
+  // subqueries (the expensive half) only run over sessions that already cleared the "no root
+  // span yet" check (the cheap half) -- inlining them (Postgres's default since v12) lets the
+  // planner interleave the two checks and run the expensive pair over every candidate row
+  // instead. Measured against the 100 most-recently-active real sessions: inlined, 48.6 ms
+  // (each aggregate subquery evaluated per candidate row); staged via MATERIALIZED, 31.8 ms
+  // with the aggregate subqueries down to 3 evaluations apiece -- the handful of sessions
+  // without a root span yet, not the full page. Every leg still rides an index (V30's
+  // session_id column plus the event_name column for latest_prompt; idx_spans_trace /
+  // idx_spans_root / idx_log_records_trace for the rest), so this scales with the size of the
+  // requested page, not the size of the tables.
+  @Query(value = """
+      WITH latest_prompt AS MATERIALIZED (
+        SELECT DISTINCT ON (session_id)
+            session_id,
+            NULLIF(NULLIF(trace_id, ''), repeat('0', 32)) AS trace_id
+        FROM log_records
+        WHERE event_name = :userPromptEventName
+          AND session_id IN :sessionIds
+        ORDER BY session_id, timestamp DESC
+      ),
+      unresolved_prompt AS MATERIALIZED (
+        SELECT session_id, trace_id
+        FROM latest_prompt
+        WHERE trace_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM spans s
+            WHERE s.trace_id = latest_prompt.trace_id
+              AND s.parent_span_id IS NULL
+              AND s.name LIKE :rootSpanNamePattern
+          )
+      )
+      SELECT up.session_id
+      FROM unresolved_prompt up
+      WHERE GREATEST(
+        (SELECT MAX(end_timestamp) FROM spans s2 WHERE s2.trace_id = up.trace_id),
+        (SELECT MAX(timestamp) FROM log_records l2 WHERE l2.trace_id = up.trace_id)
+      ) > :recentActivitySince
+      """, nativeQuery = true)
+  List<String> findInProgressSessionIds(
+      @Param("sessionIds") Collection<String> sessionIds,
+      @Param("userPromptEventName") String userPromptEventName,
+      @Param("rootSpanNamePattern") String rootSpanNamePattern,
+      @Param("recentActivitySince") Instant recentActivitySince);
+
   // Full prompt timeline for one session (the Sessions grid's expandable row).
   // Not window-scoped — returns every user_prompt event for the session, oldest
   // first, capped at :promptLimit (the service clamps this the same way
