@@ -55,20 +55,22 @@ export const AttributeListView = ({
         width: '100%',
       }}
     >
-      {Object.entries(attributes).map(([key, value]) => (
-        <Box key={key} sx={{ mb: 0.5 }}>
-          <Box component="span" sx={{ color: 'text.secondary' }}>
-            {key}:{' '}
+      {Object.entries(attributes)
+        .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+        .map(([key, value]) => (
+          <Box key={key} sx={{ mb: 0.5 }}>
+            <Box component="span" sx={{ color: 'text.secondary' }}>
+              {key}:{' '}
+            </Box>
+            <AttributeValue
+              attrKey={key}
+              value={value}
+              truncate={truncate}
+              inlineExpand={inlineExpand}
+              onExpand={onExpand}
+            />
           </Box>
-          <AttributeValue
-            attrKey={key}
-            value={value}
-            truncate={truncate}
-            inlineExpand={inlineExpand}
-            onExpand={onExpand}
-          />
-        </Box>
-      ))}
+        ))}
       <ExpandedValueDialog
         state={expanded}
         onClose={onClose}
