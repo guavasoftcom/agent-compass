@@ -14,14 +14,15 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { useMemo, useState, type ReactNode } from 'react';
-import { Box, Drawer, alpha } from '@mui/material';
+import { Box, alpha } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CloseIcon from '@mui/icons-material/Close';
 import type { SpanRow, TraceRow } from '../../../../api';
 import { AttributeList } from '../../../../components/AttributeList';
+import PeekDrawer from '../../../../components/PeekDrawer';
 import { formatTimestamp } from '../../../../lib/format';
 import { gradients, neutralColors } from '../../../../theme/colors';
-import { backdropGradient, radii } from '../../../../theme/theme';
+import { radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 import type { ChipFamily } from '../../../TraceDetailPage/chipVisibility';
 import SpanWaterfallRow from '../../../TraceDetailPage/components/SpanWaterfallRow';
@@ -33,10 +34,6 @@ import {
   summarizeExemplarModels,
   type ExemplarStatus,
 } from './exemplarWaterfall';
-
-// Slide timing shared with SessionDetailDrawer, so the two peek drawers feel like one family.
-const SLIDE_DURATION_MS = 260;
-const SLIDE_EASING = 'cubic-bezier(.22,.8,.24,1)';
 
 // The peek keeps the name, model and tool chips (what tells one row from the next) and drops the
 // token / cache / cost ones: the stat row and the full trace page carry those figures. The `call N`
@@ -354,44 +351,8 @@ const MetricExemplarDrawer = ({ exemplar, onClose, onOpenInTraces }: MetricExemp
   const status = rendered ? exemplarStatusOf(rendered.summary, rendered.spans) : null;
 
   return (
-    <Drawer
-      anchor="right"
-      open={open}
-      onClose={onClose}
-      transitionDuration={SLIDE_DURATION_MS}
-      slotProps={{
-        transition: {
-          easing: SLIDE_EASING,
-          // The closed exemplar is only dropped once the panel is fully gone.
-          onExited: () => setLastExemplar(null),
-        },
-        backdrop: {
-          sx: {
-            bgcolor: (t) => alpha(neutralColors.shadowDeep, t.palette.mode === 'dark' ? 0.6 : 0.45),
-          },
-        },
-        paper: {
-          sx: {
-            width: 560,
-            maxWidth: '94vw',
-            display: 'flex',
-            flexDirection: 'column',
-            borderRadius: 0,
-            borderLeft: 1,
-            borderColor: 'divider',
-            bgcolor: 'background.default',
-            // The aurora glow is painted on <body> and fixed, so a panel above it would read as a flat slab.
-            backgroundImage: (t) => backdropGradient(t.palette.mode),
-            backgroundRepeat: 'no-repeat',
-            boxShadow: (t) =>
-              `-28px 0 60px ${alpha(
-                t.palette.mode === 'dark' ? neutralColors.black : neutralColors.shadowIndigo,
-                t.palette.mode === 'dark' ? 0.5 : 0.3,
-              )}`,
-          },
-        },
-      }}
-    >
+    // The closed exemplar is only dropped once the panel is fully gone.
+    <PeekDrawer open={open} onClose={onClose} onExited={() => setLastExemplar(null)}>
       {rendered ? (
         <>
           <ExemplarHeader exemplar={rendered} onClose={onClose} />
@@ -434,7 +395,7 @@ const MetricExemplarDrawer = ({ exemplar, onClose, onOpenInTraces }: MetricExemp
           </Box>
         </>
       ) : null}
-    </Drawer>
+    </PeekDrawer>
   );
 };
 

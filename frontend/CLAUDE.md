@@ -15,6 +15,17 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `SectionLayout` — `PageLayout` + tab strip + shared `selection` / `autoRefresh` context (`useSectionContext`) for grouped pages like Tool activity.
   - `PillTabs` — the Aurora pill tab strip (wrapping row, active tab lifted onto a paper-tinted surface). Two forms from one component: pass `to` on each tab for routed section tabs (`SectionLayout`), or omit it and handle `onChange` for in-page tabs (`TokensPage`). Use it rather than restyling a `ButtonBase` row, so a tab looks the same whether or not it changes the URL.
   - `StatCard`, `AttributeList`, `Sparkline`, `DonutCard`, etc. — leaf presentational primitives.
+    `Sparkline` takes three opt-in props, all added for the Usage Calendar's KPI strip and inert by default:
+    `color` (bars fade from this instead of the theme primary, so a card can match its metric's palette
+    color), `emphasizedIndex` (one bar at full opacity, every other one dimmed — "today" within a period),
+    and `placeholderFromIndex` (from this index on, bars are faint fixed-height placeholders and are left
+    out of the normalization — future days that have no data yet, which must never squash the real bars).
+  - `PeekDrawer` — the right-hand quick-peek slide-over chrome (560px, scrim, aurora backdrop glow, heavy
+    shadow) and nothing else: header, stat row, scrolling body and footer are the caller's, as a flex
+    column. Used by the Metrics exemplar-trace drawer and the Usage Calendar day drawer. A peek rather than
+    a navigation on purpose — "click, glance, close, click the next" is the loop both exist for. `onExited`
+    fires when the panel has fully slid away, for a caller that keeps its content rendered through the
+    slide-out.
     `DonutCard` legend values default to a thousands-separated count, which suits every caller whose
     slices are counts; pass `formatSliceValue` when they are not (the Settings page's storage donut
     passes `formatBytes`). Format at the legend rather than pre-scaling the slice values, which would
@@ -160,6 +171,8 @@ into `PageLayout`'s `actions` slot instead of `PageActions` (two thirds of which
 `WindowSelector` it requires, and auto-refresh — would be dead there). Prefer that over adding a
 `hideWindowSelector` flag to the shared component. Read
 [src/pages/SettingsPage/CLAUDE.md](src/pages/SettingsPage/CLAUDE.md) before touching that page.
+
+Documented deviation: `UsageCalendarPage` is the other page that steps around `WindowSelector`: a day-granularity calendar has no use for a preset-or-custom window, so its period pill (prev / month-or-week label / next) stands in for it, composed through `PageActionsView` directly (with `RepositorySelector`, reload, and no auto-refresh). Its queries key on the period's own local range and the browser's IANA zone rather than a `WindowSelection`. Read [src/pages/UsageCalendarPage/CLAUDE.md](src/pages/UsageCalendarPage/CLAUDE.md) before touching that page.
 
 Documented deviation: `TracesPage` is data-dense enough that prop-drilling produced a ~47-prop view, so it uses a page-scoped context instead — all behavior lives in `useTracesExplorer`, the `TracesExplorerContext` provider wires it to the global window context, and `TracesPageView` reads context and takes zero props. Read [src/pages/TracesPage/CLAUDE.md](src/pages/TracesPage/CLAUDE.md) before touching that page.
 

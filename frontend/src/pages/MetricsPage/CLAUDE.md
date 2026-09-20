@@ -119,7 +119,7 @@ MetricsPage/
 │       │                        value formatters, buildScatterPoints
 │       ├── distributionScatter.test.ts
 │       └── index.ts
-│   └── MetricExemplarDrawer/  right-side quick peek at one exemplar's trace (MUI Drawer, 560px,
+│   └── MetricExemplarDrawer/  right-side quick peek at one exemplar's trace (on the shared PeekDrawer, 560px,
 │       ├── MetricExemplarDrawer.tsx  max 94vw, scrim): header (eyebrow, trace id, close), context
 │       │                        line, stat row (the request's tokens/cost, duration, spans, model,
 │       │                        status), a compact waterfall of real SpanWaterfallRow rows, an

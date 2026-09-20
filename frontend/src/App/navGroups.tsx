@@ -19,6 +19,7 @@ import {
   TokenUsageIcon,
   CostIcon,
   SessionsIcon,
+  UsageCalendarIcon,
   TracesIcon,
   LogsIcon,
   MetricsIcon,
@@ -48,6 +49,7 @@ const navGroups: NavGroup[] = [
       { to: '/tools', label: 'Tool Usage', icon: <ToolUsageIcon /> },
       { to: '/tokens', label: 'Token Usage', icon: <TokenUsageIcon /> },
       { to: '/sessions', label: 'Sessions', icon: <SessionsIcon /> },
+      { to: '/usage-calendar', label: 'Usage Calendar', icon: <UsageCalendarIcon /> },
     ],
   },
   {
