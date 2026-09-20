@@ -18,12 +18,22 @@ import { Box, Stack } from '@mui/material';
 import PageLayout from '../../components/PageLayout';
 import PageActions from '../../components/PageActions';
 import type { WindowOption } from '../../lib/constants';
-import type { WindowSelection } from '../../api';
-import MetricKpiStrip from './components/MetricKpiStrip';
+import type { SpanRow, TraceRow, WindowSelection } from '../../api';
+import MetricCatalogRail from './components/MetricCatalogRail';
+import MetricFacetBar from './components/MetricFacetBar';
 import MetricHeader from './components/MetricHeader';
 import MetricBreakdown from './components/MetricBreakdown';
+import MetricDistributionCard from './components/MetricDistributionCard';
+import { distributionUnitFor } from './components/MetricDistributionCard/distributionScatter';
+import MetricExemplarDrawer, { type MetricExemplar } from './components/MetricExemplarDrawer';
 import MetricTrendCard from './components/MetricTrendCard';
 import { METRICS, type MetricSeries } from './components/metricsSampleData';
+import type {
+  AttributeFilter,
+  MetricAggregation,
+  MetricDistribution,
+  MetricFacet,
+} from './metricsApi';
 
 export interface MetricsPageViewProps {
   /** Window-selection chrome (same contract as every other page). */
@@ -38,8 +48,45 @@ export interface MetricsPageViewProps {
   metrics?: MetricSeries[];
   isLoading?: boolean;
   error?: Error | null;
+  /** Controlled selection (owned by the container, which needs it to gate the distribution fetch). */
+  selectedId?: string;
+  onSelectedIdChange: (next: string) => void;
+  /** Per-request distribution of the selected metric; undefined while loading or when it has none. */
+  distribution?: MetricDistribution;
+  isDistributionLoading?: boolean;
+  distributionError?: string | null;
+  /** ISO-8601 bounds of the request window: the distribution's x axis is real time within them. */
+  windowFrom: string;
+  windowTo: string;
+  /** Called with an exemplar's trace id; the container opens that trace's quick-peek drawer. */
+  onOpenTrace: (traceId: string) => void;
+  /** Trace id of the exemplar whose drawer is open; null when it is closed. */
+  openTraceId: string | null;
+  onCloseTrace: () => void;
+  /** The drawer's hand-off to the full Trace Detail page; the container navigates. */
+  onOpenTraceInTraces: (traceId: string, spanId: string | null) => void;
+  /** The open exemplar's trace summary: undefined while loading, null when the backend has none. */
+  exemplarSummary?: TraceRow | null;
+  exemplarSpans?: SpanRow[];
+  isExemplarLoading?: boolean;
+  exemplarErrorMessage?: string | null;
   repositoryUrl: string | null;
   onRepositoryUrlChange: (next: string | null) => void;
+  /**
+   * The selected metric's attribute filters (ANDed, at most one per key), owned by the container,
+   * which also clears them when the selected metric changes.
+   */
+  filters: AttributeFilter[];
+  onFiltersChange: (next: AttributeFilter[]) => void;
+  /** Filterable attributes of the selected metric; undefined until the picker has been opened. */
+  facets?: MetricFacet[];
+  isFacetsLoading?: boolean;
+  facetsErrorMessage?: string | null;
+  /** Reported so the container can fetch facets only while the picker is open. */
+  onFacetPickerOpenChange: (isOpen: boolean) => void;
+  /** How the selected metric's trend is aggregated; the container resets it on a metric switch. */
+  aggregation: MetricAggregation;
+  onAggregationChange: (next: MetricAggregation) => void;
 }
 
 const SPLIT_NONE = 'None';
@@ -47,15 +94,20 @@ const SPLIT_NONE = 'None';
 /**
  * Metrics page — a simplified master-detail over the claude_code.* counters.
  *
- * Left: the metric list (sparkline + headline value). Right: the selected
- * metric's header stats, a trend chart, and a breakdown card. A single
- * lightweight "Split by" control (None / Model / Type / …) appears only for
- * metrics that have an attribute breakdown — splitting stacks the chart and
- * fills the breakdown card. No facet filters, group-by/agg, heatmap, or
- * exemplar drawer (that distribution + drill-to-trace flow lives in Traces).
+ * Left: the searchable metric catalog rail (sparkline + cardinality per row).
+ * Right: the selected metric's header stats, a trend chart, and a breakdown
+ * card. A full-width facet bar above both hosts the attribute filters (ANDed chips /
+ * "+ Add filter" picker), the "Split by" control (None / Model / Type / …, only
+ * for metrics with an attribute breakdown — splitting stacks the chart and fills
+ * the breakdown card), and the Agg control (sum / avg / p95 / count). A non-sum Agg
+ * forces the split to None for rendering (the stored split is kept, so switching
+ * back to sum restores it). Below them, a full-width per-request distribution card
+ * (scatter of every request, percentile lines, exemplar dots that open the request's trace) — a
+ * placeholder for metrics without a per-request value.
  *
- * Presentational: the container supplies window chrome + live data; defaults to
- * sample data in components/metricsSampleData.ts. See BACKEND.md.
+ * Presentational: the container supplies window chrome + live data (and owns the
+ * selected metric id, the filters and the aggregation); defaults to sample data in
+ * components/metricsSampleData.ts. See BACKEND.md.
  */
 const MetricsPageView = ({
   selection,
@@ -68,25 +120,89 @@ const MetricsPageView = ({
   metrics = METRICS,
   isLoading = false,
   error = null,
+  selectedId,
+  onSelectedIdChange,
+  distribution,
+  isDistributionLoading = false,
+  distributionError = null,
+  windowFrom,
+  windowTo,
+  onOpenTrace,
+  openTraceId,
+  onCloseTrace,
+  onOpenTraceInTraces,
+  exemplarSummary,
+  exemplarSpans,
+  isExemplarLoading = false,
+  exemplarErrorMessage = null,
   repositoryUrl,
   onRepositoryUrlChange,
+  filters,
+  onFiltersChange,
+  facets,
+  isFacetsLoading = false,
+  facetsErrorMessage = null,
+  onFacetPickerOpenChange,
+  aggregation,
+  onAggregationChange,
 }: MetricsPageViewProps) => {
-  const [selectedId, setSelectedId] = useState(metrics[0]?.id ?? '');
-  const [split, setSplit] = useState<string>(SPLIT_NONE);
+  // The stored split survives a non-sum aggregation untouched; only what is rendered changes.
+  const [storedSplit, setSplit] = useState<string>(SPLIT_NONE);
+  const [search, setSearch] = useState('');
 
   const selected = useMemo(
     () => metrics.find((m) => m.id === selectedId) ?? metrics[0],
     [metrics, selectedId],
   );
 
+  // The distribution payload has only a time and a value per request, so the drawer's context
+  // line and headline figure come from the point the dot was drawn for. Memoized because the
+  // drawer keeps the last non-null exemplar through its slide-out by comparing identity.
+  const exemplar = useMemo<MetricExemplar | null>(() => {
+    if (openTraceId === null || !selected) {
+      return null;
+    }
+    const point = distribution?.points.find((candidate) => candidate.traceId === openTraceId);
+    return {
+      traceId: openTraceId,
+      spanId: point?.spanId ?? null,
+      metricName: selected.name,
+      unit: distributionUnitFor(selected.unit),
+      value: point?.value ?? null,
+      timestamp: point?.ts ?? null,
+      summary: exemplarSummary,
+      spans: exemplarSpans,
+      isLoading: isExemplarLoading,
+      errorMessage: exemplarErrorMessage,
+    };
+  }, [
+    openTraceId,
+    selected,
+    distribution,
+    exemplarSummary,
+    exemplarSpans,
+    isExemplarLoading,
+    exemplarErrorMessage,
+  ]);
+
   const selectMetric = (id: string) => {
-    setSelectedId(id);
+    onSelectedIdChange(id);
     setSplit(SPLIT_NONE);
   };
 
   const splitKeys = selected
     ? [SPLIT_NONE, ...Object.keys(selected.splits)]
     : [SPLIT_NONE];
+
+  // Averages / percentiles / counts are not additive across groups, so a non-sum aggregation
+  // renders as if the split were None (the Split-by control is disabled to match).
+  const split = aggregation === 'sum' ? storedSplit : SPLIT_NONE;
+
+  // Series/health stats: with no split active the chart draws the metric's own single
+  // total series; with a split active it draws one series per row in that split.
+  const activeSplitRows = selected && split !== SPLIT_NONE ? selected.splits[split] : undefined;
+  const seriesCount = activeSplitRows?.length ?? 1;
+  const seriesUnitLabel = seriesCount === 1 ? 'series' : `${split.toLowerCase()}s`;
 
   return (
     <PageLayout
@@ -111,34 +227,74 @@ const MetricsPageView = ({
       }
     >
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}>
-        <MetricKpiStrip
-          metrics={metrics}
-          selectedId={selected?.id ?? ''}
-          onSelect={selectMetric}
-        />
         {selected && (
-          <Stack sx={{ gap: 2.25, minWidth: 0 }}>
-            <MetricHeader metric={selected} />
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: '1fr 300px' },
-                gap: 2.25,
-                alignItems: 'stretch',
-              }}
-            >
-              <MetricTrendCard
-                metric={selected}
-                split={split}
-                splitKeys={splitKeys}
-                onSplitChange={setSplit}
-                isLoading={isLoading}
-              />
-              <MetricBreakdown metric={selected} split={split} />
-            </Box>
-          </Stack>
+          <MetricFacetBar
+            // Keyed by metric so the filter picker's local popover state starts closed on a switch.
+            key={selected.id}
+            splitKeys={splitKeys}
+            split={split}
+            onSplitChange={setSplit}
+            aggregation={aggregation}
+            onAggregationChange={onAggregationChange}
+            filters={filters}
+            onFiltersChange={onFiltersChange}
+            facets={facets}
+            isFacetsLoading={isFacetsLoading}
+            facetsErrorMessage={facetsErrorMessage}
+            onFacetPickerOpenChange={onFacetPickerOpenChange}
+          />
         )}
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', md: '286px minmax(0, 1fr)' },
+            gap: 2.25,
+            alignItems: 'start',
+          }}
+        >
+          <MetricCatalogRail
+            metrics={metrics}
+            selectedId={selected?.id ?? ''}
+            onSelect={selectMetric}
+            search={search}
+            onSearchChange={setSearch}
+          />
+          {selected && (
+            <Stack sx={{ gap: 2.25, minWidth: 0 }}>
+              <MetricHeader metric={selected} seriesCount={seriesCount} seriesUnitLabel={seriesUnitLabel} />
+              {/* The rail now takes a column, so trend + breakdown only sit side by side
+                  once the detail column is wide enough for both (xl, not md). */}
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1fr) 300px' },
+                  gap: 2.25,
+                  alignItems: 'stretch',
+                }}
+              >
+                <MetricTrendCard
+                  metric={selected}
+                  split={split}
+                  aggregation={aggregation}
+                  isLoading={isLoading}
+                />
+                <MetricBreakdown metric={selected} split={split} aggregation={aggregation} />
+              </Box>
+              <MetricDistributionCard
+                metric={selected}
+                distribution={distribution}
+                windowFrom={windowFrom}
+                windowTo={windowTo}
+                isLoading={isDistributionLoading}
+                errorMessage={distributionError}
+                onOpenTrace={onOpenTrace}
+                ignoresAttributeFilter={filters.length > 0}
+              />
+            </Stack>
+          )}
+        </Box>
       </Box>
+      <MetricExemplarDrawer exemplar={exemplar} onClose={onCloseTrace} onOpenInTraces={onOpenTraceInTraces} />
     </PageLayout>
   );
 };

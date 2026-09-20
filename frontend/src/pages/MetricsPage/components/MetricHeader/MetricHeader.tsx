@@ -13,15 +13,26 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { alpha, Box, Paper, Typography } from '@mui/material';
+import { alpha, Box, Paper, Tooltip, Typography, useTheme } from '@mui/material';
 import type { ReactNode } from 'react';
 import { auroraColors, gradients } from '../../../../theme/colors';
 import type { MetricSeries } from '../metricsSampleData';
 import { fontFamilies } from '../../../../theme/typography';
+import { formatCompact } from '../../../../lib/format';
+import { HEALTH_LABEL, healthColor } from '../metricHealth';
 
 export interface MetricHeaderProps {
   metric: MetricSeries;
+  /** Number of series the chart currently draws — 1 with no split active, or the active split's row count. */
+  seriesCount: number;
+  /** Pre-pluralized unit word for the Series stat, e.g. "series" or "models". */
+  seriesUnitLabel: string;
 }
+
+/** The health label's full copy reads "<short reason> · <detail>" / "<short reason> — <detail>"; the
+ * compact stat only shows the part before that separator, with the full copy in a Tooltip. */
+const healthShortLabel = (health: MetricSeries['health']): string =>
+  HEALTH_LABEL[health].split(' · ')[0].split(' — ')[0];
 
 const TYPE_BADGE = (type: string) => type.charAt(0).toUpperCase() + type.slice(1);
 
@@ -60,7 +71,9 @@ const Stat = ({ label, children, mid = false }: { label: string; children: React
  * Detail-pane header for the selected metric: fully-qualified name, type + unit
  * badges, a one-line description, and the headline stats (sum, rate, peak, delta).
  */
-const MetricHeader = ({ metric }: MetricHeaderProps) => {
+const MetricHeader = ({ metric, seriesCount, seriesUnitLabel }: MetricHeaderProps) => {
+  const theme = useTheme();
+
   return (
     <Paper variant="outlined" sx={{ p: '22px 24px' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.375, flexWrap: 'wrap' }}>
@@ -116,6 +129,26 @@ const MetricHeader = ({ metric }: MetricHeaderProps) => {
           <Box component="span" sx={{ fontSize: 14, color: 'text.secondary', fontWeight: 600 }}>{metric.rateUnit}</Box>
         </Stat>
         <Stat label="Peak / h" mid>{metric.peak}</Stat>
+        <Stat label="Series" mid>
+          {seriesCount} <Box component="span" sx={{ fontSize: 14, color: 'text.secondary', fontWeight: 600 }}>{seriesUnitLabel}</Box>
+        </Stat>
+        <Stat label="Cardinality" mid>{formatCompact(metric.cardinality)}</Stat>
+        <Stat label="Health" mid>
+          <Tooltip title={HEALTH_LABEL[metric.health]} arrow>
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, cursor: 'help' }}>
+              <Box
+                sx={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: '50%',
+                  bgcolor: healthColor(metric.health, theme),
+                  flexShrink: 0,
+                }}
+              />
+              <Box component="span" sx={{ fontSize: 16 }}>{healthShortLabel(metric.health)}</Box>
+            </Box>
+          </Tooltip>
+        </Stat>
         <Stat label="vs. prev 24h" mid>
           <Box
             component="span"

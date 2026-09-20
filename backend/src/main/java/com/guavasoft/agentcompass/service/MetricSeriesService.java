@@ -20,7 +20,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.guavasoft.agentcompass.config.TuningProperties;
+import com.guavasoft.agentcompass.model.MetricAggregation;
+import com.guavasoft.agentcompass.model.MetricAttributes;
+import com.guavasoft.agentcompass.model.MetricFacet;
+import com.guavasoft.agentcompass.model.MetricFacetValue;
 import com.guavasoft.agentcompass.model.MetricSeries;
+import com.guavasoft.agentcompass.model.MetricSeriesAggregation;
+import com.guavasoft.agentcompass.model.MetricSeriesFilter;
 import com.guavasoft.agentcompass.model.MetricSplitRow;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
 
@@ -56,6 +62,21 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class MetricSeriesService {
+
+  /**
+   * Spec ids of the two metrics {@code GET /api/metrics/distribution} can serve (it accepts their
+   * full names, the token-usage and cost-usage metrics these two specs carry), which is what the
+   * {@code hasDistribution} flag on {@link MetricSeries} reports.
+   */
+  private static final String TOKEN_METRIC_ID = "token";
+  private static final String COST_METRIC_ID = "cost";
+  private static final Set<String> DISTRIBUTION_METRIC_IDS = Set.of(TOKEN_METRIC_ID, COST_METRIC_ID);
+
+  /**
+   * A key with more distinct values than this in the window is left out of the attributes response:
+   * unbounded, id-like attributes (session ids and the like) are useless in a filter picker.
+   */
+  static final int FACET_MAX_DISTINCT_VALUES = 25;
 
   private static final int TREND_BUCKETS = 24;
   private static final double SECONDS_PER_HOUR = 3_600.0;
@@ -99,10 +120,77 @@ public class MetricSeriesService {
     private static final MetricWindowTotals ZERO = new MetricWindowTotals(0.0, 0.0);
   }
 
+  // What every query that has no filter to apply binds for the match list: an empty JSON array.
+  private static final String NO_MATCHES_JSON = MetricSeriesFilter.NONE.matchesJson();
+
+  // The resolved attribute filter: the NAME of the one metric it targets (null when inactive) and the
+  // Jackson-built match list. It decides which metrics take the plain batched queries (all but the
+  // filtered one) and which the single-metric ...Filtered variants (only the filtered one).
+  private record FilterScope(String metricName, String matchesJson) {
+    private static final FilterScope INACTIVE = new FilterScope(null, NO_MATCHES_JSON);
+
+    // @throws IllegalArgumentException when the filter names a metric id no spec carries (a 400)
+    static FilterScope of(MetricSeriesFilter filter, List<MetricSpec> specs) {
+      if (!filter.isActive()) {
+        return INACTIVE;
+      }
+      return new FilterScope(specForId(specs, filter.metricId()).name(), filter.matchesJson());
+    }
+
+    boolean isActive() {
+      return metricName != null;
+    }
+
+    List<String> unfilteredNames(List<String> metricNames) {
+      if (!isActive()) {
+        return metricNames;
+      }
+      return metricNames.stream().filter(candidate -> !candidate.equals(metricName)).toList();
+    }
+
+    // The matches to bind for a query about one metric: the real ones only for the filtered metric.
+    String matchesJsonFor(String candidateMetricName) {
+      return candidateMetricName.equals(metricName) ? matchesJson : NO_MATCHES_JSON;
+    }
+  }
+
+  // Cardinality a metric name absent from the batched cardinality query
+  // defaults to -- zero matching rows in the scanned range, same "missing key
+  // means zero, not an error" convention aggregateMetricTotals documents.
+  private static final long DEFAULT_CARDINALITY = 0L;
+
   private final TuningProperties tuningProperties;
   private final MetricPointRepository repository;
 
   public List<MetricSeries> metricSeries(Instant from, Instant to, String repositoryUrl) {
+    return metricSeries(from, to, repositoryUrl, MetricSeriesFilter.NONE);
+  }
+
+  /**
+   * Same as the unfiltered form, with optional ANDed {@code key:value} attribute filters applied to
+   * ONE metric's rows only (see {@link MetricSeriesFilter}); every other metric in the batch is
+   * aggregated as if no filter existed.
+   *
+   * @throws IllegalArgumentException when the filter names a metric id no spec carries (mapped to a 400)
+   */
+  public List<MetricSeries> metricSeries(
+      Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter) {
+    return metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE);
+  }
+
+  /**
+   * Same as the filtered form, with an optional per-bucket aggregation for ONE metric's
+   * {@code trend} array (see {@link MetricSeriesAggregation}). Everything else about that metric --
+   * sum, rate, peak, delta, splits, cardinality -- is built from the sum data exactly as before, and
+   * every other metric's series is untouched. It composes with the attribute filter and repository
+   * scope. {@link MetricAggregation#SUM} is a valid no-op.
+   *
+   * @throws IllegalArgumentException when the aggregation names a metric id no spec carries (mapped
+   *     to a 400), or when the filter does
+   */
+  public List<MetricSeries> metricSeries(
+      Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter,
+      MetricSeriesAggregation aggregation) {
     long windowSeconds = Math.max(1L, Duration.between(from, to).getSeconds());
     long bucketSeconds = Math.max(1L, windowSeconds / TREND_BUCKETS);
     Instant priorFrom = from.minusSeconds(windowSeconds);
@@ -110,34 +198,81 @@ public class MetricSeriesService {
 
     List<MetricSpec> specs = metricSpecs();
     List<String> metricNames = specs.stream().map(MetricSpec::name).toList();
+    FilterScope filterScope = FilterScope.of(filter, specs);
+    // Resolved up front so an unknown aggMetricId is a 400 even for the no-op agg=sum.
+    MetricSpec aggregatedSpec = aggregation.isActive() ? specForId(specs, aggregation.metricId()) : null;
 
     // Batched across every metric name (see MetricPointRepository's comment on
     // aggregateMetricTotals/aggregateMetricTrend): one scan for every metric's
     // total instead of one scan per metric, one scan for every metric's trend
-    // instead of one scan per metric.
-    Map<String, MetricWindowTotals> totalsByMetricName = repository
-        .aggregateMetricTotals(metricNames, priorFrom, from, to, repositoryUrl).stream()
+    // instead of one scan per metric. When an attribute filter is active the plain batched query
+    // covers every metric EXCEPT the filtered one, which has its own single-metric ...Filtered
+    // query; the two row sets share a shape and are simply concatenated.
+    List<Object[]> totalRows = new ArrayList<>(repository.aggregateMetricTotals(
+        filterScope.unfilteredNames(metricNames), priorFrom, from, to, repositoryUrl));
+    List<Object[]> trendRows = new ArrayList<>(repository.aggregateMetricTrend(
+        filterScope.unfilteredNames(metricNames), from, to, bucketSeconds, repositoryUrl));
+    List<Object[]> cardinalityRows = new ArrayList<>(repository.aggregateMetricCardinality(
+        filterScope.unfilteredNames(metricNames), from, to, repositoryUrl));
+    if (filterScope.isActive()) {
+      totalRows.addAll(repository.aggregateMetricTotalsFiltered(
+          filterScope.metricName(), priorFrom, from, to, repositoryUrl, filterScope.matchesJson()));
+      trendRows.addAll(repository.aggregateMetricTrendFiltered(
+          filterScope.metricName(), from, to, bucketSeconds, repositoryUrl, filterScope.matchesJson()));
+      cardinalityRows.addAll(repository.aggregateMetricCardinalityFiltered(
+          filterScope.metricName(), from, to, repositoryUrl, filterScope.matchesJson()));
+    }
+    Map<String, MetricWindowTotals> totalsByMetricName = totalRows.stream()
         .collect(Collectors.toMap(
             row -> (String) row[0],
             row -> new MetricWindowTotals(
                 ((Number) row[1]).doubleValue(), ((Number) row[2]).doubleValue())));
-    Map<String, List<Object[]>> trendRowsByMetricName = repository
-        .aggregateMetricTrend(metricNames, from, to, bucketSeconds, repositoryUrl).stream()
+    Map<String, List<Object[]>> trendRowsByMetricName = trendRows.stream()
         .collect(Collectors.groupingBy(row -> (String) row[0]));
     Map<String, Map<String, Map<String, Double>>> splitTotalsByMetricThenAttribute =
-        aggregateSplitTotals(specs, from, to, repositoryUrl);
+        aggregateSplitTotals(specs, from, to, repositoryUrl, filterScope);
+    Map<String, Long> cardinalityByMetricName = cardinalityRows.stream()
+        .collect(Collectors.toMap(row -> (String) row[0], row -> ((Number) row[1]).longValue()));
 
     List<MetricSeries> series = new ArrayList<>(specs.size());
     for (MetricSpec spec : specs) {
       MetricWindowTotals totals = totalsByMetricName.getOrDefault(spec.name(), MetricWindowTotals.ZERO);
-      List<Object[]> trendRows = trendRowsByMetricName.getOrDefault(spec.name(), List.of());
+      List<Object[]> metricTrendRows = trendRowsByMetricName.getOrDefault(spec.name(), List.of());
       Map<String, Map<String, Double>> splitTotalsByAttribute =
           splitTotalsByMetricThenAttribute.getOrDefault(spec.name(), Map.of());
+      long cardinality = cardinalityByMetricName.getOrDefault(spec.name(), DEFAULT_CARDINALITY);
       series.add(buildSeries(
-          spec, totals.current(), totals.prior(), trendRows, splitTotalsByAttribute,
+          spec, totals.current(), totals.prior(), metricTrendRows, splitTotalsByAttribute, cardinality,
           from, windowSeconds, bucketSeconds, windowLabel));
     }
+    if (aggregatedSpec != null && aggregation.aggregation() != MetricAggregation.SUM) {
+      // Swapped in AFTER buildSeries, which derives peak from the sum trend, so the headline
+      // figures keep describing sums and only the plotted array changes. The attribute filter
+      // applies to the aggregated trend only when the aggregated metric IS the filtered one.
+      List<Object[]> aggregatedRows = aggregatedTrendRows(
+          aggregation.aggregation(), aggregatedSpec.name(), from, to, bucketSeconds, repositoryUrl,
+          filterScope.matchesJsonFor(aggregatedSpec.name()));
+      List<Double> aggregatedTrend = buildTrend(aggregatedRows, from, bucketSeconds);
+      series.replaceAll(candidate -> candidate.id().equals(aggregatedSpec.id())
+          ? candidate.withTrend(aggregatedTrend) : candidate);
+    }
     return series;
+  }
+
+  // One repository method per aggregate (the function name can never be a bind parameter), picked
+  // here. SUM never reaches this: it is the batched trend the caller already has.
+  private List<Object[]> aggregatedTrendRows(
+      MetricAggregation aggregation, String metricName, Instant from, Instant to, long bucketSeconds,
+      String repositoryUrl, String filterMatchesJson) {
+    return switch (aggregation) {
+      case AVG -> repository.aggregateMetricTrendAverage(
+          metricName, from, to, bucketSeconds, repositoryUrl, filterMatchesJson);
+      case P95 -> repository.aggregateMetricTrendP95(
+          metricName, from, to, bucketSeconds, repositoryUrl, filterMatchesJson);
+      case COUNT -> repository.aggregateMetricTrendCount(
+          metricName, from, to, bucketSeconds, repositoryUrl, filterMatchesJson);
+      case SUM -> throw new IllegalStateException("SUM uses the batched trend, not a dedicated query");
+    };
   }
 
   // Every split-bearing curated metric shares just three physical attribute
@@ -148,8 +283,10 @@ public class MetricSeriesService {
   // contributes to whichever of the three attribute buckets it has a non-null
   // label for, reproducing the "attribute IS NOT NULL" filter the old
   // per-split query applied in SQL.
+  // With an attribute filter active, the filtered metric (if it bears splits) goes through its own
+  // single-metric aggregateMetricSplitsFiltered and the rest through the plain batched query.
   private Map<String, Map<String, Map<String, Double>>> aggregateSplitTotals(
-      List<MetricSpec> specs, Instant from, Instant to, String repositoryUrl) {
+      List<MetricSpec> specs, Instant from, Instant to, String repositoryUrl, FilterScope filterScope) {
     List<String> splitMetricNames = specs.stream()
         .filter(spec -> !spec.splits().isEmpty())
         .map(MetricSpec::name)
@@ -158,9 +295,19 @@ public class MetricSeriesService {
       return Map.of();
     }
     String typeAttribute = tuningProperties.getTokenTypeAttribute();
+    List<String> unfilteredSplitMetricNames = filterScope.unfilteredNames(splitMetricNames);
+    List<Object[]> splitRows = new ArrayList<>();
+    if (!unfilteredSplitMetricNames.isEmpty()) {
+      splitRows.addAll(repository.aggregateMetricSplits(
+          unfilteredSplitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl));
+    }
+    if (filterScope.isActive() && splitMetricNames.contains(filterScope.metricName())) {
+      splitRows.addAll(repository.aggregateMetricSplitsFiltered(
+          filterScope.metricName(), MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl,
+          filterScope.matchesJson()));
+    }
     Map<String, Map<String, Map<String, Double>>> totalsByMetricThenAttribute = new HashMap<>();
-    for (Object[] row : repository.aggregateMetricSplits(
-        splitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl)) {
+    for (Object[] row : splitRows) {
       String metricName = (String) row[0];
       double rowTotal = ((Number) row[4]).doubleValue();
       addSplitContribution(totalsByMetricThenAttribute, metricName, MODEL_ATTRIBUTE, (String) row[1], rowTotal);
@@ -168,6 +315,40 @@ public class MetricSeriesService {
       addSplitContribution(totalsByMetricThenAttribute, metricName, DECISION_ATTRIBUTE, (String) row[3], rowTotal);
     }
     return totalsByMetricThenAttribute;
+  }
+
+  /**
+   * Attribute key/value facets for one metric over the window, for the Metrics page filter picker
+   * ({@code GET /api/metrics/attributes}). Keys are alphabetical; each key's values run most common
+   * first, ties alphabetical, and a key with more than {@link #FACET_MAX_DISTINCT_VALUES} distinct
+   * values is omitted. A metric with no qualifying attributes yields an empty list.
+   *
+   * <p>Keyed by the metric's FULL NAME, straight into the query: a name that was never seen (or has no
+   * active rows in the window) simply matches nothing and yields an empty list rather than an error,
+   * which the frontend reads as "no filterable attributes".
+   */
+  public MetricAttributes metricAttributes(Instant from, Instant to, String repositoryUrl, String metricName) {
+    // The query returns rows already ordered (key, count desc, value), so grouping into an
+    // insertion-ordered map preserves that order in both the keys and each key's values.
+    Map<String, List<MetricFacetValue>> valuesByKey = new LinkedHashMap<>();
+    for (Object[] row : repository.aggregateMetricAttributeFacets(
+        metricName, from, to, repositoryUrl, FACET_MAX_DISTINCT_VALUES)) {
+      valuesByKey
+          .computeIfAbsent((String) row[0], key -> new ArrayList<>())
+          .add(new MetricFacetValue((String) row[1], ((Number) row[2]).longValue()));
+    }
+    List<MetricFacet> facets = new ArrayList<>(valuesByKey.size());
+    for (Map.Entry<String, List<MetricFacetValue>> entry : valuesByKey.entrySet()) {
+      facets.add(new MetricFacet(entry.getKey(), entry.getValue()));
+    }
+    return new MetricAttributes(facets);
+  }
+
+  private static MetricSpec specForId(List<MetricSpec> specs, String metricId) {
+    return specs.stream()
+        .filter(spec -> spec.id().equals(metricId))
+        .findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("Unknown metricId '" + metricId + "'"));
   }
 
   private static void addSplitContribution(
@@ -241,13 +422,13 @@ public class MetricSeriesService {
     String typeAttribute = tuningProperties.getTokenTypeAttribute();
     return List.of(
         new MetricSpec(
-            "token", tuningProperties.getTokenUsageMetric(), "tokens", "Sum",
+            TOKEN_METRIC_ID, tuningProperties.getTokenUsageMetric(), "tokens", "Sum",
             "Tokens consumed across Claude Code sessions, summed over the window. The biggest cost "
                 + "driver — split by model to see where they go. The input/output/cache breakdown "
                 + "lives on the Token Usage page.",
             ValueFormat.NUMBER, orderedSplits("Model", MODEL_ATTRIBUTE)),
         new MetricSpec(
-            "cost", tuningProperties.getCostUsageMetric(), "USD", "Spend",
+            COST_METRIC_ID, tuningProperties.getCostUsageMetric(), "USD", "Spend",
             "Billed spend in USD over the window. Split by model to see which model drives the bill.",
             ValueFormat.USD, orderedSplits("Model", MODEL_ATTRIBUTE)),
         new MetricSpec(
@@ -295,7 +476,7 @@ public class MetricSeriesService {
 
   private MetricSeries buildSeries(
       MetricSpec spec, double total, double priorTotal, List<Object[]> trendRows,
-      Map<String, Map<String, Double>> splitTotalsByAttribute,
+      Map<String, Map<String, Double>> splitTotalsByAttribute, long cardinality,
       Instant from, long windowSeconds, long bucketSeconds, String windowLabel) {
     List<Double> trend = buildTrend(trendRows, from, bucketSeconds);
     double peak = trend.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
@@ -322,7 +503,10 @@ public class MetricSeriesService {
         deltaPct >= 0.0 ? DIR_UP : DIR_DOWN,
         spec.description(),
         trend,
-        splits);
+        splits,
+        cardinality,
+        CardinalityHealth.cardinalityHealth(cardinality),
+        DISTRIBUTION_METRIC_IDS.contains(spec.id()));
   }
 
   // Exactly TREND_BUCKETS evenly-spaced values across the window; sparse query rows

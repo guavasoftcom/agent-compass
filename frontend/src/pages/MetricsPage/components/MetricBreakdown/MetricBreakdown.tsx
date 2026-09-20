@@ -17,13 +17,16 @@ import { Box, Paper, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
 import BreakdownList from '../../../../components/BreakdownList';
 import type { BreakdownRow } from '../../../../components/BreakdownList';
+import type { MetricAggregation } from '../../metricsApi';
 import type { MetricSeries } from '../metricsSampleData';
 import { fontFamilies } from '../../../../theme/typography';
 
 export interface MetricBreakdownProps {
   metric: MetricSeries;
-  /** Active split key ("None" or one of metric.splits). */
+  /** Active split key ("None" or one of metric.splits); the view passes "None" for a non-sum aggregation. */
   split: string;
+  /** Defaults to sum. Non-sum shows the Summary with a note that it stays sum-based. */
+  aggregation?: MetricAggregation;
 }
 
 const SummaryStat = ({ label, children }: { label: string; children: ReactNode }) => (
@@ -40,13 +43,23 @@ const SummaryStat = ({ label, children }: { label: string; children: ReactNode }
 /**
  * Right-hand card in the detail pane. With no split it shows a compact summary
  * (sum / rate / peak); with a split active it lists the per-attribute shares as
- * labelled bars. Matches the chart's split state.
+ * labelled bars. Matches the chart's split state. A non-sum aggregation forces the summary
+ * (a split of averages has no meaning) and says the figures are still sums.
  */
-const MetricBreakdown = ({ metric, split }: MetricBreakdownProps) => {
+const MetricBreakdown = ({ metric, split, aggregation = 'sum' }: MetricBreakdownProps) => {
+  const isSumAggregation = aggregation === 'sum';
   const rows = metric.splits[split];
   const hasSplits = Object.keys(metric.splits).length > 0;
 
-  if (split === 'None' || !rows) {
+  if (!isSumAggregation || split === 'None' || !rows) {
+    let footerNote = 'This metric has no attribute breakdown — it’s a single series.';
+    if (!isSumAggregation) {
+      footerNote =
+        'This summary is sum-based; Agg only changes the trend chart. Switch Agg back to sum to split by attribute.';
+    } else if (hasSplits) {
+      footerNote = 'Use Split by above to break this metric down by attribute.';
+    }
+
     return (
       <Paper variant="outlined" sx={{ p: '20px 22px', height: '100%', display: 'flex', flexDirection: 'column' }}>
         <Typography sx={{ fontFamily: fontFamilies.display, fontWeight: 600, fontSize: 15 }}>Summary</Typography>
@@ -60,9 +73,7 @@ const MetricBreakdown = ({ metric, split }: MetricBreakdownProps) => {
           <SummaryStat label="Peak / h">{metric.peak}</SummaryStat>
         </Box>
         <Box sx={{ mt: 'auto', pt: 2, borderTop: '1px solid', borderColor: 'divider', fontSize: 12, color: 'text.secondary', lineHeight: 1.5 }}>
-          {hasSplits
-            ? 'Use Split by above to break this metric down by attribute.'
-            : 'This metric has no attribute breakdown — it’s a single series.'}
+          {footerNote}
         </Box>
       </Paper>
     );

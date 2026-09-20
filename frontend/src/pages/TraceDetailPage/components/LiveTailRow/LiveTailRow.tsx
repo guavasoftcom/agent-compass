@@ -15,7 +15,7 @@ see <https://www.gnu.org/licenses/>.
 */
 import { Box } from '@mui/material';
 import { RunningIndicator } from '../../../../components/RunningIndicator';
-import { auroraColors, gradients, neutralColors } from '../../../../theme/colors';
+import { gradients, neutralColors } from '../../../../theme/colors';
 
 export interface LiveTailRowProps {
   gridColumns: string;
@@ -87,23 +87,6 @@ const LiveTailRow = ({ gridColumns, left, right }: LiveTailRowProps) => {
             '@keyframes liveShimmer': {
               '0%': { backgroundPosition: '0% 0' },
               '100%': { backgroundPosition: '-200% 0' },
-            },
-          }}
-        />
-        <Box
-          sx={{
-            position: 'absolute',
-            top: '50%',
-            left: `${right}%`,
-            transform: 'translate(-50%, -50%)',
-            width: 9,
-            height: 9,
-            borderRadius: '50%',
-            bgcolor: auroraColors.cyanBrightText,
-            animation: 'sessionRunningPulse 1.3s ease-in-out infinite',
-            '@keyframes sessionRunningPulse': {
-              '0%, 100%': { opacity: 1, transform: 'scale(1)' },
-              '50%': { opacity: 0.4, transform: 'scale(0.8)' },
             },
           }}
         />

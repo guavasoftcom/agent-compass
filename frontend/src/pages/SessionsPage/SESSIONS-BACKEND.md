@@ -150,7 +150,9 @@ the UI, so they need no sort support. Other existing sortable fields (`startTime
 - **`inProgress`** *(NEW)* — `true` while this session has a turn still running. Same liveness
   definition as the prompt timeline's per-turn `inProgress` below (identical staleness bound,
   identical root-span check), just resolved at session-row granularity instead of per-turn: a
-  session is running exactly when its own newest turn would be.
+  session is running when its own newest turn would be, **or** when any of its finished turns
+  still has a dispatched subagent logging under its trace (the background-work rule under "Running
+  turn" below — the two must agree so a row and its drawer never disagree about being live).
 
 Computed as a **bulk, page-scoped enrichment** layered on top of the existing page of rows — for
 each session on the returned page (not the whole table, and not filtered by the request's
@@ -330,8 +332,9 @@ folding them into a separate KPI.
 
 ### Running turn (`inProgress`) — SHIPPED
 
-- **`inProgress`** — `true` on at most one turn: the one still running. Always `false` on every
-  other turn.
+- **`inProgress`** — `true` on the newest turn while it is still running, and on any finished turn
+  whose dispatched subagent is still working (see the background-work paragraph below). Always
+  `false` on every other turn.
 
 Claude Code exports a span only once it **ends**, so a turn's `claude_code.interaction` root span
 does not exist in `spans` until the turn finishes — while its `user_prompt`, `api_request` and
@@ -352,6 +355,25 @@ across 364 completed turns (p99 6 minutes, p90 84 seconds) — so a long tool ca
 does not flip a running turn to finished; the cost is that an abandoned newest turn reads as
 running for up to 20 minutes after it went quiet. A timeline truncated at the 500-turn cap never
 reports a running turn, since its real newest turn was not returned.
+
+**A turn also reads as running while a subagent it dispatched is still working — so `inProgress`
+is no longer "at most one turn".** The newest-turn rule above cannot see background work: a
+fire-and-forget subagent (an `Agent` dispatch whose own span closes in milliseconds) keeps issuing
+`api_request` / `tool_result` logs stamped with the **dispatching** turn's trace for minutes
+afterwards, while every newer turn is a few-second `<task-notification>`. Measured on one live
+session: 111 requests over 15 minutes on a trace whose root span had closed at the start, and a
+newest turn that lasted 4 seconds — the session was visibly spending, and neither the grid row nor
+any card carried a dot. `LogRecordRepository.findBackgroundActiveTraces` returns the
+`(session_id, trace_id)` pairs with a log newer than `LogService.BACKGROUND_ACTIVITY_WINDOW`
+(2 minutes) **and** later than that trace's own root span's end plus
+`ROOT_SPAN_CLOSE_GRACE_SECONDS` (5s — the root is exported milliseconds after the last request log
+it covers, so a turn's own trailing output must not count). `LogService.promptsForSession` marks
+*every* turn whose trace appears, not just the newest, because the work belongs to the older turn's
+card. The window is much tighter than the 20-minute staleness bound on purpose: that bound exists
+for an interrupted turn that can never export its root span, whereas here the root **has** closed,
+so nothing marks the work finished except the logs going quiet; the cost is a dot that flickers
+off during a subagent's own quiet stretch longer than 2 minutes. A trace with **no** root span is
+not matched by this query — that is the newest-turn rule's territory.
 
 ---
 

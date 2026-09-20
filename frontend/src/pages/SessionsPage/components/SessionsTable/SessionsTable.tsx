@@ -485,7 +485,7 @@ const SessionsTable = ({
                   </Tooltip>
                   {row.inProgress ? (
                     <RunningIndicator
-                      tooltip="This session has a turn still running. Its row updates automatically while it does."
+                      tooltip="This session has a turn still running, or a subagent still working in the background. Its row updates automatically while it does."
                       ariaLabel="Session still running"
                     />
                   ) : null}

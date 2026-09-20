@@ -45,14 +45,14 @@ export interface StatCardProps {
   displayFont?: boolean;
   /**
    * Override the font size of the value when `displayFont` is true. Defaults to 30.
-   * Use this when a denser strip card needs a smaller number (e.g. MetricKpiStrip
-   * uses 23 to fit six cards across one row).
+   * Use this when a denser strip card needs a smaller number (e.g. 23 to fit six
+   * cards across one row).
    */
   displayFontSize?: number;
   /**
    * When false, the label is rendered in mixed-case body style rather than the
    * default uppercase tracking caption. Useful for metric-name labels that are
-   * already lowercase identifiers (MetricKpiStrip).
+   * already lowercase identifiers.
    */
   labelUppercase?: boolean;
   /**
@@ -90,13 +90,13 @@ export interface StatCardProps {
    * Optional node rendered absolutely in the top-right corner of the card.
    * When present the Paper receives `position: relative` and the label gets
    * a right-padding of 1.5 to avoid overlap with the adornment.
-   * Intended for small badge indicators such as the metric-type dot in MetricKpiStrip.
+   * Intended for small badge indicators such as a metric-type dot.
    */
   adornment?: ReactNode;
   /**
    * Props forwarded to the underlying MUI Paper element. Use this to wire up
    * interactive behaviour (onClick, role, tabIndex, onKeyDown, sx overrides) when
-   * the card acts as a selector button, e.g. MetricKpiStrip.
+   * the card acts as a selector button.
    */
   PaperProps?: PaperProps;
 }

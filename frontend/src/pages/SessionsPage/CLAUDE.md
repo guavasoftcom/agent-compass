@@ -263,7 +263,7 @@ trace link for those rows, not a disabled placeholder.
 - **`sessionsTrend` sparkline**: the shared `LineSparkline` (`components/LineSparkline`) renders
   if `values.length >= 2`. It draws a filled area + stroke line over the bucket counts returned by
   the summary endpoint. Renders nothing for a single-bucket window (the `< 2` guard lives in
-  `LineSparkline`, shared with `MetricKpiStrip`). Its buckets count sessions that *opened* in the
+  `LineSparkline`, shared with the Metrics page's `MetricCatalogRail`). Its buckets count sessions that *opened* in the
   window and so **do not sum to the Total-sessions figure above them**, which counts sessions that
   were *active* in it — an all-zero line under a card reading `2` just means both sessions are
   older than the window. Making them agree would require bucketing on each session's earliest
@@ -320,8 +320,13 @@ trace link for those rows, not a disabled placeholder.
   that.
 - **Grid-row running indicator (`SessionSummaryRow.inProgress`)**: bulk-computed backend-side for
   every row on the returned page — identical liveness definition to the prompt timeline's
-  per-turn `inProgress` (newest turn, no exported root span yet, active within 20 minutes), just
-  resolved at session-row granularity. Not window-scoped: a session that began before the
+  per-turn `inProgress` (newest turn, no exported root span yet, active within 20 minutes, **or**
+  a finished turn whose dispatched subagent is still logging under its trace within the last 2
+  minutes — see SESSIONS-BACKEND.md "Running turn"), just
+  resolved at session-row granularity. That second clause is why a session driving background
+  subagents shows a dot even when its newest turn is a few-second `<task-notification>`, and why
+  **more than one timeline card can carry a dot at once** (the dispatching turn's, not only the
+  newest's). Not window-scoped: a session that began before the
   requested window can still be flagged running. `SessionsTable` renders it as a small pulsing
   dot (the shared `components/RunningIndicator` — re-exported through `PromptTimelinePanel`'s
   barrel for this page's existing imports, same component the drawer's turn cards use, with a

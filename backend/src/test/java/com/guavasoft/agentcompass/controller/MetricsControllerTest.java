@@ -24,12 +24,18 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
+import com.guavasoft.agentcompass.model.DistributionPoint;
 import com.guavasoft.agentcompass.model.EventRow;
-import com.guavasoft.agentcompass.model.ExemplarPoint;
+import com.guavasoft.agentcompass.model.MetricAttributes;
+import com.guavasoft.agentcompass.model.MetricDistribution;
+import com.guavasoft.agentcompass.model.MetricFacet;
+import com.guavasoft.agentcompass.model.MetricFacetValue;
 import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.MetricSeries;
+import com.guavasoft.agentcompass.model.MetricAggregation;
+import com.guavasoft.agentcompass.model.MetricSeriesAggregation;
+import com.guavasoft.agentcompass.model.MetricSeriesFilter;
 import com.guavasoft.agentcompass.model.MetricSplitRow;
-import com.guavasoft.agentcompass.model.TokenDistribution;
 import com.guavasoft.agentcompass.service.MetricService;
 import com.guavasoft.agentcompass.service.MetricSeriesService;
 
@@ -37,8 +43,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -128,33 +137,73 @@ class MetricsControllerTest {
     }
 
     @Test
-    void metricAttributesReturnsDistinctKeyValuePairsWhenNoFilterApplied() throws Exception {
-        when(metricService.availableAttributePairs(List.of(), null, null)).thenReturn(List.of(
-                "method=GET",
-                "route=/users",
-                "status=200"));
+    void metricAttributesDispatchesByMetricNameAndReturnsTheWrappedKeysWithValueCounts() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        when(metricSeriesService.metricAttributes(from, to, repositoryUrl, "claude_code.token.usage"))
+                .thenReturn(new MetricAttributes(List.of(
+                        new MetricFacet("model", List.of(
+                                new MetricFacetValue("claude-sonnet-4", 812L),
+                                new MetricFacetValue("claude-opus-4", 340L))),
+                        new MetricFacet("terminal.type", List.of(new MetricFacetValue("vscode", 1100L))))));
 
-        mockMvc.perform(get("/api/metrics/attributes"))
+        mockMvc.perform(get("/api/metrics/attributes")
+                .param("metric", "claude_code.token.usage")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("repositoryUrl", repositoryUrl))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(3)))
-                .andExpect(jsonPath("$[0]").value("method=GET"))
-                .andExpect(jsonPath("$[1]").value("route=/users"))
-                .andExpect(jsonPath("$[2]").value("status=200"));
+                .andExpect(jsonPath("$.attributes", hasSize(2)))
+                .andExpect(jsonPath("$.attributes[0].key").value("model"))
+                .andExpect(jsonPath("$.attributes[0].values", hasSize(2)))
+                .andExpect(jsonPath("$.attributes[0].values[0].value").value("claude-sonnet-4"))
+                .andExpect(jsonPath("$.attributes[0].values[0].count").value(812))
+                .andExpect(jsonPath("$.attributes[0].values[1].value").value("claude-opus-4"))
+                .andExpect(jsonPath("$.attributes[1].key").value("terminal.type"))
+                .andExpect(jsonPath("$.attributes[1].values[0].count").value(1100));
 
-        verify(metricService).availableAttributePairs(List.of(), null, null);
+        verify(metricSeriesService).metricAttributes(from, to, repositoryUrl, "claude_code.token.usage");
     }
 
     @Test
-    void metricAttributesNarrowsBySuppliedFilters() throws Exception {
-        when(metricService.availableAttributePairs(List.of("method=GET", "status=200"), null, null))
-                .thenReturn(List.of("method=GET", "route=/users", "status=200"));
+    void metricAttributesTreatsRepositoryUrlAsOptionalAndAnUnseenMetricYieldsAnEmptyList() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(metricSeriesService.metricAttributes(from, to, null, "claude_code.never_emitted"))
+                .thenReturn(new MetricAttributes(List.of()));
 
         mockMvc.perform(get("/api/metrics/attributes")
-                .param("filter", "method=GET", "status=200"))
+                .param("metric", "claude_code.never_emitted")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(3)));
+                .andExpect(jsonPath("$.attributes", hasSize(0)));
 
-        verify(metricService).availableAttributePairs(List.of("method=GET", "status=200"), null, null);
+        verify(metricSeriesService).metricAttributes(from, to, null, "claude_code.never_emitted");
+    }
+
+    @Test
+    void metricAttributesRequiresMetricAndBothWindowBounds() throws Exception {
+        mockMvc.perform(get("/api/metrics/attributes")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/metrics/attributes")
+                .param("metric", "claude_code.token.usage")
+                .param("to", "2026-05-31T23:59:59Z"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(metricSeriesService);
+    }
+
+    @Test
+    void theSeriesFacetsEndpointNoLongerExists() throws Exception {
+        mockMvc.perform(get("/api/metrics/series/facets")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("metricId", "token"))
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -216,38 +265,91 @@ class MetricsControllerTest {
     }
 
     @Test
-    void metricDistributionDispatchesToServiceWithFromAndTo() throws Exception {
+    void metricDistributionDispatchesByFullMetricNameAndReturnsThePointList() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricService.aggregateTokenDistribution(from, to)).thenReturn(new TokenDistribution(
-                List.of("256K", "128K", "64K", "32K", "16K", "8K", "4K", "0"),
-                List.of(new ExemplarPoint(
-                        3, 4,
-                        "13.2K", "1.9s",
-                        "sonnet-4", "ok", "a13f·9c7e2",
-                        "8K – 16K", "14:03:51", true,
-                        List.of(), List.of(List.of("model", "claude-sonnet-4"))))));
+        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        when(metricService.aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage"))
+                .thenReturn(new MetricDistribution(List.of(
+                        new DistributionPoint(Instant.parse("2026-05-11T08:12:40Z"), 13_180.0, null, null),
+                        new DistributionPoint(
+                                Instant.parse("2026-05-11T11:47:13Z"), 27_340.0, "7b22c0f4a1d94e6bb03a5e8f2c1f019d",
+                                "00f067aa0ba902b7"))));
 
         mockMvc.perform(get("/api/metrics/distribution")
+                .param("metric", "claude_code.token.usage")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("repositoryUrl", repositoryUrl))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.points", hasSize(2)))
+                .andExpect(jsonPath("$.points[0].ts").value("2026-05-11T08:12:40Z"))
+                .andExpect(jsonPath("$.points[0].value").value(13180.0))
+                .andExpect(jsonPath("$.points[0].traceId").value(nullValue()))
+                .andExpect(jsonPath("$.points[1].ts").value("2026-05-11T11:47:13Z"))
+                .andExpect(jsonPath("$.points[1].value").value(27340.0))
+                .andExpect(jsonPath("$.points[1].traceId").value("7b22c0f4a1d94e6bb03a5e8f2c1f019d"))
+                .andExpect(jsonPath("$.points[0].spanId").value(nullValue()))
+                .andExpect(jsonPath("$.points[1].spanId").value("00f067aa0ba902b7"))
+                // The heatmap-era fields are gone, and so is the old metricId parameter's echo.
+                .andExpect(jsonPath("$.cells").doesNotExist())
+                .andExpect(jsonPath("$.exemplars").doesNotExist())
+                .andExpect(jsonPath("$.metricId").doesNotExist());
+
+        verify(metricService).aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage");
+    }
+
+    @Test
+    void metricDistributionTreatsRepositoryUrlAsOptionalAndReturnsAnEmptyPointList() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(metricService.aggregateMetricDistribution(from, to, null, "claude_code.cost.usage"))
+                .thenReturn(new MetricDistribution(List.of()));
+
+        mockMvc.perform(get("/api/metrics/distribution")
+                .param("metric", "claude_code.cost.usage")
                 .param("from", "2026-05-01T00:00:00Z")
                 .param("to", "2026-05-31T23:59:59Z"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.bands", hasSize(8)))
-                .andExpect(jsonPath("$.bands[0]").value("256K"))
-                .andExpect(jsonPath("$.exemplars", hasSize(1)))
-                .andExpect(jsonPath("$.exemplars[0].tokens").value("13.2K"))
-                .andExpect(jsonPath("$.exemplars[0].model").value("sonnet-4"))
-                .andExpect(jsonPath("$.exemplars[0].status").value("ok"))
-                .andExpect(jsonPath("$.exemplars[0].worst").value(true));
+                .andExpect(jsonPath("$.points", hasSize(0)));
 
-        verify(metricService).aggregateTokenDistribution(from, to);
+        verify(metricService).aggregateMetricDistribution(from, to, null, "claude_code.cost.usage");
+    }
+
+    @Test
+    void metricDistributionRejectsAMetricThatIsNeitherTokenNorCostWithBadRequest() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(metricService.aggregateMetricDistribution(from, to, null, "claude_code.session.count"))
+                .thenThrow(new IllegalArgumentException("Unsupported metric 'claude_code.session.count'"));
+
+        mockMvc.perform(get("/api/metrics/distribution")
+                .param("metric", "claude_code.session.count")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void metricDistributionRequiresMetricAndNoLongerAcceptsTheOldMetricIdParameter() throws Exception {
+        mockMvc.perform(get("/api/metrics/distribution")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/metrics/distribution")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("metricId", "token"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(metricService);
     }
 
     @Test
     void metricSeriesDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricSeriesService.metricSeries(from, to, null)).thenReturn(List.of(
+        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE)).thenReturn(List.of(
                 new MetricSeries(
                         "token",
                         "claude_code.token.usage",
@@ -263,7 +365,10 @@ class MetricsControllerTest {
                         "Tokens consumed across sessions.",
                         List.of(260.0, 312.0, 820.0),
                         Map.of("Model", List.of(
-                                new MetricSplitRow("claude-sonnet-4", "7.8M", 60, 0))))));
+                                new MetricSplitRow("claude-sonnet-4", "7.8M", 60, 0))),
+                        1234L,
+                        "ok",
+                        true)));
 
         mockMvc.perform(get("/api/metrics/series")
                 .param("from", "2026-05-01T00:00:00Z")
@@ -280,8 +385,280 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[0].trend", hasSize(3)))
                 .andExpect(jsonPath("$[0].splits.Model", hasSize(1)))
                 .andExpect(jsonPath("$[0].splits.Model[0].label").value("claude-sonnet-4"))
-                .andExpect(jsonPath("$[0].splits.Model[0].pct").value(60));
+                .andExpect(jsonPath("$[0].splits.Model[0].pct").value(60))
+                .andExpect(jsonPath("$[0].cardinality").value(1234))
+                .andExpect(jsonPath("$[0].health").value("ok"))
+                .andExpect(jsonPath("$[0].hasDistribution").value(true));
 
-        verify(metricSeriesService).metricSeries(from, to, null);
+        verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
+    }
+
+    @Test
+    void metricSeriesForwardsRepeatedFiltersAndRepositoryToTheService() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        MetricSeriesFilter filter = MetricSeriesFilter.of(
+                "token", List.of("model:claude-opus-4", "terminal.type:vscode"));
+        when(metricSeriesService.metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("repositoryUrl", repositoryUrl)
+                .param("filterMetricId", "token")
+                .param("filter", "model:claude-opus-4", "terminal.type:vscode"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        verify(metricSeriesService).metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE);
+        assertThat(filter.matches()).containsExactly(
+                new MetricSeriesFilter.AttributeMatch("model", "claude-opus-4"),
+                new MetricSeriesFilter.AttributeMatch("terminal.type", "vscode"));
+    }
+
+    @Test
+    void metricSeriesSplitsEachFilterOnItsFirstColonOnlyAndKeepsCommasInValues() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        // A colon in the value survives, and so does a comma: Spring would otherwise split a single
+        // collection-typed request parameter on it and turn one filter into two malformed ones.
+        MetricSeriesFilter filter = MetricSeriesFilter.of(
+                "loc", List.of("file_path:C:\\work\\a.txt", "label:one,two"));
+        when(metricSeriesService.metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", "loc")
+                .param("filter", "file_path:C:\\work\\a.txt")
+                .param("filter", "label:one,two"))
+                .andExpect(status().isOk());
+
+        verify(metricSeriesService).metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE);
+        assertThat(filter.matches()).containsExactly(
+                new MetricSeriesFilter.AttributeMatch("file_path", "C:\\work\\a.txt"),
+                new MetricSeriesFilter.AttributeMatch("label", "one,two"));
+    }
+
+    @Test
+    void metricSeriesTreatsABlankFilterMetricIdWithNoFiltersAsAbsent() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", ""))
+                .andExpect(status().isOk());
+
+        verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
+    }
+
+    @Test
+    void metricSeriesRejectsAFilterWithoutAMetricIdAndAMetricIdWithoutAFilter() throws Exception {
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filter", "model:claude-sonnet-4"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", "token"))
+                .andExpect(status().isBadRequest());
+        // The old filterKey/filterValue pair is gone: it is ignored, leaving a metric id with no filter.
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", "token")
+                .param("filterKey", "model")
+                .param("filterValue", "claude-sonnet-4"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(metricSeriesService);
+    }
+
+    @Test
+    void metricSeriesRejectsAMalformedFilterPairWithBadRequest() throws Exception {
+        // No colon at all, an empty key, a blank key, and one bad pair among good ones.
+        for (String malformedPair : List.of("model", ":claude-sonnet-4", "  :claude-sonnet-4", "")) {
+            mockMvc.perform(get("/api/metrics/series")
+                    .param("from", "2026-05-01T00:00:00Z")
+                    .param("to", "2026-05-31T23:59:59Z")
+                    .param("filterMetricId", "token")
+                    .param("filter", malformedPair))
+                    .andExpect(status().isBadRequest());
+        }
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", "token")
+                .param("filter", "model:claude-sonnet-4", "terminal.type"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(metricSeriesService);
+    }
+
+    @Test
+    void metricSeriesAcceptsAnEmptyFilterValue() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        MetricSeriesFilter filter = MetricSeriesFilter.of("token", List.of("query_source:"));
+        when(metricSeriesService.metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", "token")
+                .param("filter", "query_source:"))
+                .andExpect(status().isOk());
+
+        assertThat(filter.matches()).containsExactly(new MetricSeriesFilter.AttributeMatch("query_source", ""));
+    }
+
+    @Test
+    void metricSeriesRejectsAnUnknownFilterMetricIdWithBadRequest() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        MetricSeriesFilter filter = MetricSeriesFilter.of("latency", List.of("model:claude-sonnet-4"));
+        when(metricSeriesService.metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE))
+                .thenThrow(new IllegalArgumentException("Unknown metricId 'latency'"));
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("filterMetricId", "latency")
+                .param("filter", "model:claude-sonnet-4"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void metricSeriesForwardsTheAggregationTogetherWithFilterAndRepository() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        MetricSeriesFilter filter = MetricSeriesFilter.of("token", List.of("model:claude-sonnet-4"));
+        MetricSeriesAggregation aggregation = new MetricSeriesAggregation("token", MetricAggregation.AVG);
+        when(metricSeriesService.metricSeries(from, to, repositoryUrl, filter, aggregation))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("repositoryUrl", repositoryUrl)
+                .param("filterMetricId", "token")
+                .param("filter", "model:claude-sonnet-4")
+                .param("aggMetricId", "token")
+                .param("agg", "avg"))
+                .andExpect(status().isOk());
+
+        verify(metricSeriesService).metricSeries(from, to, repositoryUrl, filter, aggregation);
+    }
+
+    @Test
+    void metricSeriesParsesAggCaseInsensitivelyForEverySupportedValue() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        for (String agg : List.of("SUM", "Avg", "p95", "COUNT")) {
+            MetricSeriesAggregation aggregation = new MetricSeriesAggregation(
+                    "session", MetricAggregation.valueOf(agg.toUpperCase(java.util.Locale.ROOT)));
+            when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, aggregation))
+                    .thenReturn(List.of());
+
+            mockMvc.perform(get("/api/metrics/series")
+                    .param("from", "2026-05-01T00:00:00Z")
+                    .param("to", "2026-05-31T23:59:59Z")
+                    .param("aggMetricId", "session")
+                    .param("agg", agg))
+                    .andExpect(status().isOk());
+
+            verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, aggregation);
+        }
+    }
+
+    @Test
+    void metricSeriesAggSumIsAValidNoOpRequest() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        MetricSeriesAggregation sum = new MetricSeriesAggregation("token", MetricAggregation.SUM);
+        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, sum))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("aggMetricId", "token")
+                .param("agg", "sum"))
+                .andExpect(status().isOk());
+
+        verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, sum);
+    }
+
+    @Test
+    void metricSeriesTreatsBlankAggregationParamsAsAbsent() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("aggMetricId", " ")
+                .param("agg", ""))
+                .andExpect(status().isOk());
+
+        verify(metricSeriesService)
+                .metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
+    }
+
+    @Test
+    void metricSeriesRejectsOnlyOneOfAggMetricIdAndAggWithBadRequest() throws Exception {
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("aggMetricId", "token"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("agg", "avg"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(metricSeriesService);
+    }
+
+    @Test
+    void metricSeriesRejectsAnUnsupportedAggWithBadRequest() throws Exception {
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("aggMetricId", "token")
+                .param("agg", "median"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(metricSeriesService);
+    }
+
+    @Test
+    void metricSeriesRejectsAnUnknownAggMetricIdWithBadRequest() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        MetricSeriesAggregation aggregation = new MetricSeriesAggregation("latency", MetricAggregation.P95);
+        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, aggregation))
+                .thenThrow(new IllegalArgumentException("Unknown metricId 'latency'"));
+
+        mockMvc.perform(get("/api/metrics/series")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("aggMetricId", "latency")
+                .param("agg", "p95"))
+                .andExpect(status().isBadRequest());
     }
 }

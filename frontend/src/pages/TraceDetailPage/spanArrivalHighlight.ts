@@ -13,5 +13,10 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-export { default } from './MetricKpiStrip';
-export type { MetricKpiStripProps } from './MetricKpiStrip';
+
+// How long a span that arrived while the trace was running stays highlighted in the waterfall.
+// Shared by the row's fade-out animation and the view's timer that drops the span from the
+// "newly arrived" set, so the two can't drift: the timer must not fire before the animation ends
+// (the row would snap back mid-fade) and shouldn't linger long after (a row that remounts on
+// collapse/zoom would replay the flash).
+export const NEW_SPAN_HIGHLIGHT_MS = 2400;

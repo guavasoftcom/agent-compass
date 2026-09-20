@@ -13,7 +13,7 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -41,8 +41,17 @@ import AnalyzeTraceDialog from './components/AnalyzeTraceDialog';
 import { radii } from '../../theme/theme';
 import { useNowTick } from '../../lib/useNowTick';
 
+import { NEW_SPAN_HIGHLIGHT_MS } from './spanArrivalHighlight';
+
+// How far from the bottom still counts as "at the bottom" for following a running trace's new
+// rows — scroll positions are fractional on high-DPI displays, so an exact match would miss.
+const AUTO_SCROLL_BOTTOM_TOLERANCE_PX = 4;
+
 export interface TraceDetailPageViewProps {
   traceId: string;
+  // A span to reveal and select once the spans have loaded (the `?span=` deep link). Absent or null
+  // keeps the default arrival: waterfall at full width, nothing selected.
+  initialSpanId?: string | null;
   spans: SpanRow[] | undefined;
   isLoading: boolean;
   error: Error | null;
@@ -100,6 +109,7 @@ export interface TraceDetailPageViewProps {
 
 const TraceDetailPageView = ({
   traceId,
+  initialSpanId = null,
   spans,
   isLoading,
   error,
@@ -144,13 +154,32 @@ const TraceDetailPageView = ({
     });
   }, []);
 
+  // useNowTick is mounted unconditionally (Rules of Hooks), but its return only matters while
+  // traceInProgress — a finished trace's geometry never depends on the ticking clock.
+  const now = useNowTick();
   const earliest = traceWindow?.earliestStartMs ?? 0;
-  const totalMs = traceWindow?.totalMs ?? 1;
-  const [view, setView] = useState<ZoomView>({ s: 0, e: totalMs });
+  const recordedTotalMs = traceWindow?.totalMs ?? 1;
+  // A running trace's window is stretched out to "now" rather than ending at the last span
+  // received: the live-tail row has to draw its bar somewhere, and every span already on screen
+  // narrows a little each tick to make room for it. Never shrinks below the recorded window, so a
+  // client clock running behind the server can't clip a span.
+  const totalMs =
+    traceInProgress && traceWindow
+      ? Math.max(recordedTotalMs, now - earliest)
+      : recordedTotalMs;
+  // null = the full window, which is what keeps following `totalMs` as it grows. Only an actual
+  // zoom is stored, since a stored full-extent view would freeze at the moment it was made.
+  const [zoomView, setZoomView] = useState<ZoomView | null>(null);
   useEffect(() => {
+    // Keyed on the recorded window, not the live one: a new batch of spans resets the zoom (as it
+    // always has), but the once-a-second tick must not.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setView({ s: 0, e: totalMs });
-  }, [totalMs]);
+    setZoomView(null);
+  }, [recordedTotalMs]);
+  const view = useMemo<ZoomView>(() => zoomView ?? { s: 0, e: totalMs }, [zoomView, totalMs]);
+  const changeView = (nextView: ZoomView) => {
+    setZoomView(nextView.s <= 0 && nextView.e >= totalMs ? null : nextView);
+  };
 
   const offMsOf = useCallback(
     (s: SpanRow) => Date.parse(s.startTimestamp) - earliest,
@@ -193,10 +222,7 @@ const TraceDetailPageView = ({
     ((timeMs - view.s) / visibleSpanMs) * 100;
 
   // The live-tail row's geometry — see LiveTailRow's own doc comment for why this is a new
-  // trailing segment rather than an existing row's bar growing. useNowTick is mounted
-  // unconditionally (Rules of Hooks), but its return is only used while traceInProgress —
-  // a finished trace's row math never depends on the ticking clock.
-  const now = useNowTick();
+  // trailing segment rather than an existing row's bar growing.
   const lastKnownEndMs = traceInProgress
     ? Math.max(0, ...visible.map((s) => offMsOf(s) + durMsOf(s)))
     : 0;
@@ -204,6 +230,73 @@ const TraceDetailPageView = ({
   const liveTailRight = traceInProgress
     ? Math.min(100, percentOf(Math.min(view.e, now - earliest)))
     : 0;
+
+  // Follow a running trace's new rows, but only for a reader already parked at the very bottom —
+  // scrolled up to inspect something, they stay put. "Was at the bottom" is judged against the
+  // scrollHeight recorded after the previous row-count change, because by the time this runs the
+  // new rows are already in the DOM and the container's current height says nothing about where the
+  // reader was. Keyed on the row count (and the live-tail row appearing) rather than run every tick,
+  // and the height is recorded even when not following so the next comparison is against real
+  // history. A finished trace never scrolls itself: expanding a row while at the bottom must not
+  // yank the list away from the rows just revealed.
+  const previousScrollHeightRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const container = waterfallRef.current;
+    if (!container) {
+      return;
+    }
+    const previousScrollHeight = previousScrollHeightRef.current;
+    const wasAtBottom =
+      previousScrollHeight !== null &&
+      previousScrollHeight - container.scrollTop - container.clientHeight <=
+        AUTO_SCROLL_BOTTOM_TOLERANCE_PX;
+    if (traceInProgress && wasAtBottom) {
+      container.scrollTop = container.scrollHeight;
+    }
+    previousScrollHeightRef.current = container.scrollHeight;
+  }, [visible.length, traceInProgress]);
+
+  // Spans that showed up on a poll, kept for NEW_SPAN_HIGHLIGHT_MS so their rows can flash. The
+  // first batch of spans is the baseline rather than "new" (everything on screen on arrival would
+  // otherwise flash), and each batch clears on its own timer so a later batch doesn't cut an
+  // earlier one short. Not gated on traceInProgress: the last batch often lands in the same poll
+  // that flips it false, and a finished trace's spans never change, so nothing else could trigger it.
+  const knownSpanIdsRef = useRef<Set<string> | null>(null);
+  const highlightTimeoutIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const [newlyArrivedSpanIds, setNewlyArrivedSpanIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!spans) {
+      return;
+    }
+    const previouslyKnownSpanIds = knownSpanIdsRef.current;
+    knownSpanIdsRef.current = new Set(spans.map((span) => span.spanId));
+    if (previouslyKnownSpanIds === null) {
+      return;
+    }
+    const arrivedSpanIds = spans
+      .filter((span) => !previouslyKnownSpanIds.has(span.spanId))
+      .map((span) => span.spanId);
+    if (arrivedSpanIds.length === 0) {
+      return;
+    }
+    setNewlyArrivedSpanIds((previous) => new Set([...previous, ...arrivedSpanIds]));
+    const timeoutId = setTimeout(() => {
+      highlightTimeoutIdsRef.current.delete(timeoutId);
+      setNewlyArrivedSpanIds((previous) => {
+        const remaining = new Set(previous);
+        arrivedSpanIds.forEach((spanId) => remaining.delete(spanId));
+        return remaining;
+      });
+    }, NEW_SPAN_HIGHLIGHT_MS);
+    highlightTimeoutIdsRef.current.add(timeoutId);
+  }, [spans]);
+  useEffect(() => {
+    const timeoutIds = highlightTimeoutIdsRef.current;
+    return () => {
+      timeoutIds.forEach((timeoutId) => clearTimeout(timeoutId));
+      timeoutIds.clear();
+    };
+  }, []);
 
   // Bring a span's row into view, scrolling only as far as it takes and leaving
   // a couple of rows of context at whichever edge the row entered from. Rows
@@ -331,7 +424,11 @@ const TraceDetailPageView = ({
       });
       const off = offMsOf(target);
       const dur = durMsOf(target);
-      setView((previous) => {
+      setZoomView((previous) => {
+        // Not zoomed: the full window already contains every span, so there is nothing to widen.
+        if (!previous) {
+          return previous;
+        }
         const start = Math.min(previous.s, off);
         const end = Math.max(previous.e, off + dur);
         return start === previous.s && end === previous.e ? previous : { s: start, e: end };
@@ -355,6 +452,24 @@ const TraceDetailPageView = ({
       scrollToSpan(spanId);
     }
   }, [pendingRevealTick, scrollToSpan]);
+
+  // Honors the `?span=` deep link once. Waits for the span to be in hand (the spans query may still
+  // be loading, or polling for a running trace) and then reveals it exactly like a related-call
+  // link would. The ref makes it one-shot, so a later poll or the reader closing the drawer never
+  // re-selects it; a new trace remounts this view (key={traceId}), which resets the ref.
+  // Declared after the zoom-reset effect above so its widening lands on top of the reset.
+  const initialSpanRevealedRef = useRef(false);
+  useEffect(() => {
+    if (initialSpanRevealedRef.current || initialSpanId === null || !spans) {
+      return;
+    }
+    if (!spans.some((span) => span.spanId === initialSpanId)) {
+      return;
+    }
+    initialSpanRevealedRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    revealSpan(initialSpanId);
+  }, [initialSpanId, spans, revealSpan]);
 
   // Clicking a WaterfallToolbar agent-dispatch legend swatch jumps to one of that label's dispatch
   // spans via revealSpan, same idiom as nextError/errorIndexRef above: a ref-held index per label,
@@ -576,7 +691,7 @@ const TraceDetailPageView = ({
             totalMs={totalMs}
             depthBySpanId={depthBySpanId}
             view={view}
-            onViewChange={setView}
+            onViewChange={changeView}
           />
 
           {/* axis */}
@@ -647,6 +762,7 @@ const TraceDetailPageView = ({
                   costUsd={costOfSelectedSpan(s, logsBySpanId.get(s.spanId))}
                   isRollupCost={costOfSpan(s) > 0}
                   agentColor={agentColorBySpanId.get(s.spanId)}
+                  isNewlyArrived={newlyArrivedSpanIds.has(s.spanId)}
                   chipsOff={chipsOff}
                   logs={logsBySpanId.get(s.spanId)}
                   gridColumns={gridColumns}

@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTraceLogs } from '../../api';
 import type { LogRow } from '../../api';
@@ -37,6 +37,10 @@ import TraceDetailPageView from './TraceDetailPageView';
 
 export default function TraceDetailPage() {
   const { traceId } = useParams<{ traceId: string }>();
+  // `?span=<spanId>` deep-links to one span (the Metrics page's exemplar drawer sends it), which
+  // the view reveals and selects once the spans load.
+  const [searchParams] = useSearchParams();
+  const initialSpanId = searchParams.get('span');
 
   // The trace's aggregate row — the spans response is an array and can't carry
   // trace-level fields. Feeds firstUserPrompt and the header's authoritative
@@ -70,11 +74,15 @@ export default function TraceDetailPage() {
   });
 
   // Logs load eagerly (not gated on the drawer) so the per-span "Logs" section in
-  // the detail dock has data the moment you select a span.
+  // the detail dock has data the moment you select a span. Polled alongside the spans while the
+  // trace runs: an llm_request span's cost comes only from the api_request logs bucketed onto it
+  // (costOfSelectedSpan), and Claude Code emits those logs after the span, so a span that arrives
+  // in one poll would show no cost until the logs catch up.
   const { data: logsData } = useQuery({
     queryKey: ['trace-logs', traceId],
     queryFn: () => fetchTraceLogs(traceId!),
     enabled: Boolean(traceId),
+    refetchInterval: traceSummaryQuery.data?.inProgress ? RUNNING_TRACE_POLL_INTERVAL_MS : false,
   });
 
   // Hoisted from AnalyzeTraceDialog (which still runs the identical query,
@@ -228,6 +236,7 @@ export default function TraceDetailPage() {
     <TraceDetailPageView
       key={traceId}
       traceId={traceId ?? ''}
+      initialSpanId={initialSpanId}
       spans={spans}
       isLoading={isLoading}
       error={error as Error | null}

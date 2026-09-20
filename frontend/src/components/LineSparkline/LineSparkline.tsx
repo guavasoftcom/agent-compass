@@ -32,7 +32,7 @@ const BAR_CORNER_RADIUS = 1.5;
  * `values`: an area+line for a continuous series, or per-bucket bars for a
  * sparse whole-number counter (same `isSparseCounter` threshold `MetricTrendCard`
  * uses to switch its detail chart, so a card never shows bars while its chart
- * shows an area). Used by MetricKpiStrip (height=24) and SessionsKpiStrip
+ * shows an area). Used by MetricCatalogRail (height=22) and SessionsKpiStrip
  * (height=36). Returns null when fewer than two data points are provided,
  * avoiding divide-by-zero in the x-coordinate calculation and NaN from
  * Math.max/min on an empty spread.

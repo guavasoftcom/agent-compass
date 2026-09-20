@@ -36,8 +36,24 @@ public record MetricSeries(
         @Schema(description = "Signed change vs. the previous equal window", example = "+18.3%") String delta,
         @Schema(description = "Direction of the change", example = "up") String dir,
         @Schema(description = "One-line plain-text description") String description,
-        @Schema(description = "Per-bucket trend values for the window (raw numbers, newest last)")
+        @Schema(description = "Per-bucket trend values for the window (raw numbers, newest last). Per-bucket "
+                + "sums, except for the one metric named by aggMetricId, whose buckets follow the requested agg")
         List<Double> trend,
         @Schema(description = "Attribute breakdowns keyed by split name (Model, Type, …); empty when none")
-        Map<String, List<MetricSplitRow>> splits) {
+        Map<String, List<MetricSplitRow>> splits,
+        @Schema(description = "Distinct attribute label-sets (streams) seen in the window. For the one metric an "
+                + "attribute filter targets, only label-sets with non-zero activity are counted, so it can be "
+                + "lower than the unfiltered figure", example = "1234")
+        long cardinality,
+        @Schema(description = "Server-computed cardinality health: ok / warn / bad", example = "ok",
+                allowableValues = {"ok", "warn", "bad"})
+        String health,
+        @Schema(description = "True when GET /api/metrics/distribution can serve this metric (token and cost)",
+                example = "true") boolean hasDistribution) {
+
+        /** This series with only its trend replaced; every headline figure, split and cardinality is kept. */
+        public MetricSeries withTrend(List<Double> replacementTrend) {
+                return new MetricSeries(id, name, type, unit, sum, sumLabel, rate, rateUnit, peak, delta, dir,
+                        description, replacementTrend, splits, cardinality, health, hasDistribution);
+        }
 }

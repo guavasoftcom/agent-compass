@@ -13,14 +13,15 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-import { describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import TraceDetailPageView, {
   type TraceDetailPageViewProps,
 } from './TraceDetailPageView';
 import type { SpanRow } from '../../api';
+import { NEW_SPAN_HIGHLIGHT_MS } from './spanArrivalHighlight';
 import {
   buildSpanDepths,
   buildSpanIndices,
@@ -128,6 +129,29 @@ const baseProps: TraceDetailPageViewProps = {
   ollamaAnalysisEnabled: true,
 };
 
+// What one more poll of a running trace brings: a fourth span, ending inside the recorded window so
+// only the row count changes.
+const lateSpan: SpanRow = {
+  ...executionSpan,
+  id: 4,
+  spanId: 'span-late',
+  parentSpanId: 'span-root',
+  name: 'claude_code.llm_request',
+  startTimestamp: '2026-08-30T10:00:00.400Z',
+  statusCode: 'ok',
+  statusMessage: null,
+};
+const grownSpans = [...spans, lateSpan];
+const grownTree = buildSpanTree(grownSpans);
+const grownProps: TraceDetailPageViewProps = {
+  ...baseProps,
+  spans: grownSpans,
+  tree: grownTree,
+  spanIndices: buildSpanIndices(grownTree.roots, grownTree.childrenByParentId),
+  depthBySpanId: buildSpanDepths(grownTree.roots, grownTree.childrenByParentId),
+  traceWindow: computeTraceWindow(grownSpans),
+};
+
 // The fixture's span names ("claude_code.interaction" etc.) legitimately
 // repeat across the page — once as a waterfall row, again in the header's
 // MetaFooter (root span name) and Time-by-operation breakdown — so waterfall
@@ -211,6 +235,31 @@ describe('TraceDetailPageView', () => {
     expect(screen.getByText('span-exec')).toBeInTheDocument();
   });
 
+  it('opens the drawer on the deep-linked span when initialSpanId names one in the trace', () => {
+    renderWithProviders(<TraceDetailPageView {...baseProps} initialSpanId="span-exec" />);
+
+    expect(screen.getByText('span id')).toBeInTheDocument();
+    expect(screen.getByText('span-exec')).toBeInTheDocument();
+  });
+
+  it('waits for the spans to load before revealing the deep-linked span', () => {
+    const { rerender } = renderWithProviders(
+      <TraceDetailPageView {...baseProps} spans={undefined} isLoading initialSpanId="span-exec" />,
+    );
+    expect(screen.queryByText('span id')).not.toBeInTheDocument();
+
+    rerender(<TraceDetailPageView {...baseProps} initialSpanId="span-exec" />);
+
+    expect(screen.getByText('span id')).toBeInTheDocument();
+    expect(screen.getByText('span-exec')).toBeInTheDocument();
+  });
+
+  it('opens nothing when the deep-linked span is not in the trace', () => {
+    renderWithProviders(<TraceDetailPageView {...baseProps} initialSpanId="no-such-span" />);
+
+    expect(screen.queryByText('span id')).not.toBeInTheDocument();
+  });
+
   it('closes the drawer when the already-selected row is clicked again', async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(
@@ -283,5 +332,144 @@ describe('TraceDetailPageView', () => {
     rerender(<TraceDetailPageView {...baseProps} traceInProgress={false} />);
 
     expect(screen.queryByText('waiting for more spans…')).not.toBeInTheDocument();
+  });
+
+  describe('following a running trace', () => {
+    const ROW_HEIGHT_PX = 30;
+    const VIEWPORT_HEIGHT_PX = 60;
+
+    // jsdom does no layout, so scrollHeight/clientHeight are 0 everywhere; stand in a height that
+    // grows with the rendered rows so "new spans arrived" changes what the waterfall can scroll.
+    beforeEach(() => {
+      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.querySelectorAll('[data-span]').length * ROW_HEIGHT_PX;
+        },
+      });
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get: () => VIEWPORT_HEIGHT_PX,
+      });
+    });
+
+    afterEach(() => {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+    });
+
+    const scrollerOf = (container: HTMLElement): HTMLElement =>
+      getRow(container, 'span-root').parentElement as HTMLElement;
+
+    it('scrolls to the new bottom when the reader was already at the bottom', () => {
+      const { container, rerender } = renderWithProviders(
+        <TraceDetailPageView {...baseProps} traceInProgress />,
+      );
+      // Three rows of 30px in a 60px viewport: the bottom is a scrollTop of 30.
+      scrollerOf(container).scrollTop = 30;
+
+      rerender(<TraceDetailPageView {...grownProps} traceInProgress />);
+
+      expect(scrollerOf(container).scrollTop).toBe(4 * ROW_HEIGHT_PX);
+    });
+
+    it('leaves a reader who scrolled up where they are', () => {
+      const { container, rerender } = renderWithProviders(
+        <TraceDetailPageView {...baseProps} traceInProgress />,
+      );
+      scrollerOf(container).scrollTop = 0;
+
+      rerender(<TraceDetailPageView {...grownProps} traceInProgress />);
+
+      expect(scrollerOf(container).scrollTop).toBe(0);
+    });
+
+    it('never scrolls a finished trace by itself', () => {
+      const { container, rerender } = renderWithProviders(
+        <TraceDetailPageView {...baseProps} />,
+      );
+      scrollerOf(container).scrollTop = 30;
+
+      rerender(<TraceDetailPageView {...grownProps} />);
+
+      expect(scrollerOf(container).scrollTop).toBe(30);
+    });
+  });
+
+  describe('highlighting newly arrived spans', () => {
+    // The flash is an `animation` on the row; jsdom keeps the shorthand text as authored.
+    const isFlashing = (row: HTMLElement): boolean =>
+      getComputedStyle(row).animation.includes(`${NEW_SPAN_HIGHLIGHT_MS}ms`);
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('flashes only a span that arrives after the first load, then lets it settle', () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const { container, rerender } = renderWithProviders(
+        <TraceDetailPageView {...baseProps} traceInProgress />,
+      );
+      // Everything on screen on arrival is the baseline, not news.
+      expect(isFlashing(getRow(container, 'span-root'))).toBe(false);
+
+      rerender(<TraceDetailPageView {...grownProps} traceInProgress />);
+
+      expect(isFlashing(getRow(container, 'span-late'))).toBe(true);
+      expect(isFlashing(getRow(container, 'span-root'))).toBe(false);
+
+      act(() => {
+        vi.advanceTimersByTime(NEW_SPAN_HIGHLIGHT_MS);
+      });
+
+      expect(isFlashing(getRow(container, 'span-late'))).toBe(false);
+    });
+  });
+
+  describe('running trace window', () => {
+    // The row's timeline bar is the only 13px-tall absolutely positioned box in it.
+    const barWidthPercent = (row: HTMLElement): number => {
+      const bar = Array.from(row.querySelectorAll<HTMLElement>('div')).find((element) => {
+        const style = getComputedStyle(element);
+        return style.position === 'absolute' && style.height === '13px';
+      });
+      if (!bar) {
+        throw new Error('timeline bar not found');
+      }
+      return parseFloat(getComputedStyle(bar).width);
+    };
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stretches the window to now and narrows earlier bars on every tick', () => {
+      // The fixture's spans end 500ms after the trace started; "now" is a full second in.
+      vi.useFakeTimers({
+        now: Date.parse('2026-08-30T10:00:01.000Z'),
+        toFake: ['Date', 'setInterval', 'clearInterval'],
+      });
+      const { container } = renderWithProviders(
+        <TraceDetailPageView {...baseProps} traceInProgress />,
+      );
+
+      expect(barWidthPercent(getRow(container, 'span-root'))).toBeCloseTo(50, 0);
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(barWidthPercent(getRow(container, 'span-root'))).toBeCloseTo(25, 0);
+    });
+
+    it('leaves a finished trace on the window its spans define, however late it is', () => {
+      vi.useFakeTimers({
+        now: Date.parse('2026-08-30T10:00:09.000Z'),
+        toFake: ['Date', 'setInterval', 'clearInterval'],
+      });
+      const { container } = renderWithProviders(<TraceDetailPageView {...baseProps} />);
+
+      expect(barWidthPercent(getRow(container, 'span-root'))).toBeCloseTo(100, 0);
+    });
   });
 });
