@@ -284,6 +284,42 @@ class SessionsQueryIntegrationTest {
   }
 
   @Test
+  void rowsFlagInProgressWhenAFinishedTurnsDispatchedSubagentIsStillLoggingUnderItsTrace() {
+    Instant base = Instant.now().minus(10, ChronoUnit.MINUTES);
+    saveCost("BG1", "opus", "main", 1.0, base);
+    saveUserPrompt("BG1", "Kick off the subagents", base, TRACE_TURN_ZERO, "bg1-prompt-0");
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-bg1", base, base.plusSeconds(20));
+    // The turn's root span closed 20s in, yet a request stamped with its trace lands 30s ago:
+    // background work. The session's newest (and only) turn is finished, so the newest-turn
+    // rule alone reads this session as idle.
+    saveApiRequest("BG1", TRACE_TURN_ZERO, "bg1-prompt-0", 0.1, Instant.now().minus(30, ChronoUnit.SECONDS));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummary session = page.items().stream()
+        .filter(item -> "BG1".equals(item.sessionId())).findFirst().orElseThrow();
+
+    assertThat(session.inProgress()).isTrue();
+  }
+
+  @Test
+  void rowsDoNotFlagInProgressWhenTheBackgroundActivityIsOlderThanTheRecencyWindow() {
+    Instant base = Instant.now().minus(30, ChronoUnit.MINUTES);
+    saveCost("BG2", "opus", "main", 1.0, base);
+    saveUserPrompt("BG2", "Kick off the subagents", base, TRACE_TURN_ZERO, "bg2-prompt-0");
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-bg2", base, base.plusSeconds(20));
+    // Past the root's close, but 10 minutes ago -- the subagent has gone quiet.
+    saveApiRequest("BG2", TRACE_TURN_ZERO, "bg2-prompt-0", 0.1, Instant.now().minus(10, ChronoUnit.MINUTES));
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummary session = page.items().stream()
+        .filter(item -> "BG2".equals(item.sessionId())).findFirst().orElseThrow();
+
+    assertThat(session.inProgress()).isFalse();
+  }
+
+  @Test
   void tokenBreakdownSplitsByTypeWithResetAwareSumsAndSumsToTokens() {
     Instant base = Instant.now().minus(8, ChronoUnit.MINUTES);
     // Session I needs a cost/active-time emission to enter session_window at all
@@ -890,6 +926,40 @@ class SessionsQueryIntegrationTest {
     saveApiRequest("R3", TRACE_TURN_ZERO, 0.5, turnStart.plusSeconds(30));
 
     List<SessionPrompt> prompts = logService.promptsForSession("R3");
+
+    assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
+  }
+
+  @Test
+  void promptsForSessionMarksAnOlderFinishedTurnRunningWhileItsDispatchedSubagentStillLogs() {
+    // Turn zero dispatched a subagent and finished; turn one is a short follow-up that also
+    // finished. The subagent keeps issuing requests stamped with turn zero's trace, so it is
+    // turn zero's card -- not the newest turn's -- that should read as running.
+    Instant dispatchingTurnStart = Instant.now().minus(10, ChronoUnit.MINUTES);
+    Instant followUpTurnStart = Instant.now().minus(1, ChronoUnit.MINUTES);
+    saveUserPrompt("R4", "Dispatch the subagents", dispatchingTurnStart, TRACE_TURN_ZERO);
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-r4-0", dispatchingTurnStart, dispatchingTurnStart.plusSeconds(20));
+    saveUserPrompt("R4", "Short follow-up", followUpTurnStart, TRACE_TURN_ONE);
+    saveInteractionRootSpan(TRACE_TURN_ONE, "root-span-r4-1", followUpTurnStart, followUpTurnStart.plusSeconds(4));
+    saveApiRequest("R4", TRACE_TURN_ZERO, 0.5, Instant.now().minus(30, ChronoUnit.SECONDS));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("R4");
+
+    assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(true, false);
+  }
+
+  @Test
+  void promptsForSessionDoesNotTreatATurnsOwnTrailingLogAsBackgroundWork() {
+    // The root span is exported milliseconds after the last request log it covers. A log a
+    // couple of seconds past the root's end (inside the grace) is the turn's own tail, and must
+    // not make a turn that just finished read as running.
+    Instant turnStart = Instant.now().minus(20, ChronoUnit.SECONDS);
+    Instant rootEnd = Instant.now().minus(3, ChronoUnit.SECONDS);
+    saveUserPrompt("R5", "Just finished", turnStart, TRACE_TURN_ZERO);
+    saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-r5", turnStart, rootEnd);
+    saveApiRequest("R5", TRACE_TURN_ZERO, 0.5, rootEnd.plusSeconds(2));
+
+    List<SessionPrompt> prompts = logService.promptsForSession("R5");
 
     assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
   }

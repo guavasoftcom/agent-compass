@@ -17,12 +17,14 @@ package com.guavasoft.agentcompass.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
@@ -34,10 +36,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostSummary;
+import com.guavasoft.agentcompass.model.MetricAttributes;
+import com.guavasoft.agentcompass.model.MetricDistribution;
 import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.MetricSeries;
+import com.guavasoft.agentcompass.model.MetricSeriesAggregation;
+import com.guavasoft.agentcompass.model.MetricSeriesFilter;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
-import com.guavasoft.agentcompass.model.TokenDistribution;
 import com.guavasoft.agentcompass.service.MetricService;
 import com.guavasoft.agentcompass.service.MetricSeriesService;
 
@@ -48,19 +53,46 @@ import java.util.List;
 @RequiredArgsConstructor
 @Validated
 @RequestMapping("/api/metrics")
-@Tag(name = "Metrics", description = "OTLP metric data points and attribute autocomplete for the Metrics DataGrid")
+@Tag(name = "Metrics", description = "OTLP metric data points, per-metric series, attribute facets and "
+        + "per-request distributions for the Metrics page")
 public class MetricsController {
+
+    private static final String FILTER_PARAMETER = "filter";
 
     private final MetricService metricService;
     private final MetricSeriesService metricSeriesService;
 
+    // The filter parameter is read off the request rather than bound as a List<String>: Spring splits a
+    // SINGLE value of a collection-typed @RequestParam on commas, which would cut a value such as
+    // "model:a,b" into two malformed pairs. It is documented via the operation's parameters instead.
     @GetMapping("/series")
     @Operation(
             summary = "Per-metric series for the Metrics page: trend, headline stats, and attribute splits",
             description = "Returns one object per fixed claude_code.* counter over the window: a windowed "
-                    + "trend, headline sum / rate / peak, signed delta vs. the previous equal window, and "
-                    + "any attribute splits (e.g. token usage by model or type). All display values are "
-                    + "pre-formatted strings. Both from and to are required ISO-8601 instants.")
+                    + "trend, headline sum / rate / peak, signed delta vs. the previous equal window, "
+                    + "any attribute splits (e.g. token usage by model or type), and the distinct-stream "
+                    + "cardinality (a number) with its server-computed health (ok / warn / bad). Display "
+                    + "values are pre-formatted strings. Both from and to are required ISO-8601 instants. "
+                    + "Optional attribute filters (repeated filter=key:value, ANDed, each split on its "
+                    + "FIRST colon so a value may contain colons, plus the filterMetricId they apply to) "
+                    + "narrow ONE metric's rows; every other metric in the response is unaffected. Values "
+                    + "compare as text, so a numeric or boolean attribute matches its text form. Under an "
+                    + "active filter the filtered metric's cardinality counts only label-sets with non-zero "
+                    + "activity in the window (streams that merely re-emitted an unchanged value are "
+                    + "excluded), so it can be lower than that metric's unfiltered cardinality. filter "
+                    + "without filterMetricId, filterMetricId without filter, a malformed pair (no colon, "
+                    + "or an empty key) or a filterMetricId matching no metric is a 400. "
+                    + "An optional aggregation (aggMetricId + agg, both or neither) changes ONLY the trend "
+                    + "array of that one metric to the per-bucket avg, p95 or count of its individual "
+                    + "non-zero increments (agg=sum is the default and a no-op); header stats, splits and "
+                    + "cardinality stay sum-based. Only one of the two, an unknown aggMetricId or an "
+                    + "unknown agg is a 400.",
+            parameters = @Parameter(
+                    name = FILTER_PARAMETER,
+                    in = ParameterIn.QUERY,
+                    description = "Attribute filter written key:value, repeatable; all must match (AND). Split on "
+                            + "the first colon only. Requires filterMetricId.",
+                    array = @ArraySchema(schema = @Schema(type = "string", example = "model:claude-sonnet-4"))))
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "Metric series for the requested window, one per metric",
@@ -73,8 +105,26 @@ public class MetricsController {
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
             @RequestParam Instant to,
             @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
-            @RequestParam(required = false) String repositoryUrl) {
-        return metricSeriesService.metricSeries(from, to, repositoryUrl);
+            @RequestParam(required = false) String repositoryUrl,
+            @Parameter(description = "Id of the one metric the attribute filters apply to (a series id such as token); "
+                    + "must be supplied together with filter", example = "token")
+            @RequestParam(required = false) String filterMetricId,
+            @Parameter(description = "Id of the one metric whose trend agg applies to (a series id such as token); "
+                    + "must be supplied together with agg", example = "token")
+            @RequestParam(required = false) String aggMetricId,
+            @Parameter(description = "How that metric's trend buckets are aggregated, case-insensitive: sum "
+                    + "(default, per-bucket total), avg (mean increment), p95 (95th-percentile increment) or "
+                    + "count (number of increments). avg/p95/count consider only non-zero increments, so "
+                    + "the exporter's per-minute zero-delta re-emissions do not distort them. Affects the "
+                    + "trend array only.", example = "avg",
+                    schema = @Schema(allowableValues = {"sum", "avg", "p95", "count"}))
+            @RequestParam(required = false) String agg,
+            @Parameter(hidden = true) HttpServletRequest request) {
+        String[] filterValues = request.getParameterValues(FILTER_PARAMETER);
+        return metricSeriesService.metricSeries(
+                from, to, repositoryUrl,
+                MetricSeriesFilter.of(filterMetricId, filterValues == null ? List.of() : List.of(filterValues)),
+                MetricSeriesAggregation.of(aggMetricId, agg));
     }
 
     @GetMapping("")
@@ -152,43 +202,62 @@ public class MetricsController {
 
     @GetMapping("/distribution")
     @Operation(
-            summary = "Token-band heatmap data for the Metrics distribution panel",
-            description = "Returns the Y-axis band labels and up to 8 sampled exemplar requests "
-                    + "placed on a col × row grid. Each exemplar carries its token count, "
-                    + "correlated span duration, model, status, and trace-id display string. "
-                    + "Both from and to are required ISO-8601 instants.")
+            summary = "Per-request points of the token or cost metric for the Metrics distribution scatter plot",
+            description = "Returns one point per api_request log record in the window: its timestamp, its "
+                    + "value (input + output + cache-creation + cache-read tokens for the token metric, "
+                    + "cost_usd for the cost metric) and a traceId. Points are ascending by timestamp and "
+                    + "capped to the NEWEST 2,000 requests in the window. traceId is non-null only for a "
+                    + "handful (at most 5) of server-chosen exemplars, each a real trace id: the maximum, "
+                    + "the requests nearest the p50 / p95 / p99 values of the returned set, and the "
+                    + "highest-value failed request; every other point carries null. The client computes "
+                    + "its own percentiles. Sourced from the exact per-call api_request logs, so it "
+                    + "deliberately does NOT reconcile with the counter-based /series sum. "
+                    + "Both from and to are required ISO-8601 instants; metric must be the full token-usage "
+                    + "or cost-usage metric name (any other or unknown name is a 400).")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
-            description = "Token distribution heatmap for the requested window",
+            description = "Per-request points for the requested window and metric",
             content = @Content(
                     mediaType = "application/json",
-                    schema = @Schema(implementation = TokenDistribution.class))))
-    public TokenDistribution metricDistribution(
+                    schema = @Schema(implementation = MetricDistribution.class))))
+    public MetricDistribution metricDistribution(
+            @Parameter(description = "Full metric name to plot: the token-usage or cost-usage metric",
+                    example = "claude_code.token.usage")
+            @RequestParam String metric,
             @Parameter(description = "Inclusive window start (ISO-8601)", example = "2026-05-01T00:00:00Z")
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
-            @RequestParam Instant to) {
-        return metricService.aggregateTokenDistribution(from, to);
+            @RequestParam Instant to,
+            @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
+            @RequestParam(required = false) String repositoryUrl) {
+        return metricService.aggregateMetricDistribution(from, to, repositoryUrl, metric);
     }
 
     @GetMapping("/attributes")
     @Operation(
-            summary = "Distinct attribute key=value pairs across metric_points, narrowed by active filters",
-            description = "Powers the autocomplete in the Metrics filter. Returns every distinct "
-                    + "\"key=value\" string found in the attributes jsonb column across rows that contain "
-                    + "*every* filter parameter (AND). When no filter is supplied, returns the full set. "
-                    + "Primitive values are rendered without JSON quoting (e.g. method=GET).")
+            summary = "Filterable attribute keys and their values for one metric, to populate the Metrics filter picker",
+            description = "Returns, for the named metric, every attribute key its data points carry in the "
+                    + "window with the key's distinct values and, per value, how many distinct active "
+                    + "label-sets (streams) carry it. Keys are alphabetical; values are most common first "
+                    + "(ties alphabetical). Keys with more than 25 distinct values (session ids and other "
+                    + "unbounded attributes) are omitted. A metric name that was never seen, or that has no "
+                    + "qualifying attribute, is NOT an error: it yields {\"attributes\": []}. Both from and "
+                    + "to are required ISO-8601 instants.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
-            description = "Sorted distinct key=value pairs from rows matching every filter",
+            description = "Filterable attributes for the requested metric and window",
             content = @Content(
                     mediaType = "application/json",
-                    array = @ArraySchema(schema = @Schema(implementation = String.class)))))
-    public List<String> metricAttributes(
-            @Parameter(description = "Active key=value filters; rows must contain all of them", example = "method=GET")
-            @RequestParam(required = false) List<String> filter,
-            @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
-        return metricService.availableAttributePairs(
-                filter == null ? List.of() : filter, timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp());
+                    schema = @Schema(implementation = MetricAttributes.class))))
+    public MetricAttributes metricAttributes(
+            @Parameter(description = "Full metric name to list attributes for", example = "claude_code.token.usage")
+            @RequestParam String metric,
+            @Parameter(description = "Inclusive window start (ISO-8601)", example = "2026-05-01T00:00:00Z")
+            @RequestParam Instant from,
+            @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
+            @RequestParam Instant to,
+            @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
+            @RequestParam(required = false) String repositoryUrl) {
+        return metricSeriesService.metricAttributes(from, to, repositoryUrl, metric);
     }
 }

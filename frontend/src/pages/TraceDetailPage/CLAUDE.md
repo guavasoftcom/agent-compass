@@ -521,7 +521,10 @@ TraceDetailPage/
     │   │                             the call number and error/descendant-error is gated on the
     │   │                             chipsOff prop (see Badge visibility) — the toolbar legend's
     │   │                             per-family mute toggle; those three name the row rather than
-    │   │                             report an optional figure, so they are never hidden. Optional
+    │   │                             report an optional figure, so they are never hidden (the call
+    │   │                             number alone has a separate opt-out, `showCallNumber`,
+    │   │                             default true, for the Metrics page's exemplar drawer — this
+    │   │                             page never passes it). Optional
     │   │                             `agentColor` prop (agentDispatch.ts) tints the timeline bar
     │   │                             (`linear-gradient(90deg, agentColor, alpha(agentColor, 0.6))`,
     │   │                             replacing the default primary gradient) and washes the row's
@@ -757,9 +760,9 @@ Ollama configuration section for the enforcement detail), so a stale tab still c
 analysis even if this check is bypassed.
 
 All of the page's own `useQuery` calls (the first three) are enabled
-only when `traceId` is truthy (`enabled: Boolean(traceId)`). Two of them poll conditionally —
-see the `inProgress` bullet immediately below; the third (`trace-logs`) and every
-`AnalyzeTraceDialog`/Ollama query still never poll. The logs query is intentionally
+only when `traceId` is truthy (`enabled: Boolean(traceId)`). All three poll conditionally —
+see the `inProgress` bullet immediately below; every `AnalyzeTraceDialog`/Ollama query still never
+polls. The logs query is intentionally
 eager (not gated on a span being selected)
 so the drawer's Logs section has data the moment the user first selects a span. The summary query
 feeds three things: the header's Prompt row (`firstUserPrompt`), the header's Cost KPI
@@ -768,7 +771,7 @@ feeds three things: the header's Prompt row (`firstUserPrompt`), the header's Co
 below. Every other header figure (tokens, span/tool counts, depth) stays derived from the spans
 query.
 
-**`TraceRow.inProgress` drives two conditional `refetchInterval`s, both keyed off the
+**`TraceRow.inProgress` drives three conditional `refetchInterval`s, all keyed off the
 `trace-summary` query's own resolved data.** `traceSummaryQuery` (the container's name for the
 `['trace-summary', traceId]` query — declared FIRST in the container, ahead of the trace-spans
 query, specifically so its data can be referenced from both) sets `refetchInterval` as a function
@@ -778,7 +781,12 @@ itself, which isn't assigned yet at that point in the hook call (a real temporal
 hazard, not just a style preference). The `['trace-spans', traceId]` query then reads
 `traceSummaryQuery.data?.inProgress` directly (safe there — the variable is already fully
 assigned) for the identical `refetchInterval`, so a still-running trace's waterfall keeps picking
-up newly-emitted spans until the summary query itself observes the trace finishing.
+up newly-emitted spans until the summary query itself observes the trace finishing. The
+`['trace-logs', traceId]` query takes the same `refetchInterval` and must keep it: an `llm_request`
+span is never stamped with its own cost in `span_costs`, so its per-span cost (`costOfSelectedSpan`
+-> `costOfSpanRequests`) is summed purely from the `api_request` logs bucketed onto it, and Claude
+Code emits those logs after the span. Without the poll, a span that arrives mid-run shows no cost
+(and an empty Logs section in the dock) until the page is reloaded.
 `RUNNING_TRACE_POLL_INTERVAL_MS` (5 s) is imported from `../TracesPage/tracesApi` — the same
 constant `useTracesExplorer`'s running-row polling and `TraceSummaryInline`'s spans query use (see
 `../TracesPage/CLAUDE.md`'s `inProgress` bullet). `traceInProgress` (`traceSummary?.inProgress ??
@@ -787,6 +795,35 @@ as `inProgress`, rendered as a ticking `TraceDetailHeader/TraceLiveChip` right a
 breadcrumb's `IdentityPill` (replacing the older full-width banner); `TraceDetailPageView` also
 appends a `components/LiveTailRow` after the waterfall's last row while `traceInProgress` is true,
 showing where the trace is still extending.
+
+**While `traceInProgress`, the view's window extends to "now", not to the last span received.**
+`computeTraceWindow` only knows about spans that have arrived, and a running trace's newest span
+ends well before the present, so with a window fixed at that end the live tail had no room to draw
+in — `LiveTailRow`'s `right` is clamped to the window and collapsed to its 3px `minWidth`. The view
+now takes `totalMs = max(recordedTotalMs, now - earliest)` (`now` from `useNowTick`, 1 s), which
+also means every bar already on screen and every minimap bar narrows a little per tick to make room
+— what the running bar needs. The header keeps the *recorded* `traceWindow`, so its figures don't
+tick. Zoom is stored as `zoomView: ZoomView | null`, where `null` is "the full window" and keeps
+following `totalMs`; `changeView` (the minimap's `onViewChange`) stores `null` for any view that
+covers the whole window, since a stored full-extent view would freeze at the moment it was made.
+The reset-zoom effect is keyed on the *recorded* total so a new span batch still resets the zoom
+but the per-second tick doesn't. `now` is the browser clock against server span timestamps, so a
+skewed client clock shifts the tail's edge; the `max` keeps a behind-running clock from clipping a
+real span.
+
+**A running trace also follows and flags its new rows.** (1) *Follow:* a layout effect keyed on
+`visible.length`/`traceInProgress` scrolls the waterfall body to its new bottom, but only when the
+reader was already at the bottom (within `AUTO_SCROLL_BOTTOM_TOLERANCE_PX`). "Was at the bottom" is
+judged against the `scrollHeight` recorded after the previous row-count change
+(`previousScrollHeightRef`), not the current one — by the time the effect runs the new rows are
+already in the DOM. It never scrolls a finished trace, so expanding a row at the bottom doesn't
+yank the list away. (2) *Flag:* spans whose ids weren't in the previous `spans` array are held in
+`newlyArrivedSpanIds` for `NEW_SPAN_HIGHLIGHT_MS` (`spanArrivalHighlight.ts`, shared with the row's
+fade animation) and their `SpanWaterfallRow` gets `isNewlyArrived`. The first batch is the baseline,
+so nothing flashes on arrival; the keyframe has only a `0%` frame, so the fade lands on the row's own
+tint (selected/agent wash). Not gated on `traceInProgress`, since the final batch often arrives in the
+poll that flips it false. `LiveTailRow` no longer draws a pulsing dot at the bar's leading edge —
+the bar, its "running…" label, and the header chip already say so.
 
 `TraceSummaryInline` in `TracesPage` uses `['trace-inline-spans', traceId]` (a different key)
 for the same spans endpoint — the two caches are separate.
@@ -1268,6 +1305,16 @@ so the edge tracks the cursor 1:1.
   "—" placeholder), which is the normal state for traces
   rooted in a tool/model/mcp/compaction span and for traces recorded with prompt-body capture
   off (see the same gotcha in [../TracesPage/CLAUDE.md](../TracesPage/CLAUDE.md)).
+- **`?span=<spanId>` is the one deliberate exception to "nothing is auto-selected".** The Metrics
+  page's exemplar drawer opens `/traces/:traceId?span=<spanId>` so a reader lands on the request they
+  clicked, not the top of the trace. `TraceDetailPage` reads it with `useSearchParams` and passes it to
+  the view as `initialSpanId`; the view's one-shot effect (guarded by `initialSpanRevealedRef`, declared
+  after the zoom-reset effect so its widening lands on top of the reset) waits until that span is in
+  `spans`, then calls the existing `revealSpan` — expand ancestors, widen the zoom, select, scroll, exactly
+  as a related-call link does. An id the trace does not contain (or a still-loading trace) reveals
+  nothing and leaves the normal closed-drawer arrival; it is one-shot so a poll on a running trace or
+  the reader closing the drawer never re-selects it. Arriving without the param is unchanged, and
+  the "Next error" walk is still the only way into an auto-selection from the toolbar.
 - **The drawer starts closed on every trace, and nothing is auto-selected.** `selected` is
   `useState<string | null>(null)` and no effect writes to it on mount, so arriving at
   `/traces/:traceId` shows the waterfall at full width, scrolled to the top. An earlier revision

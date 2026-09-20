@@ -156,6 +156,24 @@ public class LogService {
   // that session's opened drawer.
   static final Duration IN_PROGRESS_STALENESS_LIMIT = Duration.ofMinutes(20);
 
+  // How recently a trace must have logged something AFTER its own root span closed to count as
+  // still running background work (a subagent the turn dispatched and did not wait for). Much
+  // tighter than IN_PROGRESS_STALENESS_LIMIT on purpose: that bound exists to give an
+  // interrupted turn -- one that can never export its root span -- a way to stop reading as
+  // running, whereas here the root span HAS closed, so nothing marks the work finished except
+  // the logs going quiet. Two minutes keeps the dot from lingering long after the last subagent
+  // wrote its final line, at the cost of flickering off during a quiet stretch inside a long
+  // subagent (a slow test run with no model call or tool result for over 2 minutes).
+  //
+  // Package-private for the same reason as IN_PROGRESS_STALENESS_LIMIT: MetricService applies
+  // the identical rule at session-row granularity.
+  static final Duration BACKGROUND_ACTIVITY_WINDOW = Duration.ofMinutes(2);
+
+  // A log this close to (or before) its trace's root span end is the turn's own trailing output,
+  // not background work: the root span is exported milliseconds after the last request log it
+  // covers, and clock skew between the two signals can put a log slightly past the root's end.
+  static final double ROOT_SPAN_CLOSE_GRACE_SECONDS = 5.0;
+
   private final LogRecordRepository logRecordRepository;
   private final SpanRepository spanRepository;
   private final MetricPointRepository metricPointRepository;
@@ -485,11 +503,15 @@ public class LogService {
     Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
     Map<Integer, String> dispatchingTraceByTurn = resolveDispatchingTraceByTurn(sessionId, promptRows);
     int runningTurnIndex = truncated ? -1 : resolveRunningTurnIndex(promptRows);
+    Set<String> backgroundActiveTraceIds = resolveBackgroundActiveTraceIds(sessionId);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
       Object[] row = promptRows.get(turnIndex);
-      boolean inProgress = turnIndex == runningTurnIndex;
+      // Two independent reasons a turn reads as running: it is the newest turn and has not
+      // finished, or it finished but a subagent it dispatched is still working under its trace.
+      boolean inProgress = turnIndex == runningTurnIndex
+          || backgroundActiveTraceIds.contains((String) row[PROMPT_ROW_TRACE_ID]);
       String promptId = (String) row[PROMPT_ROW_PROMPT_ID];
       ApiRequestTurnRollup requestRollup =
           promptId == null ? null : requestRollupsByPromptId.get(promptId);
@@ -562,6 +584,27 @@ public class LogService {
     }
     boolean recentlyActive = lastActivity.isAfter(Instant.now().minus(IN_PROGRESS_STALENESS_LIMIT));
     return recentlyActive ? newestTurnIndex : -1;
+  }
+
+  /**
+   * Trace ids of this session whose turn has already finished (root span exported) but which are
+   * still producing logs -- a background subagent the turn dispatched and did not wait for. Any
+   * turn whose trace is in the result reads as running, not only the newest one: work started by
+   * an older turn keeps running underneath later turns, and it is that older turn's card the
+   * activity is billed to. See {@link LogRecordRepository#findBackgroundActiveTraces} for why the
+   * newest-turn rule alone misses this. A plain {@link HashSet} rather than {@code Set.copyOf}
+   * because callers look up a null trace id (a pre-tracing turn), which an immutable set rejects.
+   */
+  private Set<String> resolveBackgroundActiveTraceIds(String sessionId) {
+    Set<String> traceIds = new HashSet<>();
+    for (Object[] row : logRecordRepository.findBackgroundActiveTraces(
+        List.of(sessionId),
+        INTERACTION_ROOT_SPAN_NAME_PATTERN,
+        Instant.now().minus(BACKGROUND_ACTIVITY_WINDOW),
+        ROOT_SPAN_CLOSE_GRACE_SECONDS)) {
+      traceIds.add((String) row[1]);
+    }
+    return traceIds;
   }
 
   /**

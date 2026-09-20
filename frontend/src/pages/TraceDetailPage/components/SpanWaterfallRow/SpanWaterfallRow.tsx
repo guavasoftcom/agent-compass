@@ -31,6 +31,7 @@ import {
 import { fontFamilies } from '../../../../theme/typography';
 import { shortModelName } from '../../../../lib/format';
 import type { ChipFamily } from '../../chipVisibility';
+import { NEW_SPAN_HIGHLIGHT_MS } from '../../spanArrivalHighlight';
 
 interface Props {
   span: SpanRow;
@@ -50,10 +51,18 @@ interface Props {
   // one — undefined for a main-loop span. Tints the timeline bar and a quiet left-edge accent so
   // a dispatch's whole subtree reads as one thing scanning down the waterfall.
   agentColor?: string;
+  // True for the NEW_SPAN_HIGHLIGHT_MS after this span arrived on a poll of a running trace: the
+  // row flashes and fades back to its own background. Only the initial `0%` frame is given, so the
+  // fade lands on whatever tint the row otherwise has (selected, agent wash, none).
+  isNewlyArrived?: boolean;
   // Badge families the toolbar legend has muted — gates every badge below
   // except error/descendant-error, which name the row's status rather than an
   // optional figure and are never hidden.
   chipsOff: Set<ChipFamily>;
+  // The `call N` badge is not one of the chipsOff families (it is the row's identity in the trace
+  // analysis, never a toggleable figure), so a compact host with no analysis to cite from opts out
+  // here instead. Defaults to shown.
+  showCallNumber?: boolean;
   // Log rows associated with this span, used to detect skills executed.
   logs?: LogRow[];
   gridColumns: string;
@@ -477,7 +486,9 @@ const SpanWaterfallRow = ({
   costUsd,
   isRollupCost,
   agentColor,
+  isNewlyArrived = false,
   chipsOff,
+  showCallNumber = true,
   logs,
   gridColumns,
   left,
@@ -566,6 +577,19 @@ const SpanWaterfallRow = ({
             : (t) => `inset 2px 0 0 ${t.palette.primary.main}`
           : 'none',
         transition: 'opacity .14s, background .1s',
+        ...(isNewlyArrived
+          ? {
+              animation: `spanArrivalFlash ${NEW_SPAN_HIGHLIGHT_MS}ms ease-out`,
+              '@keyframes spanArrivalFlash': {
+                '0%': {
+                  backgroundColor: alpha(
+                    theme.palette.primary.main,
+                    theme.palette.mode === 'dark' ? 0.45 : 0.3,
+                  ),
+                },
+              },
+            }
+          : {}),
         '&:hover': {
           bgcolor: agentColor
             ? (t) => alpha(agentColor, t.palette.mode === 'dark' ? 0.28 : 0.18)
@@ -655,7 +679,7 @@ const SpanWaterfallRow = ({
             toolbar legend's per-family visibility toggle except the call number
             and error/descendant-error, which name the row rather than report an
             optional figure and are never hidden. */}
-        <SpanCallNumberBadge callNumber={span.callNumber} />
+        {showCallNumber ? <SpanCallNumberBadge callNumber={span.callNumber} /> : null}
         {!chipsOff.has('tok') ? <SpanFullRateBadge tokens={tokens} /> : null}
         {!chipsOff.has('cr') ? <SpanCacheReadBadge tokens={tokens} /> : null}
         {!chipsOff.has('cost') ? (

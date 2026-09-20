@@ -34,14 +34,19 @@ import java.time.temporal.ChronoUnit;
  * <p>Truncating on the way in fixes it at the source and keeps every endpoint on
  * one window: the histogram, facet, and row queries share the same bounds, so
  * the {@code totalCount == histogram sum == facet total} invariant still holds.
+ *
+ * <p>Public because the Metrics series trend has the same shape but is built in
+ * {@code service}: its offsets from the window start floor a {@code date_bin}
+ * bucket, so an origin that arrived rounded down shifted every row into the
+ * bucket before it.
  */
-final class QueryWindowPrecision {
+public final class QueryWindowPrecision {
 
     private QueryWindowPrecision() {
     }
 
     /** Truncates to microseconds, the resolution of a Postgres {@code timestamptz}. */
-    static Instant toDatabasePrecision(Instant windowBound) {
+    public static Instant toDatabasePrecision(Instant windowBound) {
         return windowBound == null ? null : windowBound.truncatedTo(ChronoUnit.MICROS);
     }
 }

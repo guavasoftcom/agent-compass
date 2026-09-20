@@ -34,7 +34,7 @@ export interface RunningIndicatorProps {
 }
 
 export const RunningIndicator = ({
-  tooltip = 'This turn is still running. It updates automatically.',
+  tooltip = 'This turn is still running, or a subagent it started is still working. It updates automatically.',
   ariaLabel = 'Prompt still running',
 }: RunningIndicatorProps) => (
   <Tooltip title={tooltip} placement="top" arrow>

@@ -176,9 +176,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // served without materializing or sorting the full filtered set.
   //
   // Uses jsonb_each_text on both sides of the match so primitive attribute values
-  // compare without JSON quoting (status=200, not status="200"); object/array
-  // values are excluded from the autocomplete by findDistinctAttributePairs, so
-  // the filter strings reaching this query are always primitive pairs.
+  // compare without JSON quoting (status=200, not status="200"); the filter strings
+  // reaching this query are the grid's own primitive key=value pairs.
   // Optional [startTimestamp, endTimestamp] bounds use the same NULL-or-compare
   // pattern as LogRecordRepository: empty bounds = no time narrowing, single bound
   // = one-sided.
@@ -204,48 +203,6 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("endTimestamp") Instant endTimestamp,
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset);
-
-  // Returns every distinct "key=value" pair across metric_points.attributes,
-  // narrowed to rows
-  // that contain every entry in :filters (an AND set of "key=value" strings).
-  //
-  // Object- and array-valued attributes are excluded from the returned pair set:
-  // their text
-  // serialization differs between Postgres (jsonb_each_text adds whitespace,
-  // {"a": 1}) and the
-  // frontend's compact JSON.stringify ({"a":1}), so emitted pairs would never
-  // match any row's
-  // client-side computed pair set. Primitive types (string, number, boolean,
-  // null) round-trip
-  // cleanly and remain in the option list. The NOT EXISTS clause uses
-  // jsonb_each_text against
-  // the full attributes blob for filter matching, since active filters are always
-  // primitive
-  // pairs by construction (only primitives reach the autocomplete).
-  //
-  // When :filters is an empty array, the NOT EXISTS clause is vacuously true.
-  @Query(value = """
-      SELECT DISTINCT attribute_entry.key || '=' || (attribute_entry.value #>> '{}')
-      FROM metric_points,
-           jsonb_each(attributes) AS attribute_entry
-      WHERE attributes IS NOT NULL
-        AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
-        AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
-        AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM unnest(CAST(:filters AS text[])) AS required_filter
-          WHERE required_filter NOT IN (
-            SELECT row_entry.key || '=' || row_entry.value
-            FROM jsonb_each_text(attributes) AS row_entry
-          )
-        )
-      ORDER BY 1
-      """, nativeQuery = true)
-  List<String> findDistinctAttributePairs(
-      @Param("filters") String[] filters,
-      @Param("startTimestamp") Instant startTimestamp,
-      @Param("endTimestamp") Instant endTimestamp);
 
   // Per-(bucket, type) token totals, per-model token totals, and the window's
   // grand token total for the configured token-usage metric — in ONE scan of
@@ -1046,61 +1003,6 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end);
 
-  // ---------------------------------------------------------------------------
-  // Token distribution
-  // ---------------------------------------------------------------------------
-  //
-  // Top N sessions by total token usage. token.usage is a cumulative counter that
-  // Claude Code re-emits every minute, split into many concurrent streams per
-  // session (model x type x query_source x agent.name) — so a plain SUM over the
-  // raw value columns would re-add each running total. value_delta (V11) is
-  // already each full-attribute stream's reset-aware per-row increment,
-  // precomputed at ingest (see aggregateTokenUsageBreakdown / recomputeValueDeltas),
-  // so the innermost query only needs to SUM it per (session, model); the outer
-  // query sums per session and derives the time-column index (0..23) from the
-  // session's last emission. One exemplar per session keeps trace ids distinct.
-  @Query(value = """
-      SELECT
-        total_tokens,
-        last_timestamp                                                         AS timestamp,
-        LEAST(23, GREATEST(0,
-          FLOOR(EXTRACT(EPOCH FROM (last_timestamp - :start)) / :colWidthSeconds)::int))
-                                                                               AS col_index,
-        session_id,
-        model
-      FROM (
-        SELECT
-          session_id,
-          SUM(model_tokens)::bigint                                           AS total_tokens,
-          MAX(last_timestamp)                                                 AS last_timestamp,
-          (ARRAY_AGG(model ORDER BY model_tokens DESC))[1]                    AS model
-        FROM (
-          SELECT
-            attributes ->> :sessionIdAttribute AS session_id,
-            attributes ->> :modelAttribute     AS model,
-            SUM(value_delta)                   AS model_tokens,
-            MAX(timestamp)                     AS last_timestamp
-          FROM metric_points
-          WHERE metric_name = :metricName
-            AND timestamp >= :start
-            AND timestamp <= :end
-          GROUP BY session_id, model
-        ) AS per_model
-        GROUP BY session_id
-      ) AS sessions
-      WHERE total_tokens > 0
-      ORDER BY total_tokens DESC
-      LIMIT :exemplarLimit
-      """, nativeQuery = true)
-  List<Object[]> findTopTokenRows(
-      @Param("metricName") String metricName,
-      @Param("start") Instant start,
-      @Param("end") Instant end,
-      @Param("colWidthSeconds") long colWidthSeconds,
-      @Param("sessionIdAttribute") String sessionIdAttribute,
-      @Param("modelAttribute") String modelAttribute,
-      @Param("exemplarLimit") int exemplarLimit);
-
   // Window-level session KPIs: total session count plus cost percentiles. Reuses the
   // same reset-aware, full-attribute per-session rollup as aggregateSessionSummaries
   // (see there for why MAX-per-(session,model,query_source) under-counts), then
@@ -1286,6 +1188,35 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // metric name to zero/empty rather than treat a missing key as an error —
   // MetricSeriesQueryIntegrationTest's unseeded-metric and
   // outside-the-window-discovery tests both depend on this.
+  //
+  // The optional attribute filter (N ANDed key:value pairs, scoped to ONE metric) is NOT
+  // a clause on the plain batched queries above/below. It lives on dedicated single-metric
+  // "...Filtered" variants (totals, trend, splits, cardinality) plus, always present, on the
+  // three agg trends; MetricSeriesService calls the plain batched query for every metric
+  // EXCEPT the filtered one and the filtered variant for that one, then merges the rows.
+  // Why it is split rather than one clause: the earlier single-query form
+  //   (:filterMetricName IS NULL OR metric_name <> :filterMetricName OR NOT EXISTS (...))
+  // read `attributes` -- which is not in idx_metric_points_name_ts's INCLUDE list -- for
+  // every row of every metric, so with a filter active the planner fell back to a Seq Scan
+  // (aggregateMetricTotals over 8 metric names and a 60-day span: 8.2 s, 1.2M buffers), and
+  // because the WHERE was an OR it could never imply the partial index's predicate either.
+  // Keeping the plain queries free of any filter clause is what keeps the unfiltered path the
+  // byte-for-byte index-only scan it measured as, with no generic-plan risk.
+  //
+  // The matches ride in as ONE bound JSON string built by Jackson
+  // (MetricSeriesFilter#matchesJson; "[]" when inactive), so there is no dynamic SQL and no
+  // per-pair parameter count, and a value can never break out of the document:
+  //   NOT EXISTS (SELECT 1
+  //               FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+  //               WHERE attributes ->> (filter_match.entry ->> 'key')
+  //                 IS DISTINCT FROM (filter_match.entry ->> 'value'))
+  // Every value is compared as TEXT via ->>, so a numeric or boolean attribute still matches
+  // its text form (status=200), which is why this is not a jsonb @> containment test (that
+  // would need 200 to be a JSON number and would reject "200"). A missing attribute is NULL,
+  // which IS DISTINCT FROM every value, so the row is excluded. An array rather than an object
+  // so two pairs naming the same key are both enforced. The same clause on every filtered
+  // variant and every agg trend is what makes the header stats, trend, split breakdown,
+  // cardinality and agg trend describe one filtered population.
 
   // Every distinct metric name in the table, with its unit, so the Metrics page
   // can show a card for a counter nobody has curated yet (see
@@ -1341,6 +1272,14 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // scan (366ms -> 138ms measured on a 7-day window), and the cheaper plan
   // then falls under jit_inline_above_cost too, so it stops paying ~250ms of
   // JIT compilation on top.
+  //
+  // value_delta IS DISTINCT FROM 0 is the partial-index predicate of idx_metric_points_nonzero_name_ts
+  // (V33), and it cannot change a SUM: 99.5% of rows are the exporter's zero-delta re-emissions of an
+  // unchanged counter. Without it this read every one of them -- 718 ms for the 8 curated metrics over
+  // a 48 h span (490k rows, all heap-fetched); with it 14 ms (2.5k rows). See "Streams are never
+  // retired" in backend/CLAUDE.md, whose rule is that any SUM(value_delta) scan carries it. A metric
+  // whose every row in the range is a re-emission is absent from the result, which the caller already
+  // treats as zero (see the GROUP BY note above).
   @Query(value = """
       SELECT
         metric_name,
@@ -1348,6 +1287,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         COALESCE(SUM(value_delta) FILTER (WHERE timestamp < :from), 0)::double precision  AS prior_total
       FROM metric_points
       WHERE metric_name IN (:metricNames)
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
@@ -1360,6 +1300,107 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("to") Instant to,
       @Param("repositoryUrl") String repositoryUrl);
 
+  // Filtered sibling of aggregateMetricTotals for the ONE metric an attribute filter targets;
+  // same row shape (metric_name, current_total, prior_total), a metric with no matching rows is
+  // simply absent (the caller defaults it to zero). Restricted to value_delta IS DISTINCT FROM 0
+  // -- byte-for-byte the predicate of idx_metric_points_nonzero_name_ts (V32/V33) -- as a
+  // top-level conjunct, so the planner can prove the partial index applies and reads only the
+  // ~0.55% of rows that moved; zero-delta ghost re-exports contribute nothing to a SUM anyway.
+  // The jsonb filter then runs on those few rows only. Measured on the live database for the
+  // 8-metric, 60-day totals: the single-clause form seq-scanned in 8.2 s (1.2M buffers); this
+  // shape is ~0.2 s (194 ms) via the partial index.
+  @Query(value = """
+      SELECT
+        metric_name,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp >= :from), 0)::double precision AS current_total,
+        COALESCE(SUM(value_delta) FILTER (WHERE timestamp < :from), 0)::double precision  AS prior_total
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND timestamp >= :priorFrom
+        AND timestamp <= :to
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+          WHERE attributes ->> (filter_match.entry ->> 'key')
+            IS DISTINCT FROM (filter_match.entry ->> 'value'))
+      GROUP BY metric_name
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricTotalsFiltered(
+      @Param("metricName") String metricName,
+      @Param("priorFrom") Instant priorFrom,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
+
+  // Distinct-stream cardinality for every metric name in one scan of [start, end].
+  // Row shape: (metric_name, cardinality). Counts stream_id -- the stored
+  // generated md5(metric_name || '|' || attributes::text) column V11 added for
+  // the reset-aware delta computation -- rather than COUNT(DISTINCT attributes),
+  // which is what aggregateCatalogSummary above uses and measured 2188ms for a
+  // single 7-day window (see backend/CLAUDE.md's planner-statistics note): a
+  // plain text/md5 comparison is far cheaper for Postgres to distinct-aggregate
+  // than a jsonb equality check, and this query runs on every Metrics page load
+  // rather than only behind the currently-uncalled /api/metrics/catalog.
+  //
+  // Counts streams with NON-ZERO activity in the window ("distinct ACTIVE label-sets"), not every
+  // stream that merely emitted: the exporter never retires a stream, so ghosts re-emitting an
+  // unchanged value forever inflated the figure ~4x on live data (token.usage over 24 h: 264 emitting,
+  // 63 moving) and forced a scan of every ghost row -- 963 ms against 29 ms with the predicate, which
+  // lets idx_metric_points_nonzero_name_ts serve it. It is also the definition
+  // aggregateMetricCardinalityFiltered already used, so applying an attribute filter no longer makes
+  // the figure drop for a reason unrelated to the filter.
+  @Query(value = """
+      SELECT
+        metric_name,
+        COUNT(DISTINCT stream_id)::bigint AS cardinality
+      FROM metric_points
+      WHERE metric_name IN (:metricNames)
+        AND value_delta IS DISTINCT FROM 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      GROUP BY metric_name
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricCardinality(
+      @Param("metricNames") List<String> metricNames,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("repositoryUrl") String repositoryUrl);
+
+  // Filtered sibling of aggregateMetricCardinality for the ONE metric an attribute filter targets;
+  // same row shape (metric_name, cardinality). Under a filter, cardinality is the number of
+  // label-sets with NON-ZERO activity in the window: the value_delta IS DISTINCT FROM 0 predicate
+  // (what lets the partial index serve it, see aggregateMetricTotalsFiltered) drops the streams
+  // that only re-emitted an unchanged value, so it can be lower than the unfiltered figure,
+  // which counts every stream that emitted at all. That matches what the attributes picker
+  // (aggregateMetricAttributeFacets) counts, so a picker count and the filtered cardinality agree.
+  @Query(value = """
+      SELECT
+        metric_name,
+        COUNT(DISTINCT stream_id)::bigint AS cardinality
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+          WHERE attributes ->> (filter_match.entry ->> 'key')
+            IS DISTINCT FROM (filter_match.entry ->> 'value'))
+      GROUP BY metric_name
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricCardinalityFiltered(
+      @Param("metricName") String metricName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
+
   // Per-bucket trend for every metric name in one scan of [start, end], each
   // row's precomputed value_delta binned by its timestamp. Row shape:
   // (metric_name, bucket, total).
@@ -1370,6 +1411,11 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // planner's row-count misestimate for GROUP BY metric_name, date_bin(...)
   // (millions estimated, 175 actual) was picking a sort-based GroupAggregate
   // over a HashAggregate partly to serve that ordering for free.
+  //
+  // Carries value_delta IS DISTINCT FROM 0 for the same reason aggregateMetricTotals does: it cannot
+  // change a SUM, and it keeps the scan on the ~0.5% of rows that moved (427 ms over 490k rows for a
+  // 24 h window without it). A bucket holding only re-emissions is simply absent, which buildTrend
+  // already zero-fills by offset.
   @Query(value = """
       SELECT
         metric_name,
@@ -1377,6 +1423,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
       WHERE metric_name IN (:metricNames)
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
@@ -1388,6 +1435,154 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
       @Param("repositoryUrl") String repositoryUrl);
+
+  // Filtered sibling of aggregateMetricTrend for the ONE metric an attribute filter targets; same
+  // row shape (metric_name, bucket, total). Same non-zero restriction and partial-index reasoning
+  // as aggregateMetricTotalsFiltered (zero deltas add nothing to a bucket's SUM).
+  @Query(value = """
+      SELECT
+        metric_name,
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+        COALESCE(SUM(value_delta), 0)::double precision AS total
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+          WHERE attributes ->> (filter_match.entry ->> 'key')
+            IS DISTINCT FROM (filter_match.entry ->> 'value'))
+      GROUP BY metric_name, bucket
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricTrendFiltered(
+      @Param("metricName") String metricName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
+
+  // Per-bucket AVG / p95 / COUNT trend for ONE metric, for the Metrics page "agg" switch
+  // (GET /api/metrics/series?aggMetricId=&agg=). Each returns the same row shape as
+  // aggregateMetricTrend -- (metric_name, bucket, value) -- over the identical date_bin
+  // origin and width, so MetricSeriesService.buildTrend places and zero-fills the rows exactly
+  // as it does for the sum trend; a bucket with no qualifying increment is simply absent.
+  //
+  // These are three pre-written queries rather than one query with the aggregate function
+  // chosen by a parameter: a function name cannot be bound, and interpolating it would break
+  // the always-parameterise rule. The service picks the method with a Java switch on the enum.
+  // They are also scoped to a single metric_name instead of the batched IN (:metricNames)
+  // form, because only the one selected metric is ever aggregated this way.
+  //
+  // Only NON-ZERO increments are aggregated. Claude Code re-emits every cumulative counter
+  // once a minute with an unchanged value, so ~99% of rows carry value_delta = 0 (see the
+  // "Streams are never retired" note in backend/CLAUDE.md). A SUM is indifferent to those
+  // ghosts, but an AVG or p95 over them would collapse towards 0 and a COUNT would report
+  // heartbeats rather than activity. The predicate is written "value_delta IS DISTINCT FROM 0
+  // AND value_delta > 0": the first half is byte-for-byte the partial-index predicate of
+  // V32/V33 (idx_metric_points_nonzero_name_ts), so the planner can prove the index applies
+  // and reads only the ~0.55% of rows that moved; the second half then drops the NULL
+  // (pre-V11) rows that IS DISTINCT FROM keeps, since an unknown increment is not a value to
+  // average. The optional repository clause is the one the batched series queries carry. The
+  // attribute filter is ALWAYS bound here (:filterMatchesJson, "[]" when no filter applies to
+  // THIS metric -- the service passes the real matches only when the aggregated metric is the
+  // filtered one), which is the same NOT EXISTS the ...Filtered totals/trend use, so a filtered
+  // avg trend describes the same population as the filtered header figures. The
+  // jsonb_array_length(...) = 0 arm short-circuits the empty case: with a bound "[]" Postgres
+  // folds it to true in a custom plan, so an unfiltered agg does not touch `attributes` at all.
+  //
+  // avg: the mean of the individual increments in the bucket.
+  @Query(value = """
+      SELECT
+        metric_name,
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+        COALESCE(AVG(value_delta), 0)::double precision AS aggregated_value
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND value_delta > 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND (jsonb_array_length(CAST(:filterMatchesJson AS jsonb)) = 0
+             OR NOT EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+               WHERE attributes ->> (filter_match.entry ->> 'key')
+                 IS DISTINCT FROM (filter_match.entry ->> 'value')))
+      GROUP BY metric_name, bucket
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricTrendAverage(
+      @Param("metricName") String metricName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
+
+  // p95: the continuous 95th percentile of the individual increments in the bucket. See
+  // aggregateMetricTrendAverage for why the predicate is non-zero only.
+  @Query(value = """
+      SELECT
+        metric_name,
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+        COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY value_delta), 0)::double precision
+          AS aggregated_value
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND value_delta > 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND (jsonb_array_length(CAST(:filterMatchesJson AS jsonb)) = 0
+             OR NOT EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+               WHERE attributes ->> (filter_match.entry ->> 'key')
+                 IS DISTINCT FROM (filter_match.entry ->> 'value')))
+      GROUP BY metric_name, bucket
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricTrendP95(
+      @Param("metricName") String metricName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
+
+  // count: how many increments landed in the bucket (a non-zero increment is one emission in
+  // which the counter actually moved). See aggregateMetricTrendAverage for the predicate.
+  @Query(value = """
+      SELECT
+        metric_name,
+        date_bin(make_interval(secs => :bucketSeconds), timestamp, :start) AS bucket,
+        COUNT(*)::double precision AS aggregated_value
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND value_delta > 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND (jsonb_array_length(CAST(:filterMatchesJson AS jsonb)) = 0
+             OR NOT EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+               WHERE attributes ->> (filter_match.entry ->> 'key')
+                 IS DISTINCT FROM (filter_match.entry ->> 'value')))
+      GROUP BY metric_name, bucket
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricTrendCount(
+      @Param("metricName") String metricName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
 
   // Every attribute-split value for every split-bearing metric (token.usage,
   // cost.usage, lines_of_code.count, code_edit_tool.decision), batched into
@@ -1409,6 +1604,12 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // and drops null labels itself, reproducing each old per-split query's
   // "attribute IS NOT NULL" filter and per-metric row set exactly (verified
   // row-for-row identical to the old token/model query's output).
+  //
+  // Restricted to value_delta IS DISTINCT FROM 0 like the totals and trend queries, and here it also
+  // detoasts `attributes` for ~0.5% of the rows instead of all of them. The one visible consequence:
+  // a label whose every row in the window was a re-emission (a model that ran last week, still
+  // echoing its counter) no longer appears as a 0% split row. The filtered sibling has always
+  // behaved that way.
   @Query(value = """
       SELECT
         metric_name,
@@ -1418,6 +1619,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         COALESCE(SUM(value_delta), 0)::double precision AS total
       FROM metric_points
       WHERE metric_name IN (:metricNames)
+        AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
@@ -1431,6 +1633,111 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("repositoryUrl") String repositoryUrl);
+
+  // Filtered sibling of aggregateMetricSplits for the ONE metric an attribute filter targets; same
+  // row shape (metric_name, model, token_type, decision, total). Same non-zero restriction and
+  // partial-index reasoning as aggregateMetricTotalsFiltered. One consequence: a label whose every
+  // row in the window is a zero-delta re-export produces no row at all (the unfiltered query would
+  // list it at 0), so an idle label drops out of a filtered Group-by rather than showing 0.
+  @Query(value = """
+      SELECT
+        metric_name,
+        attributes ->> :modelAttribute AS model,
+        attributes ->> :typeAttribute AS token_type,
+        attributes ->> :decisionAttribute AS decision,
+        COALESCE(SUM(value_delta), 0)::double precision AS total
+      FROM metric_points
+      WHERE metric_name = :metricName
+        AND value_delta IS DISTINCT FROM 0
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
+          WHERE attributes ->> (filter_match.entry ->> 'key')
+            IS DISTINCT FROM (filter_match.entry ->> 'value'))
+      GROUP BY metric_name, model, token_type, decision
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricSplitsFiltered(
+      @Param("metricName") String metricName,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("typeAttribute") String typeAttribute,
+      @Param("decisionAttribute") String decisionAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("filterMatchesJson") String filterMatchesJson);
+
+  // Attribute key/value facets for ONE metric NAME, for the Metrics page filter picker
+  // (GET /api/metrics/attributes). A name with no rows in the window simply returns no
+  // rows, which the service surfaces as an empty attribute list, not an error. Row shape: (attribute_key, attribute_value,
+  // stream_count), ordered by key ascending, then stream_count descending, then
+  // value ascending.
+  //
+  // Collapses to distinct streams FIRST -- stream_id is the stored generated
+  // md5(metric_name || '|' || attributes::text) column (V11), so every row of a
+  // stream carries the identical attribute set and DISTINCT ON (stream_id) keeps
+  // one arbitrary representative. A counter is re-emitted every minute, so there
+  // are far fewer streams than rows; jsonb_each_text then expands only the
+  // representatives rather than every row in the window. stream_count is
+  // therefore the number of distinct active label-sets carrying that key=value,
+  // not a row or increment count.
+  //
+  // Only rows carrying a real increment are read (value_delta IS DISTINCT FROM 0,
+  // V33's partial-index predicate). 99.45% of rows are zero-delta re-exports from
+  // streams whose session ended long ago, so without this a label-set that has not
+  // done anything in the window still counted as "active" and the query heap-fetched
+  // every ghost row: measured on token.usage over 7 days, 2662 ms with a 790 MB
+  // external sort to find 740 streams; with the predicate, a 30-day window runs in
+  // 688 ms off idx_metric_points_nonzero_name_ts with an in-memory sort.
+  //
+  // A key with more than :maxDistinctValues distinct values in the window is
+  // dropped entirely (session ids and other unbounded identifiers are useless in
+  // a picker); the per-key distinct count comes from a window function over the
+  // grouped pairs, so the cutoff is applied in the same statement. A null or
+  // empty attribute value is skipped.
+  @Query(value = """
+      WITH metric_streams AS (
+        SELECT DISTINCT ON (stream_id) stream_id, attributes
+        FROM metric_points
+        WHERE metric_name = :metricName
+          AND timestamp >= :start
+          AND timestamp <= :end
+          AND value_delta IS DISTINCT FROM 0
+          AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        ORDER BY stream_id
+      ),
+      attribute_pairs AS (
+        SELECT
+          attribute_entry.key   AS attribute_key,
+          attribute_entry.value AS attribute_value,
+          COUNT(*)::bigint      AS stream_count
+        FROM metric_streams
+        CROSS JOIN LATERAL jsonb_each_text(metric_streams.attributes) AS attribute_entry
+        WHERE attribute_entry.value IS NOT NULL
+          AND attribute_entry.value <> ''
+        GROUP BY attribute_entry.key, attribute_entry.value
+      ),
+      bounded_pairs AS (
+        SELECT
+          attribute_key,
+          attribute_value,
+          stream_count,
+          COUNT(*) OVER (PARTITION BY attribute_key) AS distinct_value_count
+        FROM attribute_pairs
+      )
+      SELECT attribute_key, attribute_value, stream_count
+      FROM bounded_pairs
+      WHERE distinct_value_count <= :maxDistinctValues
+      ORDER BY attribute_key ASC, stream_count DESC, attribute_value ASC
+      """, nativeQuery = true)
+  List<Object[]> aggregateMetricAttributeFacets(
+      @Param("metricName") String metricName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("maxDistinctValues") int maxDistinctValues);
 
   // ---------------------------------------------------------------------------
   // Trend report (GET /api/trends)

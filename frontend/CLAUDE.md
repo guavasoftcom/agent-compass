@@ -36,7 +36,7 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
     renders as a single line, same as before the prop existed.
   - `TablePager` — shared offset-pager footer (rows-per-page `SegmentedToggle` + range label + prev/next); used by Sessions, Logs, and Traces tables.
   - `StreamTableToggle` — shared Stream|Table view-mode `SegmentedToggle`; used by Logs and (via `TraceViewToggle`) Traces.
-  - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions and Metrics KPI strips.
+  - `LineSparkline` — shared SVG sparkline (guards `values.length < 2`); area+line for a continuous series, or bars for a sparse whole-number counter (`isSparseCounter` in `lib/format.ts`, the same threshold `MetricTrendCard` uses for its detail chart). Used by the Sessions KPI strip and the Metrics catalog rail.
   - `FacetRail` — shared filter-rail (search box + checkbox facet sections); Logs' `LogFacetRail` and Traces' `TraceFacetRail` build sections for it.
   - `LiveTailToggle` — shared live-tail pill; Traces' `TraceTailToggle` wraps it.
   - `RunningIndicator` — shared pulsing "still running" dot for a row/card/panel whose figures are

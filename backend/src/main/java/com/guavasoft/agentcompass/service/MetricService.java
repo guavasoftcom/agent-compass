@@ -21,12 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
-import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.mapper.MetricPointMapper;
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
-import com.guavasoft.agentcompass.model.ExemplarPoint;
+import com.guavasoft.agentcompass.model.MetricDistribution;
 import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.model.ModelTokenShare;
 import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
@@ -34,21 +33,17 @@ import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
-import com.guavasoft.agentcompass.model.TokenDistribution;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
-import com.guavasoft.agentcompass.model.TraceSpanDto;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -115,11 +110,6 @@ public class MetricService {
 
   // Catalog
   private static final int CATALOG_SPARK_BUCKETS = 8;
-  private static final long CARDINALITY_WARN_THRESHOLD = 1_000L;
-  private static final long CARDINALITY_BAD_THRESHOLD = 5_000L;
-  private static final String HEALTH_OK = "ok";
-  private static final String HEALTH_WARN = "warn";
-  private static final String HEALTH_BAD = "bad";
   private static final String METRIC_TYPE_COUNTER = "counter";
 
   // Cost
@@ -161,35 +151,15 @@ public class MetricService {
   private static final int TOKEN_BREAKDOWN_CACHE_CREATION_INDEX = 7;
   private static final int TOKEN_BREAKDOWN_CACHE_READ_INDEX = 8;
 
-  // Distribution
-  private static final int DISTRIBUTION_COLUMNS = 24;
-  private static final int DISTRIBUTION_EXEMPLAR_LIMIT = 8;
-  private static final long BAND_256K = 262_144L;
-  private static final long BAND_128K = 131_072L;
-  private static final long BAND_64K = 65_536L;
-  private static final long BAND_32K = 32_768L;
-  private static final long BAND_16K = 16_384L;
-  private static final long BAND_8K = 8_192L;
-  private static final long BAND_4K = 4_096L;
-  private static final double NANOS_PER_SECOND = 1_000_000_000.0;
-  private static final String SESSION_ID_ATTRIBUTE = "session.id";
+  // Distribution: the newest this-many requests in the window are returned (ascending).
+  private static final int DISTRIBUTION_REQUEST_LIMIT = 2_000;
+  // Column indices of LogRecordRepository#findNewestTokenRequestPoints / findNewestCostRequestPoints rows.
+  private static final int DISTRIBUTION_ROW_TIMESTAMP_INDEX = 0;
+  private static final int DISTRIBUTION_ROW_VALUE_INDEX = 1;
+  private static final int DISTRIBUTION_ROW_TRACE_ID_INDEX = 2;
+  private static final int DISTRIBUTION_ROW_REQUEST_ID_INDEX = 3;
+  private static final int DISTRIBUTION_ROW_FAILED_INDEX = 4;
   private static final String MODEL_ATTRIBUTE = "model";
-  private static final String STATUS_ERROR = "error";
-  private static final String STATUS_OK = "ok";
-  private static final String TRACE_ID_DISPLAY_SEPARATOR = "·";
-  private static final int TRACE_ID_PREFIX_LENGTH = 4;
-  private static final int TRACE_ID_SUFFIX_LENGTH = 5;
-  private static final int TRACE_ID_SUFFIX_OFFSET = 4;
-
-  // Trace span waterfall
-  private static final long NANOS_PER_MILLI = 1_000_000L;
-  private static final int SPAN_CAP = 50;
-  private static final double SLOW_SPAN_THRESHOLD = 0.60;
-  private static final String SPAN_KIND_ROOT = "root";
-  private static final String SPAN_KIND_GENAI = "genai";
-  private static final String SPAN_KIND_TOOL = "tool";
-  private static final String SPAN_KIND_HTTP = "http";
-  private static final String SPAN_KIND_DB = "db";
 
   // DataGrid column field -> whitelisted ORDER BY token understood by
   // aggregateSessionSummaries.
@@ -228,12 +198,6 @@ public class MetricService {
         filters, startTimestamp, endTimestamp, pageSize, pageOffset);
 
     return new MetricPage(metricPointMapper.toEventRows(metricPointEntities), totalCount);
-  }
-
-  public List<String> availableAttributePairs(
-      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp) {
-    return metricPointRepository.findDistinctAttributePairs(
-        toFilterArray(activeFilters), startTimestamp, endTimestamp);
   }
 
   public TokenUsageSummary aggregateTokenUsage(int minutes, String repositoryUrl) {
@@ -587,14 +551,30 @@ public class MetricService {
     // still be running right now, so this asks about EVERY row on the returned page rather
     // than filtering by the window's own start/end. See LogService#resolveRunningTurnIndex
     // for the identical single-session liveness definition this bulk query mirrors.
-    Set<String> inProgressSessionIds = sessionIds.isEmpty()
-        ? Set.of()
-        : Set.copyOf(logRecordRepository.findInProgressSessionIds(
-            sessionIds,
-            tuningProperties.getUserPromptEventName(),
-            INTERACTION_ROOT_SPAN_NAME_PATTERN,
-            Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
+    Set<String> inProgressSessionIds = sessionIds.isEmpty() ? Set.of() : resolveInProgressSessionIds(sessionIds);
     return new SessionSummaryPage(mapSessionSummaries(rows, countsBySessionId, inProgressSessionIds), totalCount);
+  }
+
+  // A session is running when its newest turn has not finished, OR when a turn that already
+  // finished still has a dispatched subagent working under its trace. The second half is the one
+  // the newest-turn rule cannot see: a session driving background subagents typically has a
+  // short <task-notification> as its newest turn while the real work bills to an older turn's
+  // trace. Same two-part rule LogService#promptsForSession applies per turn, so a grid row and
+  // the timeline cards inside its drawer never disagree about whether the session is live.
+  private Set<String> resolveInProgressSessionIds(List<String> sessionIds) {
+    Set<String> inProgressSessionIds = new HashSet<>(logRecordRepository.findInProgressSessionIds(
+        sessionIds,
+        tuningProperties.getUserPromptEventName(),
+        INTERACTION_ROOT_SPAN_NAME_PATTERN,
+        Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
+    for (Object[] row : logRecordRepository.findBackgroundActiveTraces(
+        sessionIds,
+        INTERACTION_ROOT_SPAN_NAME_PATTERN,
+        Instant.now().minus(LogService.BACKGROUND_ACTIVITY_WINDOW),
+        LogService.ROOT_SPAN_CLOSE_GRACE_SECONDS)) {
+      inProgressSessionIds.add((String) row[0]);
+    }
+    return inProgressSessionIds;
   }
 
   private static List<SessionSummary> mapSessionSummaries(
@@ -705,8 +685,8 @@ public class MetricService {
           String metricName = (String) row[0];
           String unit = (String) row[1];
           long cardinality = row[2] == null ? 0L : ((Number) row[2]).longValue();
-          String cardinalityLabel = formatCardinality(cardinality);
-          String health = cardinalityHealth(cardinality);
+          String cardinalityLabel = CardinalityHealth.formatCardinality(cardinality);
+          String health = CardinalityHealth.cardinalityHealth(cardinality);
           List<Long> spark = sparkBuckets(sparksByMetricName.getOrDefault(metricName, new long[CATALOG_SPARK_BUCKETS]));
           return new CatalogMetric(metricName, unit, METRIC_TYPE_COUNTER, cardinalityLabel, health, spark);
         })
@@ -733,26 +713,6 @@ public class MetricService {
       result.add(bucketValue);
     }
     return result;
-  }
-
-  private static String formatCardinality(long cardinality) {
-    if (cardinality >= 1_000_000L) {
-      return String.format(Locale.US, "%.1fM", cardinality / 1_000_000.0);
-    }
-    if (cardinality >= 1_000L) {
-      return String.format(Locale.US, "%.1fK", cardinality / 1_000.0);
-    }
-    return String.valueOf(cardinality);
-  }
-
-  private static String cardinalityHealth(long cardinality) {
-    if (cardinality > CARDINALITY_BAD_THRESHOLD) {
-      return HEALTH_BAD;
-    }
-    if (cardinality >= CARDINALITY_WARN_THRESHOLD) {
-      return HEALTH_WARN;
-    }
-    return HEALTH_OK;
   }
 
   // ---------------------------------------------------------------------------
@@ -966,134 +926,75 @@ public class MetricService {
   }
 
   // ---------------------------------------------------------------------------
-  // Token distribution
+  // Metric distribution
   // ---------------------------------------------------------------------------
 
-  public TokenDistribution aggregateTokenDistribution(Instant from, Instant to) {
-    double windowSeconds = Math.max(1.0, Duration.between(from, to).getSeconds());
-    long colWidthSeconds = Math.max(1L, (long) windowSeconds / DISTRIBUTION_COLUMNS);
+  /**
+   * Per-request points of the token or cost metric for {@code GET /api/metrics/distribution}: one
+   * point per {@code api_request} log in the window, ascending by timestamp, capped to the newest
+   * {@code DISTRIBUTION_REQUEST_LIMIT} requests. A handful of points (see
+   * {@link DistributionExemplarSelector}) carry a real trace id (and, when its span is ingested,
+   * that request's {@code llm_request} span id) for click-through; the rest carry null. The frontend
+   * plots every point and computes p50/p95/p99 itself.
+   *
+   * <p>Reads the exact per-call {@code api_request} logs, NOT the cumulative counters in
+   * {@code metric_points}, so these values intentionally do not reconcile with
+   * {@code MetricSeries.sum}. The two pipelines disagree by tens of percent on real data (see the
+   * two-pipelines note in {@code backend/CLAUDE.md}); this card names the per-request one and never
+   * blends the two.
+   *
+   * @param metric the FULL metric name, i.e. the configured token-usage or cost-usage metric
+   * @throws IllegalArgumentException for any other name (mapped to a 400)
+   */
+  public MetricDistribution aggregateMetricDistribution(
+      Instant from, Instant to, String repositoryUrl, String metric) {
+    String eventName = tuningProperties.getApiRequestEventName();
     String tokenMetricName = tuningProperties.getTokenUsageMetric();
-
-    List<Object[]> tokenRows = metricPointRepository.findTopTokenRows(
-        tokenMetricName, from, to, colWidthSeconds,
-        SESSION_ID_ATTRIBUTE, MODEL_ATTRIBUTE,
-        DISTRIBUTION_EXEMPLAR_LIMIT);
-
-    if (tokenRows.isEmpty()) {
-      return new TokenDistribution(buildBandLabels(), Collections.emptyList());
+    String costMetricName = tuningProperties.getCostUsageMetric();
+    List<Object[]> newestFirstRows;
+    if (tokenMetricName.equals(metric)) {
+      newestFirstRows = logRecordRepository.findNewestTokenRequestPoints(
+          from, to, repositoryUrl, eventName, tuningProperties.getRequestIdAttribute(),
+          DISTRIBUTION_REQUEST_LIMIT);
+    } else if (costMetricName.equals(metric)) {
+      newestFirstRows = logRecordRepository.findNewestCostRequestPoints(
+          from, to, repositoryUrl, eventName, tuningProperties.getApiRequestCostAttribute(),
+          tuningProperties.getRequestIdAttribute(), DISTRIBUTION_REQUEST_LIMIT);
+    } else {
+      throw new IllegalArgumentException("Unsupported metric '" + metric + "': expected '"
+          + tokenMetricName + "' or '" + costMetricName + "'");
     }
-
-    // Collect distinct session ids to look up correlated spans.
-    List<String> sessionIds = tokenRows.stream()
-        .map(row -> (String) row[3])
-        .filter(Objects::nonNull)
-        .distinct()
-        .toList();
-    Map<String, SpanInfo> spanInfoBySessionId = sessionIds.isEmpty()
-        ? Collections.emptyMap()
-        : buildSpanInfoMap(spanRepository.findLatestSpanPerSession(
-            SESSION_ID_ATTRIBUTE,
-            sessionIds.toArray(new String[0]),
-            from, to));
-
-    long maxTokenCount = ((Number) tokenRows.get(0)[0]).longValue();
-
-    List<ExemplarPoint> exemplars = new ArrayList<>(tokenRows.size());
-    for (int rowIndex = 0; rowIndex < tokenRows.size(); rowIndex++) {
-      Object[] tokenRow = tokenRows.get(rowIndex);
-      long tokenCount = ((Number) tokenRow[0]).longValue();
-      Instant timestamp = (Instant) tokenRow[1];
-      int colIndex = ((Number) tokenRow[2]).intValue();
-      String sessionId = (String) tokenRow[3];
-      String rawModel = (String) tokenRow[4];
-
-      int bandRow = tokenCountToBandRow(tokenCount);
-      SpanInfo spanInfo = sessionId != null ? spanInfoBySessionId.get(sessionId) : null;
-
-      String traceIdDisplay = spanInfo != null ? formatTraceIdDisplay(spanInfo.traceId()) : "";
-      String durationLabel = spanInfo != null ? formatDuration(spanInfo.durationNanos()) : "";
-      String status = spanInfo != null && STATUS_ERROR.equalsIgnoreCase(spanInfo.statusCode())
-          ? STATUS_ERROR : STATUS_OK;
-
-      String modelDisplay = shortenModel(rawModel);
-      String tsDisplay = formatTimestamp(timestamp);
-      String bucketLabel = bandBucketLabel(bandRow);
-      boolean isWorst = tokenCount == maxTokenCount && rowIndex == 0;
-
-      List<List<String>> attributePairs = buildAttributePairs(rawModel, sessionId);
-
-      List<TraceSpanDto> traceSpans = (spanInfo != null && spanInfo.traceId() != null
-          && !spanInfo.traceId().isEmpty())
-          ? buildTraceSpans(spanRepository.findByTraceIdOrderByStartTimestampAsc(spanInfo.traceId()))
-          : Collections.emptyList();
-
-      exemplars.add(new ExemplarPoint(
-          colIndex, bandRow,
-          formatTokenCount(tokenCount), durationLabel,
-          modelDisplay, status, traceIdDisplay,
-          bucketLabel, tsDisplay, isWorst,
-          traceSpans, attributePairs));
-    }
-
-    return new TokenDistribution(buildBandLabels(), exemplars);
+    return new MetricDistribution(DistributionExemplarSelector.toPoints(
+        toAscendingRequests(newestFirstRows), this::llmRequestSpanIdOf));
   }
 
-  private record SpanInfo(String traceId, String statusCode, Long durationNanos) {}
-
-  private static Map<String, SpanInfo> buildSpanInfoMap(List<Object[]> spanRows) {
-    Map<String, SpanInfo> spanInfoMap = new HashMap<>(spanRows.size());
-    for (Object[] spanRow : spanRows) {
-      String sessionId = (String) spanRow[0];
-      String traceId = (String) spanRow[1];
-      String statusCode = (String) spanRow[2];
-      Long durationNanos = spanRow[3] == null ? null : ((Number) spanRow[3]).longValue();
-      if (sessionId != null) {
-        spanInfoMap.put(sessionId, new SpanInfo(traceId, statusCode, durationNanos));
-      }
+  // The llm_request span of one exemplar, so a click-through lands on it instead of the trace root.
+  // Null when the request has no trace id or request id, or its span is not ingested.
+  private String llmRequestSpanIdOf(DistributionExemplarSelector.RequestPoint request) {
+    if (request.traceId() == null || request.requestId() == null) {
+      return null;
     }
-    return spanInfoMap;
+    return spanRepository.findLlmRequestSpanId(
+            request.traceId(),
+            tuningProperties.getLlmRequestSpanName(),
+            tuningProperties.getRequestIdAttribute(),
+            request.requestId())
+        .orElse(null);
   }
 
-  private static List<String> buildBandLabels() {
-    return List.of("256K", "128K", "64K", "32K", "16K", "8K", "4K", "0");
-  }
-
-  private static int tokenCountToBandRow(long tokenCount) {
-    if (tokenCount >= BAND_256K) {
-      return 0;
+  // The queries return the newest requests first (so LIMIT keeps the newest); the response is oldest first.
+  private static List<DistributionExemplarSelector.RequestPoint> toAscendingRequests(List<Object[]> newestFirstRows) {
+    List<DistributionExemplarSelector.RequestPoint> ascendingRequests = new ArrayList<>(newestFirstRows.size());
+    for (int rowIndex = newestFirstRows.size() - 1; rowIndex >= 0; rowIndex--) {
+      Object[] row = newestFirstRows.get(rowIndex);
+      ascendingRequests.add(new DistributionExemplarSelector.RequestPoint(
+          (Instant) row[DISTRIBUTION_ROW_TIMESTAMP_INDEX],
+          ((Number) row[DISTRIBUTION_ROW_VALUE_INDEX]).doubleValue(),
+          (String) row[DISTRIBUTION_ROW_TRACE_ID_INDEX],
+          (String) row[DISTRIBUTION_ROW_REQUEST_ID_INDEX],
+          Boolean.TRUE.equals(row[DISTRIBUTION_ROW_FAILED_INDEX])));
     }
-    if (tokenCount >= BAND_128K) {
-      return 1;
-    }
-    if (tokenCount >= BAND_64K) {
-      return 2;
-    }
-    if (tokenCount >= BAND_32K) {
-      return 3;
-    }
-    if (tokenCount >= BAND_16K) {
-      return 4;
-    }
-    if (tokenCount >= BAND_8K) {
-      return 5;
-    }
-    if (tokenCount >= BAND_4K) {
-      return 6;
-    }
-    return 7;
-  }
-
-  private static String bandBucketLabel(int bandRow) {
-    return switch (bandRow) {
-      case 0 -> "128K – 256K+";
-      case 1 -> "64K – 128K";
-      case 2 -> "32K – 64K";
-      case 3 -> "16K – 32K";
-      case 4 -> "8K – 16K";
-      case 5 -> "4K – 8K";
-      case 6 -> "0 – 4K";
-      default -> "0";
-    };
+    return ascendingRequests;
   }
 
   private static String formatTokenCount(long tokenCount) {
@@ -1104,50 +1005,6 @@ public class MetricService {
       return String.format(Locale.US, "%.1fK", tokenCount / 1_000.0);
     }
     return String.valueOf(tokenCount);
-  }
-
-  private static String formatDuration(Long durationNanos) {
-    if (durationNanos == null) {
-      return "";
-    }
-    double seconds = durationNanos / NANOS_PER_SECOND;
-    return String.format(Locale.US, "%.1fs", seconds);
-  }
-
-  private static String shortenModel(String model) {
-    if (model == null) {
-      return "";
-    }
-    return model.startsWith("claude-") ? model.substring("claude-".length()) : model;
-  }
-
-  private static String formatTraceIdDisplay(String traceId) {
-    if (traceId == null || traceId.length() < TRACE_ID_PREFIX_LENGTH + TRACE_ID_SUFFIX_OFFSET + TRACE_ID_SUFFIX_LENGTH) {
-      return traceId == null ? "" : traceId;
-    }
-    return traceId.substring(0, TRACE_ID_PREFIX_LENGTH)
-        + TRACE_ID_DISPLAY_SEPARATOR
-        + traceId.substring(TRACE_ID_SUFFIX_OFFSET, TRACE_ID_SUFFIX_OFFSET + TRACE_ID_SUFFIX_LENGTH);
-  }
-
-  private static String formatTimestamp(Instant timestamp) {
-    if (timestamp == null) {
-      return "";
-    }
-    return DateTimeFormatter.ofPattern("HH:mm:ss")
-        .withZone(ZoneOffset.UTC)
-        .format(timestamp);
-  }
-
-  private static List<List<String>> buildAttributePairs(String model, String sessionId) {
-    List<List<String>> pairs = new ArrayList<>();
-    if (model != null && !model.isEmpty()) {
-      pairs.add(List.of(MODEL_ATTRIBUTE, model));
-    }
-    if (sessionId != null && !sessionId.isEmpty()) {
-      pairs.add(List.of(SESSION_ID_ATTRIBUTE, sessionId));
-    }
-    return Collections.unmodifiableList(pairs);
   }
 
   // Maps a DataGrid column field to the whitelisted ORDER BY token the native
@@ -1172,143 +1029,5 @@ public class MetricService {
 
   private static String[] toFilterArray(List<String> activeFilters) {
     return activeFilters == null ? new String[0] : activeFilters.toArray(new String[0]);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Trace span waterfall builder
-  // ---------------------------------------------------------------------------
-
-  private List<TraceSpanDto> buildTraceSpans(List<SpanEntity> rawSpans) {
-    if (rawSpans == null || rawSpans.isEmpty()) {
-      return Collections.emptyList();
-    }
-
-    // Cap to the earliest SPAN_CAP spans (list is already ordered by start_timestamp ASC).
-    List<SpanEntity> cappedSpans = rawSpans.size() > SPAN_CAP
-        ? rawSpans.subList(0, SPAN_CAP)
-        : rawSpans;
-
-    // Find the trace start (minimum start_timestamp across all capped spans).
-    Instant traceStart = cappedSpans.stream()
-        .map(SpanEntity::getStartTimestamp)
-        .filter(Objects::nonNull)
-        .min(Comparator.naturalOrder())
-        .orElse(Instant.EPOCH);
-
-    // Build a set of span IDs present in this trace for root detection.
-    java.util.Set<String> spanIdSet = new java.util.HashSet<>(cappedSpans.size());
-    for (SpanEntity spanEntity : cappedSpans) {
-      if (spanEntity.getSpanId() != null) {
-        spanIdSet.add(spanEntity.getSpanId());
-      }
-    }
-
-    // Compute depth via BFS: build parent→children map, assign root=0, child=parent+1.
-    Map<String, List<String>> childrenByParentId = new HashMap<>();
-    List<String> rootSpanIds = new ArrayList<>();
-    for (SpanEntity spanEntity : cappedSpans) {
-      String spanId = spanEntity.getSpanId();
-      String parentSpanId = spanEntity.getParentSpanId();
-      boolean isRoot = parentSpanId == null || parentSpanId.isEmpty() || !spanIdSet.contains(parentSpanId);
-      if (isRoot) {
-        rootSpanIds.add(spanId);
-      } else {
-        childrenByParentId.computeIfAbsent(parentSpanId, ignored -> new ArrayList<>()).add(spanId);
-      }
-    }
-
-    Map<String, Integer> depthBySpanId = new HashMap<>(cappedSpans.size());
-    java.util.Queue<String> bfsQueue = new java.util.ArrayDeque<>(rootSpanIds);
-    for (String rootSpanId : rootSpanIds) {
-      depthBySpanId.put(rootSpanId, 0);
-    }
-    while (!bfsQueue.isEmpty()) {
-      String currentSpanId = bfsQueue.poll();
-      int currentDepth = depthBySpanId.getOrDefault(currentSpanId, 0);
-      List<String> children = childrenByParentId.getOrDefault(currentSpanId, Collections.emptyList());
-      for (String childSpanId : children) {
-        depthBySpanId.put(childSpanId, currentDepth + 1);
-        bfsQueue.add(childSpanId);
-      }
-    }
-
-    // Find the root span's durMs (or max durMs) for slow-span threshold computation.
-    long rootDurMs = cappedSpans.stream()
-        .filter(spanEntity -> {
-          String parentSpanId = spanEntity.getParentSpanId();
-          return parentSpanId == null || parentSpanId.isEmpty() || !spanIdSet.contains(parentSpanId);
-        })
-        .mapToLong(spanEntity -> spanEntity.getDurationNanos() == null
-            ? 0L : spanEntity.getDurationNanos() / NANOS_PER_MILLI)
-        .max()
-        .orElse(0L);
-    long slowThresholdMs = (long) (rootDurMs * SLOW_SPAN_THRESHOLD);
-
-    // Build a lookup map for fast span access by spanId.
-    Map<String, SpanEntity> spanEntityById = new HashMap<>(cappedSpans.size());
-    for (SpanEntity spanEntity : cappedSpans) {
-      if (spanEntity.getSpanId() != null) {
-        spanEntityById.put(spanEntity.getSpanId(), spanEntity);
-      }
-    }
-
-    // Transform each SpanEntity into a TraceSpanDto.
-    List<TraceSpanDto> result = new ArrayList<>(cappedSpans.size());
-    for (SpanEntity spanEntity : cappedSpans) {
-      long offsetMs = spanEntity.getStartTimestamp() == null
-          ? 0L
-          : java.time.Duration.between(traceStart, spanEntity.getStartTimestamp()).toMillis();
-      long durMs = spanEntity.getDurationNanos() == null
-          ? 0L
-          : spanEntity.getDurationNanos() / NANOS_PER_MILLI;
-      int depth = depthBySpanId.getOrDefault(spanEntity.getSpanId(), 0);
-      boolean isRootSpan = depth == 0;
-      String derivedKind = deriveSpanKind(spanEntity, isRootSpan);
-      boolean isSlow = slowThresholdMs > 0 && durMs >= slowThresholdMs;
-      result.add(new TraceSpanDto(spanEntity.getName(), derivedKind, offsetMs, durMs, depth, isSlow));
-    }
-
-    // Order by offsetMs ascending (root/earliest first).
-    result.sort(Comparator.comparingLong(TraceSpanDto::offsetMs));
-    return Collections.unmodifiableList(result);
-  }
-
-  private String deriveSpanKind(SpanEntity spanEntity, boolean isRootSpan) {
-    if (isRootSpan) {
-      return SPAN_KIND_ROOT;
-    }
-    String spanName = spanEntity.getName() == null ? "" : spanEntity.getName().toLowerCase(Locale.ROOT);
-    String scopeName = spanEntity.getScopeName() == null ? "" : spanEntity.getScopeName().toLowerCase(Locale.ROOT);
-
-    if (spanName.contains("gen_ai") || spanName.contains("chat") || spanName.contains("llm")
-        || spanName.contains("completion")
-        || scopeName.contains("gen_ai") || scopeName.contains("chat") || scopeName.contains("llm")
-        || scopeName.contains("completion")) {
-      return SPAN_KIND_GENAI;
-    }
-
-    boolean nameStartsTool = spanEntity.getName() != null
-        && spanEntity.getName().toLowerCase(Locale.ROOT).startsWith("tool");
-    boolean scopeMatchesTool = spanEntity.getScopeName() != null
-        && spanEntity.getScopeName().equals(tuningProperties.getToolSpanScope());
-    boolean nameMatchesToolSpan = spanEntity.getName() != null
-        && spanEntity.getName().equals(tuningProperties.getToolSpanName());
-    if (nameStartsTool || scopeMatchesTool || nameMatchesToolSpan) {
-      return SPAN_KIND_TOOL;
-    }
-
-    Map<String, Object> spanAttributes = spanEntity.getAttributes();
-    boolean hasHttpAttribute = spanAttributes != null
-        && spanAttributes.keySet().stream().anyMatch(key -> key.startsWith("http."));
-    if (spanName.contains("http") || spanName.contains("/v1/") || hasHttpAttribute) {
-      return SPAN_KIND_HTTP;
-    }
-
-    if (spanName.contains("db") || spanName.contains("sql") || spanName.contains("postgres")
-        || spanName.contains("select ")) {
-      return SPAN_KIND_DB;
-    }
-
-    return SPAN_KIND_TOOL;
   }
 }

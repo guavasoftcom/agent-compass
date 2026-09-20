@@ -2081,6 +2081,47 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("rootSpanNamePattern") String rootSpanNamePattern,
       @Param("recentActivitySince") Instant recentActivitySince);
 
+  // The (session_id, trace_id) pairs among :sessionIds whose trace is still doing BACKGROUND
+  // work: a log landed after the trace's own claude_code.interaction root span closed, within
+  // :activitySince. This is the half of "running" that findInProgressSessionIds and
+  // LogService#resolveRunningTurnIndex cannot see, because both only ever look at a session's
+  // newest turn and only until that turn's root span is exported. A fire-and-forget subagent
+  // (an Agent dispatch whose own span closes in milliseconds) keeps issuing api_request /
+  // tool_result logs stamped with the DISPATCHING turn's trace for minutes afterwards -- one
+  // measured session ran 111 requests over 15 minutes on a trace whose root had long closed --
+  // while every newer turn was a few-second <task-notification>. Neither definition ever fired,
+  // so a session visibly burning cost carried no running indicator at all.
+  //
+  // :rootSpanGraceSeconds keeps a turn's own trailing logs from counting: the root span is
+  // exported a few milliseconds AFTER the last request log it covers, and clock skew between the
+  // two signals can put a log a hair past the root's end. Only a log clearly past it is
+  // background. A trace with no exported root span is deliberately not matched here -- that is
+  // the newest-turn rule's territory (with its own staleness bound for interrupted turns).
+  //
+  // Returned as pairs so one query serves both callers: the Sessions grid keeps the session ids,
+  // the prompt timeline (which passes a single session) keeps the trace ids and marks every
+  // turn whose trace appears. Scans only the last :activitySince window of log_records (a
+  // timestamp-range index scan; session_id and trace_id are real columns, nothing here reads
+  // the jsonb payload), so its cost tracks recent ingest volume, not table size.
+  @Query(value = """
+      SELECT DISTINCT l.session_id, l.trace_id
+      FROM log_records l
+      WHERE l.timestamp > :activitySince
+        AND l.session_id IN :sessionIds
+        AND EXISTS (
+          SELECT 1 FROM spans s
+          WHERE s.trace_id = l.trace_id
+            AND s.parent_span_id IS NULL
+            AND s.name LIKE :rootSpanNamePattern
+            AND s.end_timestamp + CAST(:rootSpanGraceSeconds AS double precision) * INTERVAL '1 second' < l.timestamp
+        )
+      """, nativeQuery = true)
+  List<Object[]> findBackgroundActiveTraces(
+      @Param("sessionIds") Collection<String> sessionIds,
+      @Param("rootSpanNamePattern") String rootSpanNamePattern,
+      @Param("activitySince") Instant activitySince,
+      @Param("rootSpanGraceSeconds") double rootSpanGraceSeconds);
+
   // Full prompt timeline for one session (the Sessions grid's expandable row).
   // Not window-scoped — returns every user_prompt event for the session, oldest
   // first, capped at :promptLimit (the service clamps this the same way
@@ -2203,6 +2244,91 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("requestIdAttribute") String requestIdAttribute,
       @Param("costAttribute") String costAttribute,
       @Param("modelAttribute") String modelAttribute,
+      @Param("requestLimit") int requestLimit);
+
+  // ---------------------------------------------------------------------------
+  // Metric distribution (GET /api/metrics/distribution): per-request point list
+  // ---------------------------------------------------------------------------
+  //
+  // Two thin queries, a token flavour and a cost flavour (not one query with an interpolated
+  // value expression -- nothing here is ever string-built). They read the exact per-call
+  // api_request logs, NOT the cumulative counters in metric_points, so the values are true
+  // per-request figures and will not reconcile with MetricSeries.sum (see the two-pipelines note
+  // in backend/CLAUDE.md).
+  //
+  // Each returns the NEWEST :requestLimit requests in the window, newest first (the service
+  // reverses them to ascending); the cap is applied here so a busy window never materialises more
+  // than that many rows. Row shape: (request_timestamp, request_value, request_trace_id,
+  // request_id, request_failed). request_id is what SpanRepository#findLlmRequestSpanId resolves
+  // to the request's llm_request span, for the few exemplars only. Filters on the generated
+  // event_name column, never
+  // `attributes ->> 'event.name'`, which has no index (see AGENTS.md).
+  //
+  // request_trace_id is NULL for a request with no trace id AND for the all-zero placeholder
+  // Claude Code stamps when tracing is off (the same NULLIF(NULLIF(...)) findApiRequestsForSession
+  // uses), so the service can treat "has a trace id" as "is a click-through candidate".
+  //
+  // request_failed reads the stored derived_severity column (V8) -- ERROR when the record carries
+  // an error/failure signal (an `error*` attribute, success = 'false', or an ERROR severity) --
+  // rather than a new property or a jsonb read. Claude Code reports a failed API call as a
+  // separate api_error event, so on today's data this is false for essentially every api_request
+  // row; it costs one column read and starts to matter the moment a row does carry the signal.
+  //
+  // The token value is the sum of the four token kinds, the same four attributes
+  // findApiRequestsForSession reads; cache reads dominate it, which is why a typical request is
+  // 100K+ tokens. The cost value is the configured cost attribute, and rows lacking it are
+  // excluded (rather than counted as $0) so a missing attribute cannot fake a free request.
+  @Query(value = """
+      SELECT
+        timestamp                                                        AS request_timestamp,
+        (COALESCE((attributes ->> 'input_tokens')::numeric, 0)
+          + COALESCE((attributes ->> 'output_tokens')::numeric, 0)
+          + COALESCE((attributes ->> 'cache_creation_tokens')::numeric, 0)
+          + COALESCE((attributes ->> 'cache_read_tokens')::numeric, 0))::double precision
+                                                                         AS request_value,
+        NULLIF(NULLIF(trace_id, ''), repeat('0', 32))                    AS request_trace_id,
+        attributes ->> :requestIdAttribute                               AS request_id,
+        COALESCE(derived_severity = 'ERROR', false)                      AS request_failed
+      FROM log_records
+      WHERE event_name = :apiRequestEventName
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ORDER BY timestamp DESC, id DESC
+      LIMIT :requestLimit
+      """, nativeQuery = true)
+  List<Object[]> findNewestTokenRequestPoints(
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("requestIdAttribute") String requestIdAttribute,
+      @Param("requestLimit") int requestLimit);
+
+  // Cost flavour of findNewestTokenRequestPoints. Rows without the cost attribute are excluded.
+  @Query(value = """
+      SELECT
+        timestamp                                                        AS request_timestamp,
+        (attributes ->> :costAttribute)::double precision                AS request_value,
+        NULLIF(NULLIF(trace_id, ''), repeat('0', 32))                    AS request_trace_id,
+        attributes ->> :requestIdAttribute                               AS request_id,
+        COALESCE(derived_severity = 'ERROR', false)                      AS request_failed
+      FROM log_records
+      WHERE event_name = :apiRequestEventName
+        AND attributes ->> :costAttribute IS NOT NULL
+        AND timestamp >= :start
+        AND timestamp <= :end
+        AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ORDER BY timestamp DESC, id DESC
+      LIMIT :requestLimit
+      """, nativeQuery = true)
+  List<Object[]> findNewestCostRequestPoints(
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("apiRequestEventName") String apiRequestEventName,
+      @Param("costAttribute") String costAttribute,
+      @Param("requestIdAttribute") String requestIdAttribute,
       @Param("requestLimit") int requestLimit);
 
   // Initiating user prompt per trace, for the Traces list rows and the trace

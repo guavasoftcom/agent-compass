@@ -61,6 +61,16 @@ export interface MetricSeries {
   trend: number[];
   /** Attribute breakdowns, keyed by split name ("Model", "Type", …). Empty = no split. */
   splits: Record<string, MetricSplitRow[]>;
+  /** Count of distinct attribute-label combinations in the window, e.g. 1234. Formatted for display. */
+  cardinality: number;
+  /** Cardinality-growth signal for the series: 'ok' (steady) through 'bad' (labels exploding). */
+  health: 'ok' | 'warn' | 'bad';
+  /**
+   * Whether the backend can serve a per-request distribution (scatter + exemplars) for this
+   * metric via `GET /api/metrics/distribution`. Backend-owned: the frontend never decides this
+   * from the metric id.
+   */
+  hasDistribution: boolean;
 }
 
 // Shared 24-point shape, scaled per metric so every sparkline reads naturally.
@@ -90,6 +100,9 @@ export const METRICS: MetricSeries[] = [
         { label: 'claude-haiku-3.5', value: '1.6M', pct: 12, colorIndex: 2 },
       ],
     },
+    cardinality: 1200,
+    health: 'ok',
+    hasDistribution: true,
   },
   {
     id: 'cost',
@@ -113,6 +126,9 @@ export const METRICS: MetricSeries[] = [
         { label: 'claude-haiku-3.5', value: '$94', pct: 7, colorIndex: 2 },
       ],
     },
+    cardinality: 940,
+    health: 'ok',
+    hasDistribution: true,
   },
   {
     id: 'session',
@@ -130,6 +146,9 @@ export const METRICS: MetricSeries[] = [
       'New Claude Code sessions started in the window. A simple volume signal for how much the CLI is being used.',
     trend: scale(0.42),
     splits: {},
+    cardinality: 56,
+    health: 'ok',
+    hasDistribution: false,
   },
   {
     id: 'active',
@@ -147,6 +166,9 @@ export const METRICS: MetricSeries[] = [
       'Total active engagement time, summed across sessions. Active time excludes idle gaps between turns.',
     trend: scale(1.6),
     splits: {},
+    cardinality: 56,
+    health: 'ok',
+    hasDistribution: false,
   },
   {
     id: 'loc',
@@ -169,6 +191,9 @@ export const METRICS: MetricSeries[] = [
         { label: 'removed', value: '3.3K', pct: 27, colorIndex: 1 },
       ],
     },
+    cardinality: 1600,
+    health: 'warn',
+    hasDistribution: false,
   },
   {
     id: 'decision',
@@ -191,6 +216,9 @@ export const METRICS: MetricSeries[] = [
         { label: 'rejected', value: '139', pct: 13, colorIndex: 1 },
       ],
     },
+    cardinality: 4800,
+    health: 'bad',
+    hasDistribution: false,
   },
   {
     id: 'commit',
@@ -212,6 +240,9 @@ export const METRICS: MetricSeries[] = [
       'the agent actually commits, so read it as a throughput signal rather than a rate.',
     trend: [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0],
     splits: {},
+    cardinality: 4,
+    health: 'ok',
+    hasDistribution: false,
   },
   {
     id: 'pull_request',
@@ -231,5 +262,8 @@ export const METRICS: MetricSeries[] = [
       'commits with no PR is worth a look.',
     trend: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     splits: {},
+    cardinality: 1,
+    health: 'ok',
+    hasDistribution: false,
   },
 ];

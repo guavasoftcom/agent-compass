@@ -25,6 +25,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
 
@@ -61,6 +62,26 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
     // Null when the trace has no spans (MAX over an empty set).
     @Query(value = "SELECT MAX(end_timestamp) FROM spans WHERE trace_id = :traceId", nativeQuery = true)
     Instant findLatestEndTimestampForTrace(@Param("traceId") String traceId);
+
+    // The llm_request span one api_request log belongs to, for MetricService's distribution
+    // exemplars. Correlated by request_id, never span_id: the log is stamped with whatever span
+    // was ACTIVE when it fired (the interaction root or a tool span), not the llm_request child
+    // (see the span_efforts view, V15). Bounded by the trace_id index; empty when the span has
+    // not been ingested yet.
+    @Query(value = """
+            SELECT span_id
+            FROM spans
+            WHERE trace_id = :traceId
+              AND name = :llmRequestSpanName
+              AND attributes ->> :requestIdAttribute = :requestId
+            ORDER BY start_timestamp
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<String> findLlmRequestSpanId(
+            @Param("traceId") String traceId,
+            @Param("llmRequestSpanName") String llmRequestSpanName,
+            @Param("requestIdAttribute") String requestIdAttribute,
+            @Param("requestId") String requestId);
 
     // Liveness probe for the prompt timeline's newest turn (LogService#promptsForSession).
     // Returns one row: (root_closed, last_activity). root_closed says whether the trace's
@@ -126,45 +147,6 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("traceIds") Collection<String> traceIds,
             @Param("rootSpanNamePattern") String rootSpanNamePattern,
             @Param("recentActivitySince") Instant recentActivitySince);
-
-    // For each (session_id, reference_timestamp) pair in the exemplar list, find
-    // the span whose start_timestamp is closest to the reference timestamp and
-    // whose attributes carry the same session_id. Used by the token-distribution
-    // endpoint to correlate metric_points rows with trace_ids.
-    // Returns (session_id, trace_id, status_code, duration_nanos) for the nearest
-    // span per session. We fetch broadly by session_id and let the service pick the
-    // closest timestamp, keeping the query simple and index-friendly.
-    // The session id is computed once in the subquery so the outer DISTINCT ON and
-    // ORDER BY reference the plain session_id alias. Postgres requires DISTINCT ON
-    // expressions to match the leading ORDER BY structurally — repeating the
-    // `attributes ->> :param` form in both clauses binds as distinct positional
-    // parameters and fails that check.
-    @Query(value = """
-            SELECT DISTINCT ON (session_id)
-              session_id,
-              trace_id,
-              status_code,
-              duration_nanos,
-              start_timestamp
-            FROM (
-              SELECT
-                attributes ->> :sessionIdAttribute AS session_id,
-                trace_id,
-                status_code,
-                duration_nanos,
-                start_timestamp
-              FROM spans
-              WHERE attributes ->> :sessionIdAttribute = ANY(CAST(:sessionIds AS text[]))
-                AND start_timestamp >= :windowStart
-                AND start_timestamp <= :windowEnd
-            ) AS session_spans
-            ORDER BY session_id, start_timestamp DESC
-            """, nativeQuery = true)
-    List<Object[]> findLatestSpanPerSession(
-            @Param("sessionIdAttribute") String sessionIdAttribute,
-            @Param("sessionIds") String[] sessionIds,
-            @Param("windowStart") Instant windowStart,
-            @Param("windowEnd") Instant windowEnd);
 
     // Per-tool latency percentiles over spans that wrap a single tool invocation.
     // Span name within the Claude Code tracing scope is generic
