@@ -64,6 +64,8 @@ class MetricSeriesQueryIntegrationTest {
   private static final String AGGREGATION_METRIC_ID = "acme-agg-metric";
   private static final String TYPED_METRIC = "acme.typed.metric";
   private static final String TYPED_METRIC_ID = "acme-typed-metric";
+  // Below the 500 ns midpoint, so a Postgres timestamptz rounds the value DOWN to a whole microsecond.
+  private static final long SUB_MICROSECOND_NANOS = 400L;
 
   @Container
   @ServiceConnection
@@ -642,6 +644,28 @@ class MetricSeriesQueryIntegrationTest {
         .containsExactly(3.0, 1.0, 0.0, 2.0);
     assertThat(byId(filteredElsewhere, "token").sum()).isEqualTo("3.5K");
     assertThat(byId(filteredElsewhere, "token").cardinality()).isEqualTo(2L);
+  }
+
+  // Instant.now() is microsecond-precision on macOS but nanosecond-precision on Linux, so this only
+  // failed in CI: a window start with sub-microsecond digits reaches date_bin rounded down, and the
+  // bucket offsets computed from the untruncated start then landed every row one bucket early. The
+  // start is built here rather than taken from the clock so the test fails on every platform.
+  @Test
+  void aWindowBoundFinerThanAMicrosecondDoesNotShiftEveryRowIntoTheBucketBefore() {
+    seedAggregationMetric();
+    Instant start = windowStart().truncatedTo(ChronoUnit.MICROS).plusNanos(SUB_MICROSECOND_NANOS);
+    Instant end = start.plusSeconds(3_600);
+
+    List<Double> sumTrend = byId(
+        metricSeriesService.metricSeries(start, end, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE),
+        AGGREGATION_METRIC_ID).trend();
+    assertThat(sumTrend.subList(16, 20)).containsExactly(70.0, 30.0, 0.0, 9.0);
+
+    List<Double> filteredCountTrend = byId(
+        metricSeriesService.metricSeries(
+            start, end, null, filterOn(AGGREGATION_METRIC_ID, "model:m1"), aggregation(MetricAggregation.COUNT)),
+        AGGREGATION_METRIC_ID).trend();
+    assertThat(filteredCountTrend.subList(16, 20)).containsExactly(3.0, 1.0, 0.0, 0.0);
   }
 
   @Test

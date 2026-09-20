@@ -28,6 +28,7 @@ import com.guavasoft.agentcompass.model.MetricSeries;
 import com.guavasoft.agentcompass.model.MetricSeriesAggregation;
 import com.guavasoft.agentcompass.model.MetricSeriesFilter;
 import com.guavasoft.agentcompass.model.MetricSplitRow;
+import com.guavasoft.agentcompass.model.QueryWindowPrecision;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
 
 import java.time.Duration;
@@ -189,6 +190,16 @@ public class MetricSeriesService {
    *     to a 400), or when the filter does
    */
   public List<MetricSeries> metricSeries(
+      Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter,
+      MetricSeriesAggregation aggregation) {
+    // The bucket offsets below are measured from the window start, while date_bin only ever sees it
+    // at the microsecond precision Postgres stores. See QueryWindowPrecision.
+    return metricSeriesInWindow(
+        QueryWindowPrecision.toDatabasePrecision(from), QueryWindowPrecision.toDatabasePrecision(to),
+        repositoryUrl, filter, aggregation);
+  }
+
+  private List<MetricSeries> metricSeriesInWindow(
       Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter,
       MetricSeriesAggregation aggregation) {
     long windowSeconds = Math.max(1L, Duration.between(from, to).getSeconds());
