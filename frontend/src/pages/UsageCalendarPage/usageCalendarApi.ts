@@ -42,6 +42,21 @@ export interface UsageCalendarDay {
   decisionsRejected: number;
   /** The day's spend split by model, largest first; empty on a day with no cost. Sums to `costUsd`. */
   costByModel: UsageCalendarModelCost[];
+  /**
+   * The day split into 24 local hour-of-day buckets, hour 0 first. Present only when the request asked
+   * for `granularity: 'hourly'` (the week view); null or absent otherwise.
+   */
+  hourly?: UsageCalendarHour[] | null;
+}
+
+/** One local hour of a day; mirrors the backend's `UsageCalendarHour`. The 24 of a day sum to its figures. */
+export interface UsageCalendarHour {
+  /** Local hour of day, 0-23. */
+  hour: number;
+  costUsd: number;
+  tokens: number;
+  skillCalls: number;
+  activeSeconds: number;
 }
 
 /** One model's counter-derived spend on one day; mirrors the backend's `UsageCalendarModelCost`. */
@@ -65,6 +80,11 @@ export interface UsageCalendarDailyParams {
   timeZone: string;
   /** Repository scope; `null`/omitted = all repositories. */
   repositoryUrl?: string | null;
+  /**
+   * `'hourly'` also fills each day's 24 hourly buckets — ask for it only over the range that draws them
+   * (the week), since it costs the backend two more grouped queries. Omitted = `'daily'`.
+   */
+  granularity?: 'daily' | 'hourly';
 }
 
 /**
@@ -81,6 +101,9 @@ export const fetchUsageCalendarDaily = async (
   });
   if (params.repositoryUrl) {
     query.set('repositoryUrl', params.repositoryUrl);
+  }
+  if (params.granularity === 'hourly') {
+    query.set('granularity', 'hourly');
   }
   const response = await getJson<UsageCalendarDailyResponse>(
     `/api/usage/calendar/daily?${query.toString()}`,

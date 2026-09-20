@@ -52,7 +52,9 @@ public class UsageCalendarController {
                     + "supplied IANA timeZone (default UTC); from and to must be the full UTC instants of "
                     + "the first and one-past-last local midnight, not bare dates. The range may span at "
                     + "most 42 days. Cost and tokens are counter-derived (the Tokens and Sessions "
-                    + "pipeline), so cost reads slightly off the Cost page for the same span.")
+                    + "pipeline), so cost reads slightly off the Cost page for the same span. Pass "
+                    + "granularity=hourly to also fill each day's 24-bucket hourly array (the week view's "
+                    + "sparklines); without it hourly is null.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
             description = "One row per local calendar day in the requested range",
@@ -64,6 +66,7 @@ public class UsageCalendarController {
                 usageCalendarParams.from(),
                 usageCalendarParams.to(),
                 usageCalendarParams.timeZone(),
-                usageCalendarParams.repositoryUrl());
+                usageCalendarParams.repositoryUrl(),
+                usageCalendarParams.includesHourly());
     }
 }

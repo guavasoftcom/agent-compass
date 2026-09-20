@@ -23,6 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.guavasoft.agentcompass.model.UsageCalendarDaily;
 import com.guavasoft.agentcompass.model.UsageCalendarDay;
+import com.guavasoft.agentcompass.model.UsageCalendarHour;
 import com.guavasoft.agentcompass.model.UsageCalendarModelCost;
 import com.guavasoft.agentcompass.service.UsageCalendarService;
 
@@ -31,6 +32,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -61,12 +63,13 @@ class UsageCalendarControllerTest {
     private static UsageCalendarDaily sampleDaily() {
         return new UsageCalendarDaily(List.of(new UsageCalendarDay(
                 LocalDate.of(2026, 9, 1), 73.2, 369_400L, 5L, 2L, 4L, 7_860L, 284L, 99L, 0L, 1L, 11L, 1L,
-                List.of(new UsageCalendarModelCost("claude-sonnet-4", 41.5)))));
+                List.of(new UsageCalendarModelCost("claude-sonnet-4", 41.5)),
+                List.of(new UsageCalendarHour(14, 4.1, 28_100L, 1L, 1_260L)))));
     }
 
     @Test
     void dailyDispatchesTheRangeZoneAndRepositoryToTheService() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily")
@@ -83,23 +86,23 @@ class UsageCalendarControllerTest {
                 .andExpect(jsonPath("$.days[0].costByModel[0].model").value("claude-sonnet-4"))
                 .andExpect(jsonPath("$.days[0].costByModel[0].costUsd").value(41.5));
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL, false);
     }
 
     @Test
     void dailyDefaultsTheTimeZoneToUtcWhenOmitted() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily").param("from", FROM).param("to", TO))
                 .andExpect(status().isOk());
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false);
     }
 
     @Test
     void dailyMapsTheUnattributedSentinelToAllRepositories() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily")
@@ -108,7 +111,51 @@ class UsageCalendarControllerTest {
                 .param("repositoryUrl", UNATTRIBUTED_SENTINEL))
                 .andExpect(status().isOk());
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false);
+    }
+
+    @Test
+    void dailyAsksTheServiceForHourlyBucketsOnlyWhenGranularityIsHourly() throws Exception {
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, true))
+                .thenReturn(sampleDaily());
+
+        mockMvc.perform(get("/api/usage/calendar/daily")
+                .param("from", FROM)
+                .param("to", TO)
+                .param("granularity", "HOURLY"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days[0].hourly[0].hour").value(14))
+                .andExpect(jsonPath("$.days[0].hourly[0].costUsd").value(4.1))
+                .andExpect(jsonPath("$.days[0].hourly[0].tokens").value(28_100))
+                .andExpect(jsonPath("$.days[0].hourly[0].skillCalls").value(1))
+                .andExpect(jsonPath("$.days[0].hourly[0].activeSeconds").value(1_260));
+
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, true);
+    }
+
+    @Test
+    void dailyTreatsAnExplicitDailyGranularityAsNoHourlyBuckets() throws Exception {
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false))
+                .thenReturn(sampleDaily());
+
+        mockMvc.perform(get("/api/usage/calendar/daily")
+                .param("from", FROM)
+                .param("to", TO)
+                .param("granularity", "daily"))
+                .andExpect(status().isOk());
+
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false);
+    }
+
+    @Test
+    void dailyRejectsAnUnknownGranularity() throws Exception {
+        mockMvc.perform(get("/api/usage/calendar/daily")
+                .param("from", FROM)
+                .param("to", TO)
+                .param("granularity", "minutely"))
+                .andExpect(status().isBadRequest());
+
+        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), anyBoolean());
     }
 
     @Test
@@ -118,7 +165,7 @@ class UsageCalendarControllerTest {
                 .param("to", "2026-09-30T00:00:00Z"))
                 .andExpect(status().isBadRequest());
 
-        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any());
+        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), anyBoolean());
     }
 
     @Test
@@ -128,6 +175,6 @@ class UsageCalendarControllerTest {
         mockMvc.perform(get("/api/usage/calendar/daily").param("to", TO))
                 .andExpect(status().isBadRequest());
 
-        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any());
+        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), anyBoolean());
     }
 }

@@ -17,6 +17,7 @@ package com.guavasoft.agentcompass.model;
 
 import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import java.time.Instant;
 
 import com.guavasoft.agentcompass.validation.DateRangeBounds;
@@ -44,13 +45,19 @@ public record UsageCalendarParams(
                 + "Defaults to UTC.", example = "America/Chicago") String timeZone,
         @Parameter(description = "Repository URL to scope the result to. Omitted or null means show every "
                 + "repository, including telemetry with no repository attribution.",
-                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl)
+                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl,
+        @Pattern(regexp = "(?i)daily|hourly", message = "granularity must be daily or hourly")
+        @Parameter(description = "daily (the default) returns one row per day; hourly also fills each day's "
+                + "24-bucket hourly array. Ask for hourly only over the range that needs it: the extra "
+                + "queries read the same counters again, split by hour.",
+                example = "hourly") String granularity)
         implements DateRangeBounds {
 
     /** Widest accepted range: six calendar weeks, the tallest month grid. */
     public static final int MAXIMUM_RANGE_DAYS = 42;
 
     private static final String DEFAULT_TIME_ZONE = "UTC";
+    private static final String HOURLY_GRANULARITY = "hourly";
 
     /**
      * Defaults a missing zone to UTC and normalizes the frontend's "Unattributed" sentinel to
@@ -59,6 +66,11 @@ public record UsageCalendarParams(
     public UsageCalendarParams {
         timeZone = timeZone == null || timeZone.isBlank() ? DEFAULT_TIME_ZONE : timeZone;
         repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
+    }
+
+    /** Whether each day should carry its 24 hourly buckets. */
+    public boolean includesHourly() {
+        return HOURLY_GRANULARITY.equalsIgnoreCase(granularity);
     }
 
     @Override

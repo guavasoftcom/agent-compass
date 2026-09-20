@@ -73,13 +73,14 @@ export default function UsageCalendarPage() {
   const range = useMemo(() => periodRange(view, anchor), [view, anchor]);
   const priorRange = useMemo(() => previousPeriodRange(view, anchor), [view, anchor]);
 
-  const dailyQueryFor = (periodRangeToFetch: typeof range) => ({
+  const dailyQueryFor = (periodRangeToFetch: typeof range, granularity: 'daily' | 'hourly') => ({
     queryKey: [
       'usage-calendar-daily',
       periodRangeToFetch.start.toISOString(),
       periodRangeToFetch.endExclusive.toISOString(),
       timeZone,
       repositoryUrl ?? 'all',
+      granularity,
     ],
     queryFn: () =>
       fetchUsageCalendarDaily({
@@ -87,12 +88,17 @@ export default function UsageCalendarPage() {
         to: periodRangeToFetch.endExclusive.toISOString(),
         timeZone,
         repositoryUrl,
+        granularity,
       }),
   });
 
-  const currentQuery = useQuery(dailyQueryFor(range));
-  // Only the KPI deltas read the prior period; a failure there drops the deltas, not the page.
-  const priorQuery = useQuery(dailyQueryFor(priorRange));
+  // Only the week view draws hourly sparklines, so only it pays for the hourly buckets (and only over
+  // its own seven days). Granularity is in the key, so flipping Month <-> Week never serves one
+  // view's cached rows to the other.
+  const currentQuery = useQuery(dailyQueryFor(range, view === 'week' ? 'hourly' : 'daily'));
+  // Only the KPI deltas read the prior period, and they need day totals alone; a failure there drops
+  // the deltas, not the page.
+  const priorQuery = useQuery(dailyQueryFor(priorRange, 'daily'));
 
   const selectedDate = useMemo(
     () => (selectedDateKey ? fromDateKey(selectedDateKey) : null),

@@ -15,11 +15,15 @@ The root of `src/` holds only the entry points (`main.tsx`, `vite-env.d.ts`); ev
   - `SectionLayout` — `PageLayout` + tab strip + shared `selection` / `autoRefresh` context (`useSectionContext`) for grouped pages like Tool activity.
   - `PillTabs` — the Aurora pill tab strip (wrapping row, active tab lifted onto a paper-tinted surface). Two forms from one component: pass `to` on each tab for routed section tabs (`SectionLayout`), or omit it and handle `onChange` for in-page tabs (`TokensPage`). Use it rather than restyling a `ButtonBase` row, so a tab looks the same whether or not it changes the URL.
   - `StatCard`, `AttributeList`, `Sparkline`, `DonutCard`, etc. — leaf presentational primitives.
-    `Sparkline` takes three opt-in props, all added for the Usage Calendar's KPI strip and inert by default:
+    `Sparkline` takes five opt-in props, all added for the Usage Calendar and inert by default:
     `color` (bars fade from this instead of the theme primary, so a card can match its metric's palette
     color), `emphasizedIndex` (one bar at full opacity, every other one dimmed — "today" within a period),
     and `placeholderFromIndex` (from this index on, bars are faint fixed-height placeholders and are left
-    out of the normalization — future days that have no data yet, which must never squash the real bars).
+    out of the normalization — future days that have no data yet, which must never squash the real bars)
+    serve the KPI strip; `gap` (pixels between bars, default 3) and `zeroBarsAsBaseline` (a zero value draws
+    a one-pixel tick instead of the 8% floor, so an empty stretch reads as a dashed line) serve the week
+    cell's 24-bar hourly charts. Heights go through MUI `sx`, where a bare number `<= 1` means a fraction of
+    the parent (`1` is `100%`) — write a one-pixel height as `'1px'`.
   - `PeekDrawer` — the right-hand quick-peek slide-over chrome (560px, scrim, aurora backdrop glow, heavy
     shadow) and nothing else: header, stat row, scrolling body and footer are the caller's, as a flex
     column. Used by the Metrics exemplar-trace drawer and the Usage Calendar day drawer. A peek rather than

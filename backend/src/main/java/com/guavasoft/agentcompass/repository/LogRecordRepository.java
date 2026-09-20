@@ -886,6 +886,49 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("timeZone") String timeZone,
       @Param("repositoryUrl") String repositoryUrl);
 
+  // Skill invocations per LOCAL day AND hour, for the Usage Calendar's week view
+  // (granularity=hourly): (day 'YYYY-MM-DD', hour 0-23, invocations).
+  //
+  // Exactly aggregateDailySkillInvocations' population and dating -- one row per (skill, prompt), dated
+  // by its EARLIEST surviving turn -- with the hour read off that same turn, so an invocation lands in
+  // one (day, hour) and a day's hours sum to its daily count.
+  @Query(value = """
+      SELECT
+        day,
+        hour,
+        COUNT(*)::bigint AS invocations
+      FROM (
+        SELECT DISTINCT ON (identifier, prompt_id)
+          (turn_at AT TIME ZONE CAST(:timeZone AS text))::date::text AS day,
+          EXTRACT(HOUR FROM turn_at AT TIME ZONE CAST(:timeZone AS text))::int AS hour
+        FROM (
+          SELECT
+            COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown')   AS identifier,
+            COALESCE(NULLIF(attributes ->> :promptIdAttribute, ''), id::text) AS prompt_id,
+            timestamp                                                         AS turn_at,
+            id                                                                AS record_id
+          FROM log_records
+          WHERE event_name = :eventName
+            AND jsonb_exists(attributes, :skillAttribute)
+            AND NOT jsonb_exists(attributes, :agentNameAttribute)
+            AND timestamp >= :start
+            AND timestamp < :end
+            AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        ) skill_turns
+        ORDER BY identifier, prompt_id, turn_at, record_id
+      ) skill_invocations
+      GROUP BY day, hour
+      """, nativeQuery = true)
+  List<Object[]> aggregateHourlySkillInvocations(
+      @Param("eventName") String eventName,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("promptIdAttribute") String promptIdAttribute,
+      @Param("agentNameAttribute") String agentNameAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
   // Subagent dispatches per LOCAL day, for the Usage Calendar: (day 'YYYY-MM-DD', dispatches).
   //
   // One row per Agent tool_result, which is one dispatch, so the daily counts sum to the

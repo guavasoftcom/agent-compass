@@ -357,6 +357,75 @@ export const buildModelMix = (day: UsageCalendarDay): ModelMixSegment[] => {
   }));
 };
 
+export const HOURS_PER_DAY = 24;
+
+/** One value per local hour, hour 0 first, for each figure a week cell draws under its heading. */
+export interface HourlySeries {
+  cost: number[];
+  tokens: number[];
+  skills: number[];
+  /** Active engagement seconds per hour: the "Hourly activity" chart at the foot of the cell. */
+  activity: number[];
+}
+
+/**
+ * A day's hourly buckets as four fixed 24-long series, or null when the rollup carried none (the
+ * month view never asks for them, and a cell must not invent a shape). Bucketed by each bucket's own
+ * `hour` rather than by position, so a reordered or gappy response still lands every value in its hour.
+ * The three per-figure sparklines and the activity chart all read this one result, so the hourly rows
+ * are walked once per day, not once per chart.
+ */
+export const buildHourlySeries = (day: UsageCalendarDay): HourlySeries | null => {
+  const buckets = day.hourly;
+  if (buckets == null || buckets.length === 0) {
+    return null;
+  }
+  const emptySeries = (): number[] => new Array<number>(HOURS_PER_DAY).fill(0);
+  const series: HourlySeries = {
+    cost: emptySeries(),
+    tokens: emptySeries(),
+    skills: emptySeries(),
+    activity: emptySeries(),
+  };
+  buckets.forEach((bucket) => {
+    if (bucket.hour < 0 || bucket.hour >= HOURS_PER_DAY) {
+      return;
+    }
+    series.cost[bucket.hour] = bucket.costUsd;
+    series.tokens[bucket.hour] = bucket.tokens;
+    series.skills[bucket.hour] = bucket.skillCalls;
+    series.activity[bucket.hour] = bucket.activeSeconds;
+  });
+  return series;
+};
+
+export interface LinesChanged {
+  added: number;
+  removed: number;
+  /** Share of the day's changed lines that were additions, 0-100; `removedPercent` is the rest. */
+  addedPercent: number;
+  removedPercent: number;
+}
+
+/**
+ * The week cell's "lines changed" bar: the day's added / removed proportion. Null when no line changed,
+ * so the cell draws no bar at all rather than an empty (or invented 50/50) track — the same rule the
+ * spend-by-model bar follows.
+ */
+export const buildLinesChanged = (day: UsageCalendarDay): LinesChanged | null => {
+  const total = day.linesAdded + day.linesRemoved;
+  if (!(total > 0)) {
+    return null;
+  }
+  const addedPercent = (day.linesAdded / total) * 100;
+  return {
+    added: day.linesAdded,
+    removed: day.linesRemoved,
+    addedPercent,
+    removedPercent: 100 - addedPercent,
+  };
+};
+
 /** "$73" from ten dollars up, "$4.20" below — the calendar cell has room for whole dollars only. */
 export const formatCalendarUsd = (usd: number): string =>
   `$${usd.toLocaleString('en-US', {

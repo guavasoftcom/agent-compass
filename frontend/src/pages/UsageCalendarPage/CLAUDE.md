@@ -35,8 +35,9 @@ UsageCalendarPage/
 │                                  KPI totals + like-for-like deltas, buildKpiCards, buildModelRows, formatters
 ├── usageCalendarDerivations.test.ts
 ├── components/
-│   ├── CalendarDayCell/           one day, two variants ('month' compact / 'week' tall, with sessions + active
-│   │                              time, a spend-by-model bar and commit/PR badges) — the shared cell
+│   ├── CalendarDayCell/           one day, two variants ('month' compact / 'week' tall: an hourly sparkline under
+│   │                              each figure, sessions + active time, spend-by-model and lines-changed bars,
+│   │                              commit/PR badges, an hourly-activity chart at the foot) — the shared cell
 │   ├── MonthCalendarGrid/         weekday header + six weeks of CalendarDayCell
 │   ├── WeekCalendarRow/           seven CalendarDayCell in a row
 │   ├── calendarGridProps.ts       the props both grids share
@@ -51,8 +52,8 @@ UsageCalendarPage/
 
 | Container hook | Query key | Fetcher → endpoint |
 |---|---|---|
-| `useQuery` | `['usage-calendar-daily', from, to, timeZone, repositoryUrl ?? 'all']` (current period) | `fetchUsageCalendarDaily` → `GET /api/usage/calendar/daily?from=&to=&timeZone=[&repositoryUrl=]` |
-| `useQuery` | same shape, the prior period's range | same fetcher — feeds only the KPI deltas |
+| `useQuery` | `['usage-calendar-daily', from, to, timeZone, repositoryUrl ?? 'all', granularity]` (current period; `'hourly'` in week view, `'daily'` in month view) | `fetchUsageCalendarDaily` → `GET /api/usage/calendar/daily?from=&to=&timeZone=[&repositoryUrl=][&granularity=hourly]` |
+| `useQuery` | same shape, the prior period's range, always `'daily'` | same fetcher — feeds only the KPI deltas |
 | `useQuery` ×3, `enabled` once a day is picked | `['usage-calendar-day-skills' \| '-subagents' \| '-models', daySelectionKey]` | `fetchSkillUsage` / `fetchSubagentUsage` / `fetchTokenUsage` with a one-day `custom` `WindowSelection` |
 
 The current-period query is the spine: its error wins `PageLayout`'s slot, and its `isLoading` or its error makes cells inert and blank (`isDayDataUnavailable`).
@@ -92,6 +93,25 @@ new exists server-side for the drawer's lists.
   uses over its window, so a model can wear a different color on two days. A day with no model-attributed spend
   draws no bar at all rather than an empty track. Commit / PR badges read `commits` / `pullRequests` off the same
   row and each renders only when non-zero.
+- **Hourly buckets are requested for the week only, on the same endpoint, and are read once per day.** The week
+  query sends `granularity=hourly`; each day then carries 24 local-hour buckets (`cost`, `tokens`, `skillCalls`,
+  `activeSeconds`) that sum to the day's own figures. `buildHourlySeries` turns them into four 24-long series
+  (placed by each bucket's own `hour`, not by position), and the three sparklines under cost / tokens / skill
+  runs plus the "Hourly activity" chart all read that one result — hourly rows are never fetched or walked once
+  per chart. Granularity is in the query key, so flipping Month ↔ Week never serves one view's rows to the other;
+  the prior-period query stays `'daily'` because only the KPI deltas read it. A day with no `hourly` (the month
+  view, or an older backend) draws none of the four charts rather than inventing a shape.
+- **"Hourly activity" is active time per hour**, not cost or an event count. It is the one hourly counter that
+  directly measures "when was I working", which is what the heading promises; the mockup drew a generic curve, so
+  the choice of measure is this port's. The three per-figure sparklines are normalized independently (each to its
+  own peak), so their heights compare hours within a figure, never one figure against another.
+- **Zero hours draw as baseline ticks** (`Sparkline`'s `zeroBarsAsBaseline`), so a quiet stretch reads as a dashed
+  line, as in the mockup, rather than as low-but-nonzero activity. The hour is the LOCAL wall-clock hour: on a
+  fall-back day the repeated hour is merged into one bucket and on a spring-forward day the skipped hour is zero.
+- **The lines-changed bar is `linesAdded` / `linesRemoved` off the same row the drawer's "All metrics" grid reads**
+  — no extra data. Green added, red removed (`success.main` / `error.main`), counts beneath. A day where no line
+  changed draws no bar at all rather than an invented 50/50 track (the mockup's fallback), the same rule the
+  spend-by-model bar follows. Week variant only.
 - **"No activity" is a real answer, not a missing one.** The backend returns one all-zero row per quiet day;
   `isActiveDay` is false for it and the cell says "No activity". A day with no row at all (still loading, or the
   rollup failed) renders nothing and is inert — a click then would open the drawer on figures that have not
@@ -115,18 +135,18 @@ new exists server-side for the drawer's lists.
 
 ## Deviations from the mockup / handoff
 
-- **No hourly sparkline in week cells.** The mockup draws one from random data and there is no hourly rollup to feed
-  it (the rollup is per day, and building an hourly one is a separate backend piece). The week cell uses the room for
-  sessions and active time, the spend-by-model bar and the commit / PR badges instead, and anchors them under the
-  date rather than sinking them to the bottom, so the space the sparkline would fill stays empty.
+- **Hourly buckets ride the daily endpoint as `granularity=hourly`** (the handoff's recommended shape), and each
+  bucket also carries `activeSeconds` — the handoff listed only cost, tokens and skill calls, but the "Hourly
+  activity" chart needed a real measure to draw. The mockup's charts are seeded random data; these are the
+  counters' own hourly split.
 - **Repository selector, no `WindowSelector`, no auto-refresh.** `UsageCalendarPageView` composes
   `PageActionsView` directly with the period pill in `windowSelector`'s slot — the same route `SettingsPage`
   takes around the shared `PageActions` — rather than adding a `hideWindowSelector` flag to it. Auto-refresh is
   hidden: there is no rolling window to keep fresh, only a calendar the user pages through. Reload refetches
   everything.
 - **Drawer gains an "Agent runs" stat** (the rollup carries `subagentCalls`, and the two lists are separate).
-- **`Sparkline` gained three opt-in props** (`color`, `emphasizedIndex`, `placeholderFromIndex`) for the KPI bars
-  and **`PeekDrawer` was extracted** from `MetricExemplarDrawer` — both documented in `frontend/CLAUDE.md`.
+- **`Sparkline` gained five opt-in props** (`color`, `emphasizedIndex`, `placeholderFromIndex` for the KPI bars;
+  `gap`, `zeroBarsAsBaseline` for the 24-bar hourly charts) and **`PeekDrawer` was extracted** from `MetricExemplarDrawer` — both documented in `frontend/CLAUDE.md`.
 
 ## Gotchas
 

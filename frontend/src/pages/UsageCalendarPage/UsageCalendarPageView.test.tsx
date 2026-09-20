@@ -19,7 +19,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import type { IdentifierUsageRow } from '../../api';
 import UsageCalendarPageView, { type UsageCalendarPageViewProps } from './UsageCalendarPageView';
-import type { UsageCalendarDay } from './usageCalendarApi';
+import type { UsageCalendarDay, UsageCalendarHour } from './usageCalendarApi';
 import {
   indexDaysByDateKey,
   monthGridDates,
@@ -410,6 +410,73 @@ describe('UsageCalendarPageView week row', () => {
     const cell = screen.getByRole('button', { name: /September 16, 2026/ });
     expect(within(cell).queryByText(/commit/)).not.toBeInTheDocument();
     expect(within(cell).queryByText(/PR/)).not.toBeInTheDocument();
+  });
+
+  // A day's 24 local hours with a single busy one, so a chart has something to normalize against.
+  const busyAfternoon = (): UsageCalendarHour[] =>
+    Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      costUsd: hour === 14 ? 12.5 : 0,
+      tokens: hour === 14 ? 50_000 : 0,
+      skillCalls: hour === 14 ? 2 : 0,
+      activeSeconds: hour === 14 ? 2_700 : 0,
+    }));
+
+  it('draws an hourly sparkline under each of the three figures and an hourly-activity chart', () => {
+    renderView(weekProps({ hourly: busyAfternoon() }));
+    const cell = screen.getByRole('button', { name: /September 16, 2026/ });
+    expect(within(cell).getByText('Hourly activity')).toBeInTheDocument();
+    // Cost, tokens and skill runs each draw 24 bars, and the activity chart a fourth 24.
+    expect(within(cell).getAllByTestId('sparkline-bar')).toHaveLength(4 * 24);
+  });
+
+  it('draws the hours with no activity as baseline ticks rather than low bars', () => {
+    renderView(weekProps({ hourly: busyAfternoon() }));
+    const cell = screen.getByRole('button', { name: /September 16, 2026/ });
+    const bars = within(cell).getAllByTestId('sparkline-bar');
+    // The first four bars are the cost sparkline: hour 0 is empty, hour 14 is the peak.
+    expect(getComputedStyle(bars[0]).height).toBe('1px');
+    expect(getComputedStyle(bars[14]).height).toBe('100%');
+  });
+
+  it('draws no hourly charts when the day carries no hourly buckets', () => {
+    renderView(weekProps());
+    const cell = screen.getByRole('button', { name: /September 16, 2026/ });
+    expect(within(cell).queryByText('Hourly activity')).not.toBeInTheDocument();
+    expect(within(cell).queryAllByTestId('sparkline-bar')).toHaveLength(0);
+  });
+
+  it('draws no hourly charts in the month view, whatever the day carries', () => {
+    renderView({
+      daysByDateKey: indexDaysByDateKey([
+        makeDay('2026-09-01', { costUsd: 5, tokens: 100, hourly: busyAfternoon() }),
+      ]),
+    });
+    expect(screen.queryByText('Hourly activity')).not.toBeInTheDocument();
+  });
+
+  it('splits changed lines into an added / removed bar with the counts beneath', () => {
+    renderView(weekProps({ linesAdded: 301, linesRemoved: 104 }));
+    const cell = screen.getByRole('button', { name: /September 16, 2026/ });
+    expect(
+      within(cell).getByRole('img', { name: 'Lines changed: +301 added, −104 removed' }),
+    ).toBeInTheDocument();
+    expect(cell).toHaveTextContent('Lines changed · +301 −104');
+  });
+
+  it('draws no lines-changed bar on a day where no line changed', () => {
+    renderView(weekProps());
+    expect(screen.queryByRole('img', { name: /Lines changed/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Lines changed/)).not.toBeInTheDocument();
+  });
+
+  it('draws no lines-changed bar in the month view', () => {
+    renderView({
+      daysByDateKey: indexDaysByDateKey([
+        makeDay('2026-09-01', { costUsd: 5, linesAdded: 10, linesRemoved: 2 }),
+      ]),
+    });
+    expect(screen.queryByText(/Lines changed/)).not.toBeInTheDocument();
   });
 });
 

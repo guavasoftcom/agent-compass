@@ -47,4 +47,24 @@ describe('Sparkline', () => {
     renderWithProviders(<Sparkline values={[10, 999]} placeholderFromIndex={1} />);
     expect(getComputedStyle(screen.getByTestId('sparkline-placeholder-bar')).height).toBe('2px');
   });
+
+  it('floors a zero bar at 8% by default', () => {
+    renderWithProviders(<Sparkline values={[0, 10]} />);
+    expect(getComputedStyle(screen.getAllByTestId('sparkline-bar')[0]).height).toBe('8%');
+  });
+
+  it('draws a zero bar as a one-pixel baseline tick when zeroBarsAsBaseline is set', () => {
+    renderWithProviders(<Sparkline values={[0, 10]} zeroBarsAsBaseline />);
+    const bars = screen.getAllByTestId('sparkline-bar');
+    expect(getComputedStyle(bars[0]).height).toBe('1px');
+    expect(getComputedStyle(bars[1]).height).toBe('100%');
+  });
+
+  it('spaces the bars by the gap given, three pixels by default', () => {
+    const { rerender } = renderWithProviders(<Sparkline values={[1, 2]} />);
+    const track = (): HTMLElement => screen.getAllByTestId('sparkline-bar')[0].parentElement as HTMLElement;
+    expect(getComputedStyle(track()).gap).toBe('3px');
+    rerender(<Sparkline values={[1, 2]} gap={1} />);
+    expect(getComputedStyle(track()).gap).toBe('1px');
+  });
 });

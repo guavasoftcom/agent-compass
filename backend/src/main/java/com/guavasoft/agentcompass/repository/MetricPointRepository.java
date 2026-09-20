@@ -1305,6 +1305,49 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("timeZone") String timeZone,
       @Param("repositoryUrl") String repositoryUrl);
 
+  // The same counters as aggregateDailyCounterTotals' cost, tokens and active-time columns, split one
+  // level finer: (day 'YYYY-MM-DD', hour 0-23, cost_usd, tokens, active_seconds), for the week view's
+  // hourly sparklines (granularity=hourly). Same metrics, non-zero restriction, range and repository
+  // scope, so a day's hours sum to that day's daily figures.
+  //
+  // The hour is the LOCAL wall-clock hour (EXTRACT off `timestamp AT TIME ZONE zone`), so on a
+  // fall-back day the repeated hour lands in one group and on a spring-forward day the skipped hour
+  // has no row at all; the service zero-fills into 24 fixed buckets. Day and hour are materialised in
+  // a subselect and grouped as plain columns, as in aggregateDailyCounterTotals.
+  @Query(value = """
+      SELECT
+        day,
+        hour,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :costMetric), 0)::double precision
+          AS cost_usd,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :tokenMetric), 0)::double precision
+          AS tokens,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :activeTimeMetric), 0)::double precision
+          AS active_seconds
+      FROM (
+        SELECT
+          (timestamp AT TIME ZONE CAST(:timeZone AS text))::date::text AS day,
+          EXTRACT(HOUR FROM timestamp AT TIME ZONE CAST(:timeZone AS text))::int AS hour,
+          metric_name,
+          value_delta
+        FROM metric_points
+        WHERE metric_name IN (:costMetric, :tokenMetric, :activeTimeMetric)
+          AND value_delta IS DISTINCT FROM 0
+          AND timestamp >= :start
+          AND timestamp < :end
+          AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ) AS counter_rows
+      GROUP BY day, hour
+      """, nativeQuery = true)
+  List<Object[]> aggregateHourlyCounterTotals(
+      @Param("costMetric") String costMetric,
+      @Param("tokenMetric") String tokenMetric,
+      @Param("activeTimeMetric") String activeTimeMetric,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
   // ---------------------------------------------------------------------------
   // Generic metric series (Metrics page, GET /api/metrics/series)
   // ---------------------------------------------------------------------------
