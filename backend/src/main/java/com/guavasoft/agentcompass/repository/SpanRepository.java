@@ -84,42 +84,47 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("requestId") String requestId);
 
     // Liveness probe for the prompt timeline's newest turn (LogService#promptsForSession).
-    // Returns one row: (root_closed, last_activity). root_closed says whether the trace's
-    // claude_code.interaction root span has been exported -- spans are exported only once
-    // they end, so its absence means the turn has not finished (or was abandoned and never
-    // will). last_activity is the newest span end or log timestamp on the trace, which is
-    // what tells those two apart. Every leg is a trace_id index lookup; measured 2.3 ms against a
-    // live ~240-span / ~420-log running turn, which matters because the Sessions drawer re-reads
-    // the timeline every few seconds while a turn is running.
+    // Returns one row: (root_closed, last_activity). root_closed says whether the trace has
+    // exported a root span (any parentless span) -- spans are exported only once they end, so a
+    // running turn's root is absent while its children already point at it, and a trace with
+    // no root yet has not finished (or was abandoned and never will). Any parentless span
+    // counts, not only claude_code.interaction: a standalone claude_code.llm_request (67 traces
+    // in 14 days) is its own closed root, and matching only the interaction name left every one
+    // of them reading as running for the whole staleness window. Across the same 14 days the
+    // interaction span was the ONLY parentless span in every interaction trace, so this cannot
+    // end a running turn early. last_activity is the newest span end or log timestamp on the
+    // trace, which is what tells a running turn from an abandoned one. Every leg is a trace_id
+    // index lookup; measured 2.3 ms against a live ~240-span / ~420-log running turn, which
+    // matters because the Sessions drawer re-reads the timeline every few seconds while a turn
+    // is running.
     @Query(value = """
             SELECT
               EXISTS (
                 SELECT 1 FROM spans
                 WHERE trace_id = :traceId
                   AND parent_span_id IS NULL
-                  AND name LIKE :rootSpanNamePattern
               ) AS root_closed,
               GREATEST(
                 (SELECT MAX(end_timestamp) FROM spans WHERE trace_id = :traceId),
                 (SELECT MAX(timestamp) FROM log_records WHERE trace_id = :traceId)
               ) AS last_activity
             """, nativeQuery = true)
-    List<Object[]> findTurnProgressForTrace(
-            @Param("traceId") String traceId,
-            @Param("rootSpanNamePattern") String rootSpanNamePattern);
+    List<Object[]> findTurnProgressForTrace(@Param("traceId") String traceId);
 
     // Batch liveness probe for the Traces Explorer's per-row "still running" indicator
-    // (TraceSummary#inProgress). Same liveness definition as findTurnProgressForTrace above
-    // and LogRecordRepository#findInProgressSessionIds (no exported claude_code.interaction
-    // root span yet, and activity within :recentActivitySince), but scoped directly by the
-    // given trace ids rather than resolved through a session's newest turn -- the Sessions
-    // query needs its own latest_prompt CTE to first find which trace a session's latest turn
-    // even points at; here the caller (TraceExplorerService) already knows which traces are on
-    // the current page, so that resolution step disappears and this collapses to a plain
-    // filter over :traceIds. Mirrors findInProgressSessionIds' two-stage MATERIALIZED CTE
-    // staging for the same reason: NOT EXISTS is the cheap half and narrows the candidate set
-    // before the two per-trace MAX(...) subqueries -- the expensive half -- run only over
-    // traces still missing a root span, not every trace on the page.
+    // (TraceSummary#inProgress). Same root-span definition as findTurnProgressForTrace above
+    // (no exported root span -- any parentless span -- yet, and activity within
+    // :recentActivitySince), but scoped directly by the given trace ids rather than resolved
+    // through a session's newest turn -- the Sessions query needs its own latest_prompt CTE to
+    // first find which trace a session's latest turn even points at; here the caller
+    // (TraceExplorerService) already knows which traces are on the current page, so that
+    // resolution step disappears and this collapses to a plain filter over :traceIds.
+    // LogRecordRepository#findInProgressSessionIds keeps the interaction-name match on purpose:
+    // it starts from a session's latest user_prompt log, which a standalone llm_request trace
+    // never has. Mirrors its two-stage MATERIALIZED CTE staging for the same reason: NOT EXISTS
+    // is the cheap half and narrows the candidate set before the two per-trace MAX(...)
+    // subqueries -- the expensive half -- run only over traces still missing a root span, not
+    // every trace on the page.
     @Query(value = """
             WITH candidate_trace AS MATERIALIZED (
               SELECT DISTINCT trace_id
@@ -133,7 +138,6 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
                 SELECT 1 FROM spans s
                 WHERE s.trace_id = ct.trace_id
                   AND s.parent_span_id IS NULL
-                  AND s.name LIKE :rootSpanNamePattern
               )
             )
             SELECT ut.trace_id
@@ -145,7 +149,6 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             """, nativeQuery = true)
     List<String> findInProgressTraceIds(
             @Param("traceIds") Collection<String> traceIds,
-            @Param("rootSpanNamePattern") String rootSpanNamePattern,
             @Param("recentActivitySince") Instant recentActivitySince);
 
     // Per-tool latency percentiles over spans that wrap a single tool invocation.

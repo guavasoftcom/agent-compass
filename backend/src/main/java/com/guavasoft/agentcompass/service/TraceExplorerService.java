@@ -767,8 +767,9 @@ public class TraceExplorerService {
      * {@code firstUserPrompt}, sharing this method's single call site across the offset-paged
      * Table query, both cursor-paging directions (Stream), and the single-trace
      * {@link #traceSummary(String)} endpoint. Same liveness definition as
-     * {@code LogService#resolveRunningTurnIndex} / {@code SessionSummary#inProgress}: no
-     * exported root span yet, and activity within {@code LogService.IN_PROGRESS_STALENESS_LIMIT}.
+     * {@code LogService#resolveRunningTurnIndex}: no exported root span yet (any parentless span,
+     * so a standalone {@code llm_request} trace is finished the moment it lands), and activity
+     * within {@code LogService.IN_PROGRESS_STALENESS_LIMIT}.
      */
     private List<TraceSummary> withInProgress(List<TraceSummary> summaries) {
         if (summaries.isEmpty()) {
@@ -777,7 +778,6 @@ public class TraceExplorerService {
         List<String> traceIds = summaries.stream().map(TraceSummary::getTraceId).toList();
         Set<String> inProgressTraceIds = Set.copyOf(spanRepository.findInProgressTraceIds(
                 traceIds,
-                INTERACTION_ROOT_SPAN_NAME_PATTERN,
                 Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
         for (TraceSummary summary : summaries) {
             summary.setInProgress(inProgressTraceIds.contains(summary.getTraceId()));
