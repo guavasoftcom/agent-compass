@@ -1150,6 +1150,162 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("repositoryUrl") String repositoryUrl);
 
   // ---------------------------------------------------------------------------
+  // Usage Calendar daily rollup (GET /api/usage/calendar/daily)
+  // ---------------------------------------------------------------------------
+  //
+  // One row per LOCAL day that had any counter movement, in the caller's IANA zone:
+  // (day 'YYYY-MM-DD', cost_usd, tokens, active_seconds, commits, pull_requests, sessions).
+  // The service zero-fills the days that produce no row.
+  //
+  // Bucketing is date_trunc-free on purpose: `timestamp AT TIME ZONE zone` yields the local wall
+  // clock and ::date its day, so a DST day is 23 or 25 hours long instead of being forced into a
+  // fixed 86400 s date_bin width (which is UTC-aligned and cannot express a local midnight at all).
+  // The day is materialised in a subselect and grouped by that plain column, because Postgres will
+  // not GROUP BY a repeated parameterised expression -- the same shape backend/CLAUDE.md documents
+  // for findToolEventsSplitByTraceIds.
+  //
+  // value_delta IS DISTINCT FROM 0 is what keeps this off the ~99.5% of rows that are exporter
+  // re-emissions (see "Streams are never retired" in backend/CLAUDE.md); it cannot change a SUM and
+  // it is the V33 partial-index predicate, so this reads only the rows that moved.
+  //
+  // Sessions is the billable population aggregateSessionKpis uses -- distinct sessions with cost or
+  // active-time movement that day -- so a start_type=resume heartbeat host, which emits only
+  // session.count, is not counted as a working session.
+  //
+  // Tokens is the sum over EVERY token type (cache reads included), matching the Tokens page total.
+  @Query(value = """
+      SELECT
+        day,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :costMetric), 0)::double precision
+          AS cost_usd,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :tokenMetric), 0)::double precision
+          AS tokens,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :activeTimeMetric), 0)::double precision
+          AS active_seconds,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :commitMetric), 0)::double precision
+          AS commits,
+        COALESCE(SUM(value_delta) FILTER (WHERE metric_name = :pullRequestMetric), 0)::double precision
+          AS pull_requests,
+        COUNT(DISTINCT session_id) FILTER (
+          WHERE metric_name IN (:costMetric, :activeTimeMetric) AND session_id IS NOT NULL)::bigint
+          AS sessions
+      FROM (
+        SELECT
+          (timestamp AT TIME ZONE CAST(:timeZone AS text))::date::text AS day,
+          metric_name,
+          value_delta,
+          session_id
+        FROM metric_points
+        WHERE metric_name IN (:costMetric, :tokenMetric, :activeTimeMetric, :commitMetric, :pullRequestMetric)
+          AND value_delta IS DISTINCT FROM 0
+          AND timestamp >= :start
+          AND timestamp < :end
+          AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ) AS counter_rows
+      GROUP BY day
+      """, nativeQuery = true)
+  List<Object[]> aggregateDailyCounterTotals(
+      @Param("costMetric") String costMetric,
+      @Param("tokenMetric") String tokenMetric,
+      @Param("activeTimeMetric") String activeTimeMetric,
+      @Param("commitMetric") String commitMetric,
+      @Param("pullRequestMetric") String pullRequestMetric,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
+  // The two metrics whose meaning lives in an attribute, per local day:
+  // (day, lines_added, lines_removed, decisions_accepted, decisions_rejected). A separate query from
+  // aggregateDailyCounterTotals so that one stays free of the `attributes` jsonb column -- these two
+  // metrics are low volume, and reading attributes is only paid for their rows.
+  //
+  // Same day bucketing and non-zero restriction as aggregateDailyCounterTotals. A value that is
+  // neither of the two known ones (a future third decision kind) is counted in neither column rather
+  // than folded into one.
+  @Query(value = """
+      SELECT
+        day,
+        COALESCE(SUM(value_delta) FILTER (
+          WHERE metric_name = :linesOfCodeMetric AND split_value = :linesAddedValue), 0)::double precision
+          AS lines_added,
+        COALESCE(SUM(value_delta) FILTER (
+          WHERE metric_name = :linesOfCodeMetric AND split_value = :linesRemovedValue), 0)::double precision
+          AS lines_removed,
+        COALESCE(SUM(value_delta) FILTER (
+          WHERE metric_name = :codeEditDecisionMetric AND split_value = :acceptedValue), 0)::double precision
+          AS decisions_accepted,
+        COALESCE(SUM(value_delta) FILTER (
+          WHERE metric_name = :codeEditDecisionMetric AND split_value = :rejectedValue), 0)::double precision
+          AS decisions_rejected
+      FROM (
+        SELECT
+          (timestamp AT TIME ZONE CAST(:timeZone AS text))::date::text AS day,
+          metric_name,
+          value_delta,
+          CASE
+            WHEN metric_name = :linesOfCodeMetric THEN attributes ->> :linesTypeAttribute
+            ELSE attributes ->> :decisionAttribute
+          END AS split_value
+        FROM metric_points
+        WHERE metric_name IN (:linesOfCodeMetric, :codeEditDecisionMetric)
+          AND value_delta IS DISTINCT FROM 0
+          AND timestamp >= :start
+          AND timestamp < :end
+          AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ) AS split_rows
+      GROUP BY day
+      """, nativeQuery = true)
+  List<Object[]> aggregateDailyAttributeSplitTotals(
+      @Param("linesOfCodeMetric") String linesOfCodeMetric,
+      @Param("codeEditDecisionMetric") String codeEditDecisionMetric,
+      @Param("linesTypeAttribute") String linesTypeAttribute,
+      @Param("decisionAttribute") String decisionAttribute,
+      @Param("linesAddedValue") String linesAddedValue,
+      @Param("linesRemovedValue") String linesRemovedValue,
+      @Param("acceptedValue") String acceptedValue,
+      @Param("rejectedValue") String rejectedValue,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
+  // Each local day's spend split by model, for the week view's "spend by model" bar:
+  // (day, model, cost_usd), largest spend first within a day. A separate query for the same reason
+  // aggregateDailyAttributeSplitTotals is: it reads the `attributes` jsonb, and only the non-zero rows
+  // of the cost counter pay for that. The population is exactly aggregateDailyCounterTotals' cost
+  // column (same metric, same non-zero restriction, same range and repository scope), so a day's
+  // models sum to its cost. A cost point carrying no model groups under a NULL model.
+  @Query(value = """
+      SELECT
+        day,
+        model,
+        SUM(value_delta)::double precision AS cost_usd
+      FROM (
+        SELECT
+          (timestamp AT TIME ZONE CAST(:timeZone AS text))::date::text AS day,
+          attributes ->> :modelAttribute AS model,
+          value_delta
+        FROM metric_points
+        WHERE metric_name = :costMetric
+          AND value_delta IS DISTINCT FROM 0
+          AND timestamp >= :start
+          AND timestamp < :end
+          AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ) AS cost_rows
+      GROUP BY day, model
+      HAVING SUM(value_delta) > 0
+      ORDER BY day, cost_usd DESC
+      """, nativeQuery = true)
+  List<Object[]> aggregateDailyCostByModel(
+      @Param("costMetric") String costMetric,
+      @Param("modelAttribute") String modelAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
+  // ---------------------------------------------------------------------------
   // Generic metric series (Metrics page, GET /api/metrics/series)
   // ---------------------------------------------------------------------------
   //

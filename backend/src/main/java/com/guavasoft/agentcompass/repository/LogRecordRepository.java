@@ -840,6 +840,85 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("end") Instant end,
       @Param("repositoryUrl") String repositoryUrl);
 
+  // Skill invocations per LOCAL day, for the Usage Calendar: (day 'YYYY-MM-DD', invocations).
+  //
+  // The population is exactly aggregateSkillInvocationsByModelInRange's -- turns inside subagents are
+  // dropped and the survivors deduplicated to one per (skill, prompt) -- so the daily counts sum to
+  // that endpoint's grand total over the same span. It differs in two ways only: there is no model
+  // dimension (nothing here needs it), and each invocation is dated by its EARLIEST surviving turn,
+  // which is the row DISTINCT ON keeps, so an invocation lands in exactly one day even when its turns
+  // straddle local midnight. The end bound is exclusive so adjacent days' ranges tile without overlap.
+  //
+  // The day is materialised in a subselect and grouped as a plain column (Postgres will not GROUP BY a
+  // repeated parameterised expression -- see findToolEventsSplitByTraceIds).
+  @Query(value = """
+      SELECT
+        day,
+        COUNT(*)::bigint AS invocations
+      FROM (
+        SELECT DISTINCT ON (identifier, prompt_id)
+          (turn_at AT TIME ZONE CAST(:timeZone AS text))::date::text AS day
+        FROM (
+          SELECT
+            COALESCE(NULLIF(attributes ->> :skillAttribute, ''), 'unknown')   AS identifier,
+            COALESCE(NULLIF(attributes ->> :promptIdAttribute, ''), id::text) AS prompt_id,
+            timestamp                                                         AS turn_at,
+            id                                                                AS record_id
+          FROM log_records
+          WHERE event_name = :eventName
+            AND jsonb_exists(attributes, :skillAttribute)
+            AND NOT jsonb_exists(attributes, :agentNameAttribute)
+            AND timestamp >= :start
+            AND timestamp < :end
+            AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        ) skill_turns
+        ORDER BY identifier, prompt_id, turn_at, record_id
+      ) skill_invocations
+      GROUP BY day
+      """, nativeQuery = true)
+  List<Object[]> aggregateDailySkillInvocations(
+      @Param("eventName") String eventName,
+      @Param("skillAttribute") String skillAttribute,
+      @Param("promptIdAttribute") String promptIdAttribute,
+      @Param("agentNameAttribute") String agentNameAttribute,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
+  // Subagent dispatches per LOCAL day, for the Usage Calendar: (day 'YYYY-MM-DD', dispatches).
+  //
+  // One row per Agent tool_result, which is one dispatch, so the daily counts sum to the
+  // subagent-usage endpoint's grand total. Deliberately does NOT reuse
+  // aggregateToolInvocationsByInnerAttributeAndModelInRange: that query walks back to the dispatching
+  // turn per row (a LEFT JOIN LATERAL) to attribute a model, which a per-day count has no use for.
+  //
+  // Filters on the event_name and tool_name COLUMNS (V16/V17), never their attributes ->> forms -- see
+  // the file-header comment. That ties this to tuning.tool-attribute staying "tool_name", the same
+  // tradeoff V17 already made for the rest of the Logs page and aggregateMcpServerUsageInRange.
+  @Query(value = """
+      SELECT
+        day,
+        COUNT(*)::bigint AS dispatches
+      FROM (
+        SELECT (timestamp AT TIME ZONE CAST(:timeZone AS text))::date::text AS day
+        FROM log_records
+        WHERE event_name = :eventName
+          AND tool_name = :toolName
+          AND timestamp >= :start
+          AND timestamp < :end
+          AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+      ) subagent_dispatches
+      GROUP BY day
+      """, nativeQuery = true)
+  List<Object[]> aggregateDailySubagentDispatches(
+      @Param("eventName") String eventName,
+      @Param("toolName") String toolName,
+      @Param("start") Instant start,
+      @Param("end") Instant end,
+      @Param("timeZone") String timeZone,
+      @Param("repositoryUrl") String repositoryUrl);
+
   // Direct cost sum for skills. Deliberately NOT built on top of
   // aggregateSkillInvocationsByModelInRange above: that query's DISTINCT ON
   // (identifier, prompt_id) dedup and its NOT jsonb_exists(:agentNameAttribute)
