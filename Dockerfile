@@ -19,7 +19,7 @@
 # runs on another host.
 # ---------------------------------------------------------------------------
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 # Prebuilt artifacts, relative to the build context.
 ARG JAR_FILE=backend/target/*.jar

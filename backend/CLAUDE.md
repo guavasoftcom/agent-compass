@@ -1,6 +1,6 @@
 # Backend conventions
 
-Project-wide conventions for `backend/` (Spring Boot 4.1, Java 21). Read [../AGENTS.md](../AGENTS.md) for repo-wide context.
+Project-wide conventions for `backend/` (Spring Boot 4.1, Java 25). Read [../AGENTS.md](../AGENTS.md) for repo-wide context.
 
 ## Spring Boot 4 notes
 
@@ -10,6 +10,7 @@ Boot 4 differs from 3.x in ways that bit this project during the upgrade — kee
 - **Auto-configuration is split into per-technology modules** that are NOT all pulled in transitively. This project explicitly depends on `spring-boot-flyway` (Flyway won't run migrations without it) and the test scope adds `spring-boot-starter-webmvc-test` for the `@WebMvcTest` slice (now in package `org.springframework.boot.webmvc.test.autoconfigure`).
 - **Testcontainers 2.x** renamed the Maven artifacts: `org.testcontainers:junit-jupiter` → `testcontainers-junit-jupiter`, `:postgresql` → `testcontainers-postgresql` (Java package names unchanged).
 - **`maven-compiler-plugin` is pinned at 3.13.0** on purpose — 3.14+/3.15 regress Lombok+MapStruct multi-round annotation processing and silently drop mapper beans. Don't bump it.
+- **protobuf-java + Java 21+**: The application emits `WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release` on startup (from `protobuf-java` 4.35.1 via `opentelemetry-proto`). These warnings are benign and do not affect functionality. The protobuf team is actively addressing this as `sun.misc.Unsafe` is deprecated in Java 21 and will be removed in a future release. Monitor [protobuf releases](https://github.com/protocolbuffers/protobuf/releases) for updated versions that fully support Java 21+.
 
 ## Module layout
 
@@ -98,7 +99,7 @@ The review judges three things — agent execution quality (tool selection, redu
 
 ## Java style
 
-- Java 21, `--release 21`. Don't lower the source level.
+- Java 25, `--release 25`. Don't lower the source level.
 - Prefer `MediaType.APPLICATION_*` / `APPLICATION_*_VALUE` constants over string literals like `"application/x-protobuf"`.
 - **Extract string literals defined inside methods as `private static final String` constants** at the top of the class — format specifiers (`HEX_BYTE_FORMAT = "%02x"`), header names, attribute keys, magic values, etc. Carve-out: one-off `log.*` and exception messages stay inline (extracting them adds noise without payoff).
 - **Extract numeric literals defined inside methods as `private static final` constants whenever the number carries domain meaning** — conversion factors (`NANOS_PER_SECOND = 1_000_000_000L`), per-unit counts (`HEX_CHARS_PER_BYTE = 2`), thresholds, timeouts, sizes, ports, retry counts, etc. Small values like `2` are NOT exempt when they mean something specific. Carve-outs (stay inline): `0`/`1`/`-1` as identities, bit masks like `0xff`, generic index/loop arithmetic, test fixture data, and counts that are obvious from immediate context (`new ArrayList<>(events.size())`).
