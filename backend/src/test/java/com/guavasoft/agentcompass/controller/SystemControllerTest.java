@@ -40,8 +40,10 @@ import com.guavasoft.agentcompass.model.SqlMirroring;
 import com.guavasoft.agentcompass.model.StorageOverview;
 import com.guavasoft.agentcompass.model.SystemBuild;
 import com.guavasoft.agentcompass.model.TableStorage;
+import com.guavasoft.agentcompass.model.UpdateCheckStatus;
 import com.guavasoft.agentcompass.service.OllamaSettingsService;
 import com.guavasoft.agentcompass.service.SystemService;
+import com.guavasoft.agentcompass.service.UpdateCheckService;
 
 import java.time.Instant;
 import java.util.List;
@@ -77,6 +79,9 @@ class SystemControllerTest {
 
     @MockitoBean
     OllamaSettingsService ollamaSettingsService;
+
+    @MockitoBean
+    UpdateCheckService updateCheckService;
 
     @Test
     void storageReturnsPerTableFootprintAndDatabaseTotal() throws Exception {
@@ -423,6 +428,67 @@ class SystemControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
 
         verify(ollamaSettingsService).listModels("http://localhost:9999");
+    }
+
+    @Test
+    void updateCheckReportsANewerReleaseWithoutForcingARefreshByDefault() throws Exception {
+        when(updateCheckService.status(false)).thenReturn(new UpdateCheckStatus(
+                true, "2.7.1", "2.8.0", true, "https://github.com/guavasoftcom/agent-compass/releases/tag/v2.8.0",
+                MEASURED_AT, MEASURED_AT, null));
+
+        mockMvc.perform(get("/api/system/update-check"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.currentVersion").value("2.7.1"))
+                .andExpect(jsonPath("$.latestVersion").value("2.8.0"))
+                .andExpect(jsonPath("$.updateAvailable").value(true))
+                .andExpect(jsonPath("$.releaseUrl").value(containsString("/releases/tag/v2.8.0")))
+                .andExpect(jsonPath("$.message").doesNotExist());
+
+        verify(updateCheckService).status(false);
+    }
+
+    @Test
+    void updateCheckPassesTheRefreshFlagThroughForCheckNow() throws Exception {
+        when(updateCheckService.status(true)).thenReturn(new UpdateCheckStatus(
+                true, "2.7.1", null, false, null, null, MEASURED_AT, "Could not reach GitHub. Is this machine offline?"));
+
+        mockMvc.perform(get("/api/system/update-check").param("refresh", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestVersion").doesNotExist())
+                .andExpect(jsonPath("$.updateAvailable").value(false))
+                .andExpect(jsonPath("$.message").value("Could not reach GitHub. Is this machine offline?"));
+
+        verify(updateCheckService).status(true);
+    }
+
+    @Test
+    void putUpdateCheckStoresTheSwitchAndReturnsTheResultingStatus() throws Exception {
+        when(updateCheckService.updateSettings(false))
+                .thenReturn(new UpdateCheckStatus(false, "2.7.1", null, false, null, null, null, null));
+
+        mockMvc.perform(put("/api/system/update-check")
+                        .contentType("application/json")
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.latestVersion").doesNotExist());
+
+        verify(updateCheckService).updateSettings(false);
+    }
+
+    /** A null switch clears the override; the service (not the controller) decides what that means. */
+    @Test
+    void putUpdateCheckWithNoValueForwardsNullToClearTheOverride() throws Exception {
+        when(updateCheckService.updateSettings(isNull()))
+                .thenReturn(new UpdateCheckStatus(true, "2.7.1", null, false, null, null, null, null));
+
+        mockMvc.perform(put("/api/system/update-check")
+                        .contentType("application/json")
+                        .content("{}"))
+                .andExpect(status().isOk());
+
+        verify(updateCheckService).updateSettings(isNull());
     }
 
     private static PurgePreview samplePurgePreview() {

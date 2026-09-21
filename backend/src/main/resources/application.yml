@@ -94,6 +94,23 @@ ollama:
   # on when a call went wrong. Which wins on YOUR model is a measurement, not an opinion: run
   # TraceAnalysisRegressionHarness with each and compare the scorecards, as with structured-output.
   timeline-detail-preference: FEWEST_REVIEW_WINDOWS
+update-check:
+  # Asks GitHub whether a release newer than the running one exists, and shows the answer on the
+  # Settings page. The only request this application makes to a third party: a single
+  # unauthenticated GET for the repository's latest release, carrying nothing about this install.
+  # This is the fallback default only. The Settings page can switch it on or off at runtime (stored
+  # in the update_check_settings table) — see GET/PUT /api/system/update-check. With it off,
+  # nothing is sent. Set false here for a deployment with no outbound access.
+  enabled: true
+  api-base-url: https://api.github.com
+  repository: guavasoftcom/agent-compass
+  # Unauthenticated GitHub calls are limited to 60 an hour per IP. A release is cut by hand a few
+  # times a month, so a success is reused for hours; a failure (offline, rate-limited) is retried
+  # sooner so a transient outage clears itself, but not on every page load.
+  cache-ttl: 6h
+  failure-retry-delay: 15m
+  connect-timeout: 3s
+  read-timeout: 5s
 tuning:
   # First tokens of Bash commands with a dedicated-tool replacement, mapped to the
   # replacement the tuning report names in its anti-pattern suggestions.

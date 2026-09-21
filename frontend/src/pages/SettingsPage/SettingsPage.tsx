@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebouncedValue } from '../../lib/useDebouncedValue';
 import SettingsPageView from './SettingsPageView';
 import {
@@ -25,16 +25,21 @@ import {
   fetchPurgePreview,
   fetchStorageOverview,
   fetchSystemBuild,
+  fetchUpdateCheck,
   purgeTelemetry,
   saveOllamaSettings,
+  saveUpdateCheckEnabled,
   testOllamaConnection,
 } from './settingsApi';
+import type { UpdateCheckStatus } from './settingsTypes';
 
 /** Retention windows offered by the purge dry-run's segmented toggle. */
 const DEFAULT_RETENTION_DAYS = 30;
 
 /** How long the Ollama tab's "Settings saved." confirmation stays up before auto-dismissing. */
 const OLLAMA_SAVE_CONFIRMATION_DISPLAY_MS = 4000;
+
+const UPDATE_CHECK_QUERY_KEY = ['system-update-check'];
 
 /**
  * Settings container.
@@ -48,6 +53,7 @@ const OLLAMA_SAVE_CONFIRMATION_DISPLAY_MS = 4000;
 type SettingsTab = 'storage-ingest' | 'schema-build' | 'configuration' | 'retention' | 'ollama';
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<SettingsTab>('storage-ingest');
   const [retentionDays, setRetentionDays] = useState(DEFAULT_RETENTION_DAYS);
   const [isPurgeDialogOpen, setIsPurgeDialogOpen] = useState(false);
@@ -93,6 +99,12 @@ export default function SettingsPage() {
   const ollamaSettingsQuery = useQuery({
     queryKey: ['system-ollama-settings'],
     queryFn: fetchOllamaSettings,
+  });
+  // The server caches its GitHub lookup for hours, so this plain read is cheap
+  // to repeat; only the explicit "Check now" mutation below bypasses that cache.
+  const updateCheckQuery = useQuery({
+    queryKey: UPDATE_CHECK_QUERY_KEY,
+    queryFn: () => fetchUpdateCheck(),
   });
 
   // Auto-fetches the installed-model list for the Model field's Autocomplete,
@@ -163,6 +175,37 @@ export default function SettingsPage() {
   const testOllamaConnectionMutation = useMutation({
     mutationFn: () => testOllamaConnection(ollamaBaseUrl, ollamaModel),
   });
+
+  // Both update-check writes resolve with the resulting status, so it goes
+  // straight into the query cache rather than triggering a second round trip.
+  const storeUpdateCheckStatus = (status: UpdateCheckStatus) => {
+    queryClient.setQueryData(UPDATE_CHECK_QUERY_KEY, status);
+  };
+
+  // Saves the moment the switch is flipped — one boolean, so no form and no
+  // Save button. The server enforces it: off means no outbound request at all.
+  const saveUpdateCheckEnabledMutation = useMutation({
+    mutationFn: (enabled: boolean) => saveUpdateCheckEnabled(enabled),
+    onSuccess: storeUpdateCheckStatus,
+  });
+
+  const checkForUpdateMutation = useMutation({
+    mutationFn: () => fetchUpdateCheck(true),
+    onSuccess: storeUpdateCheckStatus,
+  });
+
+  const handleUpdateCheckEnabledChange = useCallback(
+    (nextEnabled: boolean) => {
+      checkForUpdateMutation.reset();
+      saveUpdateCheckEnabledMutation.mutate(nextEnabled);
+    },
+    [checkForUpdateMutation, saveUpdateCheckEnabledMutation],
+  );
+
+  const handleCheckForUpdate = useCallback(() => {
+    saveUpdateCheckEnabledMutation.reset();
+    checkForUpdateMutation.mutate();
+  }, [checkForUpdateMutation, saveUpdateCheckEnabledMutation]);
 
   // Shared tail for every Ollama field edit: marks the form dirty and clears
   // out any test/save result that now describes stale, pre-edit values.
@@ -263,6 +306,7 @@ export default function SettingsPage() {
     void configurationQuery.refetch();
     void purgePreviewQuery.refetch();
     void ollamaSettingsQuery.refetch();
+    void updateCheckQuery.refetch();
   }, [
     storageQuery,
     ingestQuery,
@@ -270,6 +314,7 @@ export default function SettingsPage() {
     configurationQuery,
     purgePreviewQuery,
     ollamaSettingsQuery,
+    updateCheckQuery,
   ]);
 
   const isReloading =
@@ -278,7 +323,8 @@ export default function SettingsPage() {
     buildQuery.isFetching ||
     configurationQuery.isFetching ||
     purgePreviewQuery.isFetching ||
-    ollamaSettingsQuery.isFetching;
+    ollamaSettingsQuery.isFetching ||
+    updateCheckQuery.isFetching;
 
   return (
     <SettingsPageView
@@ -309,7 +355,8 @@ export default function SettingsPage() {
           buildQuery.error ??
           configurationQuery.error ??
           purgePreviewQuery.error ??
-          ollamaSettingsQuery.error) as Error | null
+          ollamaSettingsQuery.error ??
+          updateCheckQuery.error) as Error | null
       }
       activeTab={activeTab}
       onTabChange={handleTabChange}
@@ -334,6 +381,15 @@ export default function SettingsPage() {
       isUnsavedOllamaChangesDialogOpen={pendingTab !== null}
       onCancelOllamaTabSwitch={handleCancelOllamaTabSwitch}
       onDiscardOllamaTabSwitch={handleDiscardOllamaTabSwitch}
+      updateCheck={updateCheckQuery.data ?? null}
+      isUpdateCheckLoading={updateCheckQuery.isLoading}
+      isCheckingForUpdate={checkForUpdateMutation.isPending}
+      isSavingUpdateCheckEnabled={saveUpdateCheckEnabledMutation.isPending}
+      onUpdateCheckEnabledChange={handleUpdateCheckEnabledChange}
+      onCheckForUpdate={handleCheckForUpdate}
+      updateCheckError={
+        (saveUpdateCheckEnabledMutation.error ?? checkForUpdateMutation.error) as Error | null
+      }
     />
   );
 }

@@ -30,6 +30,7 @@ import type {
   PurgeResult,
   StorageOverview,
   SystemBuild,
+  UpdateCheckStatus,
 } from './settingsTypes';
 
 /**
@@ -48,6 +49,24 @@ export const fetchSystemBuild = (): Promise<SystemBuild> => getJson('/api/system
 
 export const fetchEffectiveConfiguration = (): Promise<EffectiveConfiguration> =>
   getJson('/api/system/configuration');
+
+/**
+ * Whether a newer release than the running one has been published. The server
+ * caches its answer for hours, so the plain read is cheap to repeat; `refresh`
+ * skips that cache and is for the operator's explicit "Check now" only. With the
+ * switch off the server makes no outbound request whatever this asks for.
+ */
+export const fetchUpdateCheck = (refresh = false): Promise<UpdateCheckStatus> =>
+  getJson(`/api/system/update-check?refresh=${refresh}`);
+
+/**
+ * Turns the update check on or off and resolves with the status that results,
+ * so switching it on answers in the same round trip. Routed through `writeJson`
+ * because it is a write; the toggle has no blank/clear form, so `enabled` is
+ * always an explicit boolean.
+ */
+export const saveUpdateCheckEnabled = (enabled: boolean): Promise<UpdateCheckStatus> =>
+  writeJson('/api/system/update-check', 'PUT', { enabled });
 
 export const fetchPurgePreview = (retentionDays: number): Promise<PurgePreview> =>
   getJson(`/api/system/purge-preview?days=${retentionDays}`);

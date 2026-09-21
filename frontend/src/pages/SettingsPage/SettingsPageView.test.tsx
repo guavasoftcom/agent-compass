@@ -130,6 +130,22 @@ const baseProps: SettingsPageViewProps = {
   isUnsavedOllamaChangesDialogOpen: false,
   onCancelOllamaTabSwitch: vi.fn(),
   onDiscardOllamaTabSwitch: vi.fn(),
+  updateCheck: {
+    enabled: true,
+    currentVersion: '2.7.1',
+    latestVersion: '2.8.0',
+    updateAvailable: true,
+    releaseUrl: 'https://github.com/guavasoftcom/agent-compass/releases/tag/v2.8.0',
+    publishedAt: '2026-09-20T18:31:04.000Z',
+    checkedAt: '2026-09-21T09:00:00.000Z',
+    message: null,
+  },
+  isUpdateCheckLoading: false,
+  isCheckingForUpdate: false,
+  isSavingUpdateCheckEnabled: false,
+  onUpdateCheckEnabledChange: vi.fn(),
+  onCheckForUpdate: vi.fn(),
+  updateCheckError: null,
 };
 
 describe('SettingsPageView', () => {
@@ -165,6 +181,20 @@ describe('SettingsPageView', () => {
     await user.click(screen.getByRole('tab', { name: 'Schema & Build' }));
 
     expect(onTabChange).toHaveBeenCalledWith('schema-build');
+  });
+
+  it('shows the update check above the migration history on the Schema & Build tab', () => {
+    renderWithProviders(<SettingsPageView {...baseProps} activeTab="schema-build" />);
+
+    expect(screen.getByRole('switch', { name: 'Check for updates' })).toBeChecked();
+    expect(screen.getByText(/v2\.8\.0 is available/)).toBeInTheDocument();
+    expect(screen.getByText('Application')).toBeInTheDocument();
+  });
+
+  it('does not render the update check on the other tabs', () => {
+    renderWithProviders(<SettingsPageView {...baseProps} activeTab="storage-ingest" />);
+
+    expect(screen.queryByRole('switch', { name: 'Check for updates' })).not.toBeInTheDocument();
   });
 
   it('surfaces the PageLayout error slot when a query has failed', () => {

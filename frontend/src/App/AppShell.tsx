@@ -34,6 +34,7 @@ import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import NavItem from './NavItem';
 import ColorModeToggle from './ColorModeToggle';
 import AuroraMark from './AuroraMark';
+import SidebarVersion from './SidebarVersion';
 import navGroups from './navGroups';
 import ErrorBoundary from '../components/ErrorBoundary';
 
@@ -176,7 +177,7 @@ const AppShell = () => {
         ))}
       </Box>
 
-      {/* Footer — color mode + collapse control pinned to the bottom */}
+      {/* Footer — color mode + collapse control + running version pinned to the bottom */}
       <Divider sx={{ mx: open ? 2 : 1.25, opacity: 0.7 }} />
       <Stack
         direction={open ? 'row' : 'column'}
@@ -197,6 +198,7 @@ const AppShell = () => {
           </Tooltip>
         )}
       </Stack>
+      <SidebarVersion />
     </Stack>
   );
 
