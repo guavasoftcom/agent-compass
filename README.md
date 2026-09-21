@@ -104,7 +104,7 @@ Coding agents push **OTLP/HTTP protobuf** straight at the backend — no collect
 
 ## Repository layout
 
-- `backend/` — Spring Boot 4.1 (Java 21), Spring Data JPA, `opentelemetry-proto`, Postgres.
+- `backend/` — Spring Boot 4.1 (Java 25), Spring Data JPA, `opentelemetry-proto`, Postgres.
 - `frontend/` — React + Vite + Material UI (charts and tables are hand-built SVG/CSS — no `@mui/x-charts` or `@mui/x-data-grid`), TanStack Query, React Router.
 
 ## Quick start
@@ -156,10 +156,14 @@ Everything below is for running from source.
 
 ## Prerequisites
 
-- JDK 21+ (the backend compiles with `--release 21`)
+- JDK 25+ (the backend compiles with `--release 25`)
 - No Maven install required — use the bundled wrapper (`./mvnw` / `./mvnw.cmd`), pinned to Maven 3.9.9
 - Node 20+ (CI builds on 22) and Yarn Berry — the exact version is pinned by the `packageManager` field in [frontend/package.json](frontend/package.json), so `corepack enable` is enough; no global Yarn install needed
 - Docker (for the Postgres compose service and for running the Testcontainers integration test)
+
+## Known Issues
+
+- **protobuf-java + Java 21+**: The backend emits `WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release` on startup (from `protobuf-java` 4.35.1). These warnings are harmless and do not affect functionality. The protobuf team is aware of this issue and will address it in a future release as `sun.misc.Unsafe` is removed from Java.
 
 ## Run
 
@@ -340,7 +344,7 @@ yarn --cwd frontend test --run
 yarn --cwd frontend test:coverage
 ```
 
-[.github/workflows/pull-request.yml](.github/workflows/pull-request.yml) runs the same checks on every pull request — `./mvnw verify` on JDK 21, plus frontend lint / typecheck / test / build on Node 22.
+[.github/workflows/pull-request.yml](.github/workflows/pull-request.yml) runs the same checks on every pull request — `./mvnw verify` on JDK 25, plus frontend lint / typecheck / test / build on Node 22.
 
 ## Release: Docker image
 

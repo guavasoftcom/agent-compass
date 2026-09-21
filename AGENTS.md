@@ -12,7 +12,7 @@ surface tool-usage patterns the agent can use to revise its own prompts/skills.
 
 ## Repository layout
 
-- `backend/` — Spring Boot 4.1 on Java 21, package root `com.guavasoft.agentcompass`. Conventions,
+- `backend/` — Spring Boot 4.1 on Java 25, package root `com.guavasoft.agentcompass`. Conventions,
   module layout, and the data-model gotchas that bite hardest: [backend/CLAUDE.md](backend/CLAUDE.md).
 - `frontend/` — React 19 + Vite 8 + MUI 9, TanStack Query v5, React Router 7.
   Conventions: [frontend/CLAUDE.md](frontend/CLAUDE.md). Each `frontend/src/pages/<Name>Page/` also
@@ -71,7 +71,7 @@ the backend source tree.
 
 ## Conventions
 
-- **Java 21**, `--release 21`. Don't lower the source level.
+- **Java 25**, `--release 25`. Don't lower the source level.
 - **Lombok + MapStruct** are both on the annotation processor path; `lombok-mapstruct-binding` keeps
   them compatible.
 - **Schema lives in Flyway migrations** (`backend/src/main/resources/db/migration/`); Hibernate runs
