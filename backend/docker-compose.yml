@@ -2,7 +2,7 @@ name: coding-agent-tuning
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     container_name: coding-agent-tuning-postgres
     # Stock Postgres defaults (shared_buffers=128MB, work_mem=4MB) are sized for
     # tiny shared hosts. The dashboard's histogram/facet/autocomplete queries
@@ -32,8 +32,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-coding_agent_tuning}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
+    # The 18 image keeps its data in a versioned directory under
+    # /var/lib/postgresql and declares that whole directory as its volume, so the
+    # mount moved up from /var/lib/postgresql/data. The volume is also a new one:
+    # a 16 data directory cannot be opened by 18. Migrate an existing dev database
+    # by hand (dump the old volume, restore into this one) — see
+    # docs/local-docker-deployment.md.
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data-18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-coding_agent_tuning}"]
       interval: 5s
@@ -41,4 +47,4 @@ services:
       retries: 10
 
 volumes:
-  postgres-data:
+  postgres-data-18:

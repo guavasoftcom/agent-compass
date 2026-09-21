@@ -49,7 +49,7 @@ class ReportQueryIntegrationTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(PostgresTestImage.NAME);
 
     @Autowired
     LogRecordRepository logRecordRepository;
