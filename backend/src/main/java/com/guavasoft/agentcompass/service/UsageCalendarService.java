@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.model.UsageCalendarDaily;
 import com.guavasoft.agentcompass.model.UsageCalendarDay;
+import com.guavasoft.agentcompass.model.UsageCalendarHour;
 import com.guavasoft.agentcompass.model.UsageCalendarModelCost;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -44,7 +45,9 @@ import java.util.TreeMap;
  * metric per day. The existing trend endpoints cannot stand in: each derives its own bucket width from
  * the window length rather than accepting one, so a day-wide bucket is not something a caller can ask
  * them for, and a fixed 86400 s {@code date_bin} could not express a local midnight anyway. Five
- * grouped queries (three over {@code metric_points}, two over {@code log_records}) cover the whole range.
+ * grouped queries (three over {@code metric_points}, two over {@code log_records}) cover the whole range;
+ * asking for hourly buckets (the week view) adds two more, the counters and the skill invocations again
+ * split by local hour.
  *
  * <p><b>Day boundaries are the caller's local ones.</b> The frontend sends the IANA zone and the
  * instants of the first and one-past-last local midnight; the queries bucket with
@@ -87,6 +90,14 @@ public class UsageCalendarService {
   private static final int MODEL_COST_COLUMN = 2;
   private static final int LOG_COUNT_COLUMN = 1;
 
+  // Column positions in the two hourly rollups: (day, hour, ...). The hour column follows the day one.
+  private static final int HOUR_COLUMN = 1;
+  private static final int HOURLY_COST_COLUMN = 2;
+  private static final int HOURLY_TOKENS_COLUMN = 3;
+  private static final int HOURLY_ACTIVE_SECONDS_COLUMN = 4;
+  private static final int HOURLY_LOG_COUNT_COLUMN = 2;
+  private static final int HOURS_PER_DAY = 24;
+
   // What the Tokens and Cost pages call a model row that carries no model attribute.
   private static final String UNKNOWN_MODEL = "unknown";
 
@@ -94,7 +105,13 @@ public class UsageCalendarService {
   private final LogRecordRepository logRecordRepository;
   private final TuningProperties tuningProperties;
 
-  public UsageCalendarDaily daily(Instant from, Instant to, String timeZone, String repositoryUrl) {
+  /**
+   * @param includeHourly whether to also fill each day's 24 hour-of-day buckets. Two more grouped
+   *     queries (the counters and the skill invocations again, split by hour), so only the week view
+   *     asks for it; without it each day's {@code hourly} is null.
+   */
+  public UsageCalendarDaily daily(
+      Instant from, Instant to, String timeZone, String repositoryUrl, boolean includeHourly) {
     if (!to.isAfter(from)) {
       throw new IllegalArgumentException("to must be after from");
     }
@@ -114,10 +131,65 @@ public class UsageCalendarService {
     collectCostByModel(totalsByDay, from, to, zoneId, repositoryUrl);
     collectSkillInvocations(totalsByDay, from, to, zoneId, repositoryUrl);
     collectSubagentDispatches(totalsByDay, from, to, zoneId, repositoryUrl);
+    if (includeHourly) {
+      collectHourlyCounterTotals(totalsByDay, from, to, zoneId, repositoryUrl);
+      collectHourlySkillInvocations(totalsByDay, from, to, zoneId, repositoryUrl);
+    }
 
     List<UsageCalendarDay> days = new ArrayList<>(totalsByDay.size());
-    totalsByDay.forEach((day, totals) -> days.add(totals.toDay(day)));
+    totalsByDay.forEach((day, totals) -> days.add(totals.toDay(day, includeHourly)));
     return new UsageCalendarDaily(days);
+  }
+
+  private void collectHourlyCounterTotals(
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+    List<Object[]> rows = metricPointRepository.aggregateHourlyCounterTotals(
+        tuningProperties.getCostUsageMetric(),
+        tuningProperties.getTokenUsageMetric(),
+        tuningProperties.getActiveTimeMetric(),
+        from,
+        to,
+        zoneId,
+        repositoryUrl);
+    for (Object[] row : rows) {
+      HourTotals hourTotals = hourTotalsFor(totalsByDay, row);
+      if (hourTotals == null) {
+        continue;
+      }
+      hourTotals.costUsd = asDouble(row[HOURLY_COST_COLUMN]);
+      hourTotals.tokens = Math.round(asDouble(row[HOURLY_TOKENS_COLUMN]));
+      hourTotals.activeSeconds = Math.round(asDouble(row[HOURLY_ACTIVE_SECONDS_COLUMN]));
+    }
+  }
+
+  private void collectHourlySkillInvocations(
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+    List<Object[]> rows = logRecordRepository.aggregateHourlySkillInvocations(
+        tuningProperties.getSkillEventName(),
+        tuningProperties.getSkillNameAttribute(),
+        tuningProperties.getPromptIdAttribute(),
+        tuningProperties.getAgentNameAttribute(),
+        from,
+        to,
+        zoneId,
+        repositoryUrl);
+    for (Object[] row : rows) {
+      HourTotals hourTotals = hourTotalsFor(totalsByDay, row);
+      if (hourTotals != null) {
+        hourTotals.skillCalls = ((Number) row[HOURLY_LOG_COUNT_COLUMN]).longValue();
+      }
+    }
+  }
+
+  // The (day, hour) bucket a grouped row belongs to, or null when either falls outside what was asked
+  // for -- the same skip-what-is-not-there rule the daily collectors apply to a day.
+  private static HourTotals hourTotalsFor(Map<LocalDate, DayTotals> totalsByDay, Object[] row) {
+    DayTotals totals = totalsByDay.get(LocalDate.parse((String) row[DAY_COLUMN]));
+    int hour = ((Number) row[HOUR_COLUMN]).intValue();
+    if (totals == null || hour < 0 || hour >= HOURS_PER_DAY) {
+      return null;
+    }
+    return totals.hours[hour];
   }
 
   private void collectCounterTotals(
@@ -259,12 +331,37 @@ public class UsageCalendarService {
     private long decisionsAccepted;
     private long decisionsRejected;
     private final List<UsageCalendarModelCost> costByModel = new ArrayList<>();
+    private final HourTotals[] hours = new HourTotals[HOURS_PER_DAY];
 
-    UsageCalendarDay toDay(LocalDate day) {
+    DayTotals() {
+      for (int hour = 0; hour < HOURS_PER_DAY; hour++) {
+        hours[hour] = new HourTotals();
+      }
+    }
+
+    UsageCalendarDay toDay(LocalDate day, boolean includeHourly) {
       return new UsageCalendarDay(
           day, costUsd, tokens, skillCalls, subagentCalls, sessions, activeSeconds,
           linesAdded, linesRemoved, commits, pullRequests, decisionsAccepted, decisionsRejected,
-          List.copyOf(costByModel));
+          List.copyOf(costByModel), includeHourly ? hourlyBuckets() : null);
     }
+
+    private List<UsageCalendarHour> hourlyBuckets() {
+      List<UsageCalendarHour> buckets = new ArrayList<>(HOURS_PER_DAY);
+      for (int hour = 0; hour < HOURS_PER_DAY; hour++) {
+        HourTotals hourTotals = hours[hour];
+        buckets.add(new UsageCalendarHour(
+            hour, hourTotals.costUsd, hourTotals.tokens, hourTotals.skillCalls, hourTotals.activeSeconds));
+      }
+      return List.copyOf(buckets);
+    }
+  }
+
+  /** Mutable accumulator for one local hour of a day. Zero until a query says otherwise. */
+  private static final class HourTotals {
+    private double costUsd;
+    private long tokens;
+    private long skillCalls;
+    private long activeSeconds;
   }
 }

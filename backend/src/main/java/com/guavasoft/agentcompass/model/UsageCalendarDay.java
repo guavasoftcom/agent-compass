@@ -43,5 +43,9 @@ public record UsageCalendarDay(
         @Schema(description = "Edit-tool permission decisions rejected", example = "1") long decisionsRejected,
         @Schema(description = "The day's spend split by model, largest first; empty on a day with no cost. "
                 + "Same counter pipeline as costUsd, so the parts sum to it")
-        List<UsageCalendarModelCost> costByModel) {
+        List<UsageCalendarModelCost> costByModel,
+        @Schema(description = "The day split into 24 local hour-of-day buckets, hour 0 first. Present only "
+                + "when the request asked for granularity=hourly; null otherwise",
+                nullable = true)
+        List<UsageCalendarHour> hourly) {
 }

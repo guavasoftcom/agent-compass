@@ -1389,14 +1389,15 @@ class TraceExplorerIntegrationTest {
 
     // -------------------------------------------------------------------------
     // inProgress -- the Traces Explorer's "still running" indicator
-    // (TraceSummary#inProgress). Same liveness rule as SessionSummary#inProgress:
-    // no exported claude_code.interaction root span, and activity within
+    // (TraceSummary#inProgress). Same liveness rule as the Sessions prompt timeline:
+    // no exported root span (any parentless span), and activity within
     // LogService.IN_PROGRESS_STALENESS_LIMIT (20 minutes).
     // -------------------------------------------------------------------------
 
     private static final String TRACE_STILL_RUNNING = "4444000000000000444400000000d001";
     private static final String TRACE_ROOT_SPAN_EXPORTED = "5555000000000000555500000000e001";
     private static final String TRACE_STALE_NO_ROOT_SPAN = "6666000000000000666600000000f001";
+    private static final String TRACE_STANDALONE_MODEL_CALL = "7777000000000000777700000000a001";
     private static final String INTERACTION_ROOT_SPAN_NAME = "claude_code.interaction";
 
     @Test
@@ -1420,6 +1421,20 @@ class TraceExplorerIntegrationTest {
                 recentEnd.minusSeconds(5), recentEnd, false);
 
         TraceSummary summary = service.traceSummary(TRACE_ROOT_SPAN_EXPORTED).orElseThrow();
+
+        assertThat(summary.isInProgress()).isFalse();
+    }
+
+    @Test
+    void traceSummaryDoesNotFlagInProgressForAStandaloneParentlessModelCall() {
+        // A lone claude_code.llm_request with no parent is its own closed root: it has no
+        // claude_code.interaction span above it and never will, so recent activity must not
+        // read as a turn still running.
+        Instant recentEnd = Instant.now().minus(2, ChronoUnit.MINUTES);
+        addTrace(TRACE_STANDALONE_MODEL_CALL, "claude_code.llm_request", null,
+                recentEnd.minusSeconds(1), recentEnd, false);
+
+        TraceSummary summary = service.traceSummary(TRACE_STANDALONE_MODEL_CALL).orElseThrow();
 
         assertThat(summary.isInProgress()).isFalse();
     }

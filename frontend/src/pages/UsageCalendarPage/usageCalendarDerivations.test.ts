@@ -20,8 +20,10 @@ import {
   HEAT_SPAN_PERCENT,
   addDays,
   buildHeatPercents,
+  buildHourlySeries,
   buildKpiCards,
   buildKpiSeries,
+  buildLinesChanged,
   buildModelMix,
   comparablePriorDays,
   endOfLocalDay,
@@ -385,6 +387,64 @@ describe('buildModelMix', () => {
       }),
     );
     expect(mix.map((segment) => segment.colorIndex)).toEqual([0, 1]);
+  });
+});
+
+describe('buildHourlySeries', () => {
+  it('is null when the rollup carried no hourly buckets, so the cell draws no chart', () => {
+    expect(buildHourlySeries(makeDay('2026-09-14'))).toBeNull();
+    expect(buildHourlySeries(makeDay('2026-09-14', { hourly: null }))).toBeNull();
+    expect(buildHourlySeries(makeDay('2026-09-14', { hourly: [] }))).toBeNull();
+  });
+
+  it('turns the buckets into four 24-long series, one value per hour', () => {
+    const series = buildHourlySeries(
+      makeDay('2026-09-14', {
+        hourly: [
+          { hour: 9, costUsd: 1.5, tokens: 1_000, skillCalls: 1, activeSeconds: 600 },
+          { hour: 14, costUsd: 4, tokens: 9_000, skillCalls: 3, activeSeconds: 1_800 },
+        ],
+      }),
+    );
+    expect(series?.cost).toHaveLength(24);
+    expect(series?.cost[9]).toBe(1.5);
+    expect(series?.cost[14]).toBe(4);
+    expect(series?.tokens[14]).toBe(9_000);
+    expect(series?.skills[14]).toBe(3);
+    expect(series?.activity[9]).toBe(600);
+    expect(series?.cost[0]).toBe(0);
+  });
+
+  it('places each value by its own hour, not by its position, and ignores an hour out of range', () => {
+    const series = buildHourlySeries(
+      makeDay('2026-09-14', {
+        hourly: [
+          { hour: 20, costUsd: 2, tokens: 0, skillCalls: 0, activeSeconds: 0 },
+          { hour: 3, costUsd: 1, tokens: 0, skillCalls: 0, activeSeconds: 0 },
+          { hour: 24, costUsd: 99, tokens: 0, skillCalls: 0, activeSeconds: 0 },
+          { hour: -1, costUsd: 99, tokens: 0, skillCalls: 0, activeSeconds: 0 },
+        ],
+      }),
+    );
+    expect(series?.cost[3]).toBe(1);
+    expect(series?.cost[20]).toBe(2);
+    expect(series?.cost.reduce((sum, value) => sum + value, 0)).toBe(3);
+  });
+});
+
+describe('buildLinesChanged', () => {
+  it('splits added against removed, the two shares summing to 100', () => {
+    const linesChanged = buildLinesChanged(makeDay('2026-09-14', { linesAdded: 300, linesRemoved: 100 }));
+    expect(linesChanged).toEqual({ added: 300, removed: 100, addedPercent: 75, removedPercent: 25 });
+  });
+
+  it('is all-added or all-removed when only one side changed', () => {
+    expect(buildLinesChanged(makeDay('2026-09-14', { linesAdded: 12 }))?.addedPercent).toBe(100);
+    expect(buildLinesChanged(makeDay('2026-09-14', { linesRemoved: 12 }))?.removedPercent).toBe(100);
+  });
+
+  it('is null when no line changed, so the cell draws no bar rather than an invented 50/50 one', () => {
+    expect(buildLinesChanged(makeDay('2026-09-14'))).toBeNull();
   });
 });
 

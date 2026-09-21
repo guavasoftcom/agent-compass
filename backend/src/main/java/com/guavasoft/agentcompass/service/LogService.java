@@ -561,8 +561,8 @@ public class LogService {
   /**
    * Index of the session's still-running turn, or -1 when there is none. Only the newest turn is
    * a candidate: an older turn with no root span was interrupted (the session has moved on), not
-   * running. The newest turn is running when it has a trace, that trace's
-   * {@code claude_code.interaction} root span has not been exported yet, and the trace has shown
+   * running. The newest turn is running when it has a trace, that trace's root span (the
+   * {@code claude_code.interaction} span, in practice) has not been exported yet, and the trace has shown
    * activity within {@link #IN_PROGRESS_STALENESS_LIMIT} -- the user_prompt log itself carries the
    * trace id, so a turn submitted moments ago counts even before its first model call lands.
    */
@@ -572,7 +572,7 @@ public class LogService {
     if (traceId == null) {
       return -1;
     }
-    List<Object[]> progressRows = spanRepository.findTurnProgressForTrace(traceId, INTERACTION_ROOT_SPAN_NAME_PATTERN);
+    List<Object[]> progressRows = spanRepository.findTurnProgressForTrace(traceId);
     if (progressRows.isEmpty()) {
       return -1;
     }

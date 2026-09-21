@@ -28,6 +28,7 @@ import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.model.UsageCalendarDaily;
 import com.guavasoft.agentcompass.model.UsageCalendarDay;
+import com.guavasoft.agentcompass.model.UsageCalendarHour;
 import com.guavasoft.agentcompass.model.UsageCalendarModelCost;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -39,6 +40,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -113,7 +115,7 @@ class UsageCalendarQueryIntegrationTest {
 
     @Test
     void returnsExactlyOneZeroFilledRowPerLocalDayInTheRange() {
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         assertThat(daily.days()).extracting(UsageCalendarDay::date)
                 .containsExactly(SEPTEMBER_FIRST, SEPTEMBER_SECOND, SEPTEMBER_THIRD);
@@ -133,7 +135,7 @@ class UsageCalendarQueryIntegrationTest {
         saveCounter(COST_METRIC, 5.0, Instant.parse("2026-09-02T05:00:00Z"), Map.of(ATTR_SESSION_ID, "midnight"));
         recomputeDeltas();
 
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         assertThat(dayOf(daily, SEPTEMBER_FIRST).costUsd()).isEqualTo(2.0, offset(MONEY_TOLERANCE));
         assertThat(dayOf(daily, SEPTEMBER_SECOND).costUsd()).isEqualTo(5.0, offset(MONEY_TOLERANCE));
@@ -146,7 +148,7 @@ class UsageCalendarQueryIntegrationTest {
         saveCounter(COST_METRIC, 25.0, Instant.parse("2026-09-02T12:00:00Z"), stream);
         recomputeDeltas();
 
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         assertThat(dayOf(daily, SEPTEMBER_FIRST).costUsd()).isEqualTo(10.0, offset(MONEY_TOLERANCE));
         assertThat(dayOf(daily, SEPTEMBER_SECOND).costUsd()).isEqualTo(15.0, offset(MONEY_TOLERANCE));
@@ -166,7 +168,7 @@ class UsageCalendarQueryIntegrationTest {
         recomputeDeltas();
 
         UsageCalendarDay firstDay = dayOf(
-                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null), SEPTEMBER_FIRST);
+                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false), SEPTEMBER_FIRST);
 
         assertThat(firstDay.tokens()).isEqualTo(5000L);
         assertThat(firstDay.activeSeconds()).isEqualTo(600L);
@@ -186,7 +188,7 @@ class UsageCalendarQueryIntegrationTest {
                 Map.of(ATTR_SESSION_ID, "s", ATTR_MODEL, "claude-sonnet-4"));
         recomputeDeltas();
 
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         UsageCalendarDay firstDay = dayOf(daily, SEPTEMBER_FIRST);
         assertThat(firstDay.costByModel()).extracting(UsageCalendarModelCost::model)
@@ -210,7 +212,7 @@ class UsageCalendarQueryIntegrationTest {
         saveCounter(PULL_REQUEST_METRIC, 1.0, thirdDayNoon, Map.of(ATTR_SESSION_ID, "s"));
         recomputeDeltas();
 
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         UsageCalendarDay secondDay = dayOf(daily, SEPTEMBER_SECOND);
         assertThat(secondDay.linesAdded()).isEqualTo(30L);
@@ -232,9 +234,9 @@ class UsageCalendarQueryIntegrationTest {
         recomputeDeltas();
 
         UsageCalendarDay unscoped = dayOf(
-                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null), SEPTEMBER_THIRD);
+                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false), SEPTEMBER_THIRD);
         UsageCalendarDay scoped = dayOf(
-                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, REPOSITORY_A), SEPTEMBER_THIRD);
+                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, REPOSITORY_A, false), SEPTEMBER_THIRD);
 
         assertThat(unscoped.costUsd()).isEqualTo(107.0, offset(MONEY_TOLERANCE));
         assertThat(scoped.costUsd()).isEqualTo(7.0, offset(MONEY_TOLERANCE));
@@ -251,7 +253,7 @@ class UsageCalendarQueryIntegrationTest {
         // A turn made from inside a spawned subagent never counts as an invocation.
         saveSkillTurn("ship", "prompt-1-subagent", Instant.parse("2026-09-02T16:00:00Z"), true);
 
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         assertThat(dayOf(daily, SEPTEMBER_FIRST).skillCalls()).isEqualTo(2L);
         assertThat(dayOf(daily, SEPTEMBER_SECOND).skillCalls()).isEqualTo(1L);
@@ -263,7 +265,7 @@ class UsageCalendarQueryIntegrationTest {
         saveToolResult("Agent", Instant.parse("2026-09-02T13:00:00Z"));
         saveToolResult("Read", Instant.parse("2026-09-02T14:00:00Z"));
 
-        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false);
 
         assertThat(dayOf(daily, SEPTEMBER_SECOND).subagentCalls()).isEqualTo(2L);
         assertThat(dayOf(daily, SEPTEMBER_FIRST).subagentCalls()).isZero();
@@ -280,7 +282,7 @@ class UsageCalendarQueryIntegrationTest {
         saveCounter(COST_METRIC, 4.0, Instant.parse("2026-11-02T06:00:00Z"), Map.of(ATTR_SESSION_ID, "next-day"));
         recomputeDeltas();
 
-        UsageCalendarDaily daily = usageCalendarService.daily(rangeStart, rangeEnd, CHICAGO, null);
+        UsageCalendarDaily daily = usageCalendarService.daily(rangeStart, rangeEnd, CHICAGO, null, false);
 
         assertThat(daily.days()).extracting(UsageCalendarDay::date)
                 .containsExactly(LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 2));
@@ -291,11 +293,85 @@ class UsageCalendarQueryIntegrationTest {
     }
 
     @Test
+    void hourlyBucketsAreOmittedUnlessRequested() {
+        saveCounter(COST_METRIC, 2.0, Instant.parse("2026-09-01T12:00:00Z"), Map.of(ATTR_SESSION_ID, "session-a"));
+        recomputeDeltas();
+
+        assertThat(usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, false).days())
+                .allSatisfy(day -> assertThat(day.hourly()).isNull());
+    }
+
+    @Test
+    void splitsEachDayIntoTwentyFourLocalHourBucketsThatSumToTheDaysFigures() {
+        // 13:30Z is 08:30 CDT; 19:10Z and 19:20Z are 14:10 and 14:20 CDT; 04:30Z Sep 2 is 23:30 CDT Sep 1.
+        saveCounter(COST_METRIC, 2.0, Instant.parse("2026-09-01T13:30:00Z"), Map.of(ATTR_SESSION_ID, "morning"));
+        saveCounter(COST_METRIC, 3.0, Instant.parse("2026-09-01T19:10:00Z"), Map.of(ATTR_SESSION_ID, "afternoon-a"));
+        saveCounter(COST_METRIC, 4.0, Instant.parse("2026-09-01T19:20:00Z"), Map.of(ATTR_SESSION_ID, "afternoon-b"));
+        saveCounter(COST_METRIC, 1.5, Instant.parse("2026-09-02T04:30:00Z"), Map.of(ATTR_SESSION_ID, "late"));
+        saveCounter(TOKEN_METRIC, 800.0, Instant.parse("2026-09-01T19:15:00Z"),
+                Map.of(ATTR_SESSION_ID, "afternoon-a", ATTR_TYPE, "input"));
+        saveCounter(ACTIVE_TIME_METRIC, 300.0, Instant.parse("2026-09-01T13:35:00Z"), Map.of(ATTR_SESSION_ID, "morning"));
+        recomputeDeltas();
+
+        UsageCalendarDay firstDay = dayOf(
+                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, true), SEPTEMBER_FIRST);
+
+        assertThat(firstDay.hourly()).extracting(UsageCalendarHour::hour)
+                .containsExactlyElementsOf(IntStream.range(0, 24).boxed().toList());
+        assertThat(firstDay.hourly().get(8).costUsd()).isEqualTo(2.0, offset(MONEY_TOLERANCE));
+        assertThat(firstDay.hourly().get(8).activeSeconds()).isEqualTo(300L);
+        assertThat(firstDay.hourly().get(14).costUsd()).isEqualTo(7.0, offset(MONEY_TOLERANCE));
+        assertThat(firstDay.hourly().get(14).tokens()).isEqualTo(800L);
+        // The local 23:30 row belongs to hour 23 of Sep 1, not to hour 4 of the UTC day it falls on.
+        assertThat(firstDay.hourly().get(23).costUsd()).isEqualTo(1.5, offset(MONEY_TOLERANCE));
+        assertThat(firstDay.hourly().get(0).costUsd()).isZero();
+        assertThat(firstDay.hourly().stream().mapToDouble(UsageCalendarHour::costUsd).sum())
+                .isEqualTo(firstDay.costUsd(), offset(MONEY_TOLERANCE));
+        assertThat(firstDay.hourly().stream().mapToLong(UsageCalendarHour::tokens).sum()).isEqualTo(firstDay.tokens());
+        assertThat(firstDay.hourly().stream().mapToLong(UsageCalendarHour::activeSeconds).sum())
+                .isEqualTo(firstDay.activeSeconds());
+    }
+
+    @Test
+    void datesAHourlySkillInvocationByItsEarliestTurnsHour() {
+        // One invocation whose turns straddle an hour: 14:50 and 15:10 CDT. It counts once, at hour 14.
+        saveSkillTurn("ship", "prompt-1", Instant.parse("2026-09-01T19:50:00Z"), false);
+        saveSkillTurn("ship", "prompt-1", Instant.parse("2026-09-01T20:10:00Z"), false);
+        saveSkillTurn("verify", "prompt-2", Instant.parse("2026-09-01T13:00:00Z"), false);
+        saveSkillTurn("ship", "prompt-1-subagent", Instant.parse("2026-09-01T20:20:00Z"), true);
+
+        UsageCalendarDay firstDay = dayOf(
+                usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, CHICAGO, null, true), SEPTEMBER_FIRST);
+
+        assertThat(firstDay.hourly().get(14).skillCalls()).isEqualTo(1L);
+        assertThat(firstDay.hourly().get(15).skillCalls()).isZero();
+        assertThat(firstDay.hourly().get(8).skillCalls()).isEqualTo(1L);
+        assertThat(firstDay.hourly().stream().mapToLong(UsageCalendarHour::skillCalls).sum())
+                .isEqualTo(firstDay.skillCalls());
+    }
+
+    @Test
+    void theFallBackDaysRepeatedHourMergesIntoOneBucket() {
+        // Chicago falls back on 2026-11-01: 01:30 happens twice, at 06:30Z (CDT) and 07:30Z (CST).
+        Instant rangeStart = Instant.parse("2026-11-01T05:00:00Z");
+        Instant rangeEnd = Instant.parse("2026-11-02T06:00:00Z");
+        saveCounter(COST_METRIC, 1.0, Instant.parse("2026-11-01T06:30:00Z"), Map.of(ATTR_SESSION_ID, "first-pass"));
+        saveCounter(COST_METRIC, 2.0, Instant.parse("2026-11-01T07:30:00Z"), Map.of(ATTR_SESSION_ID, "second-pass"));
+        recomputeDeltas();
+
+        UsageCalendarDay fallBackDay = usageCalendarService.daily(rangeStart, rangeEnd, CHICAGO, null, true)
+                .days().get(0);
+
+        assertThat(fallBackDay.hourly()).hasSize(24);
+        assertThat(fallBackDay.hourly().get(1).costUsd()).isEqualTo(3.0, offset(MONEY_TOLERANCE));
+    }
+
+    @Test
     void rejectsAnUnknownTimeZoneAndAnEmptyRange() {
-        assertThatThrownBy(() -> usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, "Not/AZone", null))
+        assertThatThrownBy(() -> usageCalendarService.daily(SEPTEMBER_FROM, SEPTEMBER_TO, "Not/AZone", null, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Not/AZone");
-        assertThatThrownBy(() -> usageCalendarService.daily(SEPTEMBER_TO, SEPTEMBER_FROM, CHICAGO, null))
+        assertThatThrownBy(() -> usageCalendarService.daily(SEPTEMBER_TO, SEPTEMBER_FROM, CHICAGO, null, false))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

@@ -15,11 +15,14 @@ see <https://www.gnu.org/licenses/>.
 */
 import type { ReactNode } from 'react';
 import { alpha, Box } from '@mui/material';
+import Sparkline from '../../../../components/Sparkline';
 import { formatCompact, shortModelName } from '../../../../lib/format';
 import { colorForIndex, radii } from '../../../../theme/theme';
 import { fontFamilies } from '../../../../theme/typography';
 import type { UsageCalendarDay } from '../../usageCalendarApi';
 import {
+  buildHourlySeries,
+  buildLinesChanged,
   buildModelMix,
   formatActiveTime,
   formatCalendarUsd,
@@ -34,8 +37,9 @@ export type CalendarDayCellVariant = 'month' | 'week';
 
 export interface CalendarDayCellProps {
   /**
-   * `'month'` is the compact grid cell; `'week'` is the taller cell with room for sessions and active
-   * time, a spend-by-model bar, and commit / pull-request badges.
+   * `'month'` is the compact grid cell; `'week'` is the taller cell: an hourly sparkline under each
+   * figure, sessions and active time, a spend-by-model bar, a lines-changed bar, commit / pull-request
+   * badges, and an hourly-activity chart at the foot.
    */
   variant: CalendarDayCellVariant;
   date: Date;
@@ -63,10 +67,14 @@ const SKILLS_COLOR_INDEX = 2;
 const OUT_OF_PERIOD_OPACITY = 0.28;
 const FUTURE_OPACITY = 0.42;
 const MONTH_CELL_MIN_HEIGHT = 114;
-const WEEK_CELL_MIN_HEIGHT = 264;
+const WEEK_CELL_MIN_HEIGHT = 298;
 // Room between the week cell's date and the figures below it (the mockup's 22px).
 const WEEK_STATS_TOP_GAP = '22px';
 const MIX_BAR_HEIGHT = 6;
+const FIGURE_SPARKLINE_HEIGHT = 16;
+const ACTIVITY_SPARKLINE_HEIGHT = 38;
+// 24 bars share one cell's width, so they sit much closer than the KPI strip's seven.
+const HOURLY_BAR_GAP_PX = 1;
 
 const TodayTag = () => (
   <Box
@@ -90,29 +98,46 @@ const FigureRow = ({
   colorIndex,
   value,
   unit,
+  hourlyValues,
 }: {
   colorIndex: number;
   value: ReactNode;
   unit?: string;
+  /** This figure's 24 hourly values; when given, a full-width sparkline sits directly under the value. */
+  hourlyValues?: number[];
 }) => (
-  <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, fontSize: 12 }}>
-    <Box
-      component="i"
-      sx={{
-        width: 6,
-        height: 6,
-        borderRadius: '2px',
-        flexShrink: 0,
-        alignSelf: 'center',
-        bgcolor: colorForIndex(colorIndex),
-      }}
-    />
-    <Box component="span" sx={{ fontWeight: 700, color: 'text.primary', fontVariantNumeric: 'tabular-nums' }}>
-      {value}
+  <Box sx={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, fontSize: 12 }}>
+      <Box
+        component="i"
+        sx={{
+          width: 6,
+          height: 6,
+          borderRadius: '2px',
+          flexShrink: 0,
+          alignSelf: 'center',
+          bgcolor: colorForIndex(colorIndex),
+        }}
+      />
+      <Box component="span" sx={{ fontWeight: 700, color: 'text.primary', fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </Box>
+      {unit ? (
+        <Box component="span" sx={{ color: 'text.disabled', fontSize: 10 }}>
+          {unit}
+        </Box>
+      ) : null}
     </Box>
-    {unit ? (
-      <Box component="span" sx={{ color: 'text.disabled', fontSize: 10 }}>
-        {unit}
+    {hourlyValues ? (
+      // Decorative: the button's aria-label already carries the day's figures.
+      <Box aria-hidden="true">
+        <Sparkline
+          values={hourlyValues}
+          height={FIGURE_SPARKLINE_HEIGHT}
+          color={colorForIndex(colorIndex)}
+          gap={HOURLY_BAR_GAP_PX}
+          zeroBarsAsBaseline
+        />
       </Box>
     ) : null}
   </Box>
@@ -129,7 +154,7 @@ const MetaFigure = ({ children }: { children: ReactNode }) => (
 
 /** Sessions and active time on one line, e.g. "4 sessions · 2h 11m active". */
 const SessionsMeta = ({ day }: { day: UsageCalendarDay }) => (
-  <Box sx={{ mt: '9px', fontSize: 11.5, color: 'text.secondary' }}>
+  <Box sx={{ mt: '15px', fontSize: 11.5, color: 'text.secondary' }}>
     <MetaFigure>{day.sessions}</MetaFigure> {day.sessions === 1 ? 'session' : 'sessions'} &middot;{' '}
     <MetaFigure>{formatActiveTime(day.activeSeconds)}</MetaFigure> active
   </Box>
@@ -148,7 +173,7 @@ const SpendByModelBar = ({ day }: { day: UsageCalendarDay }) => {
     .map((segment) => `${shortModelName(segment.model)} ${Math.round(segment.percent)}%`)
     .join(', ');
   return (
-    <Box sx={{ mt: '10px' }}>
+    <Box sx={{ mt: '15px' }}>
       <Box
         role="img"
         aria-label={`Spend by model: ${description}`}
@@ -173,6 +198,60 @@ const SpendByModelBar = ({ day }: { day: UsageCalendarDay }) => {
     </Box>
   );
 };
+
+/**
+ * A thin bar splitting the day's changed lines into added (green) and removed (red), with the counts
+ * beneath. Drawn only when a line changed; a day without any renders nothing rather than an empty track.
+ * Same rollup figures the day drawer's "All metrics" grid shows, so no extra data.
+ */
+const LinesChangedBar = ({ day }: { day: UsageCalendarDay }) => {
+  const linesChanged = buildLinesChanged(day);
+  if (linesChanged == null) {
+    return null;
+  }
+  const addedLabel = `+${linesChanged.added.toLocaleString('en-US')}`;
+  const removedLabel = `−${linesChanged.removed.toLocaleString('en-US')}`;
+  return (
+    <Box sx={{ mt: '15px' }}>
+      <Box
+        role="img"
+        aria-label={`Lines changed: ${addedLabel} added, ${removedLabel} removed`}
+        sx={{
+          height: MIX_BAR_HEIGHT,
+          borderRadius: '4px',
+          overflow: 'hidden',
+          display: 'flex',
+          bgcolor: 'action.hover',
+        }}
+      >
+        <Box component="span" sx={{ height: '100%', width: `${linesChanged.addedPercent}%`, bgcolor: 'success.main' }} />
+        <Box component="span" sx={{ height: '100%', width: `${linesChanged.removedPercent}%`, bgcolor: 'error.main' }} />
+      </Box>
+      <Box sx={{ typography: 'eyebrowSm', fontSize: 9.5, color: 'text.disabled', mt: '5px' }}>
+        Lines changed &middot; {addedLabel} {removedLabel}
+      </Box>
+    </Box>
+  );
+};
+
+/**
+ * The day's active time by local hour, anchored to the foot of the tall week cell so the stack above
+ * it can grow without pushing it around. Active time is the one per-hour counter that is a direct
+ * measure of "when was I working", which is what a chart headed "Hourly activity" promises.
+ */
+const HourlyActivity = ({ values }: { values: number[] }) => (
+  <Box sx={{ mt: 'auto', pt: '12px' }}>
+    <Box sx={{ typography: 'eyebrowSm', fontSize: 9.5, color: 'text.disabled', mb: '5px' }}>Hourly activity</Box>
+    <Box aria-hidden="true">
+      <Sparkline
+        values={values}
+        height={ACTIVITY_SPARKLINE_HEIGHT}
+        gap={HOURLY_BAR_GAP_PX}
+        zeroBarsAsBaseline
+      />
+    </Box>
+  </Box>
+);
 
 /** Commit and pull-request pills, each only when non-zero; nothing at all when both are. */
 const OutputBadges = ({ day }: { day: UsageCalendarDay }) => {
@@ -255,18 +334,36 @@ const CalendarDayCell = ({
         </Box>
       );
     }
+    // Month cells never carry hourly buckets, so only a week cell can draw the sparklines.
+    const hourlySeries = isMonth ? null : buildHourlySeries(day);
     return (
       <>
-        <Box sx={{ mt: bodyTopSpacing, display: 'flex', flexDirection: 'column', gap: isMonth ? '5px' : '7px' }}>
-          <FigureRow colorIndex={COST_COLOR_INDEX} value={formatCalendarUsd(day.costUsd)} />
-          <FigureRow colorIndex={TOKENS_COLOR_INDEX} value={formatCompact(day.tokens)} unit="tok" />
-          <FigureRow colorIndex={SKILLS_COLOR_INDEX} value={day.skillCalls} unit="skill runs" />
+        <Box sx={{ mt: bodyTopSpacing, display: 'flex', flexDirection: 'column', gap: isMonth ? '5px' : '15px' }}>
+          <FigureRow
+            colorIndex={COST_COLOR_INDEX}
+            value={formatCalendarUsd(day.costUsd)}
+            hourlyValues={hourlySeries?.cost}
+          />
+          <FigureRow
+            colorIndex={TOKENS_COLOR_INDEX}
+            value={formatCompact(day.tokens)}
+            unit="tok"
+            hourlyValues={hourlySeries?.tokens}
+          />
+          <FigureRow
+            colorIndex={SKILLS_COLOR_INDEX}
+            value={day.skillCalls}
+            unit="skill runs"
+            hourlyValues={hourlySeries?.skills}
+          />
         </Box>
         {isMonth ? null : (
           <>
             <SessionsMeta day={day} />
             <SpendByModelBar day={day} />
+            <LinesChangedBar day={day} />
             <OutputBadges day={day} />
+            {hourlySeries ? <HourlyActivity values={hourlySeries.activity} /> : null}
           </>
         )}
       </>
