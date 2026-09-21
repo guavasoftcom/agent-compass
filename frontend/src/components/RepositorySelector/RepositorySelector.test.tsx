@@ -22,7 +22,7 @@ import type { RepositorySummary } from '../../api';
 
 const repositories: RepositorySummary[] = [
   {
-    repositoryUrl: 'https://github.com/guavasoftcom/coding-agent-tuning',
+    repositoryUrl: 'https://github.com/guavasoftcom/agent-compass',
     lastSeen: '2026-09-14T00:00:00Z',
     count: 10_796,
   },
@@ -57,7 +57,7 @@ describe('RepositorySelector', () => {
 
     expect(await screen.findByRole('menuitem', { name: 'Unattributed' })).toBeInTheDocument();
     expect(
-      screen.getByRole('menuitem', { name: 'guavasoftcom/coding-agent-tuning' }),
+      screen.getByRole('menuitem', { name: 'guavasoftcom/agent-compass' }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('menuitem', { name: 'guavasoftcom/spring-batch-dashboard' }),
@@ -71,10 +71,10 @@ describe('RepositorySelector', () => {
     renderWithProviders(<RepositorySelector value={null} onValueChange={onValueChange} />);
 
     await user.click(screen.getByRole('button', { name: /All repositories/i }));
-    await user.click(await screen.findByRole('menuitem', { name: 'guavasoftcom/coding-agent-tuning' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'guavasoftcom/agent-compass' }));
 
     expect(onValueChange).toHaveBeenCalledWith(
-      'https://github.com/guavasoftcom/coding-agent-tuning',
+      'https://github.com/guavasoftcom/agent-compass',
     );
   });
 
@@ -94,13 +94,13 @@ describe('RepositorySelector', () => {
     fetchRepositories.mockResolvedValue(repositories);
     renderWithProviders(
       <RepositorySelector
-        value="https://github.com/guavasoftcom/coding-agent-tuning"
+        value="https://github.com/guavasoftcom/agent-compass"
         onValueChange={vi.fn()}
       />,
     );
 
     expect(
-      await screen.findByRole('button', { name: 'guavasoftcom/coding-agent-tuning' }),
+      await screen.findByRole('button', { name: 'guavasoftcom/agent-compass' }),
     ).toBeInTheDocument();
   });
 });

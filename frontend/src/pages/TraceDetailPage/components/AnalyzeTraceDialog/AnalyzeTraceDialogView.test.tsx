@@ -707,14 +707,14 @@ describe('AnalyzeTraceDialogView', () => {
         name: 'claude_code.tool',
         attributes: {
           tool_name: 'Edit',
-          file_path: '/Users/guadalupegarcia/Projects/coding-agent-tuning/backend/src/main/java/com/aurora/TraceAnalysisService.java',
+          file_path: '/Users/guadalupegarcia/Projects/agent-compass/backend/src/main/java/com/aurora/TraceAnalysisService.java',
         },
       }),
       summaryWorkSpan({
         name: 'claude_code.tool',
         attributes: {
           tool_name: 'Edit',
-          file_path: '/Users/guadalupegarcia/Projects/coding-agent-tuning/frontend/src/api/traceAnalysisApi.ts',
+          file_path: '/Users/guadalupegarcia/Projects/agent-compass/frontend/src/api/traceAnalysisApi.ts',
         },
       }),
     ];
@@ -738,15 +738,15 @@ describe('AnalyzeTraceDialogView', () => {
 
     await user.click(screen.getByRole('button', { name: 'Show Tools, Models, Files, Cost' }));
 
-    // The shared "/Users/guadalupegarcia/Projects/coding-agent-tuning" prefix is gone from both
+    // The shared "/Users/guadalupegarcia/Projects/agent-compass" prefix is gone from both
     // rows' visible text — it's still in the full-path title tooltip, but nowhere a reader reads
     // by default.
     expect(screen.queryByText(/\/Users\/guadalupegarcia/)).not.toBeInTheDocument();
     expect(
-      screen.getByTitle('/Users/guadalupegarcia/Projects/coding-agent-tuning/backend/src/main/java/com/aurora/TraceAnalysisService.java'),
+      screen.getByTitle('/Users/guadalupegarcia/Projects/agent-compass/backend/src/main/java/com/aurora/TraceAnalysisService.java'),
     ).toBeInTheDocument();
     expect(
-      screen.getByTitle('/Users/guadalupegarcia/Projects/coding-agent-tuning/frontend/src/api/traceAnalysisApi.ts'),
+      screen.getByTitle('/Users/guadalupegarcia/Projects/agent-compass/frontend/src/api/traceAnalysisApi.ts'),
     ).toBeInTheDocument();
     // Each filename still renders whole, next to its own (shorter, still-differing) directory.
     expect(screen.getByText('TraceAnalysisService.java')).toBeInTheDocument();

@@ -1451,7 +1451,7 @@ so the edge tracks the cursor 1:1.
   least two shared segments (`sharedSegmentCount > 1`, not `> 0` — a shared leading slash alone
   isn't a meaningful directory to strip, it's just how every absolute path starts). On a real
   trace this prefix is almost always the whole project root
-  (`/Users/.../coding-agent-tuning`), which says nothing about any individual file and, left in,
+  (`/Users/.../agent-compass`), which says nothing about any individual file and, left in,
   pushes the part that actually differs between rows — which project directory, which file — off
   the edge of the row. **What's left after stripping is split at the last remaining slash into a
   directory half and a filename half, styled and truncated completely differently: the

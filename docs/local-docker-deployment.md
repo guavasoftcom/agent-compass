@@ -123,45 +123,54 @@ To go back to Postgres 16 instead (telemetry ingested since the switch is not ca
 
 ### Your development database
 
-`backend/docker-compose.yml` moved to Postgres 18 the same way, with its own new volume (`coding-agent-tuning_postgres-data-18`) — and `./mvnw spring-boot:run` starts that compose file itself, so **the first run after pulling this change would come up on an empty 18 database** while your data sits untouched in `coding-agent-tuning_postgres-data`. Migrate it first. The script above is for the released stack; for development, dump with the old container still running, bring up the new one, and restore into it:
+`backend/docker-compose.yml` moved to Postgres 18 the same way, with its own new volume (`agent-compass-dev_postgres-data-18`) — and `./mvnw spring-boot:run` starts that compose file itself, so **the first run after pulling this change would come up on an empty 18 database** while your data sits untouched in the old volume. Migrate it first. The script above is for the released stack; for development, dump with the old container still running, bring up the new one, and restore into it.
+
+The dev compose project was renamed from `coding-agent-tuning` to `agent-compass-dev` (and its container from `coding-agent-tuning-postgres` to `agent-compass-dev-postgres`). Compose prefixes volume names with the project name, so the rename is itself a volume change: your data is in `coding-agent-tuning_postgres-data` (Postgres 16) or, if you already moved to 18 under the old name, `coding-agent-tuning_postgres-data-18`. The steps below cover both — set `OLD_VERSION` to the major version your old container runs. The project is not called plain `agent-compass` because the released stack already owns that name, and with it the `agent-compass_postgres-data-18` volume.
 
 Stop the dev backend first, so nothing writes between the dump and the switch. Then, from the repository root:
 
 ```sh
-DUMP=pg16-dir-$(date +%Y%m%d-%H%M)
+OLD_VERSION=16   # or 18, if your old container is already on Postgres 18
+DUMP=pg$OLD_VERSION-dir-$(date +%Y%m%d-%H%M)
 
-# 0. Record the row counts now, from Postgres 16 — it is replaced in step 2, so this is the only
+# 0. Record the row counts now, from the old container — it is stopped in step 2, so this is the only
 #    chance to have something to compare the restored copy with.
 COUNTS="SELECT (SELECT count(*) FROM log_records) || ',' || (SELECT count(*) FROM spans) || ',' || (SELECT count(*) FROM metric_points)"
 docker exec coding-agent-tuning-postgres psql -U postgres -d coding_agent_tuning -tAc "$COUNTS"
 
-# 1. Dump, with the Postgres 16 container still running. A one-off client shares its network
-#    and writes a parallel directory dump straight into backend/backups/ (gitignored).
+# 1. Dump, with the old container still running. A one-off client of the SAME major version shares its
+#    network and writes a parallel directory dump straight into backend/backups/ (gitignored).
 #    The directory must not exist yet; pg_dump creates it.
-docker run --rm --network container:coding-agent-tuning-postgres -v "$PWD/backend/backups":/backups postgres:16 \
+docker run --rm --network container:coding-agent-tuning-postgres -v "$PWD/backend/backups":/backups postgres:$OLD_VERSION \
   pg_dump -h 127.0.0.1 -U postgres -d coding_agent_tuning --format=directory --jobs=4 --compress=lz4 --file="/backups/$DUMP"
 
-# 2. Stop 16 cleanly (the long timeout lets it checkpoint), then recreate the container on
-#    Postgres 18 and the new volume. The old volume is kept.
+# 2. Stop the old container cleanly (the long timeout lets it checkpoint), then create the renamed one
+#    on Postgres 18 and its new volume. Both publish port 5432, so the old one must be stopped first.
+#    The old container and volume are kept.
 docker stop -t 300 coding-agent-tuning-postgres
 docker compose -f backend/docker-compose.yml up -d postgres
 
 # 3. Wait until the final server answers over TCP (the image's init phase listens on the socket only),
 #    restore from a one-off Postgres 18 client, then rebuild planner statistics.
-until docker run --rm --network container:coding-agent-tuning-postgres postgres:18 \
+until docker run --rm --network container:agent-compass-dev-postgres postgres:18 \
   pg_isready -h 127.0.0.1 -U postgres -d coding_agent_tuning >/dev/null 2>&1; do sleep 2; done
-docker run --rm --network container:coding-agent-tuning-postgres \
+docker run --rm --network container:agent-compass-dev-postgres \
   -v "$PWD/backend/backups":/backups:ro -e PGOPTIONS='-c maintenance_work_mem=512MB' \
   postgres:18 pg_restore -h 127.0.0.1 -U postgres -d coding_agent_tuning --no-owner --jobs=4 "/backups/$DUMP"
-docker exec coding-agent-tuning-postgres psql -U postgres -d coding_agent_tuning -c 'ANALYZE'
+docker exec agent-compass-dev-postgres psql -U postgres -d coding_agent_tuning -c 'ANALYZE'
 
 # 4. Compare with step 0 — the two lines must be identical.
-docker exec coding-agent-tuning-postgres psql -U postgres -d coding_agent_tuning -tAc "$COUNTS"
+docker exec agent-compass-dev-postgres psql -U postgres -d coding_agent_tuning -tAc "$COUNTS"
 ```
 
-On a 24 GB development database this took about 50 seconds to dump and under four minutes to restore; dumping a single file through `docker exec` is far slower, because one process compresses everything. `pg_dump` writes `toc.dat` last, so a directory without it did not finish. A single-file custom-format dump you already have restores the same way — point `pg_restore` at the file instead of the directory.
+On a 24 GB development database this took about 40-50 seconds to dump and a few minutes to restore; dumping a single file through `docker exec` is far slower, because one process compresses everything. `pg_dump` writes `toc.dat` last, so a directory without it did not finish. A single-file custom-format dump you already have restores the same way — point `pg_restore` at the file instead of the directory.
 
-Remove `coding-agent-tuning_postgres-data` only once the counts match and the dashboard shows your data.
+Roll back by stopping `agent-compass-dev-postgres`, restoring the previous `backend/docker-compose.yml`, and starting `coding-agent-tuning-postgres` again (`docker start`) — the old volume is untouched. Once the counts match and the dashboard shows your data, remove the old container and volume (a stopped container still holds its volume, and `docker volume rm` refuses):
+
+```sh
+docker rm coding-agent-tuning-postgres
+docker volume rm coding-agent-tuning_postgres-data coding-agent-tuning_postgres-data-18   # whichever exist
+```
 
 ## Point Claude Code at it
 
@@ -297,7 +306,7 @@ Postgres is intentionally **not** published to the host — the app reaches it o
 
 ## Data, and how it relates to the dev stack
 
-This stack is isolated from development on purpose. Its compose project is `agent-compass`, so its data lives in the `agent-compass_postgres-data-18` volume, while `backend/docker-compose.yml` — the stack `./mvnw spring-boot:run` brings up — owns `coding-agent-tuning_postgres-data-18`. Neither can drop the other's data, but it also means **the dashboard here starts empty even if your dev database is full**.
+This stack is isolated from development on purpose. Its compose project is `agent-compass`, so its data lives in the `agent-compass_postgres-data-18` volume, while `backend/docker-compose.yml` — the stack `./mvnw spring-boot:run` brings up — (project `agent-compass-dev`) owns `agent-compass-dev_postgres-data-18`. Neither can drop the other's data, but it also means **the dashboard here starts empty even if your dev database is full**.
 
 To read the dev data from this stack instead, stop the dev stack first (one Postgres per volume) and declare its volume as external. The dev database has to be on Postgres 18 already (see _Your development database_ above), since one volume cannot be opened by two major versions:
 
@@ -305,7 +314,7 @@ To read the dev data from this stack instead, stop the dev stack first (one Post
 volumes:
   postgres-data-18:
     external: true
-    name: coding-agent-tuning_postgres-data-18
+    name: agent-compass-dev_postgres-data-18
 ```
 
 `docker compose down -v` deletes the volume of whichever stack you run it in — with the snippet above in place, that would be your development database.

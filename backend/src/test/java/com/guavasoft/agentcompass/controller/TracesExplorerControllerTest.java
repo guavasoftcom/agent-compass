@@ -61,7 +61,7 @@ class TracesExplorerControllerTest {
     private static final String TRACE_ID = "aabbccddeeff00112233445566778899";
     private static final String SECOND_TRACE_ID = "99887766554433221100ffeeddccbbaa";
     private static final String FIRST_USER_PROMPT = "Add a firstUserPrompt field to the Traces API";
-    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/agent-compass";
 
     @Autowired
     MockMvc mockMvc;

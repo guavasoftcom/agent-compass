@@ -1,9 +1,12 @@
-name: coding-agent-tuning
+# Not `agent-compass`: the root docker-compose.yml (the released stack) owns that project
+# name, and with it the agent-compass_postgres-data-18 volume. Compose prefixes volume
+# names with the project name, so sharing it would make the two stacks share a database.
+name: agent-compass-dev
 
 services:
   postgres:
     image: postgres:18
-    container_name: coding-agent-tuning-postgres
+    container_name: agent-compass-dev-postgres
     # Stock Postgres defaults (shared_buffers=128MB, work_mem=4MB) are sized for
     # tiny shared hosts. The dashboard's histogram/facet/autocomplete queries
     # rescan the recent log_records window + GIN indexes and sort/aggregate

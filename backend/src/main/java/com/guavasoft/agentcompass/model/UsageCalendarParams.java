@@ -45,7 +45,7 @@ public record UsageCalendarParams(
                 + "Defaults to UTC.", example = "America/Chicago") String timeZone,
         @Parameter(description = "Repository URL to scope the result to. Omitted or null means show every "
                 + "repository, including telemetry with no repository attribution.",
-                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl,
+                example = "https://github.com/guavasoftcom/agent-compass") String repositoryUrl,
         @Pattern(regexp = "(?i)daily|hourly", message = "granularity must be daily or hourly")
         @Parameter(description = "daily (the default) returns one row per day; hourly also fills each day's "
                 + "24-bucket hourly array. Ask for hourly only over the range that needs it: the extra "

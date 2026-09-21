@@ -54,7 +54,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(ToolActivityController.class)
 class ToolActivityControllerTest {
 
-    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/agent-compass";
 
     @Autowired
     MockMvc mockMvc;

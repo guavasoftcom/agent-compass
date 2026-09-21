@@ -172,7 +172,7 @@ class SkillSubagentUsageQueryIntegrationTest {
     // the log-side filter (see aggregateSubagentCostByModelInRange's own comment).
     private static final int OFFSET_REPOSITORY_SCOPED_DISPATCH = 720;
     private static final double COST_REPOSITORY_SCOPED_SUBAGENT_CALL = 2.50;
-    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/agent-compass";
     private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     @BeforeEach
