@@ -86,6 +86,83 @@ AGENT_COMPASS_IMAGE=ghcr.io/guavasoftcom/agent-compass:v1.1.0 docker compose up 
 
 Superseded images accumulate on disk; `docker image prune` clears the untagged leftovers when you care.
 
+## Upgrade Postgres 16 to 18
+
+Releases up to the move to Postgres 18 ran Postgres 16. A major version cannot open the previous one's data directory, and the 18 image also moved where it keeps data (a versioned directory under `/var/lib/postgresql`, so the volume mounts there rather than at `/var/lib/postgresql/data`). The compose file therefore declares a **new** volume, `postgres-data-18`, and an existing install has to move its data across once. A fresh install needs none of this.
+
+```sh
+./upgrade-postgres-16-to-18.sh
+```
+
+Or, without a checkout:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/upgrade-postgres-16-to-18.sh | bash
+```
+
+It uses the same `~/.agent-compass` directory as install.sh (override with `--dir` or `$AGENT_COMPASS_HOME`), and `--help` lists the rest. What it does, in order:
+
+1. Fetches the Postgres 18 compose file and checks it *before* touching anything, so a bad download or a compose file that still says 16 changes nothing.
+2. Stops the stack, then starts a temporary Postgres 16 on the old volume — reachable only over its unix socket — and records exact row counts for the migrations table, `log_records`, `spans` and `metric_points`.
+3. Dumps the database with `pg_dump --format=directory --jobs=4 --compress=lz4`. A directory dump runs in parallel, and lz4 is what keeps a multi-gigabyte dump from crawling; a dump that did not finish has no `toc.dat`, and the script reads that back before going further.
+4. Switches to the new compose file (the old one is kept as `docker-compose.yml.pre-postgres-18`), starts Postgres 18 on the new volume, restores in parallel, and runs `ANALYZE` — a dump carries no planner statistics, and this schema's query plans depend on them.
+5. Compares the restored row counts with the recorded ones, and only then starts the app.
+
+**Nothing you had is removed.** The Postgres 16 volume (`agent-compass_postgres-data`), the dump (`pg16-dump-<timestamp>/`, next to the compose file) and the previous compose file all stay until you delete them. Budget disk for the dump (typically a third to a half of the data size, on the host) plus a second copy of the data inside Docker's own disk; the script prints both figures before it asks to proceed. It asks on the terminal even under `curl … | bash`; with no terminal at all (cron, CI) it stops before changing anything unless you pass `--yes`. The stack is down for the whole run, and the restore is the long part — index rebuilds dominate.
+
+Run it **before** re-running `install.sh`. install.sh re-downloads the compose file, and the new one points at an empty Postgres 18 volume, so a re-run first would bring the dashboard up empty. Your data is not lost — it is still in the old volume — but the script then refuses to overwrite the new volume. The app has been writing to that volume since the re-run, so anything Claude Code sent in the meantime is only there; if you do not want it, run `docker compose down` in the install directory (a merely stopped container still holds the volume, and `docker volume rm` refuses), then `docker volume rm agent-compass_postgres-data-18`, and run the script again. install.sh also replaced your Postgres 16 compose file, so that run keeps no copy of it for rolling back; the old volume and the dump are still kept. `update.sh` is unaffected: it only recreates `app`.
+
+Once you have looked over the dashboard, reclaim the space:
+
+```sh
+docker volume rm agent-compass_postgres-data
+rm -rf ~/.agent-compass/pg16-dump-*
+```
+
+To go back to Postgres 16 instead (telemetry ingested since the switch is not carried back), the script prints the exact commands; they amount to `docker compose down`, copying `docker-compose.yml.pre-postgres-18` back over `docker-compose.yml`, and `docker compose up -d`.
+
+### Your development database
+
+`backend/docker-compose.yml` moved to Postgres 18 the same way, with its own new volume (`coding-agent-tuning_postgres-data-18`) — and `./mvnw spring-boot:run` starts that compose file itself, so **the first run after pulling this change would come up on an empty 18 database** while your data sits untouched in `coding-agent-tuning_postgres-data`. Migrate it first. The script above is for the released stack; for development, dump with the old container still running, bring up the new one, and restore into it:
+
+Stop the dev backend first, so nothing writes between the dump and the switch. Then, from the repository root:
+
+```sh
+DUMP=pg16-dir-$(date +%Y%m%d-%H%M)
+
+# 0. Record the row counts now, from Postgres 16 — it is replaced in step 2, so this is the only
+#    chance to have something to compare the restored copy with.
+COUNTS="SELECT (SELECT count(*) FROM log_records) || ',' || (SELECT count(*) FROM spans) || ',' || (SELECT count(*) FROM metric_points)"
+docker exec coding-agent-tuning-postgres psql -U postgres -d coding_agent_tuning -tAc "$COUNTS"
+
+# 1. Dump, with the Postgres 16 container still running. A one-off client shares its network
+#    and writes a parallel directory dump straight into backend/backups/ (gitignored).
+#    The directory must not exist yet; pg_dump creates it.
+docker run --rm --network container:coding-agent-tuning-postgres -v "$PWD/backend/backups":/backups postgres:16 \
+  pg_dump -h 127.0.0.1 -U postgres -d coding_agent_tuning --format=directory --jobs=4 --compress=lz4 --file="/backups/$DUMP"
+
+# 2. Stop 16 cleanly (the long timeout lets it checkpoint), then recreate the container on
+#    Postgres 18 and the new volume. The old volume is kept.
+docker stop -t 300 coding-agent-tuning-postgres
+docker compose -f backend/docker-compose.yml up -d postgres
+
+# 3. Wait until the final server answers over TCP (the image's init phase listens on the socket only),
+#    restore from a one-off Postgres 18 client, then rebuild planner statistics.
+until docker run --rm --network container:coding-agent-tuning-postgres postgres:18 \
+  pg_isready -h 127.0.0.1 -U postgres -d coding_agent_tuning >/dev/null 2>&1; do sleep 2; done
+docker run --rm --network container:coding-agent-tuning-postgres \
+  -v "$PWD/backend/backups":/backups:ro -e PGOPTIONS='-c maintenance_work_mem=512MB' \
+  postgres:18 pg_restore -h 127.0.0.1 -U postgres -d coding_agent_tuning --no-owner --jobs=4 "/backups/$DUMP"
+docker exec coding-agent-tuning-postgres psql -U postgres -d coding_agent_tuning -c 'ANALYZE'
+
+# 4. Compare with step 0 — the two lines must be identical.
+docker exec coding-agent-tuning-postgres psql -U postgres -d coding_agent_tuning -tAc "$COUNTS"
+```
+
+On a 24 GB development database this took about 50 seconds to dump and under four minutes to restore; dumping a single file through `docker exec` is far slower, because one process compresses everything. `pg_dump` writes `toc.dat` last, so a directory without it did not finish. A single-file custom-format dump you already have restores the same way — point `pg_restore` at the file instead of the directory.
+
+Remove `coding-agent-tuning_postgres-data` only once the counts match and the dashboard shows your data.
+
 ## Point Claude Code at it
 
 Claude Code emits telemetry only when you turn it on, and each signal — metrics, logs (events), traces — has its own exporter switch. The dashboard uses all three: metrics drive Tokens/Insights, logs drive Tool Activity and the log explorer, traces drive the Traces pages. Turning on only metrics leaves most of the UI empty.
@@ -220,15 +297,15 @@ Postgres is intentionally **not** published to the host — the app reaches it o
 
 ## Data, and how it relates to the dev stack
 
-This stack is isolated from development on purpose. Its compose project is `agent-compass`, so its data lives in the `agent-compass_postgres-data` volume, while `backend/docker-compose.yml` — the stack `./mvnw spring-boot:run` brings up — owns `coding-agent-tuning_postgres-data`. Neither can drop the other's data, but it also means **the dashboard here starts empty even if your dev database is full**.
+This stack is isolated from development on purpose. Its compose project is `agent-compass`, so its data lives in the `agent-compass_postgres-data-18` volume, while `backend/docker-compose.yml` — the stack `./mvnw spring-boot:run` brings up — owns `coding-agent-tuning_postgres-data-18`. Neither can drop the other's data, but it also means **the dashboard here starts empty even if your dev database is full**.
 
-To read the dev data from this stack instead, stop the dev stack first (one Postgres per volume) and declare its volume as external:
+To read the dev data from this stack instead, stop the dev stack first (one Postgres per volume) and declare its volume as external. The dev database has to be on Postgres 18 already (see _Your development database_ above), since one volume cannot be opened by two major versions:
 
 ```yaml
 volumes:
-  postgres-data:
+  postgres-data-18:
     external: true
-    name: coding-agent-tuning_postgres-data
+    name: coding-agent-tuning_postgres-data-18
 ```
 
 `docker compose down -v` deletes the volume of whichever stack you run it in — with the snippet above in place, that would be your development database.
@@ -255,7 +332,7 @@ The image is published by [.github/workflows/release.yml](../.github/workflows/r
 
 **App container restarts with `Driver claims to not accept jdbcUrl`** — `SPRING_DATASOURCE_URL` reached the container empty. Check that whatever sets it (your shell, a `.env`) isn't exporting a blank value; an empty variable overrides the compose default rather than falling back to it.
 
-**Dashboard loads but every panel is empty** — the app is running against its own fresh database. Either send it telemetry (see above), or attach the dev volume as described in _Data, and how it relates to the dev stack_.
+**Dashboard loads but every panel is empty** — the app is running against its own fresh database. Either send it telemetry (see above), or attach the dev volume as described in _Data, and how it relates to the dev stack_. If the stack ran fine before and went empty right after re-running `install.sh`, you skipped the Postgres 16 → 18 move: your data is still in `agent-compass_postgres-data`, and _Upgrade Postgres 16 to 18_ above says how to bring it across.
 
 **Telemetry enabled but nothing arrives** — work through these in order:
 

@@ -74,7 +74,7 @@ class SystemQueryIntegrationTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(PostgresTestImage.NAME);
 
     @Autowired
     LogRecordRepository logRecordRepository;
@@ -157,7 +157,7 @@ class SystemQueryIntegrationTest {
     void buildReportsPostgresVersionAndTheFullMigrationHistory() {
         SystemBuild build = systemService.systemBuild();
 
-        assertThat(build.postgresVersion()).startsWith("16");
+        assertThat(build.postgresVersion()).startsWith(PostgresTestImage.MAJOR_VERSION);
         assertThat(build.javaVersion()).isNotBlank();
         assertThat(build.applicationVersion()).isNotBlank();
         assertThat(build.migrations()).isNotEmpty();

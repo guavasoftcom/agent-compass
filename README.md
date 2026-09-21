@@ -142,6 +142,16 @@ Same idea without a checkout:
 curl -fsSL https://raw.githubusercontent.com/guavasoftcom/agent-compass/main/update.sh | bash
 ```
 
+### Upgrading an existing install from Postgres 16 to 18
+
+The stack now runs Postgres 18. A new install needs nothing, but an install made before that still holds a Postgres 16 volume, which 18 cannot open. Run [upgrade-postgres-16-to-18.sh](upgrade-postgres-16-to-18.sh) once — **before** re-running `install.sh`, which would otherwise start an empty 18 database beside your data:
+
+```sh
+./upgrade-postgres-16-to-18.sh
+```
+
+It dumps the database, restores it into a new volume, and leaves the old volume, the dump and your previous compose file in place so you can roll back. Details, disk needs and the rollback steps are in [docs/local-docker-deployment.md](docs/local-docker-deployment.md#upgrade-postgres-16-to-18).
+
 Everything below is for running from source.
 
 ## Prerequisites
