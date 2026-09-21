@@ -38,6 +38,7 @@ import PurgeDryRunCard from './components/PurgeDryRunCard';
 import OllamaConfigurationCard from './components/OllamaConfigurationCard';
 import OllamaStatusCard from './components/OllamaStatusCard';
 import UnsavedOllamaChangesDialog from './components/UnsavedOllamaChangesDialog';
+import UpdateCheckCard from './components/UpdateCheckCard';
 import { daysUntilSize, retentionSpanDays } from './settingsDerivations';
 import type {
   EffectiveConfiguration,
@@ -49,6 +50,7 @@ import type {
   PurgeResult,
   StorageOverview,
   SystemBuild,
+  UpdateCheckStatus,
 } from './settingsTypes';
 
 type SettingsTab =
@@ -168,6 +170,13 @@ export interface SettingsPageViewProps {
   isUnsavedOllamaChangesDialogOpen: boolean;
   onCancelOllamaTabSwitch: () => void;
   onDiscardOllamaTabSwitch: () => void;
+  updateCheck: UpdateCheckStatus | null;
+  isUpdateCheckLoading: boolean;
+  isCheckingForUpdate: boolean;
+  isSavingUpdateCheckEnabled: boolean;
+  onUpdateCheckEnabledChange: (enabled: boolean) => void;
+  onCheckForUpdate: () => void;
+  updateCheckError: Error | null;
 }
 
 const SettingsPageView = ({
@@ -216,6 +225,13 @@ const SettingsPageView = ({
   isUnsavedOllamaChangesDialogOpen,
   onCancelOllamaTabSwitch,
   onDiscardOllamaTabSwitch,
+  updateCheck,
+  isUpdateCheckLoading,
+  isCheckingForUpdate,
+  isSavingUpdateCheckEnabled,
+  onUpdateCheckEnabledChange,
+  onCheckForUpdate,
+  updateCheckError,
 }: SettingsPageViewProps) => {
   const theme: Theme = useTheme();
   const TABS = [
@@ -442,10 +458,21 @@ const SettingsPageView = ({
 
         {/* Schema & build tab */}
         {activeTab === 'schema-build' && (
-          <SchemaBuildCard
-            systemBuild={systemBuild}
-            isBuildLoading={isBuildLoading}
-          />
+          <Stack spacing={2}>
+            <UpdateCheckCard
+              updateCheck={updateCheck}
+              isUpdateCheckLoading={isUpdateCheckLoading}
+              isCheckingForUpdate={isCheckingForUpdate}
+              isSavingEnabled={isSavingUpdateCheckEnabled}
+              onEnabledChange={onUpdateCheckEnabledChange}
+              onCheckNow={onCheckForUpdate}
+              error={updateCheckError}
+            />
+            <SchemaBuildCard
+              systemBuild={systemBuild}
+              isBuildLoading={isBuildLoading}
+            />
+          </Stack>
         )}
 
         {/* Effective configuration tab */}

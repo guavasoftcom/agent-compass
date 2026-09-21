@@ -47,8 +47,11 @@ import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.StorageOverview;
 import com.guavasoft.agentcompass.model.SystemBuild;
+import com.guavasoft.agentcompass.model.UpdateCheckSettingsRequest;
+import com.guavasoft.agentcompass.model.UpdateCheckStatus;
 import com.guavasoft.agentcompass.service.OllamaSettingsService;
 import com.guavasoft.agentcompass.service.SystemService;
+import com.guavasoft.agentcompass.service.UpdateCheckService;
 
 import java.util.List;
 
@@ -85,6 +88,7 @@ public class SystemController {
 
   private final SystemService systemService;
   private final OllamaSettingsService ollamaSettingsService;
+  private final UpdateCheckService updateCheckService;
 
   @GetMapping("/storage")
   @Operation(
@@ -125,6 +129,39 @@ public class SystemController {
           content = @Content(schema = @Schema(implementation = SystemBuild.class))))
   public SystemBuild build() {
     return systemService.systemBuild();
+  }
+
+  @GetMapping("/update-check")
+  @Operation(
+          summary = "Whether a newer release than the running one has been published",
+          description = "Compares the running version with the latest GitHub release of this "
+                  + "project. The only call this application makes to a third party, and it can be "
+                  + "switched off (PUT /api/system/update-check): with the switch off nothing is "
+                  + "sent and every field but enabled and currentVersion is empty. The answer is "
+                  + "cached for hours, so this is cheap to poll; refresh=true bypasses the cache and "
+                  + "is for an explicit 'Check now'. Always returns 200 — an offline machine, a "
+                  + "rate-limited network or a development build is reported in 'message', not as "
+                  + "an error.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "Update-check status",
+          content = @Content(schema = @Schema(implementation = UpdateCheckStatus.class))))
+  public UpdateCheckStatus updateCheck(
+          @Parameter(description = "Skip the cache and ask GitHub now", example = "false")
+          @RequestParam(defaultValue = "false") boolean refresh) {
+    return updateCheckService.status(refresh);
+  }
+
+  @PutMapping("/update-check")
+  @Operation(
+          summary = "Turn the update check on or off",
+          description = "Upserts the singleton update_check_settings row. A null enabled clears the "
+                  + "override back to the update-check.enabled application.yml default. Enforced "
+                  + "server-side: with the check off, GET /api/system/update-check makes no "
+                  + "outbound request at all. Returns the resulting status, so turning the check on "
+                  + "answers in the same round trip.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "The status after the change",
+          content = @Content(schema = @Schema(implementation = UpdateCheckStatus.class))))
+  public UpdateCheckStatus setUpdateCheckEnabled(@RequestBody UpdateCheckSettingsRequest request) {
+    return updateCheckService.updateSettings(request.enabled());
   }
 
   @GetMapping("/configuration")

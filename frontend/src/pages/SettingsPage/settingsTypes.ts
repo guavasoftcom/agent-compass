@@ -205,3 +205,24 @@ export interface OllamaModelListResult {
   message: string;
   models: OllamaModel[];
 }
+
+/**
+ * Mirrors `GET /api/system/update-check`. `enabled` is the effective switch
+ * (stored Settings-page override, else the `update-check.enabled` default);
+ * with it off the server sends nothing anywhere and every field but `enabled`
+ * and `currentVersion` is empty. `currentVersion` has any `-SNAPSHOT` suffix
+ * already removed, or is `dev` for an unpackaged build. A check that could not
+ * complete (offline, rate-limited, a dev build) is a normal 200 carrying a
+ * `message`, not an HTTP error. `checkedAt` is when GitHub was last asked — the
+ * answer is cached server-side for hours, so it is usually not "now".
+ */
+export interface UpdateCheckStatus {
+  enabled: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string | null;
+  publishedAt: string | null;
+  checkedAt: string | null;
+  message: string | null;
+}

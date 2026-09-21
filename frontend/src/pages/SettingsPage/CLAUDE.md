@@ -26,7 +26,7 @@ measured query plans and timings that shaped the SQL — read it before changing
 ## Files
 
 ```
-SettingsPage.tsx                                   container: 6 useQuery, 3 useMutation, retentionDays +
+SettingsPage.tsx                                   container: 8 useQuery, 5 useMutation, retentionDays +
                                                     Ollama form state (incl. enabled + dirty tracking),
                                                     tab-switch guard, refetch-all
 SettingsPageView.tsx                               view: PageLayout + KPI strip + 5 tabs (6th is Ollama,
@@ -42,6 +42,9 @@ settingsDerivations.test.ts                        24 cases over those helpers
 components/StorageBreakdownCard/                   ranked share list + exact heap/index/TOAST table
 components/IngestHealthCard/                       per-signal freshness chip + volume windows
 components/SchemaBuildCard/                        version strip + scrollable flyway_schema_history table
+components/UpdateCheckCard/                        "is a newer release out?" verdict + Enabled/Disabled switch +
+                                                    Check now, stacked above SchemaBuildCard on the same tab —
+                                                    see the Update check section below
 components/EffectiveConfigurationCard/             searchable tuning.* list with the SQL-mirroring chip
 components/PurgeDryRunCard/                        retention estimate, caveats, copyable SQL, purge button
 components/PurgeConfirmDialog/                     type-to-confirm dialog gating the purge
@@ -86,6 +89,9 @@ index.ts
 | KPI strip, `StorageBreakdownCard`, donut | `['system-storage']` | `fetchStorageOverview` → `GET /api/system/storage` |
 | `IngestHealthCard` | `['system-ingest']` | `fetchIngestHealth` → `GET /api/system/ingest` |
 | `SchemaBuildCard` | `['system-build']` | `fetchSystemBuild` → `GET /api/system/build` |
+| `UpdateCheckCard` | `['system-update-check']` | `fetchUpdateCheck` → `GET /api/system/update-check` |
+| `UpdateCheckCard` switch (`useMutation`) | no key; `onSuccess` writes the result into `['system-update-check']` | `saveUpdateCheckEnabled` → `PUT /api/system/update-check` |
+| `UpdateCheckCard` "Check now" (`useMutation`) | no key; `onSuccess` writes the result into `['system-update-check']` | `fetchUpdateCheck(true)` → `GET /api/system/update-check?refresh=true` |
 | `EffectiveConfigurationCard` | `['system-configuration']` | `fetchEffectiveConfiguration` → `GET /api/system/configuration` |
 | `PurgeDryRunCard` | `['system-purge-preview', retentionDays]` | `fetchPurgePreview` → `GET /api/system/purge-preview?days=` |
 | `PurgeConfirmDialog` | `useMutation` (no key) | `purgeTelemetry` → `DELETE /api/system/telemetry?days=&confirmation=` |
@@ -260,6 +266,44 @@ being changed.
   Mutually exclusive with `saveError` by construction (a `useMutation` is never simultaneously
   `isSuccess` and holding an `error`), but the card still guards `isSaved && !saveError` defensively
   rather than relying on that invariant silently.
+
+## Update check
+
+`UpdateCheckCard` sits above `SchemaBuildCard` on the Schema & Build tab (the running version is
+already there) and answers "has a newer release been published than the one running?". It is the only
+thing on this page — and the only thing in the application — that causes a request to a third party
+(GitHub's latest-release endpoint, made by the **backend**, never the browser), which is why the card
+says so in its own text and carries the switch.
+
+- **The switch is a real, persisted setting enforced server-side, exactly like the Ollama toggle.**
+  `update_check_settings` (`V36`) holds a singleton row; `UpdateCheckService` re-checks the effective
+  value before any network call, so with the switch off `GET /api/system/update-check` returns without
+  sending anything however it is called. The card's own dimming (Check now disabled, "Nothing is sent to
+  GitHub") is a convenience, not the guarantee. Default is on (`update-check.enabled`), off for a
+  deployment that sets it `false`.
+- **It saves the moment it is flipped — no Save button, no dirty tracking, no tab-switch guard.** One
+  boolean has none of the Ollama form's reasons for a Save step. `saveUpdateCheckEnabled` always sends an
+  explicit `true`/`false`; the backend's null-clears-override form exists but nothing here uses it. The
+  `PUT` returns the resulting status, so turning the check on answers in the same round trip and both
+  mutations write that result straight into `['system-update-check']` with `setQueryData` instead of
+  refetching. The switch and Check now are held disabled while a save is in flight.
+- **A page load never bypasses the server's cache; only "Check now" does.** The plain query is cheap to
+  repeat (the server reuses a success for 6 hours and a failure for 15 minutes), which is why it rides the
+  page's Refresh button like the other queries. `Check now` is a `useMutation` calling
+  `fetchUpdateCheck(true)`, not a `refetch()` of the query, because a refetch would re-run the query's
+  own `refresh=false` function. Starting one clears the other mutation's error and vice versa, so a stale
+  message never sits under a newer action.
+- **A check that could not complete is a normal result, not an error.** The endpoint always answers 200;
+  offline, rate-limited, private repository and "this is a development build" all arrive as
+  `message` with `latestVersion: null`, and the card shows that text in place of a verdict — never
+  "up to date", which would be a claim nobody verified. A real HTTP failure (the backend down) is the
+  only thing that reaches the page-level `error` slot, via `updateCheckQuery.error`.
+- **Versions display as `v2.8.0`, `dev` stays `dev`.** The server already strips `-SNAPSHOT` from
+  `currentVersion` (a released image of `vX.Y.Z` reports `X.Y.Z-SNAPSHOT`), and the card adds the `v`
+  itself; an unpackaged build's `dev` is left unprefixed rather than read as "vdev".
+- **The release link is only rendered when it is `https://`.** The URL is text the server relayed from a
+  third party (`html_url` in GitHub's response), so anything else renders the verdict with no link rather
+  than a clickable surprise. It opens in a new tab with `rel="noopener noreferrer"`.
 
 ## Documented deviations from the page conventions
 
