@@ -78,7 +78,7 @@ class CostBreakdownQueryIntegrationTest {
     private static final String EVENT_API_REQUEST = "api_request";
 
     private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
-    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/agent-compass";
     private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     private static final String MODEL_OPUS = "claude-opus-4-8";

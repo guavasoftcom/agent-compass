@@ -31,7 +31,7 @@ public record TimeWindowParams(
         @Parameter(description = "Repository URL to scope the result to (see repository_url on spans / "
                 + "log_records / metric_points). Omitted or null means show every repository, "
                 + "including telemetry with no repository attribution.",
-                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl)
+                example = "https://github.com/guavasoftcom/agent-compass") String repositoryUrl)
         implements DateRangeBounds {
 
     /**

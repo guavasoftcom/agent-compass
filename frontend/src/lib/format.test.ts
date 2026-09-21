@@ -50,14 +50,14 @@ describe('shortModelName', () => {
 
 describe('shortRepositoryLabel', () => {
   it('shortens an https URL to owner/repo, dropping the .git suffix', () => {
-    expect(shortRepositoryLabel('https://github.com/guavasoftcom/coding-agent-tuning.git')).toBe(
-      'guavasoftcom/coding-agent-tuning',
+    expect(shortRepositoryLabel('https://github.com/guavasoftcom/agent-compass.git')).toBe(
+      'guavasoftcom/agent-compass',
     );
   });
 
   it('shortens an ssh remote the same way', () => {
-    expect(shortRepositoryLabel('git@github.com:guavasoftcom/coding-agent-tuning.git')).toBe(
-      'guavasoftcom/coding-agent-tuning',
+    expect(shortRepositoryLabel('git@github.com:guavasoftcom/agent-compass.git')).toBe(
+      'guavasoftcom/agent-compass',
     );
   });
 

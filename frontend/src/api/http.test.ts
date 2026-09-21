@@ -44,10 +44,10 @@ describe('windowQueryParams', () => {
     const selection: WindowSelection = {
       kind: 'preset',
       minutes: 1440,
-      repositoryUrl: 'https://github.com/guavasoftcom/coding-agent-tuning',
+      repositoryUrl: 'https://github.com/guavasoftcom/agent-compass',
     };
     expect(windowQueryParams(selection).get('repositoryUrl')).toBe(
-      'https://github.com/guavasoftcom/coding-agent-tuning',
+      'https://github.com/guavasoftcom/agent-compass',
     );
   });
 

@@ -66,7 +66,7 @@ class ToolRepeatsQueryIntegrationTest {
     private static final String EVENT_TOOL_RESULT = "tool_result";
     private static final String TOOL_EDIT = "Edit";
 
-    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/agent-compass";
     private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     private Instant windowStart;

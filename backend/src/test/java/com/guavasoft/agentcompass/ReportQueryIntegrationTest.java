@@ -68,7 +68,7 @@ class ReportQueryIntegrationTest {
     private static final String ATTR_TOOL_PARAMETERS = "tool_parameters";
     private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
 
-    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_A = "https://github.com/guavasoftcom/agent-compass";
     private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
     private static final String EVENT_TOOL_RESULT = "tool_result";

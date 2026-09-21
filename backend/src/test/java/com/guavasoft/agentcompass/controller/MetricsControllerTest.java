@@ -140,7 +140,7 @@ class MetricsControllerTest {
     void metricAttributesDispatchesByMetricNameAndReturnsTheWrappedKeysWithValueCounts() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
         when(metricSeriesService.metricAttributes(from, to, repositoryUrl, "claude_code.token.usage"))
                 .thenReturn(new MetricAttributes(List.of(
                         new MetricFacet("model", List.of(
@@ -268,7 +268,7 @@ class MetricsControllerTest {
     void metricDistributionDispatchesByFullMetricNameAndReturnsThePointList() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
         when(metricService.aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage"))
                 .thenReturn(new MetricDistribution(List.of(
                         new DistributionPoint(Instant.parse("2026-05-11T08:12:40Z"), 13_180.0, null, null),
@@ -397,7 +397,7 @@ class MetricsControllerTest {
     void metricSeriesForwardsRepeatedFiltersAndRepositoryToTheService() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
         MetricSeriesFilter filter = MetricSeriesFilter.of(
                 "token", List.of("model:claude-opus-4", "terminal.type:vscode"));
         when(metricSeriesService.metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE))
@@ -542,7 +542,7 @@ class MetricsControllerTest {
     void metricSeriesForwardsTheAggregationTogetherWithFilterAndRepository() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        String repositoryUrl = "https://github.com/guavasoftcom/coding-agent-tuning";
+        String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
         MetricSeriesFilter filter = MetricSeriesFilter.of("token", List.of("model:claude-sonnet-4"));
         MetricSeriesAggregation aggregation = new MetricSeriesAggregation("token", MetricAggregation.AVG);
         when(metricSeriesService.metricSeries(from, to, repositoryUrl, filter, aggregation))

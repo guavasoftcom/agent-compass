@@ -24,7 +24,7 @@ import java.time.Instant;
         + "and 'Unattributed' entries around this list rather than this endpoint emitting them.")
 public record RepositoryUsage(
         @Schema(description = "The vcs.repository.url.full value stamped by Claude Code",
-                example = "https://github.com/guavasoftcom/coding-agent-tuning") String repositoryUrl,
+                example = "https://github.com/guavasoftcom/agent-compass") String repositoryUrl,
 
         @Schema(description = "Newest timestamp across all three tables for this repository",
                 example = "2026-09-14T11:47:29Z") Instant lastSeen,

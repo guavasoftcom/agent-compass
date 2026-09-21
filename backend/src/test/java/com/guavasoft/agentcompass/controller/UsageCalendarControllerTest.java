@@ -51,7 +51,7 @@ class UsageCalendarControllerTest {
     private static final String FROM = "2026-09-01T05:00:00Z";
     private static final String TO = "2026-10-01T05:00:00Z";
     private static final String TIME_ZONE = "America/Chicago";
-    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/agent-compass";
     private static final String UNATTRIBUTED_SENTINEL = "__unattributed__";
 
     @Autowired

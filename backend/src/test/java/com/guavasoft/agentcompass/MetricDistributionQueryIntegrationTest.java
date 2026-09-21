@@ -73,7 +73,7 @@ class MetricDistributionQueryIntegrationTest {
   private static final String COST_METRIC = "claude_code.cost.usage";
 
   private static final String REPOSITORY_URL_ATTRIBUTE = "vcs.repository.url.full";
-  private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+  private static final String REPOSITORY_A = "https://github.com/guavasoftcom/agent-compass";
   private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
   private static final String UNKNOWN_REPOSITORY = "https://github.com/guavasoftcom/does-not-exist";
 

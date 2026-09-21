@@ -52,7 +52,7 @@ class TrendsQueryIntegrationTest {
   private static final String COST_METRIC = "claude_code.cost.usage";
   private static final String TOOL_RESULT_EVENT = "tool_result";
   private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
-  private static final String REPOSITORY_A = "https://github.com/guavasoftcom/coding-agent-tuning";
+  private static final String REPOSITORY_A = "https://github.com/guavasoftcom/agent-compass";
   private static final String REPOSITORY_B = "https://github.com/guavasoftcom/spring-batch-dashboard";
 
   @Container

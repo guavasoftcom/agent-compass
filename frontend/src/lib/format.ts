@@ -80,7 +80,7 @@ export const shortModelName = (model: string): string => {
 };
 
 // Short, human display label for a repository URL, e.g.
-// "https://github.com/guavasoftcom/coding-agent-tuning.git" → "guavasoftcom/coding-agent-tuning".
+// "https://github.com/guavasoftcom/agent-compass.git" → "guavasoftcom/agent-compass".
 // Shared by RepositorySelector (and anywhere else a full git URL would be too
 // long to show inline) so a repository reads identically wherever it appears.
 // Falls back to the raw URL when it doesn't parse into at least an owner/repo

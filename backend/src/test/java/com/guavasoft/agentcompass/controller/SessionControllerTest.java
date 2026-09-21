@@ -53,7 +53,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(SessionController.class)
 class SessionControllerTest {
 
-    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/agent-compass";
 
     @Autowired
     MockMvc mockMvc;

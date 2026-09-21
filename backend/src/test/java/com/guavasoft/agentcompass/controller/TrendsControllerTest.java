@@ -49,7 +49,7 @@ class TrendsControllerTest {
     private static final Instant CUSTOM_RANGE_START = Instant.parse("2026-04-01T00:00:00Z");
     private static final Instant CUSTOM_RANGE_END = Instant.parse("2026-04-08T00:00:00Z");
     private static final String METRIC_KEY = "sample_metric";
-    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/coding-agent-tuning";
+    private static final String REPOSITORY_URL = "https://github.com/guavasoftcom/agent-compass";
 
     @Autowired
     MockMvc mockMvc;
