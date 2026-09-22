@@ -13,12 +13,17 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
+import { useMemo } from 'react';
 import { Box, Dialog, DialogContent, Typography } from '@mui/material';
 import GhostButton from '../../../../components/GhostButton';
+import { formatUsd } from '../../../TracesPage/tracesApi';
+import { formatTokens } from '../../../SessionsPage/components/sessionsFormat';
 import { radii } from '../../../../theme/theme';
+import { fontFamilies } from '../../../../theme/typography';
 import { LongValueModalProvider } from '../SpanInspectorDrawer/longValue';
 import SwitchTraceModalRow from './SwitchTraceModalRow';
 import type { NestedSwitchTraceRow } from './switchTraceRows';
+import type { SessionPromptRow } from '../../../../api';
 
 // Re-exported so `IdentityPill.tsx` and existing test imports keep working
 // unchanged — the definitions themselves now live in `switchTraceRows.ts`
@@ -33,6 +38,7 @@ interface Props {
   rows: NestedSwitchTraceRow[];
   isLoading: boolean;
   onSelectTrace: (traceId: string) => void;
+  prompts: SessionPromptRow[] | undefined;
 }
 
 // One row per turn in the session, newest (current) at the bottom — the order
@@ -54,7 +60,24 @@ const SwitchTraceModalView = ({
   rows,
   isLoading,
   onSelectTrace,
-}: Props) => (
+  prompts,
+}: Props) => {
+  const sessionTotals = useMemo(() => {
+    if (!prompts) {
+      return { totalCostUsd: 0, totalTokens: 0 };
+    }
+    let totalCostUsd = 0;
+    let totalTokens = 0;
+    prompts.forEach((row) => {
+      totalCostUsd += row.costUsd ?? 0;
+      if (row.tokens) {
+        totalTokens += row.tokens.input + row.tokens.output + row.tokens.cacheCreation + row.tokens.cacheRead;
+      }
+    });
+    return { totalCostUsd, totalTokens };
+  }, [prompts]);
+
+  return (
   <Dialog
     open={open}
     onClose={onClose}
@@ -102,6 +125,96 @@ const SwitchTraceModalView = ({
       </Typography>
       <GhostButton onClick={onClose}>Close</GhostButton>
     </Box>
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 2,
+        px: 2.5,
+        py: 1.5,
+        borderBottom: 1,
+        borderTop: 1,
+        borderColor: 'divider',
+        bgcolor: 'action.hover',
+        flexShrink: 0,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 3 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.4 }}>
+          <Box
+            sx={{
+              fontFamily: fontFamilies.body,
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.5px',
+              textTransform: 'uppercase',
+              color: 'text.disabled',
+            }}
+          >
+            Session cost
+          </Box>
+          <Box
+            sx={{
+              typography: 'mono',
+              fontSize: 14,
+              fontWeight: 600,
+              color: 'warning.main',
+            }}
+          >
+            {formatUsd(sessionTotals.totalCostUsd)}
+          </Box>
+        </Box>
+        <Box sx={{ width: '1px', flexShrink: 0, bgcolor: 'divider' }} />
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.4 }}>
+          <Box
+            sx={{
+              fontFamily: fontFamilies.body,
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.5px',
+              textTransform: 'uppercase',
+              color: 'text.disabled',
+            }}
+          >
+            Session tokens
+          </Box>
+          <Box sx={{ display: 'flex', gap: 0.3, alignItems: 'baseline' }}>
+            <Box
+              sx={{
+                typography: 'mono',
+                fontSize: 14,
+                fontWeight: 600,
+                color: 'text.primary',
+              }}
+            >
+              {sessionTotals.totalTokens > 0 ? formatTokens(sessionTotals.totalTokens) : '—'}
+            </Box>
+            {sessionTotals.totalTokens > 0 && (
+              <Box
+                sx={{
+                  typography: 'mono',
+                  fontSize: 12,
+                  color: 'text.secondary',
+                }}
+              >
+                tok
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </Box>
+      <Box
+        sx={{
+          typography: 'mono',
+          fontSize: 12,
+          color: 'text.disabled',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {rows.length} {rows.length === 1 ? 'trace' : 'traces'}
+      </Box>
+    </Box>
     <DialogContent sx={{ p: 0, overflowY: 'auto' }}>
       {isLoading ? (
         <Box sx={{ p: 3, fontSize: 13, color: 'text.secondary' }}>Loading…</Box>
@@ -125,6 +238,7 @@ const SwitchTraceModalView = ({
       )}
     </DialogContent>
   </Dialog>
-);
+  );
+};
 
 export default SwitchTraceModalView;

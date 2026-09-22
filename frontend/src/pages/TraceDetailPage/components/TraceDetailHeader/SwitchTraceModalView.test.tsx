@@ -52,6 +52,7 @@ describe('SwitchTraceModalView', () => {
         rows={rows}
         isLoading={false}
         onSelectTrace={vi.fn()}
+        prompts={flatRows}
       />,
     );
 
@@ -71,6 +72,7 @@ describe('SwitchTraceModalView', () => {
         rows={[]}
         isLoading={false}
         onSelectTrace={vi.fn()}
+        prompts={undefined}
       />,
     );
 
@@ -89,6 +91,7 @@ describe('SwitchTraceModalView', () => {
         rows={[]}
         isLoading
         onSelectTrace={vi.fn()}
+        prompts={undefined}
       />,
     );
 
@@ -108,6 +111,7 @@ describe('SwitchTraceModalView', () => {
         rows={rows}
         isLoading={false}
         onSelectTrace={onSelectTrace}
+        prompts={flatRows}
       />,
     );
 
@@ -140,6 +144,7 @@ describe('SwitchTraceModalView', () => {
         rows={nestedRows}
         isLoading={false}
         onSelectTrace={vi.fn()}
+        prompts={[dispatcher, child]}
       />,
     );
 

@@ -27,6 +27,11 @@ interface Props {
   currentTraceId: string;
 }
 
+// Poll cadence while any trace is still running. Fast enough that live traces'
+// cost and token figures visibly tick along; cheap because the query only fires
+// while the modal is open.
+const RUNNING_TRACE_POLL_INTERVAL_MS = 5_000;
+
 // Container: fetches the session's full prompt timeline (same fetcher/shape
 // PromptTimelinePanel on the Sessions page already uses) and filters it down
 // to rows with both a trace and a prompt — pre-tracing sessions and
@@ -34,7 +39,8 @@ interface Props {
 // to. `enabled: open` means nothing fetches until the pill is first clicked;
 // the query key matches SessionsPage's own `['session-prompts', sessionId]`
 // so opening the switcher for a session already inspected there reads from
-// cache instead of refetching.
+// cache instead of refetching. The query polls while any trace is running
+// (`inProgress: true`) to keep cost and tokens up-to-date automatically.
 const SwitchTraceModal = ({ open, onClose, sessionId, currentTraceId }: Props) => {
   const navigate = useNavigate();
 
@@ -42,6 +48,12 @@ const SwitchTraceModal = ({ open, onClose, sessionId, currentTraceId }: Props) =
     queryKey: ['session-prompts', sessionId],
     queryFn: () => fetchSessionPrompts(sessionId),
     enabled: open,
+    refetchInterval: (query) => {
+      const rows = (query.state.data ?? []).filter(hasTraceAndPrompt);
+      return rows.some((row) => row.inProgress)
+        ? RUNNING_TRACE_POLL_INTERVAL_MS
+        : false;
+    },
   });
 
   const rows = useMemo(
@@ -63,6 +75,7 @@ const SwitchTraceModal = ({ open, onClose, sessionId, currentTraceId }: Props) =
       rows={rows}
       isLoading={isLoading}
       onSelectTrace={onSelectTrace}
+      prompts={prompts}
     />
   );
 };
