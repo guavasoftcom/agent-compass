@@ -1641,7 +1641,8 @@ public class LogService {
             row[1] == null ? "" : (String) row[1],
             row[2] == null ? 0L : ((Number) row[2]).longValue(),
             row[3] == null ? 0L : ((Number) row[3]).longValue(),
-            row[4] == null ? 0L : ((Number) row[4]).longValue()))
+            row[4] == null ? 0L : ((Number) row[4]).longValue(),
+            row[5] == null ? 0L : ((Number) row[5]).longValue()))
         .toList();
   }
 

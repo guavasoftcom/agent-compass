@@ -62,6 +62,7 @@ class ToolRepeatsQueryIntegrationTest {
     private static final String ATTR_TOOL_NAME = "tool_name";
     private static final String ATTR_TOOL_INPUT = "tool_input";
     private static final String ATTR_REPOSITORY_URL = "vcs.repository.url.full";
+    private static final String ATTR_RESULT_SIZE_BYTES = "tool_result_size_bytes";
 
     private static final String EVENT_TOOL_RESULT = "tool_result";
     private static final String TOOL_EDIT = "Edit";
@@ -130,6 +131,31 @@ class ToolRepeatsQueryIntegrationTest {
                 .contains("/repo/src/foo.ts", "/repo/src/bar.ts", "/repo/src/baz.ts");
     }
 
+    @Test
+    void estimatedTokensBurnedSumsTheLongestRunsBytesAcrossSessionsDividedByFour() {
+        // Two sessions, each a two-call Edit run on the same file -- one at 4000 bytes/call
+        // (8000 total), one at 2000 bytes/call (4000 total). Combined: 12000 bytes / 4 = 3000.
+        saveEdit(300, "session-heavy", "/repo/src/heavy.ts", null, 4000L);
+        saveEdit(310, "session-heavy", "/repo/src/heavy.ts", null, 4000L);
+        saveEdit(400, "session-light", "/repo/src/heavy.ts", null, 2000L);
+        saveEdit(410, "session-light", "/repo/src/heavy.ts", null, 2000L);
+
+        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null);
+
+        ToolRepeatStat editRun = singleRowFor(rows, TOOL_EDIT, "/repo/src/heavy.ts");
+        assertThat(editRun.sessions()).isEqualTo(2L);
+        assertThat(editRun.estimatedTokensBurned()).isEqualTo(3000L);
+    }
+
+    @Test
+    void aRunWithNoCapturedResultSizeContributesZeroTokensBurnedRatherThanFailing() {
+        // seed()'s unattributed run never sets ATTR_RESULT_SIZE_BYTES at all.
+        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null);
+
+        ToolRepeatStat editRun = singleRowFor(rows, TOOL_EDIT, "/repo/src/foo.ts");
+        assertThat(editRun.estimatedTokensBurned()).isZero();
+    }
+
     private static ToolRepeatStat singleRowFor(List<ToolRepeatStat> rows, String tool, String scope) {
         return rows.stream()
                 .filter(row -> tool.equals(row.tool()) && scope.equals(row.scope()))
@@ -138,6 +164,11 @@ class ToolRepeatsQueryIntegrationTest {
     }
 
     private void saveEdit(int offsetSeconds, String sessionId, String filePath, String repositoryUrl) {
+        saveEdit(offsetSeconds, sessionId, filePath, repositoryUrl, null);
+    }
+
+    private void saveEdit(
+            int offsetSeconds, String sessionId, String filePath, String repositoryUrl, Long resultSizeBytes) {
         Instant timestamp = windowStart.plusSeconds(offsetSeconds);
         LogRecordEntity entity = new LogRecordEntity();
         entity.setTimestamp(timestamp);
@@ -153,6 +184,9 @@ class ToolRepeatsQueryIntegrationTest {
         attributes.put(ATTR_TOOL_INPUT, "{\"file_path\":\"" + filePath + "\"}");
         if (repositoryUrl != null) {
             attributes.put(ATTR_REPOSITORY_URL, repositoryUrl);
+        }
+        if (resultSizeBytes != null) {
+            attributes.put(ATTR_RESULT_SIZE_BYTES, resultSizeBytes);
         }
         entity.setAttributes(attributes);
         entity.setResourceAttributes(Map.of("service.name", "claude-code"));

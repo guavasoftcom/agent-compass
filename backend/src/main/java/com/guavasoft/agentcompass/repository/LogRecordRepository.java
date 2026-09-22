@@ -1888,13 +1888,16 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
   // constant while the tool/scope doesn't change, so it doubles as a run
   // identifier.
   //
-  // Per (session, tool, scope) we take MAX(run_length) as that session's longest
-  // run, then
-  // roll the per-session longest runs up into a median + max for the (tool,
-  // scope) pair. The
-  // HAVING MAX(...) >= 2 filter drops sessions whose only "runs" were single
-  // isolated calls;
-  // those aren't repeats and would only depress the median.
+  // Per (session, tool, scope) we take the run with the longest run_length as that
+  // session's longest run (DISTINCT ON, tie-broken by run_bytes DESC when two runs share the
+  // max length — an arbitrary but deterministic choice, since "which of several co-longest
+  // runs" has no other natural answer), then roll the per-session longest runs up into a
+  // median + max for the (tool, scope) pair. The WHERE longest_run >= 2 filter (equivalent to
+  // the DISTINCT-ON-selected row's own length, since that row IS the session's max) drops
+  // sessions whose only "runs" were single isolated calls; those aren't repeats and would only
+  // depress the median. estimated_tokens_burned sums each session's longest-run bytes (R5:
+  // same /4 byte-to-token estimate T2's context-footprint query uses) and is the primary sort
+  // key, so a loop of few-but-huge results outranks one of many-but-tiny ones.
   @Query(value = """
       WITH events AS (
         SELECT
@@ -1923,6 +1926,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
                 '(no scope)')
             ELSE '(no scope)'
           END                                                            AS scope,
+          COALESCE((attributes ->> 'tool_result_size_bytes')::numeric, 0) AS result_bytes,
           timestamp
         FROM log_records
         WHERE event_name = :eventName
@@ -1931,13 +1935,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       ),
       numbered AS (
         SELECT
-          session_id, tool, scope,
+          session_id, tool, scope, result_bytes,
           ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY timestamp)             AS rn_session,
           ROW_NUMBER() OVER (PARTITION BY session_id, tool, scope ORDER BY timestamp) AS rn_group
         FROM events
       ),
       runs AS (
-        SELECT session_id, tool, scope, COUNT(*) AS run_length
+        SELECT session_id, tool, scope,
+          COUNT(*)          AS run_length,
+          SUM(result_bytes) AS run_bytes
         FROM numbered
         GROUP BY session_id, tool, scope, (rn_session - rn_group)
       ),
@@ -1946,21 +1952,25 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         -- targeted, so any run under it (e.g. two unrelated mcp_tool calls in a row) is not
         -- evidence of repeating the same action. Drop it here, after run detection (where it
         -- still correctly breaks adjacency for the surrounding scoped calls), not from events.
-        SELECT session_id, tool, scope, MAX(run_length) AS longest_run
+        SELECT DISTINCT ON (session_id, tool, scope)
+          session_id, tool, scope,
+          run_length AS longest_run,
+          run_bytes  AS longest_run_bytes
         FROM runs
         WHERE scope <> '(no scope)'
-        GROUP BY session_id, tool, scope
-        HAVING MAX(run_length) >= 2
+        ORDER BY session_id, tool, scope, run_length DESC, run_bytes DESC
       )
       SELECT
         tool,
         scope,
         CAST(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY longest_run)) AS bigint) AS median_run,
         MAX(longest_run)                                                                 AS max_run,
-        COUNT(*)                                                                         AS sessions
+        COUNT(*)                                                                         AS sessions,
+        CAST(SUM(longest_run_bytes) / 4 AS bigint)                                       AS estimated_tokens_burned
       FROM longest_per_session
+      WHERE longest_run >= 2
       GROUP BY tool, scope
-      ORDER BY max_run DESC, median_run DESC, sessions DESC
+      ORDER BY estimated_tokens_burned DESC, max_run DESC, median_run DESC, sessions DESC
       LIMIT :resultLimit
       """, nativeQuery = true)
   List<Object[]> aggregateToolRepeats(
@@ -1998,6 +2008,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
                 '(no scope)')
             ELSE '(no scope)'
           END                                                            AS scope,
+          COALESCE((attributes ->> 'tool_result_size_bytes')::numeric, 0) AS result_bytes,
           timestamp
         FROM log_records
         WHERE event_name = :eventName
@@ -2007,13 +2018,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       ),
       numbered AS (
         SELECT
-          session_id, tool, scope,
+          session_id, tool, scope, result_bytes,
           ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY timestamp)             AS rn_session,
           ROW_NUMBER() OVER (PARTITION BY session_id, tool, scope ORDER BY timestamp) AS rn_group
         FROM events
       ),
       runs AS (
-        SELECT session_id, tool, scope, COUNT(*) AS run_length
+        SELECT session_id, tool, scope,
+          COUNT(*)          AS run_length,
+          SUM(result_bytes) AS run_bytes
         FROM numbered
         GROUP BY session_id, tool, scope, (rn_session - rn_group)
       ),
@@ -2022,21 +2035,25 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         -- targeted, so any run under it (e.g. two unrelated mcp_tool calls in a row) is not
         -- evidence of repeating the same action. Drop it here, after run detection (where it
         -- still correctly breaks adjacency for the surrounding scoped calls), not from events.
-        SELECT session_id, tool, scope, MAX(run_length) AS longest_run
+        SELECT DISTINCT ON (session_id, tool, scope)
+          session_id, tool, scope,
+          run_length AS longest_run,
+          run_bytes  AS longest_run_bytes
         FROM runs
         WHERE scope <> '(no scope)'
-        GROUP BY session_id, tool, scope
-        HAVING MAX(run_length) >= 2
+        ORDER BY session_id, tool, scope, run_length DESC, run_bytes DESC
       )
       SELECT
         tool,
         scope,
         CAST(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY longest_run)) AS bigint) AS median_run,
         MAX(longest_run)                                                                 AS max_run,
-        COUNT(*)                                                                         AS sessions
+        COUNT(*)                                                                         AS sessions,
+        CAST(SUM(longest_run_bytes) / 4 AS bigint)                                       AS estimated_tokens_burned
       FROM longest_per_session
+      WHERE longest_run >= 2
       GROUP BY tool, scope
-      ORDER BY max_run DESC, median_run DESC, sessions DESC
+      ORDER BY estimated_tokens_burned DESC, max_run DESC, median_run DESC, sessions DESC
       LIMIT :resultLimit
       """, nativeQuery = true)
   List<Object[]> aggregateToolRepeatsInRange(

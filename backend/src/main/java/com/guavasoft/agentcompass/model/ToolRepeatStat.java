@@ -23,7 +23,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
         + "those longest-per-session values up into a median and a max. Sessions whose longest run "
         + "was only one call are excluded from the rollup — they are not repeats. Runs where the "
         + "scope couldn't be determined are also excluded — a shared 'unknown' scope isn't evidence "
-        + "the calls repeated the same action.")
+        + "the calls repeated the same action. Rows are sorted by estimatedTokensBurned descending, "
+        + "not run length, so a loop of few-but-huge results outranks one of many-but-tiny ones.")
 public record ToolRepeatStat(
         @Schema(description = "Tool name (matches the tool_name attribute on tool_result events)", example = "Edit") String tool,
 
@@ -41,5 +42,11 @@ public record ToolRepeatStat(
                 + "single session in the window.", example = "8") long maxRunLength,
 
         @Schema(description = "Number of distinct sessions that contributed a longest-run-≥2 for "
-                + "this (tool, scope).", example = "4") long sessions) {
+                + "this (tool, scope).", example = "4") long sessions,
+
+        @Schema(description = "Estimated tokens burned by this repeat pattern: sums each "
+                + "contributing session's longest-run tool_result byte total, then divides by 4 — "
+                + "the same one-time-injection-size estimate the context-footprint card (T2) uses. "
+                + "Not resend-weighted, so it understates a loop's true cost the earlier in a long "
+                + "session it occurred.", example = "18432") long estimatedTokensBurned) {
 }

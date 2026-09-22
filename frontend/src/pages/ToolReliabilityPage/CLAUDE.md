@@ -74,12 +74,17 @@ its own stacked-bar rendering, and `DonutCard` itself is still used as-is by
 │ ┌─ ToolRepeatsCard (Paper, full width) ─────────────────────────────────┐ │
 │ │ "Same-tool repeats per session"                                        │ │
 │ │ MUI Table (table-layout:fixed + colgroup):                             │ │
-│ │   Tool | Scope | Median run | Max run | Sessions                       │ │
+│ │   Tool | Scope | Median run | Max run | Sessions | Est. tokens burned  │ │
+│ │ Rows arrive sorted by estimated tokens burned descending (server-side, │ │
+│ │ R5), not run length — the table never re-sorts client-side.            │ │
 │ │ Scope is two lines for file paths (filename bold / dir dimmed, each    │ │
 │ │ independently truncated); one line with a dim "$" prefix for Bash      │ │
 │ │ commands; sandbox tmp paths collapse to an italic label.               │ │
 │ │ Max run badge tinted: ≥10 → severe, 6-9 → warning, <6 → violet tint  │ │
 │ │ Sessions === 1 gets an inline "spike" tag.                             │ │
+│ │ Est. tokens burned renders via lib/format.ts's formatCompact, prefixed │ │
+│ │ with "~" to match the estimate framing T2's context-footprint card     │ │
+│ │ uses for the same /4 byte-to-token conversion.                         │ │
 │ └───────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -136,7 +141,15 @@ container.
   rates — omitted entirely when `totalFailures === 0` so a healthy window doesn't show a false
   sliver. The Succeeded/Failed legend below is unchanged in content from the old donut legend.
 - **Same-tool repeats** (`ToolRepeatStatRow[]`): each row is a `(tool, scope)` pair with
-  `medianRunLength`, `maxRunLength`, and `sessions`. Scope is the file path for file-editing
+  `medianRunLength`, `maxRunLength`, `sessions`, and `estimatedTokensBurned` (R5, added
+  2026-09-22 — see the roadmap's Phase 3 table). The backend query sums, per contributing
+  session, the `tool_result_size_bytes` total of that session's *longest* run (same rows the
+  run-length detection already isolates) and divides by 4 — T2's context-footprint estimate,
+  reused rather than reinvented. Rows come back sorted by `estimatedTokensBurned` descending
+  (then max run, median run, sessions, matching the pre-R5 tie-break order), not by run length,
+  so a loop of a few oversized results outranks one of many tiny ones. A run with no captured
+  `tool_result_size_bytes` on any of its calls contributes 0, not a missing/null row. Scope is
+  the file path for file-editing
   tools; for Bash it's the command with any leading `cd <path> &&`/`cd <path>;` chain
   stripped, then its first two whitespace-delimited tokens (program + subcommand/flag) — a
   bare first token used to collapse e.g. `cd backend && ./mvnw test` and `cd frontend &&
