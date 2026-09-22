@@ -16,6 +16,7 @@ see <https://www.gnu.org/licenses/>.
 import { Box, alpha } from '@mui/material';
 import { formatRelativeTime } from '../../../../lib/format';
 import { formatTokens, formatUsd } from '../../../TracesPage/tracesApi';
+import RunningIndicator from '../../../../components/RunningIndicator';
 import PromptSummaryText from '../../../../components/PromptSummaryText';
 import NestingConnector, {
   type NestingConnectorGeometry,
@@ -120,11 +121,15 @@ const SwitchTraceModalRow = ({ row, isCurrent, onSelect, depth, railBelow }: Pro
       }}
     >
       <NestingConnector depth={depth} railBelow={railBelow} geometry={SWITCH_TRACE_CONNECTOR_GEOMETRY} />
-      <Box sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled' }}>
-        {formatRelativeTime(row.timestamp)}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Box sx={{ typography: 'mono', fontSize: 10.5, color: 'text.disabled' }}>
+          {formatRelativeTime(row.timestamp)}
+        </Box>
+        {row.inProgress ? (
+          <RunningIndicator tooltip="This trace is still running. It updates automatically." ariaLabel="Trace still running" />
+        ) : null}
       </Box>
       <Box
-        title={row.prompt}
         sx={{
           fontSize: 13,
           color: 'text.primary',

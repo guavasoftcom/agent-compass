@@ -14,10 +14,12 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { useMemo, useState } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import { Box } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useQuery } from '@tanstack/react-query';
 import { fetchSessionPrompts } from '../../../../api';
+import { sessionsDeepLink } from '../../../SessionsPage';
 import { hasTraceAndPrompt } from './SwitchTraceModalView';
 import SwitchTraceModal from './SwitchTraceModal';
 
@@ -29,10 +31,11 @@ interface Props {
 // Combined session/trace identity pill in the breadcrumb row, replacing the
 // old pair of separate IdChips. Session first (it's the trace's parent),
 // sharing one rounded, bordered container so the two ids read as one identity
-// rather than two unrelated chips. Both segments are plain, uncopyable text;
-// the trace segment additionally carries a caret and is clickable — but only
-// when the session has more than one trace to switch to. A session's prompt
-// timeline is fetched here (same query SwitchTraceModal itself runs when
+// rather than two unrelated chips. Both segments are clickable: the session
+// segment navigates to the Sessions page with that session opened in the
+// detail drawer; the trace segment carries a caret and opens SwitchTraceModal
+// — but only when the session has more than one trace to switch to. A session's
+// prompt timeline is fetched here (same query SwitchTraceModal itself runs when
 // opened, sharing its cache entry) purely to count distinct traces before
 // deciding whether the affordance is worth offering; a single-trace session
 // has nothing to switch to, so the segment stays inert like the no-sessionId
@@ -75,7 +78,9 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
       >
         {sessionId ? (
           <Box
-            title={`session: ${sessionId}`}
+            component={RouterLink}
+            to={sessionsDeepLink(sessionId)}
+            title={`session: ${sessionId} — click to view session`}
             sx={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -83,6 +88,10 @@ const IdentityPill = ({ traceId, sessionId }: Props) => {
               px: 1.4,
               borderRight: 1,
               borderColor: 'divider',
+              textDecoration: 'none',
+              cursor: 'pointer',
+              transition: '0.12s',
+              '&:hover': { bgcolor: 'action.hover' },
             }}
           >
             <Box
