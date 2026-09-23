@@ -26,6 +26,7 @@ import {
   Typography,
 } from '@mui/material';
 import { auroraColors, severity } from '../../../../theme/colors';
+import { formatCompact } from '../../../../lib/format';
 import type { ToolRepeatStatRow } from '../../../../api';
 
 export interface ToolRepeatsCardProps {
@@ -120,9 +121,11 @@ const ToolRepeatsCard = ({ rows, isLoading }: ToolRepeatsCardProps) => {
         sx={{ mb: 0.5, maxWidth: 760 }}
       >
         Longest consecutive run of the same tool acting on the same scope within
-        a session, rolled up across sessions. Long chains on the same file are a
-        sign the agent is hunting — AGENTS.md can encourage reading once,
-        planning all changes, then writing in a single pass.
+        a session, rolled up across sessions and ranked by estimated tokens
+        burned — not raw run length — so a loop of few-but-huge results outranks
+        one of many-but-tiny ones. Long chains on the same file are a sign the
+        agent is hunting — AGENTS.md can encourage reading once, planning all
+        changes, then writing in a single pass.
       </Typography>
       {hasData && (
         <Typography
@@ -162,10 +165,11 @@ const ToolRepeatsCard = ({ rows, isLoading }: ToolRepeatsCardProps) => {
           }}
         >
           <colgroup>
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '46%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '16%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '44%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '11%' }} />
             <col style={{ width: '14%' }} />
           </colgroup>
           <TableHead>
@@ -180,6 +184,9 @@ const ToolRepeatsCard = ({ rows, isLoading }: ToolRepeatsCardProps) => {
               </TableCell>
               <TableCell align="right" sx={headSx}>
                 Sessions
+              </TableCell>
+              <TableCell align="right" sx={headSx}>
+                Est. tokens burned
               </TableCell>
             </TableRow>
           </TableHead>
@@ -307,6 +314,16 @@ const ToolRepeatsCard = ({ rows, isLoading }: ToolRepeatsCardProps) => {
                         spike
                       </Box>
                     )}
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{
+                      fontVariantNumeric: 'tabular-nums',
+                      fontWeight: 700,
+                      color: 'text.secondary',
+                    }}
+                  >
+                    ~{formatCompact(row.estimatedTokensBurned)}
                   </TableCell>
                 </TableRow>
               );

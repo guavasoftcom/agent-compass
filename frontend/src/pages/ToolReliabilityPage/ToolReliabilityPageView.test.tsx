@@ -33,6 +33,7 @@ const repeatRows: ToolRepeatStatRow[] = [
     medianRunLength: 3,
     maxRunLength: 8,
     sessions: 4,
+    estimatedTokensBurned: 18432,
   },
 ];
 

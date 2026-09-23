@@ -185,8 +185,8 @@ class ToolActivityControllerTest {
     @Test
     void toolRepeatsReturnsAggregatedRowsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
         when(logService.aggregateToolRepeats(anyInt(), isNull())).thenReturn(List.of(
-                new ToolRepeatStat("Edit", "/repo/src/foo.ts", 4L, 8L, 3L),
-                new ToolRepeatStat("Bash", "grep", 2L, 3L, 1L)));
+                new ToolRepeatStat("Edit", "/repo/src/foo.ts", 4L, 8L, 3L, 18432L),
+                new ToolRepeatStat("Bash", "grep", 2L, 3L, 1L, 512L)));
 
         mockMvc.perform(get("/api/tool-activity/repeats"))
                 .andExpect(status().isOk())
@@ -196,6 +196,7 @@ class ToolActivityControllerTest {
                 .andExpect(jsonPath("$[0].medianRunLength").value(4))
                 .andExpect(jsonPath("$[0].maxRunLength").value(8))
                 .andExpect(jsonPath("$[0].sessions").value(3))
+                .andExpect(jsonPath("$[0].estimatedTokensBurned").value(18432))
                 .andExpect(jsonPath("$[1].tool").value("Bash"));
 
         verify(logService).aggregateToolRepeats(1440, null);

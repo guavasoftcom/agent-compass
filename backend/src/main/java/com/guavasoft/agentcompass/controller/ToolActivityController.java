@@ -226,10 +226,13 @@ public class ToolActivityController {
                     + "shared '(no scope)' bucket, since that shared value isn't evidence the calls repeated "
                     + "the same action. Long Edit-Edit-Edit chains on the same file mean the agent is "
                     + "hunting; AGENTS.md can encourage 'read the file once, plan all changes, then write in "
-                    + "a single pass'.")
+                    + "a single pass'. Each row also carries estimatedTokensBurned — each contributing "
+                    + "session's longest-run tool_result byte total summed and divided by 4, the same "
+                    + "estimate the context-footprint card uses — and rows are sorted by it descending, so a "
+                    + "loop of few-but-huge results outranks one of many-but-tiny ones.")
     @ApiResponses(@ApiResponse(
             responseCode = "200",
-            description = "Up to 15 (tool, scope) rows sorted by max run length descending",
+            description = "Up to 15 (tool, scope) rows sorted by estimated tokens burned descending",
             content = @Content(
                     mediaType = "application/json",
                     array = @ArraySchema(schema = @Schema(implementation = ToolRepeatStat.class)))))

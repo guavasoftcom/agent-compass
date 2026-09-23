@@ -241,6 +241,7 @@ export interface ToolRepeatStatRow {
   medianRunLength: number;
   maxRunLength: number;
   sessions: number;
+  estimatedTokensBurned: number;
 }
 
 export interface TokenUsagePoint {
