@@ -2,6 +2,7 @@
 name: resolve-dependabot-vulnerabilities
 description: 'Fetch open GitHub Dependabot vulnerability alerts via the gh CLI and dispatch them to the java or javascript resolver sub-skill (or both) to patch affected dependencies and validate the fix. Use when asked to resolve, fix, patch, or clear Dependabot alerts, CVEs, or vulnerable dependencies in this repo.'
 argument-hint: '[java|javascript|js] [package,package,...]'
+model: haiku
 ---
 
 # Resolve Dependabot Vulnerabilities

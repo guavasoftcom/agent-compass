@@ -2,6 +2,7 @@
 name: resolve-dependabot-vulnerabilities-javascript
 description: 'Resolve open GitHub Dependabot alerts for frontend/package.json (npm ecosystem): bump a direct dependency with yarn up -E, or pin a transitive dependency via the resolutions field plus yarn install, then validate with typecheck/lint/test/build. Never commits. Callable standalone or dispatched from /resolve-dependabot-vulnerabilities.'
 argument-hint: '[package,package,...]'
+model: haiku
 ---
 
 # Resolve Dependabot Vulnerabilities — JavaScript (npm)
