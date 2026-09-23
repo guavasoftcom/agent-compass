@@ -50,13 +50,9 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Exercises the native session aggregation against a real Postgres so the
- * dynamic CASE-based
- * ORDER BY, COUNT(*) OVER() total, and percentile_cont KPI query are validated
- * end-to-end —
- * the {@link com.guavasoft.agentcompass.controller.DashboardControllerTest}
- * mocks
- * the service and
+ * Exercises the native session aggregation against a real Postgres so the dynamic CASE-based
+ * ORDER BY, COUNT(*) OVER() total, and percentile_cont KPI query are validated end-to-end —
+ * {@link com.guavasoft.agentcompass.controller.SessionControllerTest} mocks the service and
  * cannot catch SQL-level mistakes.
  */
 @SpringBootTest

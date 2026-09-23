@@ -2,6 +2,7 @@
 name: resolve-dependabot-vulnerabilities-java
 description: 'Resolve open GitHub Dependabot alerts for backend/pom.xml (Maven ecosystem): bump the affected dependency via its properties entry, a dependencyManagement override, or the Spring Boot BOM version, then validate with ./mvnw clean verify. Skips maven-compiler-plugin (hard-pinned) and reports it instead of touching it. Never commits. Callable standalone or dispatched from /resolve-dependabot-vulnerabilities.'
 argument-hint: '[package,package,...]'
+model: haiku
 ---
 
 # Resolve Dependabot Vulnerabilities — Java (Maven)

@@ -1,6 +1,7 @@
 ---
 description: Check code changes on this branch against the repo's markdown docs and update any that are stale or missing coverage.
 argument-hint: [optional: path or topic to focus on]
+model: sonnet
 ---
 
 You are auditing the repo's markdown documentation against the code changes on the current branch and updating whatever has drifted.

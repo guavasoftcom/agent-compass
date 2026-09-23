@@ -1,5 +1,6 @@
 ---
 description: Generate a commit message from the working tree, commit it, then push to the current branch's remote.
+model: haiku
 ---
 
 Bundle the standard "commit + push" loop into one shot. Steps:
