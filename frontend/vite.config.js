@@ -14,41 +14,45 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { defineConfig, coverageConfigDefaults } from "vitest/config";
+import { loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      "/api": "http://localhost:8080",
+export default defineConfig(({ mode }) => {
+  const environment = loadEnv(mode, process.cwd(), "");
+
+  return {
+    plugins: [react()],
+    server: {
+      port: Number(environment.VITE_PORT || 5173),
+      proxy: {
+        "/api": environment.VITE_API_URL || "http://localhost:8080",
+      },
     },
-  },
-  build: {
-    rollupOptions: {
-      output: {
+    build: {
+      rollupOptions: {
+        output: {
         // React/MUI/Emotion churn far less often than the app's own pages, so
         // pulling them into their own chunk lets browsers cache them across
         // deploys instead of re-downloading them whenever a page changes.
-        manualChunks: (id) => {
-          if (!id.includes("node_modules")) {
+          manualChunks: (id) => {
+            if (!id.includes("node_modules")) {
+              return undefined;
+            }
+            if (
+              id.includes("/react/") ||
+              id.includes("/react-dom/") ||
+              id.includes("/scheduler/") ||
+              id.includes("/@mui/") ||
+              id.includes("/@emotion/")
+            ) {
+              return "vendor";
+            }
             return undefined;
-          }
-          if (
-            id.includes("/react/") ||
-            id.includes("/react-dom/") ||
-            id.includes("/scheduler/") ||
-            id.includes("/@mui/") ||
-            id.includes("/@emotion/")
-          ) {
-            return "vendor";
-          }
-          return undefined;
+          },
         },
       },
     },
-  },
-  test: {
+    test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setupTests.ts"],
     coverage: {
@@ -100,4 +104,5 @@ export default defineConfig({
       },
     },
   },
+  };
 });
