@@ -1023,6 +1023,15 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
   // the exporter's zero-delta re-emissions. Without it totalSessions counted every
   // session ever recorded, and both cost percentiles were computed over a population
   // padded out with $0.00 ghosts, dragging the median toward zero.
+  //
+  // cost_per_session and active_per_session carry the filter too, though it cannot change
+  // their sums (a ghost contributes 0): without it they read every re-emitted row in the
+  // window through idx_metric_points_session_id_name_ts and a heap fetch each, which on the
+  // live database was 622,508 buffers and 6,150 ms for a 30-day window -- close enough to the
+  // pooled 15s statement_timeout that the Sessions page's summary request timed out repeatedly.
+  // With the filter both CTEs are index-only scans of V33's idx_metric_points_nonzero_name_ts:
+  // 244 ms and ~12k buffers. A session whose only rows are ghosts now has no row in either CTE
+  // and falls through the LEFT JOIN's COALESCE to 0, the value its ghost-only sum already gave.
   @Query(value = """
       WITH cost_per_session AS (
         SELECT session_id, SUM(value_delta) AS cost_usd
@@ -1030,6 +1039,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         WHERE metric_name = :costMetric
           AND session_id IS NOT NULL
           AND value_double IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
@@ -1041,6 +1051,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         WHERE metric_name = :activeTimeMetric
           AND session_id IS NOT NULL
           AND value_double IS NOT NULL
+          AND value_delta IS DISTINCT FROM 0
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)

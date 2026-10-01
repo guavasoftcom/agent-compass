@@ -13,6 +13,15 @@
     ".pnp.cjs",
     ".pnp.loader.mjs",
     ".yarnrc.yml",
+    ".env",
+    "*.env",
     "CLAUDE.md"
-  ]
+  ],
+  "licenseFormats": {
+    "example": {
+      "eachLine": {
+        "prepend": "# "
+      }
+    }
+  }
 }

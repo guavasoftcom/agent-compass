@@ -1027,6 +1027,12 @@ const PromptTimelinePanel = ({
                   sx={{
                     fontSize: 13,
                     lineHeight: 1.55,
+                    // Hard-wrap inside the bubble: overflow-wrap inherits, so the
+                    // truncated preview span and the subagent summary line (neither
+                    // of which carries its own break rule) split a long unbroken
+                    // token — a URL, path or hash — instead of running past the card.
+                    minWidth: 0,
+                    overflowWrap: 'anywhere',
                     color:
                       turn.prompt == null ? 'text.disabled' : 'text.primary',
                     fontStyle: turn.prompt == null ? 'italic' : 'normal',
