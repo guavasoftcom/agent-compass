@@ -130,12 +130,12 @@ public class TraceExplorerService {
         List<Object[]> bucketRows = spanRepository.traceHistogramBuckets(
                 windowStart, windowEnd, bucketSeconds,
                 criteria.statuses(), criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl());
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(), criteria.agentProfile());
 
         List<Object[]> globalRows = spanRepository.traceHistogramGlobals(
                 windowStart, windowEnd,
                 criteria.statuses(), criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl());
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(), criteria.agentProfile());
 
         Map<Instant, Object[]> rowByBucket = new HashMap<>();
         for (Object[] row : bucketRows) {
@@ -195,7 +195,7 @@ public class TraceExplorerService {
         List<Object[]> rows = spanRepository.facetTraceAll(
                 criteria.startTimestamp(), criteria.endTimestamp(),
                 criteria.statuses(), criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(), criteria.agentProfile(),
                 FACET_OPERATION_CAP, FACET_SESSION_CAP);
 
         Map<String, List<Object[]>> rowsByFacetKind = new HashMap<>();
@@ -275,7 +275,7 @@ public class TraceExplorerService {
         long totalCount = spanRepository.countFilteredTraces(
                 criteria.startTimestamp(), criteria.endTimestamp(),
                 criteria.statuses(), criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl());
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(), criteria.agentProfile());
 
         List<TraceSummary> probeItems = fetchSortedCursorRows(
                 criteria, sort, resolvedLimit + 1);
@@ -306,60 +306,68 @@ public class TraceExplorerService {
                 rows = spanRepository.traceListSortOldCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_SLOW:
                 rows = spanRepository.traceListSortSlowCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_FAST:
                 rows = spanRepository.traceListSortFastCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_SPANS:
                 rows = spanRepository.traceListSortSpansCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_ERR:
                 rows = spanRepository.traceListSortErrCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_TOKENS:
                 rows = spanRepository.traceListSortTokensCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_COST:
                 rows = spanRepository.traceListSortCostCursor(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             default:
                 rows = spanRepository.traceListSortNew(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
         }
-        return toTraceSummaries(rows);
+        return toTraceSummaries(rows, criteria.agentProfile());
     }
 
     private List<TraceSummary> fetchSortedCursorRowsBefore(
@@ -375,7 +383,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         cursor.ts(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_SLOW:
@@ -383,7 +392,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.durationMs(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_FAST:
@@ -391,7 +401,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.durationMs(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_SPANS:
@@ -399,7 +410,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.spanCount(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_ERR:
@@ -407,7 +419,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.errorCount(), sortKey.minStart(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_TOKENS:
@@ -415,7 +428,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.totalTokens(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_COST:
@@ -423,7 +437,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.totalCostUsd(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             default:
@@ -431,11 +446,12 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         cursor.ts(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
         }
-        return toTraceSummaries(rows);
+        return toTraceSummaries(rows, criteria.agentProfile());
     }
 
     private List<TraceSummary> fetchSortedCursorRowsAfter(
@@ -451,7 +467,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         cursor.ts(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_SLOW:
@@ -459,7 +476,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.durationMs(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_FAST:
@@ -467,7 +485,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.durationMs(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_SPANS:
@@ -475,7 +494,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.spanCount(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_ERR:
@@ -483,7 +503,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.errorCount(), sortKey.minStart(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_TOKENS:
@@ -491,7 +512,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.totalTokens(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             case SORT_COST:
@@ -499,7 +521,8 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         sortKey.totalCostUsd(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
             default:
@@ -507,11 +530,12 @@ public class TraceExplorerService {
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         cursor.ts(), cursor.id(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageLimit);
                 break;
         }
-        return toTraceSummaries(rows);
+        return toTraceSummaries(rows, criteria.agentProfile());
     }
 
     /**
@@ -527,7 +551,7 @@ public class TraceExplorerService {
                 criteria.startTimestamp(), criteria.endTimestamp(),
                 cursor.id(),
                 criteria.statuses(), criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl());
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(), criteria.agentProfile());
         if (keyRows.isEmpty()) {
             return null;
         }
@@ -576,7 +600,7 @@ public class TraceExplorerService {
         long totalCount = spanRepository.countFilteredTraces(
                 criteria.startTimestamp(), criteria.endTimestamp(),
                 criteria.statuses(), criteria.operations(), criteria.services(),
-                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl());
+                criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(), criteria.agentProfile());
 
         int resolvedSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
         int resolvedPage = Math.max(0, page);
@@ -593,60 +617,68 @@ public class TraceExplorerService {
                 rows = spanRepository.traceListSortOld(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             case SORT_SLOW:
                 rows = spanRepository.traceListSortSlow(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             case SORT_FAST:
                 rows = spanRepository.traceListSortFast(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             case SORT_SPANS:
                 rows = spanRepository.traceListSortSpans(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             case SORT_ERR:
                 rows = spanRepository.traceListSortErr(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             case SORT_TOKENS:
                 rows = spanRepository.traceListSortTokens(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             case SORT_COST:
                 rows = spanRepository.traceListSortCost(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
             default:
                 rows = spanRepository.traceListSortNewOffset(
                         criteria.startTimestamp(), criteria.endTimestamp(),
                         criteria.statuses(), criteria.operations(), criteria.services(),
-                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(), criteria.repositoryUrl(),
+                        criteria.durations(), criteria.sessions(), criteria.fullTextQuery(),
+                        criteria.repositoryUrl(), criteria.agentProfile(),
                         pageSize, pageOffset);
                 break;
         }
-        return toTraceSummaries(rows);
+        return toTraceSummaries(rows, criteria.agentProfile());
     }
 
     // =========================================================================
@@ -666,7 +698,9 @@ public class TraceExplorerService {
         if (rows.isEmpty()) {
             return Optional.empty();
         }
-        TraceSummary summary = toTraceSummaries(rows).get(0);
+        String agentProfile = spanRepository.findAgentProfileForTrace(traceId)
+                .orElse(tuningProperties.getPrimaryAgentProfile());
+        TraceSummary summary = toTraceSummaries(rows, agentProfile).get(0);
         summary.setBackgroundCostUsd(backgroundCostUsdForTrace(traceId));
         return Optional.of(summary);
     }
@@ -736,10 +770,10 @@ public class TraceExplorerService {
      * uses for its prompt context, rather than a per-row lookup or a tenth copy of the
      * prompt join across all twenty trace-list queries.
      */
-    private List<TraceSummary> toTraceSummaries(List<Object[]> rows) {
+    private List<TraceSummary> toTraceSummaries(List<Object[]> rows, String agentProfile) {
         List<TraceSummary> summaries = rows.stream().map(TraceExplorerService::toTraceSummary).toList();
         summaries = withFirstUserPrompts(summaries);
-        return withInProgress(summaries);
+        return withInProgress(summaries, agentProfile);
     }
 
     /**
@@ -769,15 +803,22 @@ public class TraceExplorerService {
      * {@link #traceSummary(String)} endpoint. Same liveness definition as
      * {@code LogService#resolveRunningTurnIndex}: no exported root span yet (any parentless span,
      * so a standalone {@code llm_request} trace is finished the moment it lands), and activity
-     * within {@code LogService.IN_PROGRESS_STALENESS_LIMIT}.
+     * within {@code LogService.IN_PROGRESS_STALENESS_LIMIT}. {@code agentProfile} is the
+     * window-scoped caller's own resolved {@code criteria.agentProfile()}; the permalinked
+     * single-trace endpoint has no profile of its own to resolve, so it looks up the specific
+     * trace's actual profile instead (see {@link SpanRepository#findAgentProfileForTrace}) --
+     * guessing the configured primary profile there was tried first and was wrong whenever the
+     * permalinked trace belonged to a different one, silently reporting a genuinely in-progress
+     * trace as finished.
      */
-    private List<TraceSummary> withInProgress(List<TraceSummary> summaries) {
+    private List<TraceSummary> withInProgress(List<TraceSummary> summaries, String agentProfile) {
         if (summaries.isEmpty()) {
             return summaries;
         }
         List<String> traceIds = summaries.stream().map(TraceSummary::getTraceId).toList();
         Set<String> inProgressTraceIds = Set.copyOf(spanRepository.findInProgressTraceIds(
                 traceIds,
+                agentProfile,
                 Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
         for (TraceSummary summary : summaries) {
             summary.setInProgress(inProgressTraceIds.contains(summary.getTraceId()));

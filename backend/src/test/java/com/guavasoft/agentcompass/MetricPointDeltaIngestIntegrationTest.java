@@ -16,6 +16,7 @@
 package com.guavasoft.agentcompass;
 
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
 
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest;
@@ -177,7 +178,8 @@ class MetricPointDeltaIngestIntegrationTest {
     Instant midStreamWindowStart = Instant.ofEpochMilli(baseTimeUnixNanos / 1_000_000L).plusSeconds(30);
     Instant windowEnd = Instant.now().plusSeconds(3_600);
     Number windowTotal = firstScalar(
-        metricPointRepository.aggregateTotalTokens(TOKEN_METRIC, midStreamWindowStart, windowEnd));
+        metricPointRepository.aggregateTotalTokens(
+            TOKEN_METRIC, midStreamWindowStart, windowEnd, AgentProfiles.CLAUDE_CODE));
     assertThat(windowTotal).isNotNull();
     assertThat(windowTotal.longValue()).isEqualTo(200L);
   }

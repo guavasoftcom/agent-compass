@@ -21,6 +21,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.model.SessionApiRequest;
 import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
@@ -64,9 +65,15 @@ class SessionControllerTest {
     @MockitoBean
     LogService logService;
 
+    // Declared because @WebMvcTest builds the real SessionController, which now takes it as a
+    // constructor dependency: without the bean the whole context fails to load. Resolution
+    // defaults are AgentProfileRequestResolverTest's job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
+
     @Test
     void tokenUsageReturnsAggregatedTotalsAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(metricService.aggregateTokenUsage(anyInt(), any())).thenReturn(new TokenUsageSummary(
+        when(metricService.aggregateTokenUsage(anyInt(), any(), any())).thenReturn(new TokenUsageSummary(
                 12_000L,
                 8_000L,
                 4_000L,
@@ -89,26 +96,26 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.points", hasSize(1)))
                 .andExpect(jsonPath("$.points[0].cacheRead").value(9600));
 
-        verify(metricService).aggregateTokenUsage(1440, null);
+        verify(metricService).aggregateTokenUsage(1440, null, null);
     }
 
     @Test
     void tokenUsageDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(metricService.aggregateTokenUsage(anyInt(), any())).thenReturn(new TokenUsageSummary(
+        when(metricService.aggregateTokenUsage(anyInt(), any(), any())).thenReturn(new TokenUsageSummary(
                 0L, 0L, 0L, 0L, 0.0, 900L, List.of(), List.of(),
                 new CostSummary("$0.00", "+0.0%", "$0/h", "$0", "$0.000", List.of(), List.of(), "")));
 
         mockMvc.perform(get("/api/sessions/token-usage").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).aggregateTokenUsage(1440, REPOSITORY_URL);
+        verify(metricService).aggregateTokenUsage(1440, REPOSITORY_URL, null);
     }
 
     @Test
     void tokenUsageDispatchesSuppliedRepositoryUrlToServiceOnTheRangeForm() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(metricService.aggregateTokenUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL)).thenReturn(
+        when(metricService.aggregateTokenUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL, null)).thenReturn(
                 new TokenUsageSummary(
                         0L, 0L, 0L, 0L, 0.0, 900L, List.of(), List.of(),
                         new CostSummary("$0.00", "+0.0%", "$0/h", "$0", "$0.000", List.of(), List.of(), "")));
@@ -119,12 +126,12 @@ class SessionControllerTest {
                         .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).aggregateTokenUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL);
+        verify(metricService).aggregateTokenUsageInRange(rangeStart, rangeEnd, REPOSITORY_URL, null);
     }
 
     @Test
     void sessionsReturnsPaginatedRowsWithTotalCountHeaderAndDefaults() throws Exception {
-        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any()))
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any(), any()))
                 .thenReturn(new SessionSummaryPage(List.of(
                         new SessionSummary(
                                 "7b3fc524-7f3c-4db5-9bb4-da27b77df56b",
@@ -186,12 +193,12 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[1].tokenBreakdown.cacheRead").value(120000))
                 .andExpect(jsonPath("$[1].inProgress").value(false));
 
-        verify(metricService).sessionsSummary(1440, null, null, 0, 25, null);
+        verify(metricService).sessionsSummary(1440, null, null, 0, 25, null, null);
     }
 
     @Test
     void sessionsForwardsSortAndPaginationParams() throws Exception {
-        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any()))
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any(), any()))
                 .thenReturn(new SessionSummaryPage(List.of(), 0L));
 
         mockMvc.perform(get("/api/sessions")
@@ -202,25 +209,50 @@ class SessionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Total-Count", "0"));
 
-        verify(metricService).sessionsSummary(1440, "wallSeconds", "asc", 2, 50, null);
+        verify(metricService).sessionsSummary(1440, "wallSeconds", "asc", 2, 50, null, null);
     }
 
     @Test
     void sessionsDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any()))
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any(), any()))
                 .thenReturn(new SessionSummaryPage(List.of(), 0L));
 
         mockMvc.perform(get("/api/sessions").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).sessionsSummary(1440, null, null, 0, 25, REPOSITORY_URL);
+        verify(metricService).sessionsSummary(1440, null, null, 0, 25, REPOSITORY_URL, null);
+    }
+
+    @Test
+    void sessionsOmittedAgentProfileResolvesToThePrimaryProfile() throws Exception {
+        when(agentProfileRequestResolver.resolve(null)).thenReturn("claude-code");
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any(), any()))
+                .thenReturn(new SessionSummaryPage(List.of(), 0L));
+
+        mockMvc.perform(get("/api/sessions"))
+                .andExpect(status().isOk());
+
+        verify(metricService).sessionsSummary(1440, null, null, 0, 25, null, "claude-code");
+    }
+
+    @Test
+    void sessionsDispatchesSuppliedAgentProfileToServiceOnTheMinutesForm() throws Exception {
+        when(agentProfileRequestResolver.resolve("unknown")).thenReturn("unknown");
+        when(metricService.sessionsSummary(anyInt(), any(), any(), anyInt(), anyInt(), any(), any()))
+                .thenReturn(new SessionSummaryPage(List.of(), 0L));
+
+        mockMvc.perform(get("/api/sessions").param("agentProfile", "unknown"))
+                .andExpect(status().isOk());
+
+        verify(metricService).sessionsSummary(1440, null, null, 0, 25, null, "unknown");
     }
 
     @Test
     void sessionsDispatchesSuppliedRepositoryUrlToServiceOnTheRangeForm() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(metricService.sessionsSummaryInRange(eq(rangeStart), eq(rangeEnd), any(), any(), anyInt(), anyInt(), any()))
+        when(metricService.sessionsSummaryInRange(
+                        eq(rangeStart), eq(rangeEnd), any(), any(), anyInt(), anyInt(), any(), any()))
                 .thenReturn(new SessionSummaryPage(List.of(), 0L));
 
         mockMvc.perform(get("/api/sessions")
@@ -229,12 +261,12 @@ class SessionControllerTest {
                         .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).sessionsSummaryInRange(rangeStart, rangeEnd, null, null, 0, 25, REPOSITORY_URL);
+        verify(metricService).sessionsSummaryInRange(rangeStart, rangeEnd, null, null, 0, 25, REPOSITORY_URL, null);
     }
 
     @Test
     void sessionsSummaryReturnsWindowKpisAndDefaultsToTwentyFourHoursInMinutes() throws Exception {
-        when(metricService.sessionsKpis(anyInt(), any()))
+        when(metricService.sessionsKpis(anyInt(), any(), any()))
                 .thenReturn(new SessionKpis(128L, 1.42, 9.87, 0.123, List.of(0L, 1L, 3L)));
 
         mockMvc.perform(get("/api/sessions/summary"))
@@ -245,25 +277,25 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.medianCostPerActiveMinuteUsd").value(0.123))
                 .andExpect(jsonPath("$.sessionsTrend").value(contains(0, 1, 3)));
 
-        verify(metricService).sessionsKpis(1440, null);
+        verify(metricService).sessionsKpis(1440, null, null);
     }
 
     @Test
     void sessionsSummaryDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(metricService.sessionsKpis(anyInt(), any()))
+        when(metricService.sessionsKpis(anyInt(), any(), any()))
                 .thenReturn(new SessionKpis(0L, 0.0, 0.0, 0.0, List.of()));
 
         mockMvc.perform(get("/api/sessions/summary").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).sessionsKpis(1440, REPOSITORY_URL);
+        verify(metricService).sessionsKpis(1440, REPOSITORY_URL, null);
     }
 
     @Test
     void sessionsSummaryDispatchesSuppliedRepositoryUrlToServiceOnTheRangeForm() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(metricService.sessionsKpisInRange(rangeStart, rangeEnd, REPOSITORY_URL))
+        when(metricService.sessionsKpisInRange(rangeStart, rangeEnd, REPOSITORY_URL, null))
                 .thenReturn(new SessionKpis(0L, 0.0, 0.0, 0.0, List.of()));
 
         mockMvc.perform(get("/api/sessions/summary")
@@ -272,13 +304,13 @@ class SessionControllerTest {
                         .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).sessionsKpisInRange(rangeStart, rangeEnd, REPOSITORY_URL);
+        verify(metricService).sessionsKpisInRange(rangeStart, rangeEnd, REPOSITORY_URL, null);
     }
 
     @Test
     void promptsDispatchesToLogServiceAndReturnsTimelineInAscendingOrder() throws Exception {
         String sessionId = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b";
-        when(logService.promptsForSession(sessionId)).thenReturn(List.of(
+        when(logService.promptsForSession(sessionId, null)).thenReturn(List.of(
                 new SessionPrompt(Instant.parse("2026-05-27T00:04:31.320Z"), "/ship", null),
                 new SessionPrompt(
                         Instant.parse("2026-05-27T00:05:12.100Z"), "Add prompt context to the sessions API",
@@ -344,7 +376,7 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[0].inProgress").value(false))
                 .andExpect(jsonPath("$[1].inProgress").value(true));
 
-        verify(logService).promptsForSession(sessionId);
+        verify(logService).promptsForSession(sessionId, null);
     }
 
     @Test
@@ -389,7 +421,7 @@ class SessionControllerTest {
     @Test
     void cacheEfficiencyReturnsRankedSessionsAndDefaultsToTwentyFourHoursAndEightRows() throws Exception {
         Instant lastActivity = Instant.parse("2026-05-27T01:07:15.208Z");
-        when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt(), any())).thenReturn(List.of(
+        when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt(), any(), any())).thenReturn(List.of(
                 new SessionCacheEfficiency(
                         "7b3fc524-7f3c-4db5-9bb4-da27b77df56b", 0.41, 410_000L,
                         130_000L, 460_000L, 240_000L, 4.12, lastActivity, "Add user-prompt context"),
@@ -417,14 +449,15 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$[1].endTimestamp").value(nullValue()))
                 .andExpect(jsonPath("$[1].firstUserPrompt").value(nullValue()));
 
-        verify(metricService).worstCacheEfficiencySessions(1440, 8, null);
+        verify(metricService).worstCacheEfficiencySessions(1440, 8, null, null);
     }
 
     @Test
     void cacheEfficiencyDelegatesToTheRangeFormWhenBothBoundsArePresent() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(metricService.worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 3, null)).thenReturn(List.of());
+        when(metricService.worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 3, null, null))
+                .thenReturn(List.of());
 
         mockMvc.perform(get("/api/sessions/cache-efficiency")
                         .param("startTimestamp", rangeStart.toString())
@@ -433,24 +466,24 @@ class SessionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(0)));
 
-        verify(metricService).worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 3, null);
+        verify(metricService).worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 3, null, null);
     }
 
     @Test
     void cacheEfficiencyDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt(), any())).thenReturn(List.of());
+        when(metricService.worstCacheEfficiencySessions(anyInt(), anyInt(), any(), any())).thenReturn(List.of());
 
         mockMvc.perform(get("/api/sessions/cache-efficiency").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).worstCacheEfficiencySessions(1440, 8, REPOSITORY_URL);
+        verify(metricService).worstCacheEfficiencySessions(1440, 8, REPOSITORY_URL, null);
     }
 
     @Test
     void cacheEfficiencyDispatchesSuppliedRepositoryUrlToServiceOnTheRangeForm() throws Exception {
         Instant rangeStart = Instant.parse("2026-01-01T00:00:00Z");
         Instant rangeEnd = Instant.parse("2026-01-02T00:00:00Z");
-        when(metricService.worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 8, REPOSITORY_URL))
+        when(metricService.worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 8, REPOSITORY_URL, null))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/sessions/cache-efficiency")
@@ -459,6 +492,6 @@ class SessionControllerTest {
                         .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(metricService).worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 8, REPOSITORY_URL);
+        verify(metricService).worstCacheEfficiencySessionsInRange(rangeStart, rangeEnd, 8, REPOSITORY_URL, null);
     }
 }

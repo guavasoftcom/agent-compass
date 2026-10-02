@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.DistributionPoint;
 import com.guavasoft.agentcompass.model.MetricDistribution;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
@@ -226,7 +227,7 @@ class MetricDistributionQueryIntegrationTest {
     logRecordRepository.saveAll(requests);
 
     List<DistributionPoint> points = metricService
-        .aggregateMetricDistribution(seriesStart, seriesEnd, null, TOKEN_METRIC).points();
+        .aggregateMetricDistribution(seriesStart, seriesEnd, null, TOKEN_METRIC, AgentProfiles.UNKNOWN).points();
 
     assertThat(points).hasSize(20);
     assertThat(points).extracting(DistributionPoint::value)
@@ -257,7 +258,7 @@ class MetricDistributionQueryIntegrationTest {
     logRecordRepository.saveAll(requests);
 
     List<DistributionPoint> points = metricService
-        .aggregateMetricDistribution(capStart, capEnd, null, TOKEN_METRIC).points();
+        .aggregateMetricDistribution(capStart, capEnd, null, TOKEN_METRIC, AgentProfiles.UNKNOWN).points();
 
     // The oldest 50 are dropped; the newest 2,000 come back oldest first.
     assertThat(points).hasSize(REQUEST_CAP);
@@ -296,7 +297,9 @@ class MetricDistributionQueryIntegrationTest {
     Instant emptyEnd = emptyStart.plus(24, ChronoUnit.HOURS);
 
     for (String metric : List.of(TOKEN_METRIC, COST_METRIC)) {
-      assertThat(metricService.aggregateMetricDistribution(emptyStart, emptyEnd, null, metric).points()).isEmpty();
+      assertThat(metricService.aggregateMetricDistribution(emptyStart, emptyEnd, null, metric, AgentProfiles.UNKNOWN)
+              .points())
+          .isEmpty();
       assertThat(distribution(metric, UNKNOWN_REPOSITORY).points()).isEmpty();
     }
   }
@@ -304,7 +307,8 @@ class MetricDistributionQueryIntegrationTest {
   @Test
   void aMetricThatIsNeitherTokenNorCostIsRejectedAsAnIllegalArgument() {
     for (String unsupportedMetric : List.of("claude_code.session.count", "token", "latency", "")) {
-      assertThatThrownBy(() -> metricService.aggregateMetricDistribution(windowStart, windowEnd, null, unsupportedMetric))
+      assertThatThrownBy(() -> metricService.aggregateMetricDistribution(
+              windowStart, windowEnd, null, unsupportedMetric, AgentProfiles.UNKNOWN))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining(TOKEN_METRIC)
           .hasMessageContaining(COST_METRIC);
@@ -312,7 +316,7 @@ class MetricDistributionQueryIntegrationTest {
   }
 
   private MetricDistribution distribution(String metric, String repositoryUrl) {
-    return metricService.aggregateMetricDistribution(windowStart, windowEnd, repositoryUrl, metric);
+    return metricService.aggregateMetricDistribution(windowStart, windowEnd, repositoryUrl, metric, AgentProfiles.UNKNOWN);
   }
 
   // Timestamp -> trace id for every point that carries one, so an assertion names the exemplars.

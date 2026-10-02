@@ -21,6 +21,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.service.ReportService;
 
 import java.time.Instant;
@@ -54,30 +56,39 @@ class ReportControllerTest {
     @MockitoBean
     ReportService reportService;
 
+    // ReportController now resolves agentProfile the same way CostController/MetricsController do
+    // -- see those tests for the pattern this mirrors. Resolution defaults are
+    // AgentProfileRequestResolverTest's own job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
+
     @Test
     void reportDefaultsToTheStandardOneDayWindowWhenNoParamsSupplied() throws Exception {
-        when(reportService.renderMarkdown(DEFAULT_MINUTES, null)).thenReturn(SAMPLE_MARKDOWN);
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(reportService.renderMarkdown(DEFAULT_MINUTES, null, AgentProfiles.CLAUDE_CODE)).thenReturn(SAMPLE_MARKDOWN);
 
         mockMvc.perform(get("/api/report"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(SAMPLE_MARKDOWN));
 
-        verify(reportService).renderMarkdown(DEFAULT_MINUTES, null);
+        verify(reportService).renderMarkdown(DEFAULT_MINUTES, null, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void reportDispatchesSuppliedMinutesToService() throws Exception {
-        when(reportService.renderMarkdown(EXPLICIT_MINUTES, null)).thenReturn(SAMPLE_MARKDOWN);
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(reportService.renderMarkdown(EXPLICIT_MINUTES, null, AgentProfiles.CLAUDE_CODE)).thenReturn(SAMPLE_MARKDOWN);
 
         mockMvc.perform(get("/api/report").param("minutes", String.valueOf(EXPLICIT_MINUTES)))
                 .andExpect(status().isOk());
 
-        verify(reportService).renderMarkdown(EXPLICIT_MINUTES, null);
+        verify(reportService).renderMarkdown(EXPLICIT_MINUTES, null, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void reportUsesCustomRangeWhenBothTimestampsSupplied() throws Exception {
-        when(reportService.renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null))
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(reportService.renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, AgentProfiles.CLAUDE_CODE))
                 .thenReturn(SAMPLE_MARKDOWN);
 
         mockMvc.perform(get("/api/report")
@@ -85,22 +96,25 @@ class ReportControllerTest {
                 .param("endTimestamp", CUSTOM_RANGE_END.toString()))
                 .andExpect(status().isOk());
 
-        verify(reportService).renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null);
+        verify(reportService).renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void reportDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(reportService.renderMarkdown(DEFAULT_MINUTES, REPOSITORY_URL)).thenReturn(SAMPLE_MARKDOWN);
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(reportService.renderMarkdown(DEFAULT_MINUTES, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE))
+                .thenReturn(SAMPLE_MARKDOWN);
 
         mockMvc.perform(get("/api/report").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(reportService).renderMarkdown(DEFAULT_MINUTES, REPOSITORY_URL);
+        verify(reportService).renderMarkdown(DEFAULT_MINUTES, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void reportDispatchesSuppliedRepositoryUrlToServiceOnTheCustomRangeForm() throws Exception {
-        when(reportService.renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL))
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(reportService.renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE))
                 .thenReturn(SAMPLE_MARKDOWN);
 
         mockMvc.perform(get("/api/report")
@@ -109,6 +123,18 @@ class ReportControllerTest {
                 .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(reportService).renderMarkdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL);
+        verify(reportService).renderMarkdownInRange(
+                CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE);
+    }
+
+    @Test
+    void reportDispatchesSuppliedAgentProfileToServiceOnTheMinutesForm() throws Exception {
+        when(agentProfileRequestResolver.resolve("other-agent")).thenReturn("other-agent");
+        when(reportService.renderMarkdown(DEFAULT_MINUTES, null, "other-agent")).thenReturn(SAMPLE_MARKDOWN);
+
+        mockMvc.perform(get("/api/report").param("agentProfile", "other-agent"))
+                .andExpect(status().isOk());
+
+        verify(reportService).renderMarkdown(DEFAULT_MINUTES, null, "other-agent");
     }
 }

@@ -163,8 +163,8 @@ public class MetricSeriesService {
   private final TuningProperties tuningProperties;
   private final MetricPointRepository repository;
 
-  public List<MetricSeries> metricSeries(Instant from, Instant to, String repositoryUrl) {
-    return metricSeries(from, to, repositoryUrl, MetricSeriesFilter.NONE);
+  public List<MetricSeries> metricSeries(Instant from, Instant to, String repositoryUrl, String agentProfile) {
+    return metricSeries(from, to, repositoryUrl, agentProfile, MetricSeriesFilter.NONE);
   }
 
   /**
@@ -175,8 +175,8 @@ public class MetricSeriesService {
    * @throws IllegalArgumentException when the filter names a metric id no spec carries (mapped to a 400)
    */
   public List<MetricSeries> metricSeries(
-      Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter) {
-    return metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE);
+      Instant from, Instant to, String repositoryUrl, String agentProfile, MetricSeriesFilter filter) {
+    return metricSeries(from, to, repositoryUrl, agentProfile, filter, MetricSeriesAggregation.NONE);
   }
 
   /**
@@ -190,17 +190,17 @@ public class MetricSeriesService {
    *     to a 400), or when the filter does
    */
   public List<MetricSeries> metricSeries(
-      Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter,
+      Instant from, Instant to, String repositoryUrl, String agentProfile, MetricSeriesFilter filter,
       MetricSeriesAggregation aggregation) {
     // The bucket offsets below are measured from the window start, while date_bin only ever sees it
     // at the microsecond precision Postgres stores. See QueryWindowPrecision.
     return metricSeriesInWindow(
         QueryWindowPrecision.toDatabasePrecision(from), QueryWindowPrecision.toDatabasePrecision(to),
-        repositoryUrl, filter, aggregation);
+        repositoryUrl, agentProfile, filter, aggregation);
   }
 
   private List<MetricSeries> metricSeriesInWindow(
-      Instant from, Instant to, String repositoryUrl, MetricSeriesFilter filter,
+      Instant from, Instant to, String repositoryUrl, String agentProfile, MetricSeriesFilter filter,
       MetricSeriesAggregation aggregation) {
     long windowSeconds = Math.max(1L, Duration.between(from, to).getSeconds());
     long bucketSeconds = Math.max(1L, windowSeconds / TREND_BUCKETS);
@@ -220,18 +220,18 @@ public class MetricSeriesService {
     // covers every metric EXCEPT the filtered one, which has its own single-metric ...Filtered
     // query; the two row sets share a shape and are simply concatenated.
     List<Object[]> totalRows = new ArrayList<>(repository.aggregateMetricTotals(
-        filterScope.unfilteredNames(metricNames), priorFrom, from, to, repositoryUrl));
+        filterScope.unfilteredNames(metricNames), priorFrom, from, to, repositoryUrl, agentProfile));
     List<Object[]> trendRows = new ArrayList<>(repository.aggregateMetricTrend(
-        filterScope.unfilteredNames(metricNames), from, to, bucketSeconds, repositoryUrl));
+        filterScope.unfilteredNames(metricNames), from, to, bucketSeconds, repositoryUrl, agentProfile));
     List<Object[]> cardinalityRows = new ArrayList<>(repository.aggregateMetricCardinality(
-        filterScope.unfilteredNames(metricNames), from, to, repositoryUrl));
+        filterScope.unfilteredNames(metricNames), from, to, repositoryUrl, agentProfile));
     if (filterScope.isActive()) {
       totalRows.addAll(repository.aggregateMetricTotalsFiltered(
-          filterScope.metricName(), priorFrom, from, to, repositoryUrl, filterScope.matchesJson()));
+          filterScope.metricName(), priorFrom, from, to, repositoryUrl, agentProfile, filterScope.matchesJson()));
       trendRows.addAll(repository.aggregateMetricTrendFiltered(
-          filterScope.metricName(), from, to, bucketSeconds, repositoryUrl, filterScope.matchesJson()));
+          filterScope.metricName(), from, to, bucketSeconds, repositoryUrl, agentProfile, filterScope.matchesJson()));
       cardinalityRows.addAll(repository.aggregateMetricCardinalityFiltered(
-          filterScope.metricName(), from, to, repositoryUrl, filterScope.matchesJson()));
+          filterScope.metricName(), from, to, repositoryUrl, agentProfile, filterScope.matchesJson()));
     }
     Map<String, MetricWindowTotals> totalsByMetricName = totalRows.stream()
         .collect(Collectors.toMap(
@@ -241,7 +241,7 @@ public class MetricSeriesService {
     Map<String, List<Object[]>> trendRowsByMetricName = trendRows.stream()
         .collect(Collectors.groupingBy(row -> (String) row[0]));
     Map<String, Map<String, Map<String, Double>>> splitTotalsByMetricThenAttribute =
-        aggregateSplitTotals(specs, from, to, repositoryUrl, filterScope);
+        aggregateSplitTotals(specs, from, to, repositoryUrl, agentProfile, filterScope);
     Map<String, Long> cardinalityByMetricName = cardinalityRows.stream()
         .collect(Collectors.toMap(row -> (String) row[0], row -> ((Number) row[1]).longValue()));
 
@@ -261,7 +261,7 @@ public class MetricSeriesService {
       // figures keep describing sums and only the plotted array changes. The attribute filter
       // applies to the aggregated trend only when the aggregated metric IS the filtered one.
       List<Object[]> aggregatedRows = aggregatedTrendRows(
-          aggregation.aggregation(), aggregatedSpec.name(), from, to, bucketSeconds, repositoryUrl,
+          aggregation.aggregation(), aggregatedSpec.name(), from, to, bucketSeconds, repositoryUrl, agentProfile,
           filterScope.matchesJsonFor(aggregatedSpec.name()));
       List<Double> aggregatedTrend = buildTrend(aggregatedRows, from, bucketSeconds);
       series.replaceAll(candidate -> candidate.id().equals(aggregatedSpec.id())
@@ -274,14 +274,14 @@ public class MetricSeriesService {
   // here. SUM never reaches this: it is the batched trend the caller already has.
   private List<Object[]> aggregatedTrendRows(
       MetricAggregation aggregation, String metricName, Instant from, Instant to, long bucketSeconds,
-      String repositoryUrl, String filterMatchesJson) {
+      String repositoryUrl, String agentProfile, String filterMatchesJson) {
     return switch (aggregation) {
       case AVG -> repository.aggregateMetricTrendAverage(
-          metricName, from, to, bucketSeconds, repositoryUrl, filterMatchesJson);
+          metricName, from, to, bucketSeconds, repositoryUrl, agentProfile, filterMatchesJson);
       case P95 -> repository.aggregateMetricTrendP95(
-          metricName, from, to, bucketSeconds, repositoryUrl, filterMatchesJson);
+          metricName, from, to, bucketSeconds, repositoryUrl, agentProfile, filterMatchesJson);
       case COUNT -> repository.aggregateMetricTrendCount(
-          metricName, from, to, bucketSeconds, repositoryUrl, filterMatchesJson);
+          metricName, from, to, bucketSeconds, repositoryUrl, agentProfile, filterMatchesJson);
       case SUM -> throw new IllegalStateException("SUM uses the batched trend, not a dedicated query");
     };
   }
@@ -297,7 +297,8 @@ public class MetricSeriesService {
   // With an attribute filter active, the filtered metric (if it bears splits) goes through its own
   // single-metric aggregateMetricSplitsFiltered and the rest through the plain batched query.
   private Map<String, Map<String, Map<String, Double>>> aggregateSplitTotals(
-      List<MetricSpec> specs, Instant from, Instant to, String repositoryUrl, FilterScope filterScope) {
+      List<MetricSpec> specs, Instant from, Instant to, String repositoryUrl, String agentProfile,
+      FilterScope filterScope) {
     List<String> splitMetricNames = specs.stream()
         .filter(spec -> !spec.splits().isEmpty())
         .map(MetricSpec::name)
@@ -310,12 +311,13 @@ public class MetricSeriesService {
     List<Object[]> splitRows = new ArrayList<>();
     if (!unfilteredSplitMetricNames.isEmpty()) {
       splitRows.addAll(repository.aggregateMetricSplits(
-          unfilteredSplitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl));
+          unfilteredSplitMetricNames, MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl,
+          agentProfile));
     }
     if (filterScope.isActive() && splitMetricNames.contains(filterScope.metricName())) {
       splitRows.addAll(repository.aggregateMetricSplitsFiltered(
           filterScope.metricName(), MODEL_ATTRIBUTE, typeAttribute, DECISION_ATTRIBUTE, from, to, repositoryUrl,
-          filterScope.matchesJson()));
+          agentProfile, filterScope.matchesJson()));
     }
     Map<String, Map<String, Map<String, Double>>> totalsByMetricThenAttribute = new HashMap<>();
     for (Object[] row : splitRows) {
@@ -338,12 +340,13 @@ public class MetricSeriesService {
    * active rows in the window) simply matches nothing and yields an empty list rather than an error,
    * which the frontend reads as "no filterable attributes".
    */
-  public MetricAttributes metricAttributes(Instant from, Instant to, String repositoryUrl, String metricName) {
+  public MetricAttributes metricAttributes(
+      Instant from, Instant to, String repositoryUrl, String agentProfile, String metricName) {
     // The query returns rows already ordered (key, count desc, value), so grouping into an
     // insertion-ordered map preserves that order in both the keys and each key's values.
     Map<String, List<MetricFacetValue>> valuesByKey = new LinkedHashMap<>();
     for (Object[] row : repository.aggregateMetricAttributeFacets(
-        metricName, from, to, repositoryUrl, FACET_MAX_DISTINCT_VALUES)) {
+        metricName, from, to, repositoryUrl, agentProfile, FACET_MAX_DISTINCT_VALUES)) {
       valuesByKey
           .computeIfAbsent((String) row[0], key -> new ArrayList<>())
           .add(new MetricFacetValue((String) row[1], ((Number) row[2]).longValue()));

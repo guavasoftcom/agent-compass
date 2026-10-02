@@ -21,6 +21,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.SubagentCostBreakdown;
@@ -75,6 +76,12 @@ class TracesControllerTest {
     // emitter. Its behaviour is covered by TraceAnalysisSseStreamerTest.
     @MockitoBean
     TraceAnalysisSseStreamer traceAnalysisSseStreamer;
+
+    // Declared for the same reason as traceAnalysisSseStreamer above: TracesController now takes
+    // it as a constructor dependency, and resolution defaults are AgentProfileRequestResolverTest's
+    // job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
 
     @Test
     void tracesListReturnsCursorPageWithTotalCount() throws Exception {

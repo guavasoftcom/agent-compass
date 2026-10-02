@@ -39,6 +39,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.LogRecord;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.TraceAnalysis;
@@ -74,6 +75,7 @@ public class TracesController {
     private final LogService logService;
     private final TraceAnalysisService traceAnalysisService;
     private final TraceAnalysisSseStreamer traceAnalysisSseStreamer;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("/histogram")
     @Operation(
@@ -309,7 +311,7 @@ public class TracesController {
         return traceAnalysisSseStreamer.stream(traceId);
     }
 
-    private static TraceQueryCriteria buildCriteria(TraceFilterParams filterParams) {
+    private TraceQueryCriteria buildCriteria(TraceFilterParams filterParams) {
         return TraceQueryCriteria.of(
                 filterParams.getStartTimestamp(),
                 filterParams.getEndTimestamp(),
@@ -319,6 +321,7 @@ public class TracesController {
                 filterParams.getDuration(),
                 filterParams.getSession(),
                 filterParams.getQ(),
-                filterParams.getRepositoryUrl());
+                filterParams.getRepositoryUrl(),
+                agentProfileRequestResolver.resolve(filterParams.getAgentProfile()));
     }
 }

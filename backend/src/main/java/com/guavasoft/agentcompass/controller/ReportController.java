@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.service.ReportService;
 
 import java.time.Instant;
@@ -43,6 +44,7 @@ public class ReportController {
     private static final MediaType MARKDOWN = MediaType.valueOf("text/markdown;charset=UTF-8");
 
     private final ReportService reportService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping(produces = "text/markdown")
     @Operation(
@@ -62,10 +64,14 @@ public class ReportController {
             @Parameter(description = "Optional explicit end of the custom range (ISO-8601). Overrides "
                     + "`minutes` when paired with startTimestamp.") @RequestParam(required = false) Instant endTimestamp,
             @Parameter(description = "Optional repository URL to scope the report to a single repo; "
-                    + "omitted or null reports across all repositories.") @RequestParam(required = false) String repositoryUrl) {
+                    + "omitted or null reports across all repositories.") @RequestParam(required = false) String repositoryUrl,
+            @Parameter(description = "Agent profile to scope the report to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile) {
+        String resolvedAgentProfile = agentProfileRequestResolver.resolve(agentProfile);
         String body = startTimestamp != null && endTimestamp != null
-                ? reportService.renderMarkdownInRange(startTimestamp, endTimestamp, repositoryUrl)
-                : reportService.renderMarkdown(minutes, repositoryUrl);
+                ? reportService.renderMarkdownInRange(startTimestamp, endTimestamp, repositoryUrl, resolvedAgentProfile)
+                : reportService.renderMarkdown(minutes, repositoryUrl, resolvedAgentProfile);
         return ResponseEntity.ok()
                 .contentType(MARKDOWN)
                 .body(body);

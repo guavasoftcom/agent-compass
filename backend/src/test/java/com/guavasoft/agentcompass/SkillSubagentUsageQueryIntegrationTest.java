@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
@@ -280,7 +281,7 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void skillUsageSplitsCallsByTheModelThatRanTheSkill() {
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(IdentifierUsageCount::tool).containsExactly(SKILL_SHIP, SKILL_VERIFY);
         assertThat(rows.get(0).calls()).isEqualTo(2L);
@@ -300,7 +301,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 .count();
         assertThat(shipTurnsInWindow).isEqualTo(4L);
 
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows)
                 .filteredOn(row -> SKILL_SHIP.equals(row.tool()))
@@ -313,7 +314,7 @@ class SkillSubagentUsageQueryIntegrationTest {
         // That turn carries its own prompt id, so the prompt-level dedup does not
         // absorb it: without the agent.name check ship gains a third call and a
         // Haiku bucket it never ran on.
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows)
                 .filteredOn(row -> SKILL_SHIP.equals(row.tool()))
@@ -328,7 +329,7 @@ class SkillSubagentUsageQueryIntegrationTest {
     void skillInvocationSpanningModelsIsAttributedToItsEarliestTurn() {
         // PROMPT_FIRST_SHIP starts on Opus and later runs on Sonnet. Attributing
         // it to the latest turn instead would read {Sonnet: 2} and lose Opus.
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows)
                 .filteredOn(row -> SKILL_SHIP.equals(row.tool()))
@@ -351,7 +352,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_MODEL, MODEL_OPUS,
                 ATTR_SKILL_NAME, "unprompted"));
 
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows)
                 .filteredOn(row -> "unprompted".equals(row.tool()))
@@ -369,7 +370,7 @@ class SkillSubagentUsageQueryIntegrationTest {
         // that ran while the skill was active spent real money, including that one -- so
         // the two queries deliberately disagree about which turns they cover. calls()
         // stays 2 for ship; costUsd sums all four of its turns.
-        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         IdentifierUsageCount ship = rows.stream()
                 .filter(row -> SKILL_SHIP.equals(row.tool()))
@@ -392,7 +393,7 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void subagentUsageAttributesCallsToTheDispatchingMainLoopTurnNotTheSubagentsOwnTurns() {
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(IdentifierUsageCount::tool)
                 .containsExactly(SUBAGENT_EXPLORE, SUBAGENT_GENERAL_PURPOSE);
@@ -410,7 +411,7 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void subagentDispatchWithNoTypeIsCreditedToTheDefaultAgentNotAnUnknownBucket() {
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(IdentifierUsageCount::tool).doesNotContain("unknown");
         assertThat(rows)
@@ -421,8 +422,9 @@ class SkillSubagentUsageQueryIntegrationTest {
 
     @Test
     void perModelCallsAlwaysSumToTheRowTotal() {
-        List<IdentifierUsageCount> rows = new ArrayList<>(service.aggregateSkillUsageInRange(windowStart, windowEnd, null));
-        rows.addAll(service.aggregateSubagentUsageInRange(windowStart, windowEnd, null));
+        List<IdentifierUsageCount> rows = new ArrayList<>(
+                service.aggregateSkillUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN));
+        rows.addAll(service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN));
 
         assertThat(rows).isNotEmpty().allSatisfy(row ->
                 assertThat(row.byModel().values().stream().mapToLong(Long::longValue).sum())
@@ -439,7 +441,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_TOOL_NAME, TOOL_AGENT,
                 ATTR_SUBAGENT_TYPE, "orphaned"));
 
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows)
                 .filteredOn(row -> "orphaned".equals(row.tool()))
@@ -496,7 +498,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_MODEL, MODEL_SONNET,
                 ATTR_COST_USD, COST_CORRELATED_SUBAGENT_CALL));
 
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         IdentifierUsageCount subagent = rows.stream()
                 .filter(row -> subagentType.equals(row.tool()))
@@ -541,7 +543,7 @@ class SkillSubagentUsageQueryIntegrationTest {
                 Map.of(ATTR_TOOL_USE_ID, "toolu_orphan_childless"));
         // Deliberately no llm_request span beneath e000000000000002.
 
-        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> rows = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows)
                 .filteredOn(row -> subagentTypeNoSpanAtAll.equals(row.tool()))
@@ -603,11 +605,12 @@ class SkillSubagentUsageQueryIntegrationTest {
                 ATTR_MODEL, MODEL_SONNET,
                 ATTR_COST_USD, COST_REPOSITORY_SCOPED_SUBAGENT_CALL));
 
-        List<IdentifierUsageCount> unscoped = service.aggregateSubagentUsageInRange(windowStart, windowEnd, null);
+        List<IdentifierUsageCount> unscoped =
+                service.aggregateSubagentUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
         List<IdentifierUsageCount> scopedToRepositoryA =
-                service.aggregateSubagentUsageInRange(windowStart, windowEnd, REPOSITORY_A);
+                service.aggregateSubagentUsageInRange(windowStart, windowEnd, REPOSITORY_A, AgentProfiles.UNKNOWN);
         List<IdentifierUsageCount> scopedToRepositoryB =
-                service.aggregateSubagentUsageInRange(windowStart, windowEnd, REPOSITORY_B);
+                service.aggregateSubagentUsageInRange(windowStart, windowEnd, REPOSITORY_B, AgentProfiles.UNKNOWN);
 
         // Unscoped: the dispatch is counted and its cost resolves normally.
         IdentifierUsageCount unscopedRow = rowFor(unscoped, subagentType);
@@ -633,8 +636,8 @@ class SkillSubagentUsageQueryIntegrationTest {
     void emptyWindowReturnsNoRowsRatherThanAnUnknownBucket() {
         Instant beforeAnySeededRow = windowStart.minus(10, ChronoUnit.MINUTES);
 
-        assertThat(service.aggregateSkillUsageInRange(beforeAnySeededRow, windowStart, null)).isEmpty();
-        assertThat(service.aggregateSubagentUsageInRange(beforeAnySeededRow, windowStart, null)).isEmpty();
+        assertThat(service.aggregateSkillUsageInRange(beforeAnySeededRow, windowStart, null, AgentProfiles.UNKNOWN)).isEmpty();
+        assertThat(service.aggregateSubagentUsageInRange(beforeAnySeededRow, windowStart, null, AgentProfiles.UNKNOWN)).isEmpty();
     }
 
     private static Map<String, Object> mapWithRepository(Map<String, Object> attributes, String repositoryUrl) {

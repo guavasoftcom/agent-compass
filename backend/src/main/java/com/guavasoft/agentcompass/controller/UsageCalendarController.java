@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.UsageCalendarDaily;
 import com.guavasoft.agentcompass.model.UsageCalendarParams;
 import com.guavasoft.agentcompass.service.UsageCalendarService;
@@ -43,6 +44,7 @@ import com.guavasoft.agentcompass.service.UsageCalendarService;
 public class UsageCalendarController {
 
     private final UsageCalendarService usageCalendarService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("/daily")
     @Operation(
@@ -67,6 +69,7 @@ public class UsageCalendarController {
                 usageCalendarParams.to(),
                 usageCalendarParams.timeZone(),
                 usageCalendarParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(usageCalendarParams.agentProfile()),
                 usageCalendarParams.includesHourly());
     }
 }

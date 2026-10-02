@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.TrendsResponse;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -93,7 +94,7 @@ class TrendsQueryIntegrationTest {
     saveToolResult("session-prior", from.minusSeconds(1), false);
 
     Object[] row = logRecordRepository.aggregateSessionFailuresCurrentAndPrior(
-        TOOL_RESULT_EVENT, "success", from, to, priorFrom, null).get(0);
+        TOOL_RESULT_EVENT, "success", from, to, priorFrom, null, AgentProfiles.UNKNOWN).get(0);
 
     long currentFailures = ((Number) row[0]).longValue();
     long priorFailures = ((Number) row[1]).longValue();
@@ -108,7 +109,7 @@ class TrendsQueryIntegrationTest {
     saveCost("session-A", "opus", 12.0, from.plusSeconds(300));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse response = trendService.costTrendsInRange(from, to, null);
+    TrendsResponse response = trendService.costTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
     TrendsResponse.MetricTrend costPerSession = response.metrics().get("cost_per_session");
 
     assertThat(costPerSession.before()).isZero();
@@ -134,7 +135,7 @@ class TrendsQueryIntegrationTest {
     // Prior window: no failures.
     saveToolResult("session-C", priorFrom.plusSeconds(400), true);
 
-    TrendsResponse costResponse = trendService.costTrendsInRange(from, to, null);
+    TrendsResponse costResponse = trendService.costTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(costResponse.current().start()).isEqualTo(from);
     assertThat(costResponse.current().end()).isEqualTo(to);
@@ -150,7 +151,7 @@ class TrendsQueryIntegrationTest {
     assertThat(totalCost.afterSeries()).hasSize(7);
     assertThat(totalCost.directionIsGoodWhen()).isEqualTo("down");
 
-    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to, null);
+    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(reliabilityResponse.metrics()).containsOnlyKeys("tool_errors", "error_rate_pct", "session_failures");
 
@@ -158,7 +159,7 @@ class TrendsQueryIntegrationTest {
     assertThat(sessionFailures.after()).isEqualTo(1.0);
     assertThat(sessionFailures.before()).isZero();
 
-    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to, null);
+    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(activityResponse.metrics()).containsOnlyKeys("sessions", "avg_duration_min");
 
@@ -189,10 +190,10 @@ class TrendsQueryIntegrationTest {
     saveToolResult("session-A", from.plusSeconds(400), false);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse costResponse = trendService.costTrendsInRange(from, to, null);
-    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to, null);
-    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to, null);
-    TrendsResponse tokenEfficiencyResponse = trendService.tokenEfficiencyTrendsInRange(from, to, null);
+    TrendsResponse costResponse = trendService.costTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
+    TrendsResponse reliabilityResponse = trendService.reliabilityTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
+    TrendsResponse activityResponse = trendService.activityTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
+    TrendsResponse tokenEfficiencyResponse = trendService.tokenEfficiencyTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(costResponse.metrics().get("total_cost").after()).isEqualTo(10.0);
     assertThat(reliabilityResponse.metrics().get("tool_errors").after()).isEqualTo(1.0);
@@ -212,9 +213,9 @@ class TrendsQueryIntegrationTest {
     saveCost("session-b-prior", "opus", 3.0, priorFrom.plusSeconds(300), REPOSITORY_B);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse scopedToRepositoryA = trendService.costTrendsInRange(from, to, REPOSITORY_A);
-    TrendsResponse scopedToRepositoryB = trendService.costTrendsInRange(from, to, REPOSITORY_B);
-    TrendsResponse unscoped = trendService.costTrendsInRange(from, to, null);
+    TrendsResponse scopedToRepositoryA = trendService.costTrendsInRange(from, to, REPOSITORY_A, AgentProfiles.UNKNOWN);
+    TrendsResponse scopedToRepositoryB = trendService.costTrendsInRange(from, to, REPOSITORY_B, AgentProfiles.UNKNOWN);
+    TrendsResponse unscoped = trendService.costTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     TrendsResponse.MetricTrend totalCostA = scopedToRepositoryA.metrics().get("total_cost");
     assertThat(totalCostA.after()).isEqualTo(10.0);
@@ -235,8 +236,8 @@ class TrendsQueryIntegrationTest {
     saveCost("session-b", "opus", 7.0, from.plusSeconds(300), REPOSITORY_B);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse scopedToRepositoryA = trendService.tokenEfficiencyTrendsInRange(from, to, REPOSITORY_A);
-    TrendsResponse unscoped = trendService.tokenEfficiencyTrendsInRange(from, to, null);
+    TrendsResponse scopedToRepositoryA = trendService.tokenEfficiencyTrendsInRange(from, to, REPOSITORY_A, AgentProfiles.UNKNOWN);
+    TrendsResponse unscoped = trendService.tokenEfficiencyTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(scopedToRepositoryA.metrics()).containsKeys(
         "cache_read_ratio_pct", "tokens_total", "tokens_per_session");
@@ -249,9 +250,9 @@ class TrendsQueryIntegrationTest {
     saveToolResult("session-b", from.plusSeconds(400), false, REPOSITORY_B);
     saveToolResult("session-b", from.plusSeconds(450), true, REPOSITORY_B);
 
-    TrendsResponse scopedToRepositoryA = trendService.reliabilityTrendsInRange(from, to, REPOSITORY_A);
-    TrendsResponse scopedToRepositoryB = trendService.reliabilityTrendsInRange(from, to, REPOSITORY_B);
-    TrendsResponse unscoped = trendService.reliabilityTrendsInRange(from, to, null);
+    TrendsResponse scopedToRepositoryA = trendService.reliabilityTrendsInRange(from, to, REPOSITORY_A, AgentProfiles.UNKNOWN);
+    TrendsResponse scopedToRepositoryB = trendService.reliabilityTrendsInRange(from, to, REPOSITORY_B, AgentProfiles.UNKNOWN);
+    TrendsResponse unscoped = trendService.reliabilityTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(scopedToRepositoryA.metrics().get("tool_errors").after()).isEqualTo(1.0);
     assertThat(scopedToRepositoryB.metrics().get("tool_errors").after()).isEqualTo(1.0);
@@ -265,9 +266,9 @@ class TrendsQueryIntegrationTest {
     saveCost("session-b", "opus", 7.0, from.plusSeconds(300), REPOSITORY_B);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TrendsResponse scopedToRepositoryA = trendService.activityTrendsInRange(from, to, REPOSITORY_A);
-    TrendsResponse scopedToRepositoryB = trendService.activityTrendsInRange(from, to, REPOSITORY_B);
-    TrendsResponse unscoped = trendService.activityTrendsInRange(from, to, null);
+    TrendsResponse scopedToRepositoryA = trendService.activityTrendsInRange(from, to, REPOSITORY_A, AgentProfiles.UNKNOWN);
+    TrendsResponse scopedToRepositoryB = trendService.activityTrendsInRange(from, to, REPOSITORY_B, AgentProfiles.UNKNOWN);
+    TrendsResponse unscoped = trendService.activityTrendsInRange(from, to, null, AgentProfiles.UNKNOWN);
 
     assertThat(scopedToRepositoryA.metrics().get("sessions").after()).isEqualTo(1.0);
     assertThat(scopedToRepositoryB.metrics().get("sessions").after()).isEqualTo(1.0);

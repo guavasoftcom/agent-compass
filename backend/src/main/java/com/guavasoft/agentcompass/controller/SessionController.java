@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.SessionApiRequest;
 import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
 import com.guavasoft.agentcompass.model.SessionKpis;
@@ -57,6 +58,7 @@ public class SessionController {
 
     private final MetricService metricService;
     private final LogService logService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("")
     @Operation(
@@ -89,13 +91,15 @@ public class SessionController {
             @Parameter(description = "Zero-based page index", example = "0") @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "Page size", example = "25") @RequestParam(defaultValue = "25") int size,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         SessionSummaryPage result;
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             result = metricService.sessionsSummaryInRange(
                     timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), sort, direction, page, size,
-                    timeWindowParams.repositoryUrl());
+                    timeWindowParams.repositoryUrl(), agentProfile);
         } else {
-            result = metricService.sessionsSummary(minutes, sort, direction, page, size, timeWindowParams.repositoryUrl());
+            result = metricService.sessionsSummary(
+                    minutes, sort, direction, page, size, timeWindowParams.repositoryUrl(), agentProfile);
         }
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Total-Count", String.valueOf(result.totalCount()));
@@ -120,11 +124,13 @@ public class SessionController {
     public SessionKpis sessionsSummary(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return metricService.sessionsKpisInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return metricService.sessionsKpis(minutes, timeWindowParams.repositoryUrl());
+        return metricService.sessionsKpis(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/token-usage")
@@ -145,11 +151,12 @@ public class SessionController {
     public TokenUsageSummary tokenUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return metricService.aggregateTokenUsageInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return metricService.aggregateTokenUsage(minutes, timeWindowParams.repositoryUrl());
+        return metricService.aggregateTokenUsage(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/cache-efficiency")
@@ -175,12 +182,13 @@ public class SessionController {
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Parameter(description = "Maximum sessions to return", example = "8") @RequestParam(defaultValue = "8") int limit,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return metricService.worstCacheEfficiencySessionsInRange(
                     timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), limit,
-                    timeWindowParams.repositoryUrl());
+                    timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return metricService.worstCacheEfficiencySessions(minutes, limit, timeWindowParams.repositoryUrl());
+        return metricService.worstCacheEfficiencySessions(minutes, limit, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/{sessionId}/prompts")
@@ -198,8 +206,11 @@ public class SessionController {
                     array = @ArraySchema(schema = @Schema(implementation = SessionPrompt.class)))))
     public List<SessionPrompt> prompts(
             @Parameter(description = "Session identifier (the session.id attribute value)",
-                    example = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b") @PathVariable String sessionId) {
-        return logService.promptsForSession(sessionId);
+                    example = "7b3fc524-7f3c-4db5-9bb4-da27b77df56b") @PathVariable String sessionId,
+            @Parameter(description = "Agent profile to scope results to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile) {
+        return logService.promptsForSession(sessionId, agentProfileRequestResolver.resolve(agentProfile));
     }
 
     @GetMapping("/{sessionId}/requests")

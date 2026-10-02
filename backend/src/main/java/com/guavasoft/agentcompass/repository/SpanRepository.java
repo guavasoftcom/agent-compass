@@ -63,6 +63,20 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
     @Query(value = "SELECT MAX(end_timestamp) FROM spans WHERE trace_id = :traceId", nativeQuery = true)
     Instant findLatestEndTimestampForTrace(@Param("traceId") String traceId);
 
+    // Resolves the actual agent_profile a specific, already-identified trace belongs to -- every
+    // span in one trace carries the same value (resolved once per OTLP resource block at ingest),
+    // so any one row answers it. Exists for TraceExplorerService#traceSummary: that endpoint is
+    // deliberately NOT profile-scoped, the same way traceSummaryById is deliberately not
+    // window-scoped (a permalinked trace must resolve regardless of which profile the caller
+    // happens to have selected), so the downstream findInProgressTraceIds call -- which DOES
+    // require a concrete profile, since it is a hard partition -- needs the trace's own value
+    // rather than a guessed default. Guessing the configured primary profile was tried first and
+    // was wrong whenever the trace actually belongs to a different profile: the candidate_trace
+    // CTE's equality filter then excludes the trace entirely and a genuinely in-progress trace
+    // reads as finished.
+    @Query(value = "SELECT agent_profile FROM spans WHERE trace_id = :traceId LIMIT 1", nativeQuery = true)
+    Optional<String> findAgentProfileForTrace(@Param("traceId") String traceId);
+
     // The llm_request span one api_request log belongs to, for MetricService's distribution
     // exemplars. Correlated by request_id, never span_id: the log is stamped with whatever span
     // was ACTIVE when it fired (the interaction root or a tool span), not the llm_request child
@@ -130,6 +144,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               SELECT DISTINCT trace_id
               FROM spans
               WHERE trace_id IN :traceIds
+                AND agent_profile = :agentProfile
             ),
             unresolved_trace AS MATERIALIZED (
               SELECT ct.trace_id
@@ -149,6 +164,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             """, nativeQuery = true)
     List<String> findInProgressTraceIds(
             @Param("traceIds") Collection<String> traceIds,
+            @Param("agentProfile") String agentProfile,
             @Param("recentActivitySince") Instant recentActivitySince);
 
     // Per-tool latency percentiles over spans that wrap a single tool invocation.
@@ -186,6 +202,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               AND duration_nanos IS NOT NULL
               AND jsonb_exists(attributes, :toolAttribute)
               AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+              AND agent_profile = :agentProfile
             GROUP BY 1
             ORDER BY p95_nanos DESC NULLS LAST
             """, nativeQuery = true)
@@ -195,7 +212,8 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("toolAttribute") String toolAttribute,
             @Param("mcpPrefix") String mcpPrefix,
             @Param("since") Instant since,
-            @Param("repositoryUrl") String repositoryUrl);
+            @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile);
 
     @Query(value = """
             SELECT
@@ -213,6 +231,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               AND duration_nanos IS NOT NULL
               AND jsonb_exists(attributes, :toolAttribute)
               AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+              AND agent_profile = :agentProfile
             GROUP BY 1
             ORDER BY p95_nanos DESC NULLS LAST
             """, nativeQuery = true)
@@ -223,7 +242,8 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("mcpPrefix") String mcpPrefix,
             @Param("start") Instant start,
             @Param("end") Instant end,
-            @Param("repositoryUrl") String repositoryUrl);
+            @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile);
 
     // =========================================================================
     // Trace Explorer queries (histogram, facets, cursor paging, offset paging).
@@ -277,6 +297,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -363,7 +384,8 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("durations") String[] durations,
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
-            @Param("repositoryUrl") String repositoryUrl);
+            @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile);
 
     // Window-wide p50/p95 and total/errorCount for the histogram header.
     @Query(value = """
@@ -377,6 +399,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -458,7 +481,8 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("durations") String[] durations,
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
-            @Param("repositoryUrl") String repositoryUrl);
+            @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile);
 
     // =========================================================================
     // Consolidated facets query (perf item B3).
@@ -494,6 +518,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -609,6 +634,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("facetLimit") int facetLimit,
             @Param("sessionLimit") int sessionLimit);
 
@@ -624,6 +650,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -699,7 +726,8 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("durations") String[] durations,
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
-            @Param("repositoryUrl") String repositoryUrl);
+            @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile);
 
     // Cursor list — initial page (sort=new: start DESC, trace_id DESC).
     // Returns columns: trace_id, min_start, max_end, error_count, span_count,
@@ -719,6 +747,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -815,6 +844,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Cursor list — scroll-back page for sort=new:
@@ -832,6 +862,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -931,6 +962,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live tail for sort=new: rows where (min_start, trace_id) > (cursorTs, cursorTraceId)
@@ -947,6 +979,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1046,6 +1079,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Generic list query for non-time sorts and offset paging.
@@ -1064,6 +1098,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1160,6 +1195,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
@@ -1179,6 +1215,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1275,6 +1312,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Cursor list — scroll-back page for sort=old. "Scroll back" means "further along the sort
@@ -1293,6 +1331,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1392,6 +1431,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live tail for sort=old: rows above the head of an ascending list, i.e.
@@ -1415,6 +1455,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1517,6 +1558,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // sort=slow: duration_ms DESC, trace_id DESC
@@ -1533,6 +1575,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1629,6 +1672,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
@@ -1646,6 +1690,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1742,6 +1787,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
@@ -1759,6 +1805,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1855,6 +1902,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
@@ -1872,6 +1920,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -1968,6 +2017,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
@@ -1985,6 +2035,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2081,6 +2132,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit,
             @Param("pageOffset") int pageOffset);
 
@@ -2102,6 +2154,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2193,7 +2246,8 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("durations") String[] durations,
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
-            @Param("repositoryUrl") String repositoryUrl);
+            @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile);
 
     // Cursor list — scroll-back page for sort=slow:
     // ORDER BY duration_ms DESC, trace_id DESC
@@ -2212,6 +2266,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2314,6 +2369,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live-tail page for sort=slow:
@@ -2332,6 +2388,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2434,6 +2491,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Cursor list — scroll-back page for sort=fast:
@@ -2453,6 +2511,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2555,6 +2614,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live-tail page for sort=fast:
@@ -2573,6 +2633,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2675,6 +2736,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Cursor list — scroll-back page for sort=spans:
@@ -2694,6 +2756,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2796,6 +2859,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live-tail page for sort=spans:
@@ -2814,6 +2878,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -2916,6 +2981,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Cursor list — scroll-back page for sort=err:
@@ -2937,6 +3003,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3042,6 +3109,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live-tail page for sort=err:
@@ -3062,6 +3130,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3167,6 +3236,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Initial cursor page for sort=slow (no cursor, no OFFSET — uses LIMIT only).
@@ -3183,6 +3253,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3279,6 +3350,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Initial cursor page for sort=fast.
@@ -3295,6 +3367,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3391,6 +3464,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Initial cursor page for sort=spans.
@@ -3407,6 +3481,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3503,6 +3578,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Initial cursor page for sort=err.
@@ -3519,6 +3595,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3615,6 +3692,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Initial cursor page for sort=tokens (total_tokens DESC, trace_id DESC — mirrors sort=slow structure).
@@ -3631,6 +3709,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3727,6 +3806,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Scroll-back page for sort=tokens:
@@ -3746,6 +3826,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3848,6 +3929,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live-tail page for sort=tokens:
@@ -3866,6 +3948,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -3968,6 +4051,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Offset paged query for sort=tokens: total_tokens DESC, trace_id DESC.
@@ -3984,6 +4068,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -4080,6 +4165,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageSize") int pageSize,
             @Param("pageOffset") int pageOffset);
 
@@ -4097,6 +4183,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -4193,6 +4280,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Scroll-back page for sort=cost:
@@ -4212,6 +4300,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -4314,6 +4403,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Live-tail page for sort=cost:
@@ -4332,6 +4422,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -4434,6 +4525,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageLimit") int pageLimit);
 
     // Offset paged query for sort=cost: total_cost_usd DESC, trace_id DESC.
@@ -4450,6 +4542,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
               WHERE s.start_timestamp >= :windowStart
                 AND s.start_timestamp <= :windowEnd
                 AND (:repositoryUrl IS NULL OR s.repository_url = :repositoryUrl)
+                AND s.agent_profile = :agentProfile
               GROUP BY s.trace_id
             ),
             trace_roots AS (
@@ -4546,6 +4639,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, Long> {
             @Param("sessions") String[] sessions,
             @Param("fullTextQuery") String fullTextQuery,
             @Param("repositoryUrl") String repositoryUrl,
+            @Param("agentProfile") String agentProfile,
             @Param("pageSize") int pageSize,
             @Param("pageOffset") int pageOffset);
 

@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.ModelTokenShare;
 import com.guavasoft.agentcompass.model.SessionApiRequest;
 import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
@@ -153,7 +154,7 @@ class TokenTelemetryQueryIntegrationTest {
   @Test
   void ranksSessionsByAscendingCacheEfficiencyIgnoringOutputTokens() {
     List<SessionCacheEfficiency> ranked =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null, AgentProfiles.UNKNOWN);
 
     assertThat(ranked).extracting(SessionCacheEfficiency::sessionId)
         .containsExactly(SESSION_WORST, SESSION_MIDDLE, SESSION_BEST);
@@ -213,7 +214,7 @@ class TokenTelemetryQueryIntegrationTest {
   @Test
   void excludesSessionsBelowTheInputSideTokenFloor() {
     List<SessionCacheEfficiency> ranked =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null, AgentProfiles.UNKNOWN);
 
     // tiny has the worst ratio of anything seeded (10%); it is absent purely
     // because it is too small to judge, not because it ranked poorly.
@@ -223,7 +224,7 @@ class TokenTelemetryQueryIntegrationTest {
   @Test
   void excludesResumeHeartbeatSessionsStructurally() {
     List<SessionCacheEfficiency> ranked =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null, AgentProfiles.UNKNOWN);
 
     // The heartbeat session carries a full 1,000,000 input-side tokens and a 60%
     // ratio, so it clears the floor and would rank second if it were visible at
@@ -236,14 +237,14 @@ class TokenTelemetryQueryIntegrationTest {
 
   @Test
   void honoursTheRequestedRowLimit() {
-    List<SessionCacheEfficiency> ranked = metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, 1, null);
+    List<SessionCacheEfficiency> ranked = metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, 1, null, AgentProfiles.UNKNOWN);
 
     assertThat(ranked).extracting(SessionCacheEfficiency::sessionId).containsExactly(SESSION_WORST);
   }
 
   @Test
   void windowCacheReadRatioUsesTheSameDenominatorAsThePerSessionRatio() {
-    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES, null);
+    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     long inputSideTokens =
         summary.inputTokens() + summary.cacheCreationTokens() + summary.cacheReadTokens();
@@ -272,7 +273,7 @@ class TokenTelemetryQueryIntegrationTest {
         50_000, seededBase);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES, null);
+    TokenUsageSummary summary = metricService.aggregateTokenUsage(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     ModelTokenShare opus = summary.byModel().stream()
         .filter(share -> "claude-opus-5".equals(share.model()))
@@ -303,7 +304,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveToolResult("Bash", 30_000L, false, base.plusSeconds(2));
     saveToolResult("Read", 4_000L, true, base.plusSeconds(3));
 
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     ToolContextFootprint bash = toolRow(footprint, "Bash");
     assertThat(bash.calls()).isEqualTo(3L);
@@ -325,7 +326,7 @@ class TokenTelemetryQueryIntegrationTest {
     // question — what is filling the window — and must count it.
     saveToolResult("Agent", 100_000L, true, base.plusSeconds(2));
 
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     assertThat(footprint).extracting(ToolContextFootprint::tool)
         .containsExactly("Agent", "Bash", "Read");
@@ -337,7 +338,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveToolResult("Bash", 10_000L, true, base);
     saveToolResultWithoutSize("Bash", base.plusSeconds(1));
 
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     // The sizeless call is not counted as a zero-byte call: `calls` means "calls
     // we can account for", so it stays 1 and the average is not deflated.
@@ -356,7 +357,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveToolResult("Bash", 500_000L, true, base.plusSeconds(20));
 
     ToolContextFootprint bash =
-        toolRow(logService.aggregateToolContextFootprint(WINDOW_MINUTES, null), "Bash");
+        toolRow(logService.aggregateToolContextFootprint(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN), "Bash");
 
     assertThat(bash.calls()).isEqualTo(20L);
     assertThat(bash.p95Bytes()).isGreaterThan(1_000L);
@@ -364,7 +365,7 @@ class TokenTelemetryQueryIntegrationTest {
 
   @Test
   void returnsNothingWhenNoToolResultCarriedASize() {
-    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null);
+    List<ToolContextFootprint> footprint = logService.aggregateToolContextFootprint(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     assertThat(footprint).isEmpty();
   }
@@ -388,7 +389,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveApiRequest("S1", secondTurn, "req-4", "claude-fable-5", 40, 400, 4_000, 80_000, 0.40, 600L,
         base.plusSeconds(140));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("S1");
+    List<SessionPrompt> prompts = logService.promptsForSession("S1", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     SessionPrompt turnOne = prompts.get(0);
@@ -412,7 +413,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveApiRequest("S1", turn, "req-1", "claude-opus-5", 10, 100, 1_000, 50_000, 0.10, 900L, base.plusSeconds(1));
     saveApiRequest("S1", turn, "req-2", "claude-opus-5", 20, 200, 2_000, 60_000, 0.20, 800L, base.plusSeconds(2));
 
-    SessionPrompt rolledUp = logService.promptsForSession("S1").get(0);
+    SessionPrompt rolledUp = logService.promptsForSession("S1", AgentProfiles.UNKNOWN).get(0);
     List<SessionApiRequest> requests = logService.requestsForSession("S1").stream()
         .filter(request -> turn.equals(request.promptId()))
         .toList();
@@ -439,7 +440,7 @@ class TokenTelemetryQueryIntegrationTest {
     Instant base = Instant.now().minus(4, ChronoUnit.MINUTES);
     savePrompt("S2", "prompt-untracked", "A turn recorded without event logging", base);
 
-    SessionPrompt turn = logService.promptsForSession("S2").get(0);
+    SessionPrompt turn = logService.promptsForSession("S2", AgentProfiles.UNKNOWN).get(0);
 
     // Degrades rather than reporting zeros: a session with no api_request logs is
     // a normal outcome (event logging off, older CLI), and its counter-derived
@@ -456,7 +457,7 @@ class TokenTelemetryQueryIntegrationTest {
     saveApiRequest("S3", "prompt-new", "req-1", "claude-opus-5", 10, 100, 1_000, 50_000, 0.10, 900L,
         base.plusSeconds(61));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("S3");
+    List<SessionPrompt> prompts = logService.promptsForSession("S3", AgentProfiles.UNKNOWN);
 
     // The fallback is per-turn, not per-session: a session that gained
     // api_request logs partway through reports each turn however it can be
@@ -492,7 +493,7 @@ class TokenTelemetryQueryIntegrationTest {
   // ---- fixtures -------------------------------------------------------------
 
   private SessionCacheEfficiency rankedSession(String sessionId) {
-    return metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null).stream()
+    return metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, ROW_LIMIT, null, AgentProfiles.UNKNOWN).stream()
         .filter(session -> sessionId.equals(session.sessionId()))
         .findFirst()
         .orElseThrow();

@@ -27,6 +27,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.SessionCacheEfficiency;
 import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionPrompt;
@@ -168,7 +169,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void defaultSortRanksSessionsByCostDescendingWithTotalCount() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
 
     assertThat(page.totalCount()).isEqualTo(3);
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C", "B");
@@ -179,7 +180,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void ascendingActiveTimeSortPutsTheIdleOnlySessionFirst() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "activeTimeSeconds", "asc", 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "activeTimeSeconds", "asc", 0, 25, null, AgentProfiles.UNKNOWN);
 
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("C", "B", "A");
   }
@@ -194,17 +195,18 @@ class SessionsQueryIntegrationTest {
     saveCost("B", "opus", "main", 1.6, base.plusSeconds(120));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage descending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "desc", 0, 25, null);
+    SessionSummaryPage descending =
+        metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "desc", 0, 25, null, AgentProfiles.UNKNOWN);
     assertThat(descending.items()).extracting(SessionSummary::sessionId).containsExactly("B", "A", "C");
 
-    SessionSummaryPage ascending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "asc", 0, 25, null);
+    SessionSummaryPage ascending = metricService.sessionsSummary(WINDOW_MINUTES, "endTimestamp", "asc", 0, 25, null, AgentProfiles.UNKNOWN);
     assertThat(ascending.items()).extracting(SessionSummary::sessionId).containsExactly("C", "A", "B");
   }
 
   @Test
   void paginationReturnsRequestedSliceWhileTotalCountStaysWholeWindow() {
-    SessionSummaryPage firstPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2, null);
-    SessionSummaryPage secondPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2, null);
+    SessionSummaryPage firstPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 0, 2, null, AgentProfiles.UNKNOWN);
+    SessionSummaryPage secondPage = metricService.sessionsSummary(WINDOW_MINUTES, "costUsd", "desc", 1, 2, null, AgentProfiles.UNKNOWN);
 
     assertThat(firstPage.totalCount()).isEqualTo(3);
     assertThat(firstPage.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C");
@@ -214,7 +216,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void rowsCarryTokensTerminalAndStartTypeAndSortByTokens() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "tokens", "desc", 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, "tokens", "desc", 0, 25, null, AgentProfiles.UNKNOWN);
 
     // A is the only session with token rows, so it sorts first on tokens.
     SessionSummary sessionA = page.items().get(0);
@@ -252,7 +254,7 @@ class SessionsQueryIntegrationTest {
     saveApiRequest("J", TRACE_TURN_ZERO, "j-prompt-0", 0.1, base.plusSeconds(30));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     SessionSummary sessionJ = page.items().stream()
         .filter(item -> "J".equals(item.sessionId())).findFirst().orElseThrow();
 
@@ -272,7 +274,7 @@ class SessionsQueryIntegrationTest {
     saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-k", base, base.plusSeconds(40));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     SessionSummary sessionK = page.items().stream()
         .filter(item -> "K".equals(item.sessionId())).findFirst().orElseThrow();
 
@@ -291,7 +293,7 @@ class SessionsQueryIntegrationTest {
     saveApiRequest("BG1", TRACE_TURN_ZERO, "bg1-prompt-0", 0.1, Instant.now().minus(30, ChronoUnit.SECONDS));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     SessionSummary session = page.items().stream()
         .filter(item -> "BG1".equals(item.sessionId())).findFirst().orElseThrow();
 
@@ -308,7 +310,7 @@ class SessionsQueryIntegrationTest {
     saveApiRequest("BG2", TRACE_TURN_ZERO, "bg2-prompt-0", 0.1, Instant.now().minus(10, ChronoUnit.MINUTES));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     SessionSummary session = page.items().stream()
         .filter(item -> "BG2".equals(item.sessionId())).findFirst().orElseThrow();
 
@@ -340,7 +342,7 @@ class SessionsQueryIntegrationTest {
 
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     SessionSummary sessionI = page.items().stream()
         .filter(item -> "I".equals(item.sessionId())).findFirst().orElseThrow();
 
@@ -371,7 +373,7 @@ class SessionsQueryIntegrationTest {
     saveCost("R", "opus", "main", 1.0, base);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<String> descending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "desc", 0, 25, null)
+    List<String> descending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "desc", 0, 25, null, AgentProfiles.UNKNOWN)
         .items().stream().map(SessionSummary::sessionId).toList();
     // Seed session A has 1,000,000 input tokens but zero cacheRead -> 0% efficiency
     // (defined, not null), so the defined-efficiency order highest-first is P, Q, A.
@@ -382,7 +384,7 @@ class SessionsQueryIntegrationTest {
     assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("B"));
     assertThat(descending.indexOf("A")).isLessThan(descending.indexOf("C"));
 
-    List<String> ascending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "asc", 0, 25, null)
+    List<String> ascending = metricService.sessionsSummary(WINDOW_MINUTES, "cacheEfficiency", "asc", 0, 25, null, AgentProfiles.UNKNOWN)
         .items().stream().map(SessionSummary::sessionId).toList();
     // Ascending flips the defined order to A (0%), Q (20%), P (90%); nulls still last.
     assertThat(ascending).containsSubsequence("A", "Q", "P");
@@ -412,7 +414,7 @@ class SessionsQueryIntegrationTest {
     saveCost("X", "opus", "main", 99.0, beforeWindow);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     assertThat(page.items()).extracting(SessionSummary::sessionId).doesNotContain("X");
 
     SessionSummary sessionW = page.items().stream()
@@ -447,18 +449,18 @@ class SessionsQueryIntegrationTest {
     saveCost("H", "opus", "main", 7.0, insideWindow.plusSeconds(60));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     assertThat(page.items()).extracting(SessionSummary::sessionId).doesNotContain("H");
     assertThat(page.totalCount()).isEqualTo(3);
 
     // The KPI population is filtered the same way, so the ghost cannot pad the
     // session count or drag the cost percentiles toward zero.
-    assertThat(metricService.sessionsKpis(WINDOW_MINUTES, null).totalSessions()).isEqualTo(3);
+    assertThat(metricService.sessionsKpis(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN).totalSessions()).isEqualTo(3);
   }
 
   @Test
   void kpisComputePercentilesOverTheWholeWindow() {
-    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null);
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     assertThat(kpis.totalSessions()).isEqualTo(3);
     // Costs sorted: [1.5, 8.0, 15.0] -> P50 = 8.0, P95 interpolates to 14.3.
@@ -491,7 +493,7 @@ class SessionsQueryIntegrationTest {
     saveCost("R", "opus", "main", 9.0, insideWindow);
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null);
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
 
     assertThat(kpis.totalSessions()).isEqualTo(4);
     assertThat(kpis.sessionsTrend().stream().mapToLong(Long::longValue).sum())
@@ -500,7 +502,7 @@ class SessionsQueryIntegrationTest {
 
   @Test
   void promptContextEnrichesFirstPromptAndCountPerSession() {
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
 
     SessionSummary sessionA = page.items().stream()
         .filter(item -> "A".equals(item.sessionId())).findFirst().orElseThrow();
@@ -602,7 +604,7 @@ class SessionsQueryIntegrationTest {
 
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("F");
+    List<SessionPrompt> prompts = logService.promptsForSession("F", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(3);
 
@@ -651,7 +653,7 @@ class SessionsQueryIntegrationTest {
     saveCost("T", "opus", "main", 12.0, turnOneStart.plusSeconds(30));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("T");
+    List<SessionPrompt> prompts = logService.promptsForSession("T", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     // Both of turn 0's requests count toward turn 0, not the turn the counter
@@ -676,7 +678,7 @@ class SessionsQueryIntegrationTest {
     saveCost("S", "opus", "main", 5.0, turnZeroStart.plusSeconds(2));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("S");
+    List<SessionPrompt> prompts = logService.promptsForSession("S", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     assertThat(prompts.get(0).costUsd()).isEqualTo(5.0);
@@ -695,7 +697,7 @@ class SessionsQueryIntegrationTest {
     saveCost("U", "opus", "main", 6.0, turnStart.plusSeconds(30));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("U");
+    List<SessionPrompt> prompts = logService.promptsForSession("U", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     assertThat(prompts.get(0).costUsd()).isEqualTo(6.0);
@@ -725,7 +727,7 @@ class SessionsQueryIntegrationTest {
     // Turn 1's own real request.
     saveApiRequest("V", TRACE_TURN_ONE, turnOnePromptId, 2.0, turnOneStart.plusSeconds(35));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("V");
+    List<SessionPrompt> prompts = logService.promptsForSession("V", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     SessionPrompt turnZero = prompts.get(0);
@@ -768,7 +770,7 @@ class SessionsQueryIntegrationTest {
     // Turn 1's own real request.
     saveApiRequest("Y", TRACE_TURN_ONE, turnOnePromptId, 0.0, 10L, 5L, 0L, 500L, turnOneStart.plusSeconds(35));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("Y");
+    List<SessionPrompt> prompts = logService.promptsForSession("Y", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     SessionPrompt turnZero = prompts.get(0);
@@ -811,7 +813,7 @@ class SessionsQueryIntegrationTest {
     // Turn 1's own real request.
     saveApiRequest("Z", TRACE_TURN_ONE, turnOnePromptId, "claude-sonnet-4-5", 0.0, turnOneStart.plusSeconds(35));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("Z");
+    List<SessionPrompt> prompts = logService.promptsForSession("Z", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     SessionPrompt turnOne = prompts.get(1);
@@ -843,7 +845,7 @@ class SessionsQueryIntegrationTest {
     // Turn 1's own tool call, correctly inside its own window.
     saveToolResult("W", "Write", TRACE_TURN_ONE, turnOneStart.plusSeconds(90));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("W");
+    List<SessionPrompt> prompts = logService.promptsForSession("W", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     assertThat(prompts.get(0).tools()).containsExactlyInAnyOrder(
@@ -872,7 +874,7 @@ class SessionsQueryIntegrationTest {
     saveToolResult("X", "Bash", TRACE_TURN_ZERO, rootSpanEnd.plusSeconds(600));
     saveToolResult("X", "Bash", TRACE_TURN_ZERO, rootSpanEnd.plusSeconds(660));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("X");
+    List<SessionPrompt> prompts = logService.promptsForSession("X", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     SessionPrompt turn = prompts.get(0);
@@ -897,7 +899,7 @@ class SessionsQueryIntegrationTest {
     saveUserPrompt("R1", "Second request", liveTurnStart, TRACE_TURN_ONE);
     saveApiRequest("R1", TRACE_TURN_ONE, 0.5, liveTurnStart.plusSeconds(10));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("R1");
+    List<SessionPrompt> prompts = logService.promptsForSession("R1", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false, true);
   }
@@ -908,7 +910,7 @@ class SessionsQueryIntegrationTest {
     saveUserPrompt("R2", "Finished request", turnStart, TRACE_TURN_ZERO);
     saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-r2", turnStart, turnStart.plusSeconds(40));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("R2");
+    List<SessionPrompt> prompts = logService.promptsForSession("R2", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
   }
@@ -921,7 +923,7 @@ class SessionsQueryIntegrationTest {
     saveUserPrompt("R3", "Abandoned request", turnStart, TRACE_TURN_ZERO);
     saveApiRequest("R3", TRACE_TURN_ZERO, 0.5, turnStart.plusSeconds(30));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("R3");
+    List<SessionPrompt> prompts = logService.promptsForSession("R3", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
   }
@@ -939,7 +941,7 @@ class SessionsQueryIntegrationTest {
     saveInteractionRootSpan(TRACE_TURN_ONE, "root-span-r4-1", followUpTurnStart, followUpTurnStart.plusSeconds(4));
     saveApiRequest("R4", TRACE_TURN_ZERO, 0.5, Instant.now().minus(30, ChronoUnit.SECONDS));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("R4");
+    List<SessionPrompt> prompts = logService.promptsForSession("R4", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(true, false);
   }
@@ -955,7 +957,7 @@ class SessionsQueryIntegrationTest {
     saveInteractionRootSpan(TRACE_TURN_ZERO, "root-span-r5", turnStart, rootEnd);
     saveApiRequest("R5", TRACE_TURN_ZERO, 0.5, rootEnd.plusSeconds(2));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("R5");
+    List<SessionPrompt> prompts = logService.promptsForSession("R5", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).extracting(SessionPrompt::inProgress).containsExactly(false);
   }
@@ -965,7 +967,7 @@ class SessionsQueryIntegrationTest {
     Instant timestamp = Instant.now().minus(5, ChronoUnit.MINUTES);
     saveUserPrompt("G", "Just chatting", timestamp, null);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("G");
+    List<SessionPrompt> prompts = logService.promptsForSession("G", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     SessionPrompt onlyTurn = prompts.get(0);
@@ -990,7 +992,7 @@ class SessionsQueryIntegrationTest {
     // would otherwise do.
     saveToolResult("H", "Write", base.plusSeconds(PageBounds.MAXIMUM_PAGE_SIZE));
 
-    List<SessionPrompt> prompts = logService.promptsForSession("H");
+    List<SessionPrompt> prompts = logService.promptsForSession("H", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(PageBounds.MAXIMUM_PAGE_SIZE);
     SessionPrompt lastReturnedTurn = prompts.get(prompts.size() - 1);
@@ -1009,7 +1011,7 @@ class SessionsQueryIntegrationTest {
     saveDispatchingToolResult("N1", TRACE_TURN_ZERO, toolUseId, dispatchTurnStart.plusSeconds(5));
     saveNotificationPrompt("N1", notificationTurnStart, TRACE_TURN_ONE, toolUseId, "completed");
 
-    List<SessionPrompt> prompts = logService.promptsForSession("N1");
+    List<SessionPrompt> prompts = logService.promptsForSession("N1", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(2);
     assertThat(prompts.get(0).dispatchingTraceId()).isNull();
@@ -1021,7 +1023,7 @@ class SessionsQueryIntegrationTest {
     Instant notificationTurnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
     saveUserPrompt("N2", taskNotification(null, "completed"), notificationTurnStart, TRACE_TURN_ONE);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("N2");
+    List<SessionPrompt> prompts = logService.promptsForSession("N2", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     assertThat(prompts.get(0).dispatchingTraceId()).isNull();
@@ -1032,7 +1034,7 @@ class SessionsQueryIntegrationTest {
     Instant notificationTurnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
     saveNotificationPrompt("N3", notificationTurnStart, TRACE_TURN_ONE, "toolu_purged", "completed");
 
-    List<SessionPrompt> prompts = logService.promptsForSession("N3");
+    List<SessionPrompt> prompts = logService.promptsForSession("N3", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     assertThat(prompts.get(0).dispatchingTraceId()).isNull();
@@ -1043,7 +1045,7 @@ class SessionsQueryIntegrationTest {
     Instant turnStart = Instant.now().minus(20, ChronoUnit.MINUTES);
     saveUserPrompt("N4", "Refactor the widget", turnStart, TRACE_TURN_ZERO);
 
-    List<SessionPrompt> prompts = logService.promptsForSession("N4");
+    List<SessionPrompt> prompts = logService.promptsForSession("N4", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     assertThat(prompts.get(0).dispatchingTraceId()).isNull();
@@ -1067,7 +1069,7 @@ class SessionsQueryIntegrationTest {
     saveDispatchingToolResult("N5", secondDispatchTraceId, secondToolUseId, secondDispatchTurnStart.plusSeconds(5));
     saveNotificationPrompt("N5", secondNotificationStart, secondNotificationTraceId, secondToolUseId, "completed");
 
-    List<SessionPrompt> prompts = logService.promptsForSession("N5");
+    List<SessionPrompt> prompts = logService.promptsForSession("N5", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(4);
     assertThat(prompts.get(1).dispatchingTraceId()).isEqualTo(TRACE_TURN_ZERO);
@@ -1085,7 +1087,7 @@ class SessionsQueryIntegrationTest {
     saveDispatchingToolResult("N6", TRACE_TURN_ZERO, toolUseId, turnStart.minusSeconds(5));
     saveNotificationPrompt("N6", turnStart, TRACE_TURN_ZERO, toolUseId, "completed");
 
-    List<SessionPrompt> prompts = logService.promptsForSession("N6");
+    List<SessionPrompt> prompts = logService.promptsForSession("N6", AgentProfiles.UNKNOWN);
 
     assertThat(prompts).hasSize(1);
     assertThat(prompts.get(0).dispatchingTraceId()).isNull();
@@ -1363,11 +1365,11 @@ class SessionsQueryIntegrationTest {
   void repositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
     // None of seedSessions()'s rows carry vcs.repository.url.full, so repositoryUrl = null must
     // read exactly what every other test in this class already asserts for the unfiltered window.
-    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+    SessionSummaryPage page = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
     assertThat(page.totalCount()).isEqualTo(3);
     assertThat(page.items()).extracting(SessionSummary::sessionId).containsExactly("A", "C", "B");
 
-    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null);
+    SessionKpis kpis = metricService.sessionsKpis(WINDOW_MINUTES, null, AgentProfiles.UNKNOWN);
     assertThat(kpis.totalSessions()).isEqualTo(3);
   }
 
@@ -1382,10 +1384,10 @@ class SessionsQueryIntegrationTest {
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
     SessionSummaryPage scopedToA =
-        metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, REPOSITORY_A);
+        metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, REPOSITORY_A, AgentProfiles.UNKNOWN);
     SessionSummaryPage scopedToB =
-        metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, REPOSITORY_B);
-    SessionSummaryPage unscoped = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null);
+        metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, REPOSITORY_B, AgentProfiles.UNKNOWN);
+    SessionSummaryPage unscoped = metricService.sessionsSummary(WINDOW_MINUTES, null, null, 0, 25, null, AgentProfiles.UNKNOWN);
 
     // Scoped to A: only REPO_A is visible -- not REPO_B's session nor the three
     // unattributed seed sessions (A, B, C), whose repository_url is NULL and is
@@ -1397,18 +1399,77 @@ class SessionsQueryIntegrationTest {
     assertThat(unscoped.items()).extracting(SessionSummary::sessionId)
         .containsExactlyInAnyOrder("A", "B", "C", "REPO_A", "REPO_B");
 
-    SessionKpis kpisScopedToA = metricService.sessionsKpis(WINDOW_MINUTES, REPOSITORY_A);
+    SessionKpis kpisScopedToA = metricService.sessionsKpis(WINDOW_MINUTES, REPOSITORY_A, AgentProfiles.UNKNOWN);
     assertThat(kpisScopedToA.totalSessions()).isEqualTo(1);
 
     List<SessionCacheEfficiency> cacheEfficiencyScopedToA =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, DEFAULT_CACHE_EFFICIENCY_LIMIT, REPOSITORY_A);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, DEFAULT_CACHE_EFFICIENCY_LIMIT, REPOSITORY_A, AgentProfiles.UNKNOWN);
     assertThat(cacheEfficiencyScopedToA).extracting(SessionCacheEfficiency::sessionId)
         .containsExactly("REPO_A");
 
     List<SessionCacheEfficiency> cacheEfficiencyScopedToB =
-        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, DEFAULT_CACHE_EFFICIENCY_LIMIT, REPOSITORY_B);
+        metricService.worstCacheEfficiencySessions(WINDOW_MINUTES, DEFAULT_CACHE_EFFICIENCY_LIMIT, REPOSITORY_B, AgentProfiles.UNKNOWN);
     assertThat(cacheEfficiencyScopedToB).extracting(SessionCacheEfficiency::sessionId)
         .doesNotContain("REPO_A");
+  }
+
+  // ---- Agent profile attribution (V37's agent_profile column; a hard partition, not a filter) ---
+
+  @Test
+  void aggregateSessionKpisOnlyCountsRowsCarryingTheRequestedAgentProfile() {
+    Instant base = Instant.now().minus(6, ChronoUnit.MINUTES);
+    saveCostWithAgentProfile("CC_SESSION", "opus", "main", 4.0, base, AgentProfiles.CLAUDE_CODE);
+    saveCostWithAgentProfile("OTHER_SESSION", "opus", "main", 9.0, base, "some-other-agent");
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    Object[] claudeCodeRow = metricPointRepository.aggregateSessionKpis(
+        COST_METRIC, ACTIVE_METRIC, base.minusSeconds(60), Instant.now(), null, AgentProfiles.CLAUDE_CODE)
+        .get(0);
+    Object[] otherAgentRow = metricPointRepository.aggregateSessionKpis(
+        COST_METRIC, ACTIVE_METRIC, base.minusSeconds(60), Instant.now(), null, "some-other-agent")
+        .get(0);
+
+    // Each profile's KPI row counts only its own session -- never the other agent's, and never
+    // both summed together, which is the hard-partition guarantee V37/V38 exist to enforce.
+    assertThat(((Number) claudeCodeRow[0]).longValue()).isEqualTo(1L);
+    assertThat(((Number) claudeCodeRow[1]).doubleValue()).isEqualTo(4.0);
+    assertThat(((Number) otherAgentRow[0]).longValue()).isEqualTo(1L);
+    assertThat(((Number) otherAgentRow[1]).doubleValue()).isEqualTo(9.0);
+  }
+
+  @Test
+  void aggregateMetricTotalsOnlyCountsRowsCarryingTheRequestedAgentProfile() {
+    Instant start = Instant.now().minus(6, ChronoUnit.MINUTES);
+    Instant priorFrom = start.minusSeconds(3_600);
+    Instant end = Instant.now();
+    saveCostWithAgentProfile("CC_METRIC_TOTALS", "opus", "main", 12.0, start, AgentProfiles.CLAUDE_CODE);
+    saveCostWithAgentProfile("OTHER_METRIC_TOTALS", "opus", "main", 30.0, start, "some-other-agent");
+    metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
+
+    List<Object[]> claudeCodeRows = metricPointRepository.aggregateMetricTotals(
+        List.of(COST_METRIC), priorFrom, start, end, null, AgentProfiles.CLAUDE_CODE);
+    List<Object[]> otherAgentRows = metricPointRepository.aggregateMetricTotals(
+        List.of(COST_METRIC), priorFrom, start, end, null, "some-other-agent");
+
+    assertThat(((Number) claudeCodeRows.get(0)[1]).doubleValue()).isEqualTo(12.0);
+    assertThat(((Number) otherAgentRows.get(0)[1]).doubleValue()).isEqualTo(30.0);
+  }
+
+  private void saveCostWithAgentProfile(
+      String sessionId, String model, String querySource, double value, Instant timestamp, String agentProfile) {
+    MetricPointEntity entity = new MetricPointEntity();
+    entity.setMetricName(COST_METRIC);
+    entity.setTimestamp(timestamp);
+    entity.setReceivedAt(Instant.now());
+    entity.setValueDouble(value);
+    entity.setValueKind("double");
+    entity.setAgentProfile(agentProfile);
+    entity.setAttributes(Map.of(
+        "session.id", sessionId,
+        "model", model,
+        "query_source", querySource));
+    MetricPointEntity savedEntity = metricPointRepository.save(entity);
+    seededMetricPointIds.add(savedEntity.getId());
   }
 
   private static final int DEFAULT_CACHE_EFFICIENCY_LIMIT = 8;

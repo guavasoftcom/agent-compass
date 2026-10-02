@@ -33,7 +33,8 @@ public record TraceQueryCriteria(
         String[] durations,
         String[] sessions,
         String fullTextQuery,
-        String repositoryUrl) {
+        String repositoryUrl,
+        String agentProfile) {
 
     /**
      * Normalizes the window to Postgres's microsecond resolution — see
@@ -46,7 +47,12 @@ public record TraceQueryCriteria(
         repositoryUrl = RepositoryUrlFilter.normalize(repositoryUrl);
     }
 
-    /** Convenience factory that coerces null lists to empty arrays. */
+    /**
+     * Convenience factory that coerces null lists to empty arrays. {@code agentProfile} must
+     * already be resolved (see {@link AgentProfileRequestResolver}) -- unlike {@code repositoryUrl},
+     * this type performs no further normalization on it, since a null here would mean "every
+     * agent," which is never a valid request.
+     */
     public static TraceQueryCriteria of(
             Instant startTimestamp,
             Instant endTimestamp,
@@ -56,7 +62,8 @@ public record TraceQueryCriteria(
             List<String> durations,
             List<String> sessions,
             String fullTextQuery,
-            String repositoryUrl) {
+            String repositoryUrl,
+            String agentProfile) {
         return new TraceQueryCriteria(
                 startTimestamp,
                 endTimestamp,
@@ -66,7 +73,8 @@ public record TraceQueryCriteria(
                 toArray(durations),
                 toArray(sessions),
                 fullTextQuery == null ? "" : fullTextQuery,
-                repositoryUrl);
+                repositoryUrl,
+                agentProfile);
     }
 
     private static String[] toArray(List<String> list) {

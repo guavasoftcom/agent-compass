@@ -111,7 +111,8 @@ public class UsageCalendarService {
    *     asks for it; without it each day's {@code hourly} is null.
    */
   public UsageCalendarDaily daily(
-      Instant from, Instant to, String timeZone, String repositoryUrl, boolean includeHourly) {
+      Instant from, Instant to, String timeZone, String repositoryUrl, String agentProfile,
+      boolean includeHourly) {
     if (!to.isAfter(from)) {
       throw new IllegalArgumentException("to must be after from");
     }
@@ -126,14 +127,14 @@ public class UsageCalendarService {
       totalsByDay.put(day, new DayTotals());
     }
 
-    collectCounterTotals(totalsByDay, from, to, zoneId, repositoryUrl);
-    collectAttributeSplitTotals(totalsByDay, from, to, zoneId, repositoryUrl);
-    collectCostByModel(totalsByDay, from, to, zoneId, repositoryUrl);
-    collectSkillInvocations(totalsByDay, from, to, zoneId, repositoryUrl);
-    collectSubagentDispatches(totalsByDay, from, to, zoneId, repositoryUrl);
+    collectCounterTotals(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
+    collectAttributeSplitTotals(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
+    collectCostByModel(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
+    collectSkillInvocations(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
+    collectSubagentDispatches(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
     if (includeHourly) {
-      collectHourlyCounterTotals(totalsByDay, from, to, zoneId, repositoryUrl);
-      collectHourlySkillInvocations(totalsByDay, from, to, zoneId, repositoryUrl);
+      collectHourlyCounterTotals(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
+      collectHourlySkillInvocations(totalsByDay, from, to, zoneId, repositoryUrl, agentProfile);
     }
 
     List<UsageCalendarDay> days = new ArrayList<>(totalsByDay.size());
@@ -142,7 +143,8 @@ public class UsageCalendarService {
   }
 
   private void collectHourlyCounterTotals(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateHourlyCounterTotals(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getTokenUsageMetric(),
@@ -150,7 +152,8 @@ public class UsageCalendarService {
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       HourTotals hourTotals = hourTotalsFor(totalsByDay, row);
       if (hourTotals == null) {
@@ -163,7 +166,8 @@ public class UsageCalendarService {
   }
 
   private void collectHourlySkillInvocations(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateHourlySkillInvocations(
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
@@ -172,7 +176,8 @@ public class UsageCalendarService {
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       HourTotals hourTotals = hourTotalsFor(totalsByDay, row);
       if (hourTotals != null) {
@@ -193,7 +198,8 @@ public class UsageCalendarService {
   }
 
   private void collectCounterTotals(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateDailyCounterTotals(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getTokenUsageMetric(),
@@ -203,7 +209,8 @@ public class UsageCalendarService {
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       DayTotals totals = totalsByDay.get(LocalDate.parse((String) row[DAY_COLUMN]));
       if (totals == null) {
@@ -219,7 +226,8 @@ public class UsageCalendarService {
   }
 
   private void collectAttributeSplitTotals(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateDailyAttributeSplitTotals(
         tuningProperties.getLinesOfCodeMetric(),
         tuningProperties.getCodeEditDecisionMetric(),
@@ -232,7 +240,8 @@ public class UsageCalendarService {
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       DayTotals totals = totalsByDay.get(LocalDate.parse((String) row[DAY_COLUMN]));
       if (totals == null) {
@@ -248,14 +257,16 @@ public class UsageCalendarService {
   // Rows arrive day-ascending and spend-descending within a day, so appending keeps each day's list
   // largest-first without a sort here.
   private void collectCostByModel(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateDailyCostByModel(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getModelAttribute(),
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       DayTotals totals = totalsByDay.get(LocalDate.parse((String) row[DAY_COLUMN]));
       if (totals == null) {
@@ -267,7 +278,8 @@ public class UsageCalendarService {
   }
 
   private void collectSkillInvocations(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateDailySkillInvocations(
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
@@ -276,7 +288,8 @@ public class UsageCalendarService {
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       DayTotals totals = totalsByDay.get(LocalDate.parse((String) row[DAY_COLUMN]));
       if (totals != null) {
@@ -286,14 +299,16 @@ public class UsageCalendarService {
   }
 
   private void collectSubagentDispatches(
-      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl) {
+      Map<LocalDate, DayTotals> totalsByDay, Instant from, Instant to, String zoneId, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateDailySubagentDispatches(
         tuningProperties.getToolEventName(),
         tuningProperties.getSubagentToolName(),
         from,
         to,
         zoneId,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] row : rows) {
       DayTotals totals = totalsByDay.get(LocalDate.parse((String) row[DAY_COLUMN]));
       if (totals != null) {

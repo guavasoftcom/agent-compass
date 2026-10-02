@@ -21,6 +21,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.CostBreakdown;
 import com.guavasoft.agentcompass.service.CostService;
 
@@ -53,6 +55,12 @@ class CostControllerTest {
     @MockitoBean
     CostService costService;
 
+    // CostController now resolves agentProfile the same way MetricsController/ToolActivityController
+    // do -- see those tests for the pattern this mirrors. Resolution defaults are
+    // AgentProfileRequestResolverTest's own job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
+
     private static CostBreakdown sampleBreakdown() {
         return new CostBreakdown(
                 408.16, 331.90, 22.98, 1.21, 873.6,
@@ -62,51 +70,58 @@ class CostControllerTest {
 
     @Test
     void breakdownDefaultsToTheStandardOneDayWindowWhenNoParamsSupplied() throws Exception {
-        when(costService.breakdown(DEFAULT_MINUTES, null)).thenReturn(sampleBreakdown());
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(costService.breakdown(DEFAULT_MINUTES, null, AgentProfiles.CLAUDE_CODE)).thenReturn(sampleBreakdown());
 
         mockMvc.perform(get("/api/cost/breakdown"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalCostUsd").value(408.16))
                 .andExpect(jsonPath("$.totalRequests").value(5814));
 
-        verify(costService).breakdown(DEFAULT_MINUTES, null);
+        verify(costService).breakdown(DEFAULT_MINUTES, null, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void breakdownDispatchesSuppliedMinutesToService() throws Exception {
-        when(costService.breakdown(EXPLICIT_MINUTES, null)).thenReturn(sampleBreakdown());
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(costService.breakdown(EXPLICIT_MINUTES, null, AgentProfiles.CLAUDE_CODE)).thenReturn(sampleBreakdown());
 
         mockMvc.perform(get("/api/cost/breakdown").param("minutes", String.valueOf(EXPLICIT_MINUTES)))
                 .andExpect(status().isOk());
 
-        verify(costService).breakdown(EXPLICIT_MINUTES, null);
+        verify(costService).breakdown(EXPLICIT_MINUTES, null, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void breakdownUsesCustomRangeWhenBothTimestampsSupplied() throws Exception {
-        when(costService.breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null)).thenReturn(sampleBreakdown());
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(costService.breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, AgentProfiles.CLAUDE_CODE))
+                .thenReturn(sampleBreakdown());
 
         mockMvc.perform(get("/api/cost/breakdown")
                 .param("startTimestamp", CUSTOM_RANGE_START.toString())
                 .param("endTimestamp", CUSTOM_RANGE_END.toString()))
                 .andExpect(status().isOk());
 
-        verify(costService).breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null);
+        verify(costService).breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void breakdownDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(costService.breakdown(DEFAULT_MINUTES, REPOSITORY_URL)).thenReturn(sampleBreakdown());
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(costService.breakdown(DEFAULT_MINUTES, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE))
+                .thenReturn(sampleBreakdown());
 
         mockMvc.perform(get("/api/cost/breakdown").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(costService).breakdown(DEFAULT_MINUTES, REPOSITORY_URL);
+        verify(costService).breakdown(DEFAULT_MINUTES, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE);
     }
 
     @Test
     void breakdownDispatchesSuppliedRepositoryUrlToServiceOnTheCustomRangeForm() throws Exception {
-        when(costService.breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL))
+        when(agentProfileRequestResolver.resolve(null)).thenReturn(AgentProfiles.CLAUDE_CODE);
+        when(costService.breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE))
                 .thenReturn(sampleBreakdown());
 
         mockMvc.perform(get("/api/cost/breakdown")
@@ -115,6 +130,17 @@ class CostControllerTest {
                 .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(costService).breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL);
+        verify(costService).breakdownInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, AgentProfiles.CLAUDE_CODE);
+    }
+
+    @Test
+    void breakdownDispatchesSuppliedAgentProfileToServiceOnTheMinutesForm() throws Exception {
+        when(agentProfileRequestResolver.resolve("other-agent")).thenReturn("other-agent");
+        when(costService.breakdown(DEFAULT_MINUTES, null, "other-agent")).thenReturn(sampleBreakdown());
+
+        mockMvc.perform(get("/api/cost/breakdown").param("agentProfile", "other-agent"))
+                .andExpect(status().isOk());
+
+        verify(costService).breakdown(DEFAULT_MINUTES, null, "other-agent");
     }
 }

@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.McpServerUsage;
 import com.guavasoft.agentcompass.model.OversizedToolResult;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
@@ -155,7 +156,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void mcpServerUsageSplitsCallsByServerAndTool() {
-        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null);
+        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(McpServerUsage::server)
                 .contains(SERVER_PLAYWRIGHT, SERVER_CODE_GRAPH, "unknown");
@@ -177,7 +178,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void blankToolParametersBucketsUnderUnknownRatherThanBeingDropped() {
-        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null);
+        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         McpServerUsage unknown = singleRowFor(rows, "unknown");
         assertThat(unknown.tool()).isEqualTo("unknown");
@@ -189,7 +190,7 @@ class McpServerUsageQueryIntegrationTest {
     void mcpServerUsageRepositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
         // None of seed()'s rows carry vcs.repository.url.full, so repositoryUrl = null must read
         // exactly what mcpServerUsageSplitsCallsByServerAndTool already asserts unfiltered.
-        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null);
+        List<McpServerUsage> rows = logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         McpServerUsage playwright = singleRowFor(rows, SERVER_PLAYWRIGHT);
         assertThat(playwright.calls()).isEqualTo(3L);
@@ -203,9 +204,9 @@ class McpServerUsageQueryIntegrationTest {
                 null, null, REPOSITORY_B);
 
         List<McpServerUsage> scopedToRepositoryA =
-                logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, REPOSITORY_A);
+                logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, REPOSITORY_A, AgentProfiles.UNKNOWN);
         List<McpServerUsage> scopedToRepositoryB =
-                logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, REPOSITORY_B);
+                logService.aggregateMcpServerUsageInRange(windowStart, windowEnd, REPOSITORY_B, AgentProfiles.UNKNOWN);
 
         // Scoped to A: only the row attributed to A is visible -- none of seed()'s unattributed
         // rows (repository_url NULL) nor B's row, since (:repositoryUrl IS NULL OR
@@ -221,7 +222,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolCallsSplitsMcpRowsByServerInsteadOfCollapsing() {
-        List<ToolCallCount> rows = logService.aggregateToolCallsInRange(windowStart, windowEnd, null);
+        List<ToolCallCount> rows = logService.aggregateToolCallsInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(ToolCallCount::getTool)
                 .contains("mcp:" + SERVER_PLAYWRIGHT, "mcp:" + SERVER_CODE_GRAPH, "mcp:unknown", TOOL_BASH)
@@ -233,7 +234,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolFailureRatesSplitsFailuresByServer() {
-        List<ToolFailureRate> rows = logService.aggregateToolFailureRatesInRange(windowStart, windowEnd, null);
+        List<ToolFailureRate> rows = logService.aggregateToolFailureRatesInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         ToolFailureRate playwright = rows.stream()
                 .filter(row -> ("mcp:" + SERVER_PLAYWRIGHT).equals(row.tool()))
@@ -244,7 +245,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolFailuresInRangeAttributesRootCauseToTheNamedServer() {
-        List<ToolFailure> rows = logService.aggregateToolFailuresInRange(windowStart, windowEnd);
+        List<ToolFailure> rows = logService.aggregateToolFailuresInRange(windowStart, windowEnd, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(ToolFailure::tool).contains("mcp:" + SERVER_PLAYWRIGHT);
         ToolFailure playwrightFailure = rows.stream()
@@ -256,7 +257,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolDenialsInRangeSplitsMcpDenialsByServer() {
-        List<ToolDenialCount> rows = logService.aggregateToolDenialsInRange(windowStart, windowEnd, null);
+        List<ToolDenialCount> rows = logService.aggregateToolDenialsInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).anySatisfy(row -> {
             assertThat(row.tool()).isEqualTo("mcp:" + SERVER_PLAYWRIGHT);
@@ -267,7 +268,8 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateToolContextFootprintInRangeSplitsBytesByServer() {
-        List<ToolContextFootprint> rows = logService.aggregateToolContextFootprintInRange(windowStart, windowEnd, null);
+        List<ToolContextFootprint> rows =
+                logService.aggregateToolContextFootprintInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         ToolContextFootprint playwright = rows.stream()
                 .filter(row -> ("mcp:" + SERVER_PLAYWRIGHT).equals(row.tool()))
@@ -280,7 +282,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateOversizedToolResultsInRangeUsesMcpToolNameAsScope() {
-        List<OversizedToolResult> rows = logService.aggregateOversizedToolResultsInRange(windowStart, windowEnd);
+        List<OversizedToolResult> rows = logService.aggregateOversizedToolResultsInRange(windowStart, windowEnd, AgentProfiles.UNKNOWN);
 
         // The largest seeded row is the second playwright success call.
         OversizedToolResult largest = rows.get(0);
@@ -291,7 +293,7 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void aggregateSlowAndLargeCallsInRangeUsesMcpToolNameAsScope() {
-        List<SlowAndLargeCall> rows = logService.aggregateSlowAndLargeCallsInRange(windowStart, windowEnd);
+        List<SlowAndLargeCall> rows = logService.aggregateSlowAndLargeCallsInRange(windowStart, windowEnd, AgentProfiles.UNKNOWN);
 
         assertThat(rows).anySatisfy(call -> {
             assertThat(call.tool()).isEqualTo("mcp:" + SERVER_PLAYWRIGHT);
@@ -303,7 +305,8 @@ class McpServerUsageQueryIntegrationTest {
 
     @Test
     void spanAggregateToolLatencyInRangeCollapsesRawMcpSpanNamesToOneRowPerServer() {
-        List<ToolLatency> rows = traceService.aggregateToolLatencyInRange(windowStart, windowEnd, null);
+        List<ToolLatency> rows = traceService.aggregateToolLatencyInRange(
+                windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(rows).extracting(ToolLatency::tool)
                 .contains("mcp:" + SERVER_PLAYWRIGHT, TOOL_BASH)

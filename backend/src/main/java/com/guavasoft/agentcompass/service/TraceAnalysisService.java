@@ -319,13 +319,20 @@ public class TraceAnalysisService {
 
         List<Span> spans = traceService.spansForTrace(traceId);
         List<LogRecord> logRecords = logService.logsForTrace(traceId);
+        // This trace's own actual agent profile (not the caller's -- preparePrompt is reached from
+        // a permalinked trace id, never a window-scoped request) scopes the two session-correlated
+        // lookups below to the same hard partition the trace itself belongs to. See
+        // TraceService#agentProfileForTrace's javadoc for why guessing the configured default here
+        // would be wrong.
+        String traceAgentProfile = traceService.agentProfileForTrace(traceId);
         // The turn this one is answering. A follow-up request read on its own ("yes implement those
         // two") looks like under-specified wording; read against the message that ended "Want me to
         // implement those two?" it is exact. Null is a normal outcome -- the trace may open a
         // session, or predate assistant-response logging -- and simply drops that section.
         LogRecord precedingAssistantResponse = logService
                 .lastAssistantResponseBeforeTrace(
-                        traceSummary.get().getSessionId(), traceSummary.get().getStartTimestamp(), traceId)
+                        traceSummary.get().getSessionId(), traceSummary.get().getStartTimestamp(), traceId,
+                        traceAgentProfile)
                 .orElse(null);
         // A <task-notification> trace is a continuation: the work it reports on was dispatched in an
         // earlier trace, so the call that started it is not among this trace's own logs and has to
@@ -335,7 +342,8 @@ public class TraceAnalysisService {
                 .dispatchingToolCall(
                         traceSummary.get().getSessionId(),
                         traceSummary.get().getStartTimestamp(),
-                        promptBuilder.backgroundTaskToolUseId(logRecords))
+                        promptBuilder.backgroundTaskToolUseId(logRecords),
+                        traceAgentProfile)
                 .orElse(null);
         TraceAnalysisPromptBuilder.PromptResult prompt = promptBuilder.build(
                 traceSummary.get(), spans, logRecords, precedingAssistantResponse, dispatchingToolCall);

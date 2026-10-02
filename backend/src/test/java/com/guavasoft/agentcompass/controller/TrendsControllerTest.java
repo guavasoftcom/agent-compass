@@ -21,6 +21,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.TrendsResponse;
 import com.guavasoft.agentcompass.service.TrendService;
 
@@ -57,6 +58,12 @@ class TrendsControllerTest {
     @MockitoBean
     TrendService trendService;
 
+    // Declared because @WebMvcTest builds the real TrendsController, which now takes it as a
+    // constructor dependency: without the bean the whole context fails to load. Resolution
+    // defaults are AgentProfileRequestResolverTest's job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
+
     private static TrendsResponse sampleResponse() {
         TrendsResponse.MetricTrend sampleMetric = new TrendsResponse.MetricTrend(
                 128.40, 154.10,
@@ -91,48 +98,48 @@ class TrendsControllerTest {
 
     @Test
     void costTrendsDefaultsToTheStandardOneDayWindowWhenNoParamsSupplied() throws Exception {
-        when(trendService.costTrends(DEFAULT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.costTrends(DEFAULT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         assertSampleResponseBody("/api/trends/cost");
 
-        verify(trendService).costTrends(DEFAULT_MINUTES, null);
+        verify(trendService).costTrends(DEFAULT_MINUTES, null, null);
     }
 
     @Test
     void costTrendsDispatchesSuppliedMinutesToService() throws Exception {
-        when(trendService.costTrends(EXPLICIT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.costTrends(EXPLICIT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/cost").param("minutes", String.valueOf(EXPLICIT_MINUTES)))
                 .andExpect(status().isOk());
 
-        verify(trendService).costTrends(EXPLICIT_MINUTES, null);
+        verify(trendService).costTrends(EXPLICIT_MINUTES, null, null);
     }
 
     @Test
     void costTrendsUsesCustomRangeWhenBothTimestampsSupplied() throws Exception {
-        when(trendService.costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null)).thenReturn(sampleResponse());
+        when(trendService.costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/cost")
                 .param("startTimestamp", CUSTOM_RANGE_START.toString())
                 .param("endTimestamp", CUSTOM_RANGE_END.toString()))
                 .andExpect(status().isOk());
 
-        verify(trendService).costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null);
+        verify(trendService).costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null);
     }
 
     @Test
     void costTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(trendService.costTrends(DEFAULT_MINUTES, REPOSITORY_URL)).thenReturn(sampleResponse());
+        when(trendService.costTrends(DEFAULT_MINUTES, REPOSITORY_URL, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/cost").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).costTrends(DEFAULT_MINUTES, REPOSITORY_URL);
+        verify(trendService).costTrends(DEFAULT_MINUTES, REPOSITORY_URL, null);
     }
 
     @Test
     void costTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheCustomRangeForm() throws Exception {
-        when(trendService.costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL))
+        when(trendService.costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/cost")
@@ -141,7 +148,28 @@ class TrendsControllerTest {
                 .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL);
+        verify(trendService).costTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null);
+    }
+
+    @Test
+    void costTrendsOmittedAgentProfileResolvesToThePrimaryProfile() throws Exception {
+        when(agentProfileRequestResolver.resolve(null)).thenReturn("claude-code");
+        when(trendService.costTrends(DEFAULT_MINUTES, null, "claude-code")).thenReturn(sampleResponse());
+
+        assertSampleResponseBody("/api/trends/cost");
+
+        verify(trendService).costTrends(DEFAULT_MINUTES, null, "claude-code");
+    }
+
+    @Test
+    void costTrendsDispatchesSuppliedAgentProfileToService() throws Exception {
+        when(agentProfileRequestResolver.resolve("unknown")).thenReturn("unknown");
+        when(trendService.costTrends(DEFAULT_MINUTES, null, "unknown")).thenReturn(sampleResponse());
+
+        mockMvc.perform(get("/api/trends/cost").param("agentProfile", "unknown"))
+                .andExpect(status().isOk());
+
+        verify(trendService).costTrends(DEFAULT_MINUTES, null, "unknown");
     }
 
     // -------------------------------------------------------------------------
@@ -150,26 +178,26 @@ class TrendsControllerTest {
 
     @Test
     void tokenEfficiencyTrendsDefaultsToTheStandardOneDayWindowWhenNoParamsSupplied() throws Exception {
-        when(trendService.tokenEfficiencyTrends(DEFAULT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.tokenEfficiencyTrends(DEFAULT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         assertSampleResponseBody("/api/trends/token-efficiency");
 
-        verify(trendService).tokenEfficiencyTrends(DEFAULT_MINUTES, null);
+        verify(trendService).tokenEfficiencyTrends(DEFAULT_MINUTES, null, null);
     }
 
     @Test
     void tokenEfficiencyTrendsDispatchesSuppliedMinutesToService() throws Exception {
-        when(trendService.tokenEfficiencyTrends(EXPLICIT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.tokenEfficiencyTrends(EXPLICIT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/token-efficiency").param("minutes", String.valueOf(EXPLICIT_MINUTES)))
                 .andExpect(status().isOk());
 
-        verify(trendService).tokenEfficiencyTrends(EXPLICIT_MINUTES, null);
+        verify(trendService).tokenEfficiencyTrends(EXPLICIT_MINUTES, null, null);
     }
 
     @Test
     void tokenEfficiencyTrendsUsesCustomRangeWhenBothTimestampsSupplied() throws Exception {
-        when(trendService.tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null))
+        when(trendService.tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/token-efficiency")
@@ -177,22 +205,22 @@ class TrendsControllerTest {
                 .param("endTimestamp", CUSTOM_RANGE_END.toString()))
                 .andExpect(status().isOk());
 
-        verify(trendService).tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null);
+        verify(trendService).tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null);
     }
 
     @Test
     void tokenEfficiencyTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(trendService.tokenEfficiencyTrends(DEFAULT_MINUTES, REPOSITORY_URL)).thenReturn(sampleResponse());
+        when(trendService.tokenEfficiencyTrends(DEFAULT_MINUTES, REPOSITORY_URL, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/token-efficiency").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).tokenEfficiencyTrends(DEFAULT_MINUTES, REPOSITORY_URL);
+        verify(trendService).tokenEfficiencyTrends(DEFAULT_MINUTES, REPOSITORY_URL, null);
     }
 
     @Test
     void tokenEfficiencyTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheCustomRangeForm() throws Exception {
-        when(trendService.tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL))
+        when(trendService.tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/token-efficiency")
@@ -201,7 +229,7 @@ class TrendsControllerTest {
                 .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL);
+        verify(trendService).tokenEfficiencyTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null);
     }
 
     // -------------------------------------------------------------------------
@@ -210,26 +238,26 @@ class TrendsControllerTest {
 
     @Test
     void reliabilityTrendsDefaultsToTheStandardOneDayWindowWhenNoParamsSupplied() throws Exception {
-        when(trendService.reliabilityTrends(DEFAULT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.reliabilityTrends(DEFAULT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         assertSampleResponseBody("/api/trends/reliability");
 
-        verify(trendService).reliabilityTrends(DEFAULT_MINUTES, null);
+        verify(trendService).reliabilityTrends(DEFAULT_MINUTES, null, null);
     }
 
     @Test
     void reliabilityTrendsDispatchesSuppliedMinutesToService() throws Exception {
-        when(trendService.reliabilityTrends(EXPLICIT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.reliabilityTrends(EXPLICIT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/reliability").param("minutes", String.valueOf(EXPLICIT_MINUTES)))
                 .andExpect(status().isOk());
 
-        verify(trendService).reliabilityTrends(EXPLICIT_MINUTES, null);
+        verify(trendService).reliabilityTrends(EXPLICIT_MINUTES, null, null);
     }
 
     @Test
     void reliabilityTrendsUsesCustomRangeWhenBothTimestampsSupplied() throws Exception {
-        when(trendService.reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null))
+        when(trendService.reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/reliability")
@@ -237,22 +265,22 @@ class TrendsControllerTest {
                 .param("endTimestamp", CUSTOM_RANGE_END.toString()))
                 .andExpect(status().isOk());
 
-        verify(trendService).reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null);
+        verify(trendService).reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null);
     }
 
     @Test
     void reliabilityTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(trendService.reliabilityTrends(DEFAULT_MINUTES, REPOSITORY_URL)).thenReturn(sampleResponse());
+        when(trendService.reliabilityTrends(DEFAULT_MINUTES, REPOSITORY_URL, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/reliability").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).reliabilityTrends(DEFAULT_MINUTES, REPOSITORY_URL);
+        verify(trendService).reliabilityTrends(DEFAULT_MINUTES, REPOSITORY_URL, null);
     }
 
     @Test
     void reliabilityTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheCustomRangeForm() throws Exception {
-        when(trendService.reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL))
+        when(trendService.reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/reliability")
@@ -261,7 +289,7 @@ class TrendsControllerTest {
                 .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL);
+        verify(trendService).reliabilityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null);
     }
 
     // -------------------------------------------------------------------------
@@ -270,26 +298,26 @@ class TrendsControllerTest {
 
     @Test
     void activityTrendsDefaultsToTheStandardOneDayWindowWhenNoParamsSupplied() throws Exception {
-        when(trendService.activityTrends(DEFAULT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.activityTrends(DEFAULT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         assertSampleResponseBody("/api/trends/activity");
 
-        verify(trendService).activityTrends(DEFAULT_MINUTES, null);
+        verify(trendService).activityTrends(DEFAULT_MINUTES, null, null);
     }
 
     @Test
     void activityTrendsDispatchesSuppliedMinutesToService() throws Exception {
-        when(trendService.activityTrends(EXPLICIT_MINUTES, null)).thenReturn(sampleResponse());
+        when(trendService.activityTrends(EXPLICIT_MINUTES, null, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/activity").param("minutes", String.valueOf(EXPLICIT_MINUTES)))
                 .andExpect(status().isOk());
 
-        verify(trendService).activityTrends(EXPLICIT_MINUTES, null);
+        verify(trendService).activityTrends(EXPLICIT_MINUTES, null, null);
     }
 
     @Test
     void activityTrendsUsesCustomRangeWhenBothTimestampsSupplied() throws Exception {
-        when(trendService.activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null))
+        when(trendService.activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/activity")
@@ -297,22 +325,22 @@ class TrendsControllerTest {
                 .param("endTimestamp", CUSTOM_RANGE_END.toString()))
                 .andExpect(status().isOk());
 
-        verify(trendService).activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null);
+        verify(trendService).activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, null, null);
     }
 
     @Test
     void activityTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheMinutesForm() throws Exception {
-        when(trendService.activityTrends(DEFAULT_MINUTES, REPOSITORY_URL)).thenReturn(sampleResponse());
+        when(trendService.activityTrends(DEFAULT_MINUTES, REPOSITORY_URL, null)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/activity").param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).activityTrends(DEFAULT_MINUTES, REPOSITORY_URL);
+        verify(trendService).activityTrends(DEFAULT_MINUTES, REPOSITORY_URL, null);
     }
 
     @Test
     void activityTrendsDispatchesSuppliedRepositoryUrlToServiceOnTheCustomRangeForm() throws Exception {
-        when(trendService.activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL))
+        when(trendService.activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null))
                 .thenReturn(sampleResponse());
 
         mockMvc.perform(get("/api/trends/activity")
@@ -321,6 +349,6 @@ class TrendsControllerTest {
                 .param("repositoryUrl", REPOSITORY_URL))
                 .andExpect(status().isOk());
 
-        verify(trendService).activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL);
+        verify(trendService).activityTrendsInRange(CUSTOM_RANGE_START, CUSTOM_RANGE_END, REPOSITORY_URL, null);
     }
 }

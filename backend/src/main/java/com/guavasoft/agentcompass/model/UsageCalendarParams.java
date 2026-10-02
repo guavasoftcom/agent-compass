@@ -46,6 +46,10 @@ public record UsageCalendarParams(
         @Parameter(description = "Repository URL to scope the result to. Omitted or null means show every "
                 + "repository, including telemetry with no repository attribution.",
                 example = "https://github.com/guavasoftcom/agent-compass") String repositoryUrl,
+        @Parameter(description = "Agent profile to scope the result to. Omitted or null resolves to the "
+                + "configured primary profile (default claude-code) -- there is no \"all agents\" option, "
+                + "since two agents' telemetry is not safely summable.",
+                example = "claude-code") String agentProfile,
         @Pattern(regexp = "(?i)daily|hourly", message = "granularity must be daily or hourly")
         @Parameter(description = "daily (the default) returns one row per day; hourly also fills each day's "
                 + "24-bucket hourly array. Ask for hourly only over the range that needs it: the extra "

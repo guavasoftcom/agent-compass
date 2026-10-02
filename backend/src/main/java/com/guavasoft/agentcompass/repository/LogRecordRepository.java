@@ -203,6 +203,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> 'session.id' = :sessionId
         AND timestamp < :beforeTimestamp
         AND (trace_id IS NULL OR trace_id <> :excludedTraceId)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC
       LIMIT 1
       """, nativeQuery = true)
@@ -210,7 +211,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("assistantResponseEventName") String assistantResponseEventName,
       @Param("sessionId") String sessionId,
       @Param("beforeTimestamp") Instant beforeTimestamp,
-      @Param("excludedTraceId") String excludedTraceId);
+      @Param("excludedTraceId") String excludedTraceId,
+      @Param("agentProfile") String agentProfile);
 
   // The tool call that launched a background task, found from the tool_use_id the
   // harness quotes back in the <task-notification> envelope that wakes the session.
@@ -232,6 +234,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> 'session.id' = :sessionId
         AND timestamp < :beforeTimestamp
         AND attributes ->> :toolCallIdAttribute = :toolUseId
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC
       LIMIT 1
       """, nativeQuery = true)
@@ -240,7 +243,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionId") String sessionId,
       @Param("beforeTimestamp") Instant beforeTimestamp,
       @Param("toolCallIdAttribute") String toolCallIdAttribute,
-      @Param("toolUseId") String toolUseId);
+      @Param("toolUseId") String toolUseId,
+      @Param("agentProfile") String agentProfile);
 
   // Bulk counterpart of findToolCallByToolUseId above, for resolving a whole page of prompt turns'
   // dispatching trace ids at once (LogService#resolveDispatchingTraceByTurn) instead of looping the
@@ -273,6 +277,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND attributes ->> 'session.id' = :sessionId
           AND timestamp < :beforeTimestamp
           AND attributes ->> :toolCallIdAttribute IN (:toolUseIds)
+          AND agent_profile = :agentProfile
       )
       SELECT DISTINCT ON (tool_use_id) tool_use_id, trace_id
       FROM candidate_tool_calls
@@ -283,7 +288,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionId") String sessionId,
       @Param("beforeTimestamp") Instant beforeTimestamp,
       @Param("toolCallIdAttribute") String toolCallIdAttribute,
-      @Param("toolUseIds") Collection<String> toolUseIds);
+      @Param("toolUseIds") Collection<String> toolUseIds,
+      @Param("agentProfile") String agentProfile);
 
   // Returns every distinct "key=value" pair across log_records.attributes,
   // narrowed to rows
@@ -302,6 +308,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
         AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
         AND NOT EXISTS (
           SELECT 1
@@ -317,7 +324,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Distinct attribute keys across log_records.attributes, narrowed to the same
   // filter/window
@@ -335,6 +343,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
         AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
         AND NOT EXISTS (
           SELECT 1
@@ -350,7 +359,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Distinct values for a single attribute key, same filter/window contract as
   // the keys query.
@@ -364,6 +374,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
         AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND jsonb_typeof(attribute_entry.value) NOT IN ('object', 'array')
         AND NOT EXISTS (
           SELECT 1
@@ -380,7 +391,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("filters") String[] filters,
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Tool dimension is MCP-aware (MCP_AWARE_TOOL_EXPRESSION): this feeds the tool-mix donut on the
   // same ToolCallsPage as the calls-over-time chart aggregateToolCallsTimeseries/InRange reads —
@@ -395,6 +407,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE event_name = :eventName
         AND timestamp >= :since
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY calls DESC
       """, nativeQuery = true)
@@ -405,7 +418,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("parametersAttribute") String parametersAttribute,
       @Param("serverKey") String serverKey,
       @Param("since") Instant since,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       SELECT
@@ -417,6 +431,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY calls DESC
       """, nativeQuery = true)
@@ -428,7 +443,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Same population as aggregateToolCalls, but bucketed by time. date_bin aligns
   // buckets to
@@ -460,6 +476,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE event_name = :eventName
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY calls DESC
       """, nativeQuery = true)
@@ -470,7 +487,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("parametersAttribute") String parametersAttribute,
       @Param("serverKey") String serverKey,
       @Param("start") Instant start,
-      @Param("end") Instant end);
+      @Param("end") Instant end,
+      @Param("agentProfile") String agentProfile);
 
   // Per-tool context footprint: how many bytes of result text each tool pushed
   // into the context window over the window. Drives the Tokens page's
@@ -507,6 +525,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY total_bytes DESC, tool ASC
       """, nativeQuery = true)
@@ -518,7 +537,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // The tuning report's variant of the footprint aggregation above: same columns,
   // but restricted to rows a rule in AGENTS.md could actually change. The two
@@ -553,6 +573,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY total_bytes DESC, tool ASC
       """, nativeQuery = true)
@@ -564,7 +585,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("serverKey") String serverKey,
       @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
-      @Param("end") Instant end);
+      @Param("end") Instant end,
+      @Param("agentProfile") String agentProfile);
 
   // Per-(tool, error_type, root cause) failure counts over tool_result events.
   // success is
@@ -609,6 +631,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND attributes ->> 'success' = 'false'
           AND timestamp >= :start
           AND timestamp <= :end
+          AND agent_profile = :agentProfile
       )
       SELECT
         tool,
@@ -635,7 +658,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("parametersAttribute") String parametersAttribute,
       @Param("serverKey") String serverKey,
       @Param("start") Instant start,
-      @Param("end") Instant end);
+      @Param("end") Instant end,
+      @Param("agentProfile") String agentProfile);
 
   // Counts tool_result events for a single tool, grouped by an inner identifier
   // attribute. The
@@ -676,6 +700,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       )
       SELECT
         subagent_calls.identifier                                      AS identifier,
@@ -689,6 +714,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND main_loop_turn.attributes ->> 'session.id' = subagent_calls.session_id
           AND NOT jsonb_exists(main_loop_turn.attributes, :agentNameAttribute)
           AND main_loop_turn.timestamp <= subagent_calls.dispatched_at
+          AND main_loop_turn.agent_profile = :agentProfile
         ORDER BY main_loop_turn.timestamp DESC
         LIMIT 1
       ) dispatching_turn ON TRUE
@@ -706,7 +732,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("agentNameAttribute") String agentNameAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-(server, tool) MCP usage: calls, failures, latency, and result-size aggregates over
   // tool_result events whose tool_name is the shared :mcpToolName constant. Simpler than
@@ -749,6 +776,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       )
       SELECT
         server,
@@ -771,7 +799,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolKey") String toolKey,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Counts skill invocations, grouped by the skill-name attribute and the model
   // that ran the skill. Skills are emitted as api_request events (not
@@ -819,6 +848,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             AND timestamp >= :start
             AND timestamp <= :end
             AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+            AND agent_profile = :agentProfile
         ) skill_turns
         ORDER BY identifier, prompt_id, turn_at, record_id
       )
@@ -838,7 +868,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("agentNameAttribute") String agentNameAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Skill invocations per LOCAL day, for the Usage Calendar: (day 'YYYY-MM-DD', invocations).
   //
@@ -871,6 +902,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             AND timestamp >= :start
             AND timestamp < :end
             AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+            AND agent_profile = :agentProfile
         ) skill_turns
         ORDER BY identifier, prompt_id, turn_at, record_id
       ) skill_invocations
@@ -884,7 +916,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Skill invocations per LOCAL day AND hour, for the Usage Calendar's week view
   // (granularity=hourly): (day 'YYYY-MM-DD', hour 0-23, invocations).
@@ -914,6 +947,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
             AND timestamp >= :start
             AND timestamp < :end
             AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+            AND agent_profile = :agentProfile
         ) skill_turns
         ORDER BY identifier, prompt_id, turn_at, record_id
       ) skill_invocations
@@ -927,7 +961,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Subagent dispatches per LOCAL day, for the Usage Calendar: (day 'YYYY-MM-DD', dispatches).
   //
@@ -951,6 +986,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp >= :start
           AND timestamp < :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) subagent_dispatches
       GROUP BY day
       """, nativeQuery = true)
@@ -960,7 +996,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Direct cost sum for skills. Deliberately NOT built on top of
   // aggregateSkillInvocationsByModelInRange above: that query's DISTINCT ON
@@ -992,6 +1029,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY identifier, model
       ORDER BY identifier, cost_usd DESC
       """, nativeQuery = true)
@@ -1002,7 +1040,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("costAttribute") String costAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-subagent-type cost, via span correlation rather than the last-main-loop-turn
   // heuristic aggregateToolInvocationsByInnerAttributeAndModelInRange above uses for
@@ -1084,6 +1123,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ),
       priced_llm_calls AS (
         SELECT
@@ -1095,6 +1135,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           ON dispatch_execution.name = :toolExecutionSpanName
           AND dispatch_execution.attributes ->> :toolCallIdAttribute = dispatches.tool_use_id
           AND (:repositoryUrl IS NULL OR dispatch_execution.repository_url = :repositoryUrl)
+          AND dispatch_execution.agent_profile = :agentProfile
         LEFT JOIN spans child_llm_span
           ON child_llm_span.parent_span_id = dispatch_execution.span_id
           AND child_llm_span.name = :llmRequestSpanName
@@ -1124,7 +1165,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("costAttribute") String costAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Cost page: work-category partition
@@ -1172,6 +1214,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) categorized
       GROUP BY GROUPING SETS ((), (category), (category, bucket))
       ORDER BY
@@ -1189,7 +1232,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Equal-prior-window total, for the Cost page's delta-vs-prior KPI. The current-window
   // total is NOT computed here -- CostService#breakdownInRange already gets it for free off
@@ -1202,13 +1246,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :priorStart
         AND timestamp < :start
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> aggregatePriorApiRequestCostTotalInRange(
       @Param("eventName") String eventName,
       @Param("costAttribute") String costAttribute,
       @Param("priorStart") Instant priorStart,
       @Param("start") Instant start,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Cost drivers: model x effort grid. effort is absent on ~7% of api_request
   // rows (see AGENTS.md), so it is left nullable here rather than defaulted --
@@ -1228,6 +1274,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY model, effort
       ORDER BY cost_usd DESC
       """, nativeQuery = true)
@@ -1238,7 +1285,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("costAttribute") String costAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Biggest line items: top sessions by spend in the window, log-side so this
   // sums into the same total the rest of the Cost page reads from.
@@ -1263,6 +1311,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp <= :end
         AND session_id IS NOT NULL
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY session_id
       ORDER BY cost_usd DESC
       LIMIT :sessionLimit
@@ -1273,7 +1322,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("sessionLimit") int sessionLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-session breakdown of the same four-way work-category partition
   // aggregateCostByWorkCategoryInRange computes page-wide (identical precedence:
@@ -1306,6 +1356,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp <= :end
           AND attributes ->> 'session.id' IN :sessionIds
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) categorized
       GROUP BY session_id, category
       ORDER BY session_id, category
@@ -1320,7 +1371,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("sessionIds") Collection<String> sessionIds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-tool success / failure split. success is stored as a JSON boolean;
   // ->>'success' returns
@@ -1339,6 +1391,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE event_name = :eventName
         AND timestamp >= :since
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY failures DESC, calls DESC
       """, nativeQuery = true)
@@ -1349,7 +1402,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("parametersAttribute") String parametersAttribute,
       @Param("serverKey") String serverKey,
       @Param("since") Instant since,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       SELECT
@@ -1362,6 +1416,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool
       ORDER BY failures DESC, calls DESC
       """, nativeQuery = true)
@@ -1373,7 +1428,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Historically hardcoded 'tool_name' rather than binding :toolAttribute — the one documented
   // exception to this file's "never hardcode tool_name" convention. Splitting MCP rows onto
@@ -1389,6 +1445,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> 'decision' = 'reject'
         AND timestamp >= :since
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool, source
       ORDER BY count DESC
       """, nativeQuery = true)
@@ -1399,7 +1456,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("parametersAttribute") String parametersAttribute,
       @Param("serverKey") String serverKey,
       @Param("since") Instant since,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       SELECT
@@ -1413,6 +1471,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY tool, source
       ORDER BY count DESC
       """, nativeQuery = true)
@@ -1424,7 +1483,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("serverKey") String serverKey,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       SELECT
@@ -1439,13 +1499,15 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE event_name = :eventName
         AND timestamp >= :since
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY hookEvent, hookName
       ORDER BY blockingErrors DESC, total DESC
       """, nativeQuery = true)
   List<Object[]> aggregateHookExecutions(
       @Param("eventName") String eventName,
       @Param("since") Instant since,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       SELECT
@@ -1461,6 +1523,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY hookEvent, hookName
       ORDER BY blockingErrors DESC, total DESC
       """, nativeQuery = true)
@@ -1468,7 +1531,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("eventName") String eventName,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Tool dimension is MCP-aware — see the note beside aggregateToolCalls. Splitting this feed
   // also changes LogService#buildToolCallTimeseries's top-N selection: MCP servers now compete
@@ -1484,6 +1548,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE event_name = :eventName
         AND timestamp >= :since
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY bucket, tool
       ORDER BY bucket, tool
       """, nativeQuery = true)
@@ -1495,7 +1560,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("serverKey") String serverKey,
       @Param("since") Instant since,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       SELECT
@@ -1508,6 +1574,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY bucket, tool
       ORDER BY bucket, tool
       """, nativeQuery = true)
@@ -1520,7 +1587,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-command-prefix Bash hotspots. Claude Code stores the actual command
   // inside the
@@ -1555,6 +1623,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND attributes ->> :toolAttribute = 'Bash'
           AND timestamp >= :start
           AND timestamp <= :end
+          AND agent_profile = :agentProfile
       )
       SELECT
         COALESCE(NULLIF(split_part(command, ' ', 1), ''), 'unknown') AS command_prefix,
@@ -1572,7 +1641,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("hotspotLimit") int hotspotLimit);
+      @Param("hotspotLimit") int hotspotLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Largest individual tool results in the window. file_path / command live under
   // the
@@ -1623,6 +1693,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
               !~* '\\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf)$'
           AND timestamp >= :start
           AND timestamp <= :end
+          AND agent_profile = :agentProfile
       )
       SELECT
         tool,
@@ -1644,7 +1715,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("excludedTools") List<String> excludedTools,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("resultLimit") int resultLimit);
+      @Param("resultLimit") int resultLimit,
+      @Param("agentProfile") String agentProfile);
 
   // (session.id, file_path) pairs where Read was called more than once. file_path
   // lives
@@ -1672,6 +1744,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
           AND timestamp >= :start
           AND timestamp <= :end
+          AND agent_profile = :agentProfile
       )
       SELECT
         session_id,
@@ -1690,7 +1763,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("readLimit") int readLimit);
+      @Param("readLimit") int readLimit,
+      @Param("agentProfile") String agentProfile);
 
   // (session.id, file_path) pairs where Edit failed two or more times. Same
   // tool_input
@@ -1707,6 +1781,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY session_label, file_path
       HAVING COUNT(*) >= 2
       ORDER BY failures DESC
@@ -1717,7 +1792,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("loopLimit") int loopLimit);
+      @Param("loopLimit") int loopLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Calls that are simultaneously in the slow tail AND have an oversized result.
   // Filters
@@ -1769,6 +1845,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND (attributes ->> 'tool_result_size_bytes')::numeric >= :minBytes
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       ORDER BY ((attributes ->> 'duration_ms')::numeric
                 * (attributes ->> 'tool_result_size_bytes')::numeric) DESC
       LIMIT :resultLimit
@@ -1785,7 +1862,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("end") Instant end,
       @Param("minDurationMs") long minDurationMs,
       @Param("minBytes") long minBytes,
-      @Param("resultLimit") int resultLimit);
+      @Param("resultLimit") int resultLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Coverage check used in the Bash command hotspots blurb: how many Bash
   // tool_result rows
@@ -1810,12 +1888,14 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND attributes ->> :toolAttribute = 'Bash'
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> bashCommandCoverageInRange(
       @Param("eventName") String eventName,
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
-      @Param("end") Instant end);
+      @Param("end") Instant end,
+      @Param("agentProfile") String agentProfile);
 
   // Failed Read calls grouped by (session, file_path) — the raw material for the
   // path
@@ -1838,6 +1918,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY session_label, file_path
       ORDER BY failures DESC
       LIMIT :failedReadLimit
@@ -1847,7 +1928,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("failedReadLimit") int failedReadLimit);
+      @Param("failedReadLimit") int failedReadLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Distinct (session, file_path) pairs that Read succeeded on — the comparison
   // set for the
@@ -1865,6 +1947,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND safe_jsonb(attributes ->> 'tool_input') ->> 'file_path' IS NOT NULL
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       LIMIT :pathLimit
       """, nativeQuery = true)
   List<Object[]> distinctSuccessfulReadPathsInRange(
@@ -1872,7 +1955,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("pathLimit") int pathLimit);
+      @Param("pathLimit") int pathLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Consecutive same-tool repeats per session, scoped by file_path / command /
   // (no scope).
@@ -1932,6 +2016,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         WHERE event_name = :eventName
           AND timestamp >= :since
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ),
       numbered AS (
         SELECT
@@ -1978,7 +2063,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolAttribute") String toolAttribute,
       @Param("since") Instant since,
       @Param("resultLimit") int resultLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   @Query(value = """
       WITH events AS (
@@ -2015,6 +2101,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ),
       numbered AS (
         SELECT
@@ -2062,7 +2149,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("resultLimit") int resultLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Returns tool call count, denial count, and prompt context per session for the
   // given session IDs, in a single scan over log_records (the prompt-info rows
@@ -2194,6 +2282,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         FROM log_records
         WHERE event_name = :userPromptEventName
           AND session_id IN :sessionIds
+          AND agent_profile = :agentProfile
         ORDER BY session_id, timestamp DESC
       ),
       unresolved_prompt AS MATERIALIZED (
@@ -2218,7 +2307,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionIds") Collection<String> sessionIds,
       @Param("userPromptEventName") String userPromptEventName,
       @Param("rootSpanNamePattern") String rootSpanNamePattern,
-      @Param("recentActivitySince") Instant recentActivitySince);
+      @Param("recentActivitySince") Instant recentActivitySince,
+      @Param("agentProfile") String agentProfile);
 
   // The (session_id, trace_id) pairs among :sessionIds whose trace is still doing BACKGROUND
   // work: a log landed after the trace's own claude_code.interaction root span closed, within
@@ -2247,6 +2337,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       FROM log_records l
       WHERE l.timestamp > :activitySince
         AND l.session_id IN :sessionIds
+        AND l.agent_profile = :agentProfile
         AND EXISTS (
           SELECT 1 FROM spans s
           WHERE s.trace_id = l.trace_id
@@ -2259,7 +2350,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("sessionIds") Collection<String> sessionIds,
       @Param("rootSpanNamePattern") String rootSpanNamePattern,
       @Param("activitySince") Instant activitySince,
-      @Param("rootSpanGraceSeconds") double rootSpanGraceSeconds);
+      @Param("rootSpanGraceSeconds") double rootSpanGraceSeconds,
+      @Param("agentProfile") String agentProfile);
 
   // Full prompt timeline for one session (the Sessions grid's expandable row).
   // Not window-scoped — returns every user_prompt event for the session, oldest
@@ -2433,6 +2525,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :requestLimit
       """, nativeQuery = true)
@@ -2442,7 +2535,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("repositoryUrl") String repositoryUrl,
       @Param("apiRequestEventName") String apiRequestEventName,
       @Param("requestIdAttribute") String requestIdAttribute,
-      @Param("requestLimit") int requestLimit);
+      @Param("requestLimit") int requestLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Cost flavour of findNewestTokenRequestPoints. Rows without the cost attribute are excluded.
   @Query(value = """
@@ -2458,6 +2552,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :requestLimit
       """, nativeQuery = true)
@@ -2468,7 +2563,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("apiRequestEventName") String apiRequestEventName,
       @Param("costAttribute") String costAttribute,
       @Param("requestIdAttribute") String requestIdAttribute,
-      @Param("requestLimit") int requestLimit);
+      @Param("requestLimit") int requestLimit,
+      @Param("agentProfile") String agentProfile);
 
   // Initiating user prompt per trace, for the Traces list rows and the trace
   // detail summary. Claude Code stamps each user_prompt log with the
@@ -2683,6 +2779,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND lr.attributes ->> :toolAttribute IS NOT NULL
         AND lr.timestamp >= :firstTurnStart
         AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR lr.timestamp < :turnsEndBoundary)
+        AND lr.agent_profile = :agentProfile
       ORDER BY lr.timestamp ASC
       """, nativeQuery = true)
   List<Object[]> findToolEventsForSession(
@@ -2690,7 +2787,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("toolEventName") String toolEventName,
       @Param("toolAttribute") String toolAttribute,
       @Param("firstTurnStart") Instant firstTurnStart,
-      @Param("turnsEndBoundary") Instant turnsEndBoundary);
+      @Param("turnsEndBoundary") Instant turnsEndBoundary,
+      @Param("agentProfile") String agentProfile);
 
   // =========================================================================
   // Logs-page aggregation queries (histogram, facets, cursor paging, offset
@@ -2743,6 +2841,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE timestamp >= :windowStart
         AND timestamp <= :windowEnd
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND (
           cardinality(CAST(:events AS text[])) = 0
           OR event_name = ANY(CAST(:events AS text[]))
@@ -2775,7 +2874,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("events") String[] events,
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Facet: severity counts (all other filters applied, severity excluded).
   @Query(value = """
@@ -2786,6 +2886,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       WHERE (CAST(:windowStart AS timestamptz) IS NULL OR timestamp >= :windowStart)
         AND (CAST(:windowEnd AS timestamptz) IS NULL OR timestamp <= :windowEnd)
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND (
           cardinality(CAST(:events AS text[])) = 0
           OR event_name = ANY(CAST(:events AS text[]))
@@ -2816,7 +2917,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("events") String[] events,
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Facet: event-name counts (all other filters applied, event excluded).
   @Query(value = """
@@ -2848,6 +2950,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY facet_value
       ORDER BY row_count DESC
       LIMIT :facetLimit
@@ -2860,7 +2963,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("facetLimit") int facetLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Facet: tool counts (all other filters applied, tool excluded).
   @Query(value = """
@@ -2894,6 +2998,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY facet_value
       ORDER BY row_count DESC
       LIMIT :facetLimit
@@ -2906,7 +3011,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("events") String[] events,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("facetLimit") int facetLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Total count matching all filters — shared denominator for cursor and offset paging.
   @Query(value = """
@@ -2940,6 +3046,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   long countFiltered(
       @Param("windowStart") Instant windowStart,
@@ -2949,7 +3056,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("events") String[] events,
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Cursor paging — rows strictly OLDER than (cursorTs, cursorId), newest first.
   // Used for scroll-back (before= param). The row-constructor comparison
@@ -2987,6 +3095,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :pageLimit
       """, nativeQuery = true)
@@ -3001,7 +3110,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageLimit") int pageLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Cursor paging — rows strictly NEWER than (cursorTs, cursorId), newest first.
   // Used for live tail (after= param). Returns [] when nothing new.
@@ -3037,6 +3147,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :pageLimit
       """, nativeQuery = true)
@@ -3051,7 +3162,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageLimit") int pageLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Initial cursor page — no before/after boundary, newest first.
   @Query(value = """
@@ -3085,6 +3197,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :pageLimit
       """, nativeQuery = true)
@@ -3097,7 +3210,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("tools") String[] tools,
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageLimit") int pageLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Offset paging — fixed sort: timestamp DESC, id DESC.
   @Query(value = """
@@ -3131,6 +3245,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
           )
         )
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :pageSize OFFSET :pageOffset
       """, nativeQuery = true)
@@ -3144,7 +3259,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("fullTextQuery") String fullTextQuery,
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Trend report (GET /api/trends)
@@ -3175,6 +3291,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> aggregateToolFailureCurrentAndPriorTotals(
       @Param("eventName") String eventName,
@@ -3182,7 +3299,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // session_failures: count of DISTINCT sessions with at least one failed
   // tool_result in the period, current and prior. session.id is read as a raw
@@ -3203,6 +3321,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> aggregateSessionFailuresCurrentAndPrior(
       @Param("eventName") String eventName,
@@ -3210,7 +3329,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Trend report sparklines (7 points per side, one call per side)
@@ -3233,6 +3353,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY bucket_index
       ORDER BY bucket_index
       """, nativeQuery = true)
@@ -3242,7 +3363,8 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Bucketed count of distinct sessions with at least one failed tool_result --
   // backs session_failures' sparkline.
@@ -3257,6 +3379,7 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY bucket_index
       ORDER BY bucket_index
       """, nativeQuery = true)
@@ -3266,5 +3389,6 @@ public interface LogRecordRepository extends JpaRepository<LogRecordEntity, Long
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 }

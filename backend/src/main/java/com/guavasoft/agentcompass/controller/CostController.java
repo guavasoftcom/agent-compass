@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.CostBreakdown;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.service.CostService;
@@ -48,6 +49,7 @@ import com.guavasoft.agentcompass.service.CostService;
 public class CostController {
 
     private final CostService costService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("/breakdown")
     @Operation(
@@ -64,10 +66,12 @@ public class CostController {
     public CostBreakdown breakdown(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return costService.breakdownInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return costService.breakdown(minutes, timeWindowParams.repositoryUrl());
+        return costService.breakdown(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 }

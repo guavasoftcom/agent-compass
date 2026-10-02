@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.CostBreakdown;
 import com.guavasoft.agentcompass.model.CostCategoryShare;
 import com.guavasoft.agentcompass.model.CostSessionShare;
@@ -149,7 +150,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void categoriesPartitionEveryRequestExactlyOnceAndSumToTheTotal() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(breakdown.totalCostUsd()).isCloseTo(TOTAL_COST, offset(COST_ASSERTION_TOLERANCE));
         assertThat(breakdown.categories().stream().mapToDouble(CostCategoryShare::costUsd).sum())
@@ -160,7 +161,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void aSkillRunningInsideASubagentIsCreditedToSubagentNotSkill() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         double subagentCost = categoryCost(breakdown, "SUBAGENT");
         double skillCost = categoryCost(breakdown, "SKILL");
@@ -175,7 +176,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void mainLoopAndAuxiliaryCategoriesReadTheirOwnRows() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(categoryCost(breakdown, "MAIN_LOOP")).isCloseTo(COST_MAIN_LOOP, offset(COST_ASSERTION_TOLERANCE));
         assertThat(categoryCost(breakdown, "AUXILIARY")).isCloseTo(COST_AUXILIARY, offset(COST_ASSERTION_TOLERANCE));
@@ -186,7 +187,7 @@ class CostBreakdownQueryIntegrationTest {
         // No tool_result / span correlation was seeded, so aggregateSubagentCostByModelInRange
         // has nothing to attribute to a named subagent identifier -- identifiedCostUsd must
         // read 0 rather than being clamped up to (or silently misreported as) costUsd.
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         CostCategoryShare subagent = breakdown.categories().stream()
                 .filter(category -> "SUBAGENT".equals(category.category()))
@@ -200,7 +201,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void modelEffortGridSumsToTheSameTotalAndKeepsMissingEffortNull() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(breakdown.modelEffort().stream().mapToDouble(cell -> cell.costUsd()).sum())
                 .isCloseTo(breakdown.totalCostUsd(), offset(COST_ASSERTION_TOLERANCE));
@@ -215,7 +216,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void topSessionsAreRankedByCostDescending() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(breakdown.topSessions()).isNotEmpty();
         assertThat(breakdown.topSessions().get(0).sessionId()).isEqualTo("session-sub");
@@ -233,7 +234,7 @@ class CostBreakdownQueryIntegrationTest {
                 ATTR_SESSION_ID, "session-main",
                 "prompt", promptText));
 
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         CostSessionShare mainLoopSession = breakdown.topSessions().stream()
                 .filter(session -> "session-main".equals(session.sessionId()))
@@ -265,7 +266,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void trendBucketsPerCategorySumToTheCategoryTotal() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         double subagentFromTrend = breakdown.trend().stream()
                 .mapToDouble(point -> point.costByCategory().getOrDefault("SUBAGENT", 0.0))
@@ -275,7 +276,7 @@ class CostBreakdownQueryIntegrationTest {
 
     @Test
     void deltaVsPriorWindowReadsZeroWhenNoPriorSpendExists() {
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(breakdown.priorCostUsd()).isEqualTo(0.0);
         assertThat(breakdown.deltaPct()).isEqualTo(0.0);
@@ -286,7 +287,7 @@ class CostBreakdownQueryIntegrationTest {
         // None of seed()'s rows carry vcs.repository.url.full, so repositoryUrl = null must read
         // exactly what every other test in this class already asserts for the unfiltered window --
         // the behavior-preservation guarantee the repository_url column was designed around.
-        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown breakdown = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         assertThat(breakdown.totalCostUsd()).isCloseTo(TOTAL_COST, offset(COST_ASSERTION_TOLERANCE));
         assertThat(breakdown.categories().stream().mapToLong(CostCategoryShare::requests).sum())
@@ -312,9 +313,9 @@ class CostBreakdownQueryIntegrationTest {
                 ATTR_COST_USD, costRepositoryB,
                 ATTR_REPOSITORY_URL, REPOSITORY_B));
 
-        CostBreakdown scopedToRepositoryA = service.breakdownInRange(windowStart, windowEnd, REPOSITORY_A);
-        CostBreakdown scopedToRepositoryB = service.breakdownInRange(windowStart, windowEnd, REPOSITORY_B);
-        CostBreakdown unscoped = service.breakdownInRange(windowStart, windowEnd, null);
+        CostBreakdown scopedToRepositoryA = service.breakdownInRange(windowStart, windowEnd, REPOSITORY_A, AgentProfiles.UNKNOWN);
+        CostBreakdown scopedToRepositoryB = service.breakdownInRange(windowStart, windowEnd, REPOSITORY_B, AgentProfiles.UNKNOWN);
+        CostBreakdown unscoped = service.breakdownInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         // Scoped to A: only the row attributed to A is visible, not B's row nor the five
         // unattributed rows seed() writes -- the row absent the vcs attribute has repository_url

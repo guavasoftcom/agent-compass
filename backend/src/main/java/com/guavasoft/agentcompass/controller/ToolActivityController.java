@@ -32,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.HookExecutionSummary;
 import com.guavasoft.agentcompass.model.IdentifierUsageCount;
 import com.guavasoft.agentcompass.model.McpServerUsage;
@@ -59,6 +60,7 @@ public class ToolActivityController {
 
     private final LogService logService;
     private final TraceService traceService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("/calls")
     @Operation(
@@ -76,11 +78,13 @@ public class ToolActivityController {
     public List<ToolCallCount> toolCalls(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolCallsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return logService.aggregateToolCalls(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateToolCalls(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/calls/timeseries")
@@ -101,12 +105,13 @@ public class ToolActivityController {
             @Parameter(description = "Maximum number of distinct tool series before overflow folds "
                     + "into 'Other'", example = "8") @RequestParam(defaultValue = "8") int topN,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolCallsTimeseriesInRange(
                     timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), topN,
-                    timeWindowParams.repositoryUrl());
+                    timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return logService.aggregateToolCallsTimeseries(minutes, topN, timeWindowParams.repositoryUrl());
+        return logService.aggregateToolCallsTimeseries(minutes, topN, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/calls/latency")
@@ -124,11 +129,12 @@ public class ToolActivityController {
     public List<ToolLatency> toolCallLatency(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return traceService.aggregateToolLatencyInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return traceService.aggregateToolLatency(minutes, timeWindowParams.repositoryUrl());
+        return traceService.aggregateToolLatency(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/context-footprint")
@@ -156,11 +162,12 @@ public class ToolActivityController {
     public List<ToolContextFootprint> toolContextFootprint(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolContextFootprintInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return logService.aggregateToolContextFootprint(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateToolContextFootprint(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/failure-rates")
@@ -180,11 +187,12 @@ public class ToolActivityController {
     public List<ToolFailureRate> toolFailureRates(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolFailureRatesInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return logService.aggregateToolFailureRates(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateToolFailureRates(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/denials")
@@ -204,11 +212,13 @@ public class ToolActivityController {
     public List<ToolDenialCount> toolDenials(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolDenialsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return logService.aggregateToolDenials(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateToolDenials(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/repeats")
@@ -239,11 +249,13 @@ public class ToolActivityController {
     public List<ToolRepeatStat> toolRepeats(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateToolRepeatsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return logService.aggregateToolRepeats(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateToolRepeats(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/skill-usage")
@@ -272,11 +284,13 @@ public class ToolActivityController {
     public List<IdentifierUsageCount> skillUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateSkillUsageInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return logService.aggregateSkillUsage(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateSkillUsage(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/subagent-usage")
@@ -308,11 +322,12 @@ public class ToolActivityController {
     public List<IdentifierUsageCount> subagentUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateSubagentUsageInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return logService.aggregateSubagentUsage(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateSubagentUsage(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/mcp-usage")
@@ -336,11 +351,12 @@ public class ToolActivityController {
     public List<McpServerUsage> mcpUsage(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateMcpServerUsageInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return logService.aggregateMcpServerUsage(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateMcpServerUsage(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/hook-executions")
@@ -359,10 +375,11 @@ public class ToolActivityController {
     public List<HookExecutionSummary> hookExecutions(
             @Parameter(description = "Window size in minutes", example = "1440") @RequestParam(defaultValue = "1440") int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return logService.aggregateHookExecutionsInRange(timeWindowParams.startTimestamp(),
-                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(), agentProfile);
         }
-        return logService.aggregateHookExecutions(minutes, timeWindowParams.repositoryUrl());
+        return logService.aggregateHookExecutions(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 }

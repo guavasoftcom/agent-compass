@@ -21,6 +21,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
@@ -65,9 +66,15 @@ class MetricsControllerTest {
     @MockitoBean
     MetricSeriesService metricSeriesService;
 
+    // Declared because @WebMvcTest builds the real MetricsController, which now takes it as a
+    // constructor dependency: without the bean the whole context fails to load. Resolution
+    // defaults are AgentProfileRequestResolverTest's job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
+
     @Test
     void metricsReturnsFirstPageWhenNoFilterApplied() throws Exception {
-        when(metricService.recentEvents(List.of(), null, null, 0, 25)).thenReturn(new MetricPage(
+        when(metricService.recentEvents(List.of(), null, null, 0, 25, null)).thenReturn(new MetricPage(
                 List.of(
                         EventRow.builder()
                                 .id(1L)
@@ -95,12 +102,12 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.items[0].valueLong").value(3))
                 .andExpect(jsonPath("$.items[0].valueKind").value("long"));
 
-        verify(metricService).recentEvents(List.of(), null, null, 0, 25);
+        verify(metricService).recentEvents(List.of(), null, null, 0, 25, null);
     }
 
     @Test
     void metricsNarrowsBySuppliedFiltersAndReturnsFilteredTotalCount() throws Exception {
-        when(metricService.recentEvents(List.of("method=GET", "status=200"), null, null, 0, 25)).thenReturn(new MetricPage(
+        when(metricService.recentEvents(List.of("method=GET", "status=200"), null, null, 0, 25, null)).thenReturn(new MetricPage(
                 List.of(
                         EventRow.builder()
                                 .id(7L)
@@ -119,12 +126,12 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.items", hasSize(1)))
                 .andExpect(jsonPath("$.items[0].metricName").value("http.server.request.duration"));
 
-        verify(metricService).recentEvents(List.of("method=GET", "status=200"), null, null, 0, 25);
+        verify(metricService).recentEvents(List.of("method=GET", "status=200"), null, null, 0, 25, null);
     }
 
     @Test
     void metricsDispatchesSuppliedPageAndSizeToService() throws Exception {
-        when(metricService.recentEvents(List.of(), null, null, 2, 50)).thenReturn(new MetricPage(List.of(), 130L));
+        when(metricService.recentEvents(List.of(), null, null, 2, 50, null)).thenReturn(new MetricPage(List.of(), 130L));
 
         mockMvc.perform(get("/api/metrics")
                 .param("page", "2")
@@ -133,7 +140,7 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.items", hasSize(0)))
                 .andExpect(jsonPath("$.totalCount").value(130));
 
-        verify(metricService).recentEvents(List.of(), null, null, 2, 50);
+        verify(metricService).recentEvents(List.of(), null, null, 2, 50, null);
     }
 
     @Test
@@ -141,7 +148,7 @@ class MetricsControllerTest {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
         String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
-        when(metricSeriesService.metricAttributes(from, to, repositoryUrl, "claude_code.token.usage"))
+        when(metricSeriesService.metricAttributes(from, to, repositoryUrl, null, "claude_code.token.usage"))
                 .thenReturn(new MetricAttributes(List.of(
                         new MetricFacet("model", List.of(
                                 new MetricFacetValue("claude-sonnet-4", 812L),
@@ -163,14 +170,14 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.attributes[1].key").value("terminal.type"))
                 .andExpect(jsonPath("$.attributes[1].values[0].count").value(1100));
 
-        verify(metricSeriesService).metricAttributes(from, to, repositoryUrl, "claude_code.token.usage");
+        verify(metricSeriesService).metricAttributes(from, to, repositoryUrl, null, "claude_code.token.usage");
     }
 
     @Test
     void metricAttributesTreatsRepositoryUrlAsOptionalAndAnUnseenMetricYieldsAnEmptyList() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricSeriesService.metricAttributes(from, to, null, "claude_code.never_emitted"))
+        when(metricSeriesService.metricAttributes(from, to, null, null, "claude_code.never_emitted"))
                 .thenReturn(new MetricAttributes(List.of()));
 
         mockMvc.perform(get("/api/metrics/attributes")
@@ -180,7 +187,7 @@ class MetricsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.attributes", hasSize(0)));
 
-        verify(metricSeriesService).metricAttributes(from, to, null, "claude_code.never_emitted");
+        verify(metricSeriesService).metricAttributes(from, to, null, null, "claude_code.never_emitted");
     }
 
     @Test
@@ -210,7 +217,7 @@ class MetricsControllerTest {
     void metricCatalogDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricService.aggregateMetricCatalog(from, to)).thenReturn(List.of(
+        when(metricService.aggregateMetricCatalog(from, to, null)).thenReturn(List.of(
                 new CatalogMetric(
                         "claude_code.token.usage",
                         "tokens",
@@ -230,14 +237,45 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[0].cardinality").value("1.2K"))
                 .andExpect(jsonPath("$[0].spark", hasSize(8)));
 
-        verify(metricService).aggregateMetricCatalog(from, to);
+        verify(metricService).aggregateMetricCatalog(from, to, null);
+    }
+
+    @Test
+    void metricCatalogOmittedAgentProfileResolvesToThePrimaryProfile() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(agentProfileRequestResolver.resolve(null)).thenReturn("claude-code");
+        when(metricService.aggregateMetricCatalog(from, to, "claude-code")).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/catalog")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z"))
+                .andExpect(status().isOk());
+
+        verify(metricService).aggregateMetricCatalog(from, to, "claude-code");
+    }
+
+    @Test
+    void metricCatalogDispatchesSuppliedAgentProfileToService() throws Exception {
+        Instant from = Instant.parse("2026-05-01T00:00:00Z");
+        Instant to = Instant.parse("2026-05-31T23:59:59Z");
+        when(agentProfileRequestResolver.resolve("unknown")).thenReturn("unknown");
+        when(metricService.aggregateMetricCatalog(from, to, "unknown")).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/metrics/catalog")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-31T23:59:59Z")
+                .param("agentProfile", "unknown"))
+                .andExpect(status().isOk());
+
+        verify(metricService).aggregateMetricCatalog(from, to, "unknown");
     }
 
     @Test
     void metricCostDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricService.aggregateCostSummary(from, to)).thenReturn(new CostSummary(
+        when(metricService.aggregateCostSummary(from, to, null)).thenReturn(new CostSummary(
                 "$1,284",
                 "+22.4%",
                 "$53/h",
@@ -261,7 +299,7 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.byModel[0].model").value("claude-sonnet-4"))
                 .andExpect(jsonPath("$.byModel[0].share").value(56));
 
-        verify(metricService).aggregateCostSummary(from, to);
+        verify(metricService).aggregateCostSummary(from, to, null);
     }
 
     @Test
@@ -269,7 +307,7 @@ class MetricsControllerTest {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
         String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
-        when(metricService.aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage"))
+        when(metricService.aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage", null))
                 .thenReturn(new MetricDistribution(List.of(
                         new DistributionPoint(Instant.parse("2026-05-11T08:12:40Z"), 13_180.0, null, null),
                         new DistributionPoint(
@@ -296,14 +334,14 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$.exemplars").doesNotExist())
                 .andExpect(jsonPath("$.metricId").doesNotExist());
 
-        verify(metricService).aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage");
+        verify(metricService).aggregateMetricDistribution(from, to, repositoryUrl, "claude_code.token.usage", null);
     }
 
     @Test
     void metricDistributionTreatsRepositoryUrlAsOptionalAndReturnsAnEmptyPointList() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricService.aggregateMetricDistribution(from, to, null, "claude_code.cost.usage"))
+        when(metricService.aggregateMetricDistribution(from, to, null, "claude_code.cost.usage", null))
                 .thenReturn(new MetricDistribution(List.of()));
 
         mockMvc.perform(get("/api/metrics/distribution")
@@ -313,14 +351,14 @@ class MetricsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.points", hasSize(0)));
 
-        verify(metricService).aggregateMetricDistribution(from, to, null, "claude_code.cost.usage");
+        verify(metricService).aggregateMetricDistribution(from, to, null, "claude_code.cost.usage", null);
     }
 
     @Test
     void metricDistributionRejectsAMetricThatIsNeitherTokenNorCostWithBadRequest() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricService.aggregateMetricDistribution(from, to, null, "claude_code.session.count"))
+        when(metricService.aggregateMetricDistribution(from, to, null, "claude_code.session.count", null))
                 .thenThrow(new IllegalArgumentException("Unsupported metric 'claude_code.session.count'"));
 
         mockMvc.perform(get("/api/metrics/distribution")
@@ -349,7 +387,8 @@ class MetricsControllerTest {
     void metricSeriesDispatchesToServiceWithFromAndTo() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE)).thenReturn(List.of(
+        when(metricSeriesService.metricSeries(from, to, null, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
+                .thenReturn(List.of(
                 new MetricSeries(
                         "token",
                         "claude_code.token.usage",
@@ -390,7 +429,7 @@ class MetricsControllerTest {
                 .andExpect(jsonPath("$[0].health").value("ok"))
                 .andExpect(jsonPath("$[0].hasDistribution").value(true));
 
-        verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
+        verify(metricSeriesService).metricSeries(from, to, null, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
     }
 
     @Test
@@ -400,7 +439,7 @@ class MetricsControllerTest {
         String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
         MetricSeriesFilter filter = MetricSeriesFilter.of(
                 "token", List.of("model:claude-opus-4", "terminal.type:vscode"));
-        when(metricSeriesService.metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE))
+        when(metricSeriesService.metricSeries(from, to, repositoryUrl, null, filter, MetricSeriesAggregation.NONE))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -412,7 +451,7 @@ class MetricsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(0)));
 
-        verify(metricSeriesService).metricSeries(from, to, repositoryUrl, filter, MetricSeriesAggregation.NONE);
+        verify(metricSeriesService).metricSeries(from, to, repositoryUrl, null, filter, MetricSeriesAggregation.NONE);
         assertThat(filter.matches()).containsExactly(
                 new MetricSeriesFilter.AttributeMatch("model", "claude-opus-4"),
                 new MetricSeriesFilter.AttributeMatch("terminal.type", "vscode"));
@@ -426,7 +465,7 @@ class MetricsControllerTest {
         // collection-typed request parameter on it and turn one filter into two malformed ones.
         MetricSeriesFilter filter = MetricSeriesFilter.of(
                 "loc", List.of("file_path:C:\\work\\a.txt", "label:one,two"));
-        when(metricSeriesService.metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE))
+        when(metricSeriesService.metricSeries(from, to, null, null, filter, MetricSeriesAggregation.NONE))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -437,7 +476,7 @@ class MetricsControllerTest {
                 .param("filter", "label:one,two"))
                 .andExpect(status().isOk());
 
-        verify(metricSeriesService).metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE);
+        verify(metricSeriesService).metricSeries(from, to, null, null, filter, MetricSeriesAggregation.NONE);
         assertThat(filter.matches()).containsExactly(
                 new MetricSeriesFilter.AttributeMatch("file_path", "C:\\work\\a.txt"),
                 new MetricSeriesFilter.AttributeMatch("label", "one,two"));
@@ -447,7 +486,7 @@ class MetricsControllerTest {
     void metricSeriesTreatsABlankFilterMetricIdWithNoFiltersAsAbsent() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
+        when(metricSeriesService.metricSeries(from, to, null, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -456,7 +495,7 @@ class MetricsControllerTest {
                 .param("filterMetricId", ""))
                 .andExpect(status().isOk());
 
-        verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
+        verify(metricSeriesService).metricSeries(from, to, null, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
     }
 
     @Test
@@ -509,7 +548,7 @@ class MetricsControllerTest {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
         MetricSeriesFilter filter = MetricSeriesFilter.of("token", List.of("query_source:"));
-        when(metricSeriesService.metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE))
+        when(metricSeriesService.metricSeries(from, to, null, null, filter, MetricSeriesAggregation.NONE))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -527,7 +566,7 @@ class MetricsControllerTest {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
         MetricSeriesFilter filter = MetricSeriesFilter.of("latency", List.of("model:claude-sonnet-4"));
-        when(metricSeriesService.metricSeries(from, to, null, filter, MetricSeriesAggregation.NONE))
+        when(metricSeriesService.metricSeries(from, to, null, null, filter, MetricSeriesAggregation.NONE))
                 .thenThrow(new IllegalArgumentException("Unknown metricId 'latency'"));
 
         mockMvc.perform(get("/api/metrics/series")
@@ -545,7 +584,7 @@ class MetricsControllerTest {
         String repositoryUrl = "https://github.com/guavasoftcom/agent-compass";
         MetricSeriesFilter filter = MetricSeriesFilter.of("token", List.of("model:claude-sonnet-4"));
         MetricSeriesAggregation aggregation = new MetricSeriesAggregation("token", MetricAggregation.AVG);
-        when(metricSeriesService.metricSeries(from, to, repositoryUrl, filter, aggregation))
+        when(metricSeriesService.metricSeries(from, to, repositoryUrl, null, filter, aggregation))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -558,7 +597,7 @@ class MetricsControllerTest {
                 .param("agg", "avg"))
                 .andExpect(status().isOk());
 
-        verify(metricSeriesService).metricSeries(from, to, repositoryUrl, filter, aggregation);
+        verify(metricSeriesService).metricSeries(from, to, repositoryUrl, null, filter, aggregation);
     }
 
     @Test
@@ -568,7 +607,7 @@ class MetricsControllerTest {
         for (String agg : List.of("SUM", "Avg", "p95", "COUNT")) {
             MetricSeriesAggregation aggregation = new MetricSeriesAggregation(
                     "session", MetricAggregation.valueOf(agg.toUpperCase(java.util.Locale.ROOT)));
-            when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, aggregation))
+            when(metricSeriesService.metricSeries(from, to, null, null, MetricSeriesFilter.NONE, aggregation))
                     .thenReturn(List.of());
 
             mockMvc.perform(get("/api/metrics/series")
@@ -578,7 +617,7 @@ class MetricsControllerTest {
                     .param("agg", agg))
                     .andExpect(status().isOk());
 
-            verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, aggregation);
+            verify(metricSeriesService).metricSeries(from, to, null, null, MetricSeriesFilter.NONE, aggregation);
         }
     }
 
@@ -587,7 +626,7 @@ class MetricsControllerTest {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
         MetricSeriesAggregation sum = new MetricSeriesAggregation("token", MetricAggregation.SUM);
-        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, sum))
+        when(metricSeriesService.metricSeries(from, to, null, null, MetricSeriesFilter.NONE, sum))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -597,14 +636,14 @@ class MetricsControllerTest {
                 .param("agg", "sum"))
                 .andExpect(status().isOk());
 
-        verify(metricSeriesService).metricSeries(from, to, null, MetricSeriesFilter.NONE, sum);
+        verify(metricSeriesService).metricSeries(from, to, null, null, MetricSeriesFilter.NONE, sum);
     }
 
     @Test
     void metricSeriesTreatsBlankAggregationParamsAsAbsent() throws Exception {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
-        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
+        when(metricSeriesService.metricSeries(from, to, null, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/metrics/series")
@@ -615,7 +654,7 @@ class MetricsControllerTest {
                 .andExpect(status().isOk());
 
         verify(metricSeriesService)
-                .metricSeries(from, to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
+                .metricSeries(from, to, null, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE);
     }
 
     @Test
@@ -651,7 +690,7 @@ class MetricsControllerTest {
         Instant from = Instant.parse("2026-05-01T00:00:00Z");
         Instant to = Instant.parse("2026-05-31T23:59:59Z");
         MetricSeriesAggregation aggregation = new MetricSeriesAggregation("latency", MetricAggregation.P95);
-        when(metricSeriesService.metricSeries(from, to, null, MetricSeriesFilter.NONE, aggregation))
+        when(metricSeriesService.metricSeries(from, to, null, null, MetricSeriesFilter.NONE, aggregation))
                 .thenThrow(new IllegalArgumentException("Unknown metricId 'latency'"));
 
         mockMvc.perform(get("/api/metrics/series")

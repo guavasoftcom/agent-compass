@@ -161,11 +161,13 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             FROM jsonb_each_text(attributes) AS row_entry
           )
         )
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   long countMatchingFilters(
       @Param("filters") String[] filters,
       @Param("startTimestamp") Instant startTimestamp,
-      @Param("endTimestamp") Instant endTimestamp);
+      @Param("endTimestamp") Instant endTimestamp,
+      @Param("agentProfile") String agentProfile);
 
   // Bounded page of metric_points rows whose attributes jsonb contains every entry
   // in :filters (an AND set of "key=value" strings), newest first. Replaces the
@@ -194,6 +196,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             FROM jsonb_each_text(attributes) AS row_entry
           )
         )
+        AND agent_profile = :agentProfile
       ORDER BY timestamp DESC, id DESC
       LIMIT :pageSize OFFSET :pageOffset
       """, nativeQuery = true)
@@ -202,7 +205,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp,
       @Param("pageSize") int pageSize,
-      @Param("pageOffset") int pageOffset);
+      @Param("pageOffset") int pageOffset,
+      @Param("agentProfile") String agentProfile);
 
   // Per-(bucket, type) token totals, per-model token totals, and the window's
   // grand token total for the configured token-usage metric — in ONE scan of
@@ -301,6 +305,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) AS token_rows
       GROUP BY GROUPING SETS ((bucket, token_type), (model), ())
       ORDER BY
@@ -320,7 +325,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-session cost and active-time totals, backend-sorted and
   // backend-paginated.
@@ -485,6 +491,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       )
       SELECT
@@ -516,6 +523,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND p.metric_name IN (:costMetric, :activeTimeMetric)
           AND p.value_delta IS DISTINCT FROM 0
           AND (:repositoryUrl IS NULL OR p.repository_url = :repositoryUrl)
+          AND p.agent_profile = :agentProfile
       ) totals
       LEFT JOIN LATERAL (
         SELECT
@@ -535,6 +543,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR tp.timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR tp.timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR tp.repository_url = :repositoryUrl)
+          AND tp.agent_profile = :agentProfile
       ) tokens ON true
       LEFT JOIN LATERAL (
         SELECT
@@ -546,6 +555,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR mp.timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR mp.timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR mp.repository_url = :repositoryUrl)
+          AND mp.agent_profile = :agentProfile
         ORDER BY COALESCE(mp.start_timestamp, mp.timestamp)
         LIMIT 1
       ) meta ON true
@@ -607,7 +617,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("sortDirection") String sortDirection,
       @Param("pageSize") int pageSize,
       @Param("pageOffset") int pageOffset,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Sessions ranked by WORST cache efficiency — the Tokens page's ranked list.
   //
@@ -681,6 +692,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       ),
       session_totals AS (
@@ -704,6 +716,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
           AND p.value_delta IS DISTINCT FROM 0
           AND (:repositoryUrl IS NULL OR p.repository_url = :repositoryUrl)
+          AND p.agent_profile = :agentProfile
         GROUP BY 1
       ),
       token_per_session AS (
@@ -725,6 +738,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       )
       SELECT
@@ -758,7 +772,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("endTimestamp") Instant endTimestamp,
       @Param("minimumInputSideTokens") long minimumInputSideTokens,
       @Param("resultLimit") int resultLimit,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Prompt-timeline per-turn rollups (Sessions page GET /api/sessions/{id}/prompts)
@@ -794,13 +809,15 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND value_double IS NOT NULL
         AND timestamp >= :firstTurnStart
         AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR timestamp < :turnsEndBoundary)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp ASC
       """, nativeQuery = true)
   List<Object[]> findCostPointsForSession(
       @Param("metricName") String metricName,
       @Param("sessionId") String sessionId,
       @Param("firstTurnStart") Instant firstTurnStart,
-      @Param("turnsEndBoundary") Instant turnsEndBoundary);
+      @Param("turnsEndBoundary") Instant turnsEndBoundary,
+      @Param("agentProfile") String agentProfile);
 
   // Token points for one session, oldest first, carrying the model AND type
   // attributes so LogService can, from this single fetch, both pick the turn's
@@ -820,6 +837,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND attributes ->> :modelAttribute IS NOT NULL
         AND timestamp >= :firstTurnStart
         AND (CAST(:turnsEndBoundary AS timestamptz) IS NULL OR timestamp < :turnsEndBoundary)
+        AND agent_profile = :agentProfile
       ORDER BY timestamp ASC
       """, nativeQuery = true)
   List<Object[]> findTokenPointsForSession(
@@ -828,7 +846,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("modelAttribute") String modelAttribute,
       @Param("tokenTypeAttribute") String tokenTypeAttribute,
       @Param("firstTurnStart") Instant firstTurnStart,
-      @Param("turnsEndBoundary") Instant turnsEndBoundary);
+      @Param("turnsEndBoundary") Instant turnsEndBoundary,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Metric catalog
@@ -851,12 +870,14 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       FROM metric_points
       WHERE timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY metric_name
       ORDER BY metric_name
       """, nativeQuery = true)
   List<Object[]> aggregateCatalogSummary(
       @Param("start") Instant start,
-      @Param("end") Instant end);
+      @Param("end") Instant end,
+      @Param("agentProfile") String agentProfile);
 
   // 8-bucket sparkline for each metric name in the window.
   // date_bin aligns buckets to :start so the first bucket begins exactly at the
@@ -872,13 +893,15 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       FROM metric_points
       WHERE timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY metric_name, bucket_index
       ORDER BY metric_name, bucket_index
       """, nativeQuery = true)
   List<Object[]> aggregateCatalogSparklines(
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("bucketSeconds") long bucketSeconds);
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Cost summary
@@ -917,13 +940,15 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> aggregateCostCurrentAndPriorTotals(
       @Param("metricName") String metricName,
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // B4 perf: the window grand total, the 14-bucket trend, and the per-model
   // breakdown used to be three more separate passes over the same [:from, :to]
@@ -971,6 +996,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :from
           AND timestamp <= :to
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) AS cost_rows
       GROUP BY GROUPING SETS ((), (bucket), (model))
       ORDER BY
@@ -983,7 +1009,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Total tokens in the window (for costPer1k denominator). token.usage is a
   // cumulative counter, so we SUM value_delta (reset-aware per-stream increments,
@@ -997,11 +1024,13 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND value_delta IS DISTINCT FROM 0
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> aggregateTotalTokens(
       @Param("metricName") String metricName,
       @Param("start") Instant start,
-      @Param("end") Instant end);
+      @Param("end") Instant end,
+      @Param("agentProfile") String agentProfile);
 
   // Window-level session KPIs: total session count plus cost percentiles. Reuses the
   // same reset-aware, full-attribute per-session rollup as aggregateSessionSummaries
@@ -1043,6 +1072,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       ),
       active_per_session AS (
@@ -1055,6 +1085,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       ),
       session_window AS (
@@ -1067,6 +1098,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND (CAST(:startTimestamp AS timestamptz) IS NULL OR timestamp >= :startTimestamp)
           AND (CAST(:endTimestamp AS timestamptz) IS NULL OR timestamp <= :endTimestamp)
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       ),
       per_session AS (
@@ -1093,7 +1125,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("activeTimeMetric") String activeTimeMetric,
       @Param("startTimestamp") Instant startTimestamp,
       @Param("endTimestamp") Instant endTimestamp,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // New-session sparkline for the Sessions-page "Total sessions" card: how many
   // sessions actually OPENED in each evenly-spaced bucket of the window. A session is
@@ -1129,6 +1162,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         GROUP BY 1
       ),
       first_seen AS (
@@ -1139,6 +1173,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
           AND (:repositoryUrl IS NULL OR p.repository_url = :repositoryUrl)
+          AND p.agent_profile = :agentProfile
         GROUP BY 1
       )
       SELECT
@@ -1158,7 +1193,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Usage Calendar daily rollup (GET /api/usage/calendar/daily)
@@ -1212,6 +1248,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp < :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) AS counter_rows
       GROUP BY day
       """, nativeQuery = true)
@@ -1224,7 +1261,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // The two metrics whose meaning lives in an attribute, per local day:
   // (day, lines_added, lines_removed, decisions_accepted, decisions_rejected). A separate query from
@@ -1264,6 +1302,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp < :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) AS split_rows
       GROUP BY day
       """, nativeQuery = true)
@@ -1279,7 +1318,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Each local day's spend split by model, for the week view's "spend by model" bar:
   // (day, model, cost_usd), largest spend first within a day. A separate query for the same reason
@@ -1303,6 +1343,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp < :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) AS cost_rows
       GROUP BY day, model
       HAVING SUM(value_delta) > 0
@@ -1314,7 +1355,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // The same counters as aggregateDailyCounterTotals' cost, tokens and active-time columns, split one
   // level finer: (day 'YYYY-MM-DD', hour 0-23, cost_usd, tokens, active_seconds), for the week view's
@@ -1347,6 +1389,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp < :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ) AS counter_rows
       GROUP BY day, hour
       """, nativeQuery = true)
@@ -1357,7 +1400,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("timeZone") String timeZone,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Generic metric series (Metrics page, GET /api/metrics/series)
@@ -1501,6 +1545,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY metric_name
       """, nativeQuery = true)
   List<Object[]> aggregateMetricTotals(
@@ -1508,7 +1553,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("priorFrom") Instant priorFrom,
       @Param("from") Instant from,
       @Param("to") Instant to,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Filtered sibling of aggregateMetricTotals for the ONE metric an attribute filter targets;
   // same row shape (metric_name, current_total, prior_total), a metric with no matching rows is
@@ -1530,6 +1576,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
@@ -1543,6 +1590,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // Distinct-stream cardinality for every metric name in one scan of [start, end].
@@ -1572,13 +1620,15 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY metric_name
       """, nativeQuery = true)
   List<Object[]> aggregateMetricCardinality(
       @Param("metricNames") List<String> metricNames,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Filtered sibling of aggregateMetricCardinality for the ONE metric an attribute filter targets;
   // same row shape (metric_name, cardinality). Under a filter, cardinality is the number of
@@ -1597,6 +1647,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
@@ -1609,6 +1660,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // Per-bucket trend for every metric name in one scan of [start, end], each
@@ -1637,6 +1689,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY metric_name, bucket
       """, nativeQuery = true)
   List<Object[]> aggregateMetricTrend(
@@ -1644,7 +1697,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Filtered sibling of aggregateMetricTrend for the ONE metric an attribute filter targets; same
   // row shape (metric_name, bucket, total). Same non-zero restriction and partial-index reasoning
@@ -1660,6 +1714,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
@@ -1673,6 +1728,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // Per-bucket AVG / p95 / COUNT trend for ONE metric, for the Metrics page "agg" switch
@@ -1717,6 +1773,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND (jsonb_array_length(CAST(:filterMatchesJson AS jsonb)) = 0
              OR NOT EXISTS (
                SELECT 1
@@ -1731,6 +1788,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // p95: the continuous 95th percentile of the individual increments in the bucket. See
@@ -1748,6 +1806,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND (jsonb_array_length(CAST(:filterMatchesJson AS jsonb)) = 0
              OR NOT EXISTS (
                SELECT 1
@@ -1762,6 +1821,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // count: how many increments landed in the bucket (a non-zero increment is one emission in
@@ -1778,6 +1838,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND (jsonb_array_length(CAST(:filterMatchesJson AS jsonb)) = 0
              OR NOT EXISTS (
                SELECT 1
@@ -1792,6 +1853,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // Every attribute-split value for every split-bearing metric (token.usage,
@@ -1833,6 +1895,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY metric_name, model, token_type, decision
       """, nativeQuery = true)
   List<Object[]> aggregateMetricSplits(
@@ -1842,7 +1905,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("decisionAttribute") String decisionAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Filtered sibling of aggregateMetricSplits for the ONE metric an attribute filter targets; same
   // row shape (metric_name, model, token_type, decision, total). Same non-zero restriction and
@@ -1862,6 +1926,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :start
         AND timestamp <= :end
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
         AND NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(CAST(:filterMatchesJson AS jsonb)) AS filter_match(entry)
@@ -1877,6 +1942,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("filterMatchesJson") String filterMatchesJson);
 
   // Attribute key/value facets for ONE metric NAME, for the Metrics page filter picker
@@ -1916,6 +1982,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp <= :end
           AND value_delta IS DISTINCT FROM 0
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
         ORDER BY stream_id
       ),
       attribute_pairs AS (
@@ -1947,6 +2014,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile,
       @Param("maxDistinctValues") int maxDistinctValues);
 
   // ---------------------------------------------------------------------------
@@ -1973,12 +2041,14 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       WHERE metric_name = :metricName
         AND timestamp >= :priorFrom
         AND timestamp <= :to
+        AND agent_profile = :agentProfile
       """, nativeQuery = true)
   List<Object[]> aggregateTotalTokensCurrentAndPrior(
       @Param("metricName") String metricName,
       @Param("from") Instant from,
       @Param("to") Instant to,
-      @Param("priorFrom") Instant priorFrom);
+      @Param("priorFrom") Instant priorFrom,
+      @Param("agentProfile") String agentProfile);
 
   // Per-token-type current+prior totals (cache_read_ratio_pct's three components:
   // input, cacheCreation, cacheRead -- output is fetched too but unused by the
@@ -1998,6 +2068,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       WHERE metric_name = :metricName
         AND timestamp >= :priorFrom
         AND timestamp <= :to
+        AND agent_profile = :agentProfile
       GROUP BY token_type
       """, nativeQuery = true)
   List<Object[]> aggregateTokenTypeCurrentAndPriorTotals(
@@ -2005,7 +2076,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("tokenTypeAttribute") String tokenTypeAttribute,
       @Param("from") Instant from,
       @Param("to") Instant to,
-      @Param("priorFrom") Instant priorFrom);
+      @Param("priorFrom") Instant priorFrom,
+      @Param("agentProfile") String agentProfile);
 
   // Combines aggregateCostCurrentAndPriorTotals, aggregateTotalTokensCurrentAndPrior,
   // and aggregateTokenTypeCurrentAndPriorTotals (three round trips) into ONE. The three
@@ -2064,6 +2136,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
 
       UNION ALL
 
@@ -2080,6 +2153,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
 
       UNION ALL
 
@@ -2096,6 +2170,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         AND timestamp >= :priorFrom
         AND timestamp <= :to
         AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+        AND agent_profile = :agentProfile
       GROUP BY token_type
       """, nativeQuery = true)
   List<Object[]> aggregateMetricsTotalsCombined(
@@ -2105,7 +2180,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Session count (sessions) and average whole-session wall-clock duration
   // (avg_duration_min) for the current and prior period, in one scan.
@@ -2142,6 +2218,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :priorFrom
           AND timestamp <= :to
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ),
       session_window AS (
         SELECT session_id, period
@@ -2170,6 +2247,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
           AND p.value_delta IS DISTINCT FROM 0
           AND (:repositoryUrl IS NULL OR p.repository_url = :repositoryUrl)
+          AND p.agent_profile = :agentProfile
         GROUP BY w.session_id, w.period
       )
       SELECT
@@ -2186,7 +2264,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("from") Instant from,
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Trend report sparklines (7 points per side, one call per side)
@@ -2212,6 +2291,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       WHERE metric_name IN (:costMetric, :tokenMetric)
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY bucket_index
       ORDER BY bucket_index
       """, nativeQuery = true)
@@ -2220,7 +2300,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("tokenMetric") String tokenMetric,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("bucketSeconds") long bucketSeconds);
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("agentProfile") String agentProfile);
 
   // Bucketed per-token-type totals -- backs cache_read_ratio_pct's sparkline
   // (cacheRead / (input + cacheCreation + cacheRead) per bucket).
@@ -2234,6 +2315,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       WHERE metric_name = :tokenMetric
         AND timestamp >= :start
         AND timestamp <= :end
+        AND agent_profile = :agentProfile
       GROUP BY bucket_index, token_type
       ORDER BY bucket_index
       """, nativeQuery = true)
@@ -2242,7 +2324,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("tokenTypeAttribute") String tokenTypeAttribute,
       @Param("start") Instant start,
       @Param("end") Instant end,
-      @Param("bucketSeconds") long bucketSeconds);
+      @Param("bucketSeconds") long bucketSeconds,
+      @Param("agentProfile") String agentProfile);
 
   // Bucketed session count and average whole-session wall-clock duration --
   // backs sessions' and avg_duration_min's own sparklines, and is reused as the
@@ -2265,6 +2348,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :start
           AND timestamp <= :end
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ),
       session_window AS (
         SELECT session_id, bucket_index
@@ -2282,6 +2366,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         JOIN metric_points p ON p.session_id = w.session_id
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
           AND (:repositoryUrl IS NULL OR p.repository_url = :repositoryUrl)
+          AND p.agent_profile = :agentProfile
         GROUP BY w.session_id, w.bucket_index
       )
       SELECT
@@ -2298,7 +2383,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("start") Instant start,
       @Param("end") Instant end,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // ---------------------------------------------------------------------------
   // Consolidated trend sparklines (both periods, one round trip)
@@ -2366,6 +2452,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
             AND timestamp >= :priorFrom
             AND timestamp <= :to
             AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+            AND agent_profile = :agentProfile
         ) AS labelled_rows
         WHERE period IS NOT NULL
         GROUP BY period, bucket_index
@@ -2390,6 +2477,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :priorFrom
           AND timestamp <= :to
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       ),
       session_window AS (
         SELECT session_id, period, bucket_index
@@ -2419,6 +2507,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
         WHERE p.metric_name IN (:costMetric, :activeTimeMetric)
           AND p.value_delta IS DISTINCT FROM 0
           AND (:repositoryUrl IS NULL OR p.repository_url = :repositoryUrl)
+          AND p.agent_profile = :agentProfile
         GROUP BY w.session_id, w.period, w.bucket_index
       ),
       session_bucketed AS (
@@ -2450,7 +2539,8 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 
   // Per-token-type sparkline (cache_read_ratio_pct's three components) for both
   // periods in one scan, replacing the remaining two aggregateTokenTypeTrend
@@ -2484,6 +2574,7 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
           AND timestamp >= :priorFrom
           AND timestamp <= :to
           AND (:repositoryUrl IS NULL OR repository_url = :repositoryUrl)
+          AND agent_profile = :agentProfile
       )
       SELECT
         period,
@@ -2502,5 +2593,6 @@ public interface MetricPointRepository extends JpaRepository<MetricPointEntity, 
       @Param("to") Instant to,
       @Param("priorFrom") Instant priorFrom,
       @Param("bucketSeconds") long bucketSeconds,
-      @Param("repositoryUrl") String repositoryUrl);
+      @Param("repositoryUrl") String repositoryUrl,
+      @Param("agentProfile") String agentProfile);
 }

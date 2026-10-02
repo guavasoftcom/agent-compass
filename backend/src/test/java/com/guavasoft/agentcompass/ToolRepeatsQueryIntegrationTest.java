@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.ToolRepeatStat;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.service.LogService;
@@ -88,7 +89,7 @@ class ToolRepeatsQueryIntegrationTest {
 
     @Test
     void repositoryUrlNullBehavesIdenticallyToBeforeRepositoryAttributionExisted() {
-        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null);
+        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         ToolRepeatStat editRun = singleRowFor(rows, TOOL_EDIT, "/repo/src/foo.ts");
         assertThat(editRun.maxRunLength()).isEqualTo(3L);
@@ -109,10 +110,10 @@ class ToolRepeatsQueryIntegrationTest {
         saveEdit(250, "session-repo-b", "/repo/src/baz.ts", REPOSITORY_B);
 
         List<ToolRepeatStat> scopedToRepositoryA =
-                logService.aggregateToolRepeatsInRange(windowStart, windowEnd, REPOSITORY_A);
+                logService.aggregateToolRepeatsInRange(windowStart, windowEnd, REPOSITORY_A, AgentProfiles.UNKNOWN);
         List<ToolRepeatStat> scopedToRepositoryB =
-                logService.aggregateToolRepeatsInRange(windowStart, windowEnd, REPOSITORY_B);
-        List<ToolRepeatStat> unscoped = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null);
+                logService.aggregateToolRepeatsInRange(windowStart, windowEnd, REPOSITORY_B, AgentProfiles.UNKNOWN);
+        List<ToolRepeatStat> unscoped = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         // Scoped to A: only A's four-call run is visible -- not B's run, and not the
         // unattributed run seed() writes (repository_url NULL is excluded once :repositoryUrl is
@@ -140,7 +141,7 @@ class ToolRepeatsQueryIntegrationTest {
         saveEdit(400, "session-light", "/repo/src/heavy.ts", null, 2000L);
         saveEdit(410, "session-light", "/repo/src/heavy.ts", null, 2000L);
 
-        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null);
+        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         ToolRepeatStat editRun = singleRowFor(rows, TOOL_EDIT, "/repo/src/heavy.ts");
         assertThat(editRun.sessions()).isEqualTo(2L);
@@ -150,7 +151,7 @@ class ToolRepeatsQueryIntegrationTest {
     @Test
     void aRunWithNoCapturedResultSizeContributesZeroTokensBurnedRatherThanFailing() {
         // seed()'s unattributed run never sets ATTR_RESULT_SIZE_BYTES at all.
-        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null);
+        List<ToolRepeatStat> rows = logService.aggregateToolRepeatsInRange(windowStart, windowEnd, null, AgentProfiles.UNKNOWN);
 
         ToolRepeatStat editRun = singleRowFor(rows, TOOL_EDIT, "/repo/src/foo.ts");
         assertThat(editRun.estimatedTokensBurned()).isZero();

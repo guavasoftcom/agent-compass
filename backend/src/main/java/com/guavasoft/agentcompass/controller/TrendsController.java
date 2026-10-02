@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.TimeWindowParams;
 import com.guavasoft.agentcompass.model.TrendsResponse;
 import com.guavasoft.agentcompass.service.TrendService;
@@ -51,6 +52,7 @@ public class TrendsController {
     private static final String MINUTES_DESCRIPTION = "Window size in minutes";
 
     private final TrendService trendService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("/cost")
     @Operation(
@@ -69,11 +71,13 @@ public class TrendsController {
             @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
             @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.costTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return trendService.costTrends(minutes, timeWindowParams.repositoryUrl());
+        return trendService.costTrends(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/token-efficiency")
@@ -93,11 +97,13 @@ public class TrendsController {
             @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
             @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.tokenEfficiencyTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return trendService.tokenEfficiencyTrends(minutes, timeWindowParams.repositoryUrl());
+        return trendService.tokenEfficiencyTrends(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/reliability")
@@ -117,11 +123,13 @@ public class TrendsController {
             @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
             @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.reliabilityTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return trendService.reliabilityTrends(minutes, timeWindowParams.repositoryUrl());
+        return trendService.reliabilityTrends(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 
     @GetMapping("/activity")
@@ -141,10 +149,12 @@ public class TrendsController {
             @Parameter(description = MINUTES_DESCRIPTION, example = MINUTES_EXAMPLE)
             @RequestParam(defaultValue = DEFAULT_MINUTES) int minutes,
             @Valid @ModelAttribute TimeWindowParams timeWindowParams) {
+        String agentProfile = agentProfileRequestResolver.resolve(timeWindowParams.agentProfile());
         if (timeWindowParams.startTimestamp() != null && timeWindowParams.endTimestamp() != null) {
             return trendService.activityTrendsInRange(
-                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl());
+                    timeWindowParams.startTimestamp(), timeWindowParams.endTimestamp(), timeWindowParams.repositoryUrl(),
+                    agentProfile);
         }
-        return trendService.activityTrends(minutes, timeWindowParams.repositoryUrl());
+        return trendService.activityTrends(minutes, timeWindowParams.repositoryUrl(), agentProfile);
     }
 }

@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.EventRow;
 import com.guavasoft.agentcompass.model.MetricPage;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -92,7 +93,7 @@ class MetricPageQueryIntegrationTest {
 
   @Test
   void firstPageReturnsNewestRowsFirstAndFullTotalCount() {
-    MetricPage firstPage = metricService.recentEvents(List.of(), null, null, 0, 5);
+    MetricPage firstPage = metricService.recentEvents(List.of(), null, null, 0, 5, AgentProfiles.UNKNOWN);
 
     assertThat(firstPage.totalCount()).isEqualTo(SEEDED_ROW_COUNT);
     assertThat(firstPage.items()).hasSize(5);
@@ -102,8 +103,8 @@ class MetricPageQueryIntegrationTest {
 
   @Test
   void secondPageContinuesWhereFirstPageLeftOffWithoutOverlap() {
-    MetricPage firstPage = metricService.recentEvents(List.of(), null, null, 0, 5);
-    MetricPage secondPage = metricService.recentEvents(List.of(), null, null, 1, 5);
+    MetricPage firstPage = metricService.recentEvents(List.of(), null, null, 0, 5, AgentProfiles.UNKNOWN);
+    MetricPage secondPage = metricService.recentEvents(List.of(), null, null, 1, 5, AgentProfiles.UNKNOWN);
 
     assertThat(secondPage.totalCount()).isEqualTo(SEEDED_ROW_COUNT);
     assertThat(secondPage.items()).hasSize(3);
@@ -115,7 +116,7 @@ class MetricPageQueryIntegrationTest {
 
   @Test
   void filterNarrowsToMatchingAttributePairsOnly() {
-    MetricPage filteredPage = metricService.recentEvents(List.of("method=GET"), null, null, 0, 50);
+    MetricPage filteredPage = metricService.recentEvents(List.of("method=GET"), null, null, 0, 50, AgentProfiles.UNKNOWN);
 
     assertThat(filteredPage.totalCount()).isEqualTo(SEEDED_ROW_COUNT / 2);
     assertThat(filteredPage.items()).hasSize(SEEDED_ROW_COUNT / 2);
@@ -127,7 +128,7 @@ class MetricPageQueryIntegrationTest {
   @Test
   void pageSizeIsClampedInsteadOfFetchingUnboundedRows() {
     // size is attacker-chosen and huge; must be clamped, not passed straight to SQL LIMIT.
-    MetricPage page = metricService.recentEvents(List.of(), null, null, 0, 2_000_000_000);
+    MetricPage page = metricService.recentEvents(List.of(), null, null, 0, 2_000_000_000, AgentProfiles.UNKNOWN);
 
     assertThat(page.totalCount()).isEqualTo(SEEDED_ROW_COUNT);
     assertThat(page.items()).hasSize(SEEDED_ROW_COUNT);
@@ -135,7 +136,7 @@ class MetricPageQueryIntegrationTest {
 
   @Test
   void pageBeyondLastRowReturnsEmptyItemsButPreservesTotalCount() {
-    MetricPage page = metricService.recentEvents(List.of(), null, null, 5, 5);
+    MetricPage page = metricService.recentEvents(List.of(), null, null, 5, 5, AgentProfiles.UNKNOWN);
 
     assertThat(page.totalCount()).isEqualTo(SEEDED_ROW_COUNT);
     assertThat(page.items()).isEmpty();

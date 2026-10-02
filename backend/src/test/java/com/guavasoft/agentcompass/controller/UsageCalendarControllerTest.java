@@ -21,6 +21,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.UsageCalendarDaily;
 import com.guavasoft.agentcompass.model.UsageCalendarDay;
 import com.guavasoft.agentcompass.model.UsageCalendarHour;
@@ -60,6 +61,12 @@ class UsageCalendarControllerTest {
     @MockitoBean
     UsageCalendarService usageCalendarService;
 
+    // Declared because @WebMvcTest builds the real UsageCalendarController, which now takes it as
+    // a constructor dependency: without the bean the whole context fails to load. Resolution
+    // defaults are AgentProfileRequestResolverTest's job, not this slice's.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
+
     private static UsageCalendarDaily sampleDaily() {
         return new UsageCalendarDaily(List.of(new UsageCalendarDay(
                 LocalDate.of(2026, 9, 1), 73.2, 369_400L, 5L, 2L, 4L, 7_860L, 284L, 99L, 0L, 1L, 11L, 1L,
@@ -69,7 +76,7 @@ class UsageCalendarControllerTest {
 
     @Test
     void dailyDispatchesTheRangeZoneAndRepositoryToTheService() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL, false))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL, null, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily")
@@ -86,23 +93,50 @@ class UsageCalendarControllerTest {
                 .andExpect(jsonPath("$.days[0].costByModel[0].model").value("claude-sonnet-4"))
                 .andExpect(jsonPath("$.days[0].costByModel[0].costUsd").value(41.5));
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL, false);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), TIME_ZONE, REPOSITORY_URL, null, false);
     }
 
     @Test
     void dailyDefaultsTheTimeZoneToUtcWhenOmitted() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily").param("from", FROM).param("to", TO))
                 .andExpect(status().isOk());
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, false);
+    }
+
+    @Test
+    void dailyOmittedAgentProfileResolvesToThePrimaryProfile() throws Exception {
+        when(agentProfileRequestResolver.resolve(null)).thenReturn("claude-code");
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, "claude-code", false))
+                .thenReturn(sampleDaily());
+
+        mockMvc.perform(get("/api/usage/calendar/daily").param("from", FROM).param("to", TO))
+                .andExpect(status().isOk());
+
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, "claude-code", false);
+    }
+
+    @Test
+    void dailyDispatchesSuppliedAgentProfileToService() throws Exception {
+        when(agentProfileRequestResolver.resolve("unknown")).thenReturn("unknown");
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, "unknown", false))
+                .thenReturn(sampleDaily());
+
+        mockMvc.perform(get("/api/usage/calendar/daily")
+                        .param("from", FROM)
+                        .param("to", TO)
+                        .param("agentProfile", "unknown"))
+                .andExpect(status().isOk());
+
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, "unknown", false);
     }
 
     @Test
     void dailyMapsTheUnattributedSentinelToAllRepositories() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily")
@@ -111,12 +145,12 @@ class UsageCalendarControllerTest {
                 .param("repositoryUrl", UNATTRIBUTED_SENTINEL))
                 .andExpect(status().isOk());
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, false);
     }
 
     @Test
     void dailyAsksTheServiceForHourlyBucketsOnlyWhenGranularityIsHourly() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, true))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, true))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily")
@@ -130,12 +164,12 @@ class UsageCalendarControllerTest {
                 .andExpect(jsonPath("$.days[0].hourly[0].skillCalls").value(1))
                 .andExpect(jsonPath("$.days[0].hourly[0].activeSeconds").value(1_260));
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, true);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, true);
     }
 
     @Test
     void dailyTreatsAnExplicitDailyGranularityAsNoHourlyBuckets() throws Exception {
-        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false))
+        when(usageCalendarService.daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, false))
                 .thenReturn(sampleDaily());
 
         mockMvc.perform(get("/api/usage/calendar/daily")
@@ -144,7 +178,7 @@ class UsageCalendarControllerTest {
                 .param("granularity", "daily"))
                 .andExpect(status().isOk());
 
-        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, false);
+        verify(usageCalendarService).daily(Instant.parse(FROM), Instant.parse(TO), "UTC", null, null, false);
     }
 
     @Test
@@ -155,7 +189,7 @@ class UsageCalendarControllerTest {
                 .param("granularity", "minutely"))
                 .andExpect(status().isBadRequest());
 
-        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), anyBoolean());
+        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -165,7 +199,7 @@ class UsageCalendarControllerTest {
                 .param("to", "2026-09-30T00:00:00Z"))
                 .andExpect(status().isBadRequest());
 
-        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), anyBoolean());
+        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -175,6 +209,6 @@ class UsageCalendarControllerTest {
         mockMvc.perform(get("/api/usage/calendar/daily").param("to", TO))
                 .andExpect(status().isBadRequest());
 
-        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), anyBoolean());
+        verify(usageCalendarService, never()).daily(any(), any(), anyString(), any(), any(), anyBoolean());
     }
 }

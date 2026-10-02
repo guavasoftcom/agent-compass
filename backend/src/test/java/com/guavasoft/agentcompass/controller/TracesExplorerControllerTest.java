@@ -22,6 +22,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.TraceCursor;
 import com.guavasoft.agentcompass.model.TraceCursorPage;
@@ -85,6 +86,12 @@ class TracesExplorerControllerTest {
     // this class errors, not just the analysis ones.
     @MockitoBean
     TraceAnalysisSseStreamer traceAnalysisSseStreamer;
+
+    // Not exercised here either -- resolution defaults are AgentProfileRequestResolverTest's job.
+    // Declared for the identical reason as traceAnalysisSseStreamer above: TracesController now
+    // takes it as a constructor dependency, so the context fails to load without this bean.
+    @MockitoBean
+    AgentProfileRequestResolver agentProfileRequestResolver;
 
     // -------------------------------------------------------------------------
     // GET /api/traces/histogram

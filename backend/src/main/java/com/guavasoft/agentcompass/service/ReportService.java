@@ -105,19 +105,20 @@ public class ReportService {
     this.bashAntipatternReplacements = Map.copyOf(tuningProperties.getBashAntipatternReplacements());
   }
 
-  public String renderMarkdown(int minutes, String repositoryUrl) {
+  public String renderMarkdown(int minutes, String repositoryUrl, String agentProfile) {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
-    return renderForWindow(start, end, minutes, repositoryUrl);
+    return renderForWindow(start, end, minutes, repositoryUrl, agentProfile);
   }
 
-  public String renderMarkdownInRange(Instant start, Instant end, String repositoryUrl) {
+  public String renderMarkdownInRange(Instant start, Instant end, String repositoryUrl, String agentProfile) {
     long minutes = Math.max(1, Duration.between(start, end).toMinutes());
-    return renderForWindow(start, end, (int) Math.min(minutes, Integer.MAX_VALUE), repositoryUrl);
+    return renderForWindow(start, end, (int) Math.min(minutes, Integer.MAX_VALUE), repositoryUrl, agentProfile);
   }
 
-  private String renderForWindow(Instant start, Instant end, int minutesForContext, String repositoryUrl) {
-    List<ToolCallCount> rows = logService.aggregateToolCallsInRange(start, end, repositoryUrl);
+  private String renderForWindow(
+      Instant start, Instant end, int minutesForContext, String repositoryUrl, String agentProfile) {
+    List<ToolCallCount> rows = logService.aggregateToolCallsInRange(start, end, repositoryUrl, agentProfile);
     long total = rows.stream().mapToLong(ToolCallCount::getCalls).sum();
 
     List<Map<String, Object>> rowsWithShare = rows.stream()
@@ -130,7 +131,7 @@ public class ReportService {
         })
         .toList();
 
-    List<ToolPerformance> performanceRows = logService.aggregateToolPerformanceInRange(start, end);
+    List<ToolPerformance> performanceRows = logService.aggregateToolPerformanceInRange(start, end, agentProfile);
     List<Map<String, Object>> performanceContext = performanceRows.stream()
         .map(performance -> {
           Map<String, Object> performanceRow = new LinkedHashMap<>();
@@ -143,7 +144,7 @@ public class ReportService {
         })
         .toList();
 
-    List<ToolFailure> failureRows = logService.aggregateToolFailuresInRange(start, end);
+    List<ToolFailure> failureRows = logService.aggregateToolFailuresInRange(start, end, agentProfile);
     long totalFailures = failureRows.stream().mapToLong(ToolFailure::count).sum();
     List<Map<String, Object>> failuresContext = failureRows.stream()
         .map(failure -> {
@@ -158,7 +159,7 @@ public class ReportService {
         })
         .toList();
 
-    List<BashCommandHotspot> bashHotspots = logService.aggregateBashCommandHotspotsInRange(start, end);
+    List<BashCommandHotspot> bashHotspots = logService.aggregateBashCommandHotspotsInRange(start, end, agentProfile);
     List<Map<String, Object>> bashHotspotsContext = bashHotspots.stream()
         .map(hotspot -> {
           Map<String, Object> hotspotRow = new LinkedHashMap<>();
@@ -171,9 +172,9 @@ public class ReportService {
         })
         .toList();
 
-    BashCommandCoverage bashCoverage = logService.bashCommandCoverageInRange(start, end);
+    BashCommandCoverage bashCoverage = logService.bashCommandCoverageInRange(start, end, agentProfile);
 
-    List<OversizedToolResult> oversized = logService.aggregateOversizedToolResultsInRange(start, end);
+    List<OversizedToolResult> oversized = logService.aggregateOversizedToolResultsInRange(start, end, agentProfile);
     List<Map<String, Object>> oversizedContext = oversized.stream()
         .map(result -> {
           Map<String, Object> oversizedRow = new LinkedHashMap<>();
@@ -186,7 +187,7 @@ public class ReportService {
         .toList();
 
     List<ToolContextFootprint> contextFootprint =
-        logService.aggregateTunableToolContextFootprintInRange(start, end);
+        logService.aggregateTunableToolContextFootprintInRange(start, end, agentProfile);
     long contextFootprintTotalBytes = contextFootprint.stream()
         .mapToLong(ToolContextFootprint::totalBytes)
         .sum();
@@ -203,7 +204,8 @@ public class ReportService {
         })
         .toList();
 
-    List<McpServerUsage> mcpServerUsageRows = logService.aggregateMcpServerUsageInRange(start, end, repositoryUrl);
+    List<McpServerUsage> mcpServerUsageRows =
+        logService.aggregateMcpServerUsageInRange(start, end, repositoryUrl, agentProfile);
     List<McpServerRollup> mcpServerRollups = rollUpMcpServersByServer(mcpServerUsageRows);
     long mcpServersTotalBytes = mcpServerRollups.stream().mapToLong(McpServerRollup::totalBytes).sum();
     List<Map<String, Object>> mcpServersContext = mcpServerRollups.stream()
@@ -219,7 +221,7 @@ public class ReportService {
         })
         .toList();
 
-    List<RedundantFileRead> redundantReads = logService.aggregateRedundantFileReadsInRange(start, end);
+    List<RedundantFileRead> redundantReads = logService.aggregateRedundantFileReadsInRange(start, end, agentProfile);
     List<Map<String, Object>> redundantReadsContext = redundantReads.stream()
         .map(redundantRead -> {
           Map<String, Object> readRow = new LinkedHashMap<>();
@@ -233,7 +235,7 @@ public class ReportService {
         })
         .toList();
 
-    List<EditFailureLoop> editLoops = logService.aggregateEditFailureLoopsInRange(start, end);
+    List<EditFailureLoop> editLoops = logService.aggregateEditFailureLoopsInRange(start, end, agentProfile);
     List<Map<String, Object>> editLoopsContext = editLoops.stream()
         .map(loop -> {
           Map<String, Object> loopRow = new LinkedHashMap<>();
@@ -244,9 +246,9 @@ public class ReportService {
         })
         .toList();
 
-    List<SlowAndLargeCall> slowLarge = logService.aggregateSlowAndLargeCallsInRange(start, end);
+    List<SlowAndLargeCall> slowLarge = logService.aggregateSlowAndLargeCallsInRange(start, end, agentProfile);
 
-    List<PathNearMiss> pathNearMisses = logService.findReadPathNearMissesInRange(start, end);
+    List<PathNearMiss> pathNearMisses = logService.findReadPathNearMissesInRange(start, end, agentProfile);
     List<Map<String, Object>> pathNearMissesContext = pathNearMisses.stream()
         .map(nearMiss -> {
           Map<String, Object> nearMissRow = new LinkedHashMap<>();

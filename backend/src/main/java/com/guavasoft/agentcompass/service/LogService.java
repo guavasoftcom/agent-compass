@@ -201,13 +201,13 @@ public class LogService {
    * single indexed lookup rather than riding on any dashboard read path.
    */
   public Optional<LogRecord> lastAssistantResponseBeforeTrace(
-      String sessionId, Instant traceStart, String traceId) {
+      String sessionId, Instant traceStart, String traceId, String agentProfile) {
     if (sessionId == null || traceStart == null) {
       return Optional.empty();
     }
     return logRecordRepository
         .findLastAssistantResponseBefore(
-            tuningProperties.getAssistantResponseEventName(), sessionId, traceStart, traceId)
+            tuningProperties.getAssistantResponseEventName(), sessionId, traceStart, traceId, agentProfile)
         .map(logRecordMapper::toLogRecord);
   }
 
@@ -221,7 +221,8 @@ public class LogService {
    * dispatching turn has been purged. Like {@link #lastAssistantResponseBeforeTrace}, this is read
    * by the trace-analysis prompt only and only on an explicit regenerate.
    */
-  public Optional<LogRecord> dispatchingToolCall(String sessionId, Instant traceStart, String toolUseId) {
+  public Optional<LogRecord> dispatchingToolCall(
+      String sessionId, Instant traceStart, String toolUseId, String agentProfile) {
     if (sessionId == null || traceStart == null || toolUseId == null || toolUseId.isBlank()) {
       return Optional.empty();
     }
@@ -231,7 +232,8 @@ public class LogService {
             sessionId,
             traceStart,
             tuningProperties.getToolCallIdAttribute(),
-            toolUseId)
+            toolUseId,
+            agentProfile)
         .map(logRecordMapper::toLogRecord);
   }
 
@@ -474,7 +476,7 @@ public class LogService {
   // session has more than MAXIMUM_PAGE_SIZE prompts, in which case the "+1 probe"
   // row fetched below closes it instead, so events belonging to a truncated
   // (not-returned) 501st+ turn are never misattributed to the 500th.
-  public List<SessionPrompt> promptsForSession(String sessionId) {
+  public List<SessionPrompt> promptsForSession(String sessionId, String agentProfile) {
     List<Object[]> probeRows = logRecordRepository.findPromptsForSession(
         sessionId,
         tuningProperties.getUserPromptEventName(),
@@ -490,10 +492,12 @@ public class LogService {
     Instant turnsEndBoundary = truncated ? (Instant) probeRows.get(PageBounds.MAXIMUM_PAGE_SIZE)[0] : null;
 
     List<Instant> turnStartTimestamps = promptRows.stream().map(row -> (Instant) row[0]).toList();
-    TurnTokenRollup turnTokenRollup = resolveModelAndTokensPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
-    Map<Integer, Double> costByTurn = resolveCostPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+    TurnTokenRollup turnTokenRollup =
+        resolveModelAndTokensPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary, agentProfile);
+    Map<Integer, Double> costByTurn =
+        resolveCostPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary, agentProfile);
     Map<Integer, List<SessionPromptToolCount>> toolsByTurn =
-        resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary);
+        resolveToolsPerTurn(sessionId, turnStartTimestamps, turnsEndBoundary, agentProfile);
     Map<Integer, Double> backgroundCostByTurn = new HashMap<>();
     Map<Integer, List<SessionPromptToolCount>> backgroundToolsByTurn = new HashMap<>();
     Map<Integer, SessionTokenBreakdown> traceTokensByTurn = new HashMap<>();
@@ -501,9 +505,10 @@ public class LogService {
     applyTraceCorrelatedActivity(promptRows, costByTurn, toolsByTurn, backgroundCostByTurn, backgroundToolsByTurn,
         traceTokensByTurn, traceModelByTurn);
     Map<String, ApiRequestTurnRollup> requestRollupsByPromptId = resolveApiRequestTurns(sessionId);
-    Map<Integer, String> dispatchingTraceByTurn = resolveDispatchingTraceByTurn(sessionId, promptRows);
+    Map<Integer, String> dispatchingTraceByTurn =
+        resolveDispatchingTraceByTurn(sessionId, promptRows, agentProfile);
     int runningTurnIndex = truncated ? -1 : resolveRunningTurnIndex(promptRows);
-    Set<String> backgroundActiveTraceIds = resolveBackgroundActiveTraceIds(sessionId);
+    Set<String> backgroundActiveTraceIds = resolveBackgroundActiveTraceIds(sessionId, agentProfile);
 
     List<SessionPrompt> prompts = new ArrayList<>(promptRows.size());
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
@@ -595,13 +600,14 @@ public class LogService {
    * newest-turn rule alone misses this. A plain {@link HashSet} rather than {@code Set.copyOf}
    * because callers look up a null trace id (a pre-tracing turn), which an immutable set rejects.
    */
-  private Set<String> resolveBackgroundActiveTraceIds(String sessionId) {
+  private Set<String> resolveBackgroundActiveTraceIds(String sessionId, String agentProfile) {
     Set<String> traceIds = new HashSet<>();
     for (Object[] row : logRecordRepository.findBackgroundActiveTraces(
         List.of(sessionId),
         INTERACTION_ROOT_SPAN_NAME_PATTERN,
         Instant.now().minus(BACKGROUND_ACTIVITY_WINDOW),
-        ROOT_SPAN_CLOSE_GRACE_SECONDS)) {
+        ROOT_SPAN_CLOSE_GRACE_SECONDS,
+        agentProfile)) {
       traceIds.add((String) row[1]);
     }
     return traceIds;
@@ -621,7 +627,8 @@ public class LogService {
    * rather than defaulted -- the same "cannot tell" discipline the purge and staleness checks in
    * this codebase follow elsewhere.
    */
-  private Map<Integer, String> resolveDispatchingTraceByTurn(String sessionId, List<Object[]> promptRows) {
+  private Map<Integer, String> resolveDispatchingTraceByTurn(
+      String sessionId, List<Object[]> promptRows, String agentProfile) {
     Map<Integer, String> toolUseIdByTurn = new HashMap<>();
     for (int turnIndex = 0; turnIndex < promptRows.size(); turnIndex++) {
       String promptText = (String) promptRows.get(turnIndex)[PROMPT_ROW_PROMPT_TEXT];
@@ -648,7 +655,8 @@ public class LogService {
         sessionId,
         newestNotificationTimestamp,
         tuningProperties.getToolCallIdAttribute(),
-        toolUseIdByTurn.values())) {
+        toolUseIdByTurn.values(),
+        agentProfile)) {
       traceIdByToolUseId.put((String) row[0], (String) row[1]);
     }
 
@@ -973,9 +981,10 @@ public class LogService {
   // for this session, bucketed into the turn whose interval contains each point.
   // Superseded per-turn by applyTraceCorrelatedActivity wherever a trace exists.
   private Map<Integer, Double> resolveCostPerTurn(
-      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
+      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary, String agentProfile) {
     List<Object[]> costPointRows = metricPointRepository.findCostPointsForSession(
-        tuningProperties.getCostUsageMetric(), sessionId, turnStartTimestamps.get(0), turnsEndBoundary);
+        tuningProperties.getCostUsageMetric(), sessionId, turnStartTimestamps.get(0), turnsEndBoundary,
+        agentProfile);
 
     Map<Integer, Double> costByTurn = new HashMap<>();
     for (Object[] row : costPointRows) {
@@ -999,10 +1008,10 @@ public class LogService {
   // breakdown -- both from the rows landing in that turn's interval. A turn with
   // no token points has no entry in either map (the caller falls back to null).
   private TurnTokenRollup resolveModelAndTokensPerTurn(
-      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
+      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary, String agentProfile) {
     List<Object[]> tokenPointRows = metricPointRepository.findTokenPointsForSession(
         tuningProperties.getTokenUsageMetric(), sessionId, MODEL_ATTRIBUTE, tuningProperties.getTokenTypeAttribute(),
-        turnStartTimestamps.get(0), turnsEndBoundary);
+        turnStartTimestamps.get(0), turnsEndBoundary, agentProfile);
 
     Map<Integer, Map<String, Long>> tokensByModelPerTurn = new HashMap<>();
     Map<Integer, long[]> tokenTypeTotalsPerTurn = new HashMap<>();
@@ -1052,10 +1061,10 @@ public class LogService {
   // turn's interval, ordered by count descending then name ascending for
   // deterministic output.
   private Map<Integer, List<SessionPromptToolCount>> resolveToolsPerTurn(
-      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary) {
+      String sessionId, List<Instant> turnStartTimestamps, Instant turnsEndBoundary, String agentProfile) {
     List<Object[]> toolEventRows = logRecordRepository.findToolEventsForSession(
         sessionId, tuningProperties.getToolEventName(), tuningProperties.getToolAttribute(),
-        turnStartTimestamps.get(0), turnsEndBoundary);
+        turnStartTimestamps.get(0), turnsEndBoundary, agentProfile);
 
     Map<Integer, Map<String, Long>> countsByToolPerTurn = new HashMap<>();
     for (Object[] row : toolEventRows) {
@@ -1082,24 +1091,27 @@ public class LogService {
   }
 
   public List<String> availableAttributePairs(
-      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, String repositoryUrl) {
+      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, String repositoryUrl,
+      String agentProfile) {
     return logRecordRepository.findDistinctAttributePairs(
-        toFilterArray(activeFilters), startTimestamp, endTimestamp, repositoryUrl);
+        toFilterArray(activeFilters), startTimestamp, endTimestamp, repositoryUrl, agentProfile);
   }
 
   public List<String> availableAttributeKeys(
-      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, String repositoryUrl) {
+      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, String repositoryUrl,
+      String agentProfile) {
     return logRecordRepository.findDistinctAttributeKeys(
-        toFilterArray(activeFilters), startTimestamp, endTimestamp, repositoryUrl);
+        toFilterArray(activeFilters), startTimestamp, endTimestamp, repositoryUrl, agentProfile);
   }
 
   public List<String> availableAttributeValues(
-      String key, List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, String repositoryUrl) {
+      String key, List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, String repositoryUrl,
+      String agentProfile) {
     return logRecordRepository.findDistinctAttributeValuesForKey(
-        key, toFilterArray(activeFilters), startTimestamp, endTimestamp, repositoryUrl);
+        key, toFilterArray(activeFilters), startTimestamp, endTimestamp, repositoryUrl, agentProfile);
   }
 
-  public List<ToolCallCount> aggregateToolCalls(int minutes, String repositoryUrl) {
+  public List<ToolCallCount> aggregateToolCalls(int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = logRecordRepository.aggregateToolCalls(
         tuningProperties.getToolEventName(),
@@ -1108,11 +1120,13 @@ public class LogService {
         tuningProperties.getMcpParametersAttribute(),
         tuningProperties.getMcpServerNameAttribute(),
         since,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolCallCounts(rows);
   }
 
-  public List<ToolCallCount> aggregateToolCallsInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<ToolCallCount> aggregateToolCallsInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolCallsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1121,11 +1135,12 @@ public class LogService {
         tuningProperties.getMcpServerNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolCallCounts(rows);
   }
 
-  public List<ToolPerformance> aggregateToolPerformanceInRange(Instant start, Instant end) {
+  public List<ToolPerformance> aggregateToolPerformanceInRange(Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolPerformanceInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1133,7 +1148,8 @@ public class LogService {
         tuningProperties.getMcpParametersAttribute(),
         tuningProperties.getMcpServerNameAttribute(),
         start,
-        end);
+        end,
+        agentProfile);
     return mapToolPerformance(rows);
   }
 
@@ -1148,7 +1164,7 @@ public class LogService {
         .toList();
   }
 
-  public List<ToolFailure> aggregateToolFailuresInRange(Instant start, Instant end) {
+  public List<ToolFailure> aggregateToolFailuresInRange(Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolFailuresInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1156,16 +1172,18 @@ public class LogService {
         tuningProperties.getMcpParametersAttribute(),
         tuningProperties.getMcpServerNameAttribute(),
         start,
-        end);
+        end,
+        agentProfile);
     return mapToolFailures(rows);
   }
 
-  public List<McpServerUsage> aggregateMcpServerUsage(int minutes, String repositoryUrl) {
+  public List<McpServerUsage> aggregateMcpServerUsage(int minutes, String repositoryUrl, String agentProfile) {
     Instant end = Instant.now();
-    return aggregateMcpServerUsageInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl);
+    return aggregateMcpServerUsageInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl, agentProfile);
   }
 
-  public List<McpServerUsage> aggregateMcpServerUsageInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<McpServerUsage> aggregateMcpServerUsageInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateMcpServerUsageInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getMcpToolName(),
@@ -1174,7 +1192,8 @@ public class LogService {
         tuningProperties.getMcpToolNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapMcpServerUsage(rows);
   }
 
@@ -1199,12 +1218,13 @@ public class LogService {
         .toList();
   }
 
-  public List<IdentifierUsageCount> aggregateSkillUsage(int minutes, String repositoryUrl) {
+  public List<IdentifierUsageCount> aggregateSkillUsage(int minutes, String repositoryUrl, String agentProfile) {
     Instant end = Instant.now();
-    return aggregateSkillUsageInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl);
+    return aggregateSkillUsageInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl, agentProfile);
   }
 
-  public List<IdentifierUsageCount> aggregateSkillUsageInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<IdentifierUsageCount> aggregateSkillUsageInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateSkillInvocationsByModelInRange(
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
@@ -1213,7 +1233,8 @@ public class LogService {
         tuningProperties.getAgentNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     List<Object[]> costRows = logRecordRepository.aggregateSkillCostByModelInRange(
         tuningProperties.getSkillEventName(),
         tuningProperties.getSkillNameAttribute(),
@@ -1221,16 +1242,18 @@ public class LogService {
         tuningProperties.getApiRequestCostAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mergeIdentifierUsageCost(mapIdentifierUsageCounts(rows), costRows);
   }
 
-  public List<IdentifierUsageCount> aggregateSubagentUsage(int minutes, String repositoryUrl) {
+  public List<IdentifierUsageCount> aggregateSubagentUsage(int minutes, String repositoryUrl, String agentProfile) {
     Instant end = Instant.now();
-    return aggregateSubagentUsageInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl);
+    return aggregateSubagentUsageInRange(end.minus(Duration.ofMinutes(minutes)), end, repositoryUrl, agentProfile);
   }
 
-  public List<IdentifierUsageCount> aggregateSubagentUsageInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<IdentifierUsageCount> aggregateSubagentUsageInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolInvocationsByInnerAttributeAndModelInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1242,7 +1265,8 @@ public class LogService {
         tuningProperties.getAgentNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     // Both the initiating log_records scan (subagent_dispatches) and the correlated spans scan
     // (dispatch_execution) are filtered on the SAME repositoryUrl -- a dispatch and its own
     // subagent spans always share one repository, so this is consistent, not redundant. See
@@ -1260,7 +1284,8 @@ public class LogService {
         tuningProperties.getApiRequestCostAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mergeIdentifierUsageCost(mapIdentifierUsageCounts(rows), costRows);
   }
 
@@ -1340,7 +1365,7 @@ public class LogService {
         .toList();
   }
 
-  public List<ToolFailureRate> aggregateToolFailureRates(int minutes, String repositoryUrl) {
+  public List<ToolFailureRate> aggregateToolFailureRates(int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = logRecordRepository.aggregateToolFailureRates(
         tuningProperties.getToolEventName(),
@@ -1349,11 +1374,13 @@ public class LogService {
         tuningProperties.getMcpParametersAttribute(),
         tuningProperties.getMcpServerNameAttribute(),
         since,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolFailureRates(rows);
   }
 
-  public List<ToolFailureRate> aggregateToolFailureRatesInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<ToolFailureRate> aggregateToolFailureRatesInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolFailureRatesInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1362,7 +1389,8 @@ public class LogService {
         tuningProperties.getMcpServerNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolFailureRates(rows);
   }
 
@@ -1375,13 +1403,15 @@ public class LogService {
         .toList();
   }
 
-  public List<ToolContextFootprint> aggregateToolContextFootprint(int minutes, String repositoryUrl) {
+  public List<ToolContextFootprint> aggregateToolContextFootprint(
+      int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now();
-    return aggregateToolContextFootprintInRange(since.minus(Duration.ofMinutes(minutes)), since, repositoryUrl);
+    return aggregateToolContextFootprintInRange(
+        since.minus(Duration.ofMinutes(minutes)), since, repositoryUrl, agentProfile);
   }
 
   public List<ToolContextFootprint> aggregateToolContextFootprintInRange(
-      Instant start, Instant end, String repositoryUrl) {
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolContextFootprintInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1390,7 +1420,8 @@ public class LogService {
         tuningProperties.getMcpServerNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolContextFootprint(rows);
   }
 
@@ -1399,7 +1430,8 @@ public class LogService {
    * report has no rule to offer for: externally determined tools and image reads. Used by the
    * report only — the dashboard card deliberately keeps those rows (see the repository comment).
    */
-  public List<ToolContextFootprint> aggregateTunableToolContextFootprintInRange(Instant start, Instant end) {
+  public List<ToolContextFootprint> aggregateTunableToolContextFootprintInRange(
+      Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateTunableToolContextFootprintInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1408,7 +1440,8 @@ public class LogService {
         tuningProperties.getMcpServerNameAttribute(),
         tuningProperties.getExternallyDeterminedTools(),
         start,
-        end);
+        end,
+        agentProfile);
     return mapToolContextFootprint(rows);
   }
 
@@ -1426,7 +1459,7 @@ public class LogService {
         .toList();
   }
 
-  public List<ToolDenialCount> aggregateToolDenials(int minutes, String repositoryUrl) {
+  public List<ToolDenialCount> aggregateToolDenials(int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = logRecordRepository.aggregateToolDenials(
         tuningProperties.getToolDecisionEventName(),
@@ -1435,11 +1468,13 @@ public class LogService {
         tuningProperties.getMcpParametersAttribute(),
         tuningProperties.getMcpServerNameAttribute(),
         since,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolDenials(rows);
   }
 
-  public List<ToolDenialCount> aggregateToolDenialsInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<ToolDenialCount> aggregateToolDenialsInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolDenialsInRange(
         tuningProperties.getToolDecisionEventName(),
         tuningProperties.getToolAttribute(),
@@ -1448,7 +1483,8 @@ public class LogService {
         tuningProperties.getMcpServerNameAttribute(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolDenials(rows);
   }
 
@@ -1461,16 +1497,18 @@ public class LogService {
         .toList();
   }
 
-  public List<HookExecutionSummary> aggregateHookExecutions(int minutes, String repositoryUrl) {
+  public List<HookExecutionSummary> aggregateHookExecutions(
+      int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = logRecordRepository.aggregateHookExecutions(
-        tuningProperties.getHookExecutionEventName(), since, repositoryUrl);
+        tuningProperties.getHookExecutionEventName(), since, repositoryUrl, agentProfile);
     return mapHookExecutions(rows);
   }
 
-  public List<HookExecutionSummary> aggregateHookExecutionsInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<HookExecutionSummary> aggregateHookExecutionsInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateHookExecutionsInRange(
-        tuningProperties.getHookExecutionEventName(), start, end, repositoryUrl);
+        tuningProperties.getHookExecutionEventName(), start, end, repositoryUrl, agentProfile);
     return mapHookExecutions(rows);
   }
 
@@ -1499,13 +1537,15 @@ public class LogService {
         .toList();
   }
 
-  public List<BashCommandHotspot> aggregateBashCommandHotspotsInRange(Instant start, Instant end) {
+  public List<BashCommandHotspot> aggregateBashCommandHotspotsInRange(
+      Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateBashCommandHotspotsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         start,
         end,
-        BASH_HOTSPOT_LIMIT);
+        BASH_HOTSPOT_LIMIT,
+        agentProfile);
     return mapBashCommandHotspots(rows);
   }
 
@@ -1520,7 +1560,8 @@ public class LogService {
         .toList();
   }
 
-  public List<OversizedToolResult> aggregateOversizedToolResultsInRange(Instant start, Instant end) {
+  public List<OversizedToolResult> aggregateOversizedToolResultsInRange(
+      Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateOversizedToolResultsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1531,7 +1572,8 @@ public class LogService {
         tuningProperties.getExternallyDeterminedTools(),
         start,
         end,
-        OVERSIZED_RESULT_LIMIT);
+        OVERSIZED_RESULT_LIMIT,
+        agentProfile);
     return mapOversizedToolResults(rows);
   }
 
@@ -1545,13 +1587,15 @@ public class LogService {
         .toList();
   }
 
-  public List<RedundantFileRead> aggregateRedundantFileReadsInRange(Instant start, Instant end) {
+  public List<RedundantFileRead> aggregateRedundantFileReadsInRange(
+      Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateRedundantFileReadsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         start,
         end,
-        REDUNDANT_READ_LIMIT);
+        REDUNDANT_READ_LIMIT,
+        agentProfile);
     return mapRedundantFileReads(rows);
   }
 
@@ -1566,13 +1610,15 @@ public class LogService {
         .toList();
   }
 
-  public List<EditFailureLoop> aggregateEditFailureLoopsInRange(Instant start, Instant end) {
+  public List<EditFailureLoop> aggregateEditFailureLoopsInRange(
+      Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateEditFailureLoopsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         start,
         end,
-        EDIT_FAILURE_LOOP_LIMIT);
+        EDIT_FAILURE_LOOP_LIMIT,
+        agentProfile);
     return mapEditFailureLoops(rows);
   }
 
@@ -1585,7 +1631,8 @@ public class LogService {
         .toList();
   }
 
-  public List<SlowAndLargeCall> aggregateSlowAndLargeCallsInRange(Instant start, Instant end) {
+  public List<SlowAndLargeCall> aggregateSlowAndLargeCallsInRange(
+      Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateSlowAndLargeCallsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
@@ -1598,7 +1645,8 @@ public class LogService {
         end,
         SLOW_AND_LARGE_MIN_DURATION_MS,
         SLOW_AND_LARGE_MIN_BYTES,
-        SLOW_AND_LARGE_LIMIT);
+        SLOW_AND_LARGE_LIMIT,
+        agentProfile);
     return mapSlowAndLargeCalls(rows);
   }
 
@@ -1612,25 +1660,28 @@ public class LogService {
         .toList();
   }
 
-  public List<ToolRepeatStat> aggregateToolRepeats(int minutes, String repositoryUrl) {
+  public List<ToolRepeatStat> aggregateToolRepeats(int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = logRecordRepository.aggregateToolRepeats(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         since,
         TOOL_REPEAT_LIMIT,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolRepeats(rows);
   }
 
-  public List<ToolRepeatStat> aggregateToolRepeatsInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<ToolRepeatStat> aggregateToolRepeatsInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolRepeatsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         start,
         end,
         TOOL_REPEAT_LIMIT,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return mapToolRepeats(rows);
   }
 
@@ -1646,12 +1697,13 @@ public class LogService {
         .toList();
   }
 
-  public BashCommandCoverage bashCommandCoverageInRange(Instant start, Instant end) {
+  public BashCommandCoverage bashCommandCoverageInRange(Instant start, Instant end, String agentProfile) {
     List<Object[]> rows = logRecordRepository.bashCommandCoverageInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         start,
-        end);
+        end,
+        agentProfile);
     return mapBashCommandCoverage(rows);
   }
 
@@ -1669,13 +1721,14 @@ public class LogService {
   // usual victim) rather than probed a genuinely missing file. Distance 0 is
   // skipped on purpose: fail-then-succeed on the identical path is a
   // read-before-create race, not a typo.
-  public List<PathNearMiss> findReadPathNearMissesInRange(Instant start, Instant end) {
+  public List<PathNearMiss> findReadPathNearMissesInRange(Instant start, Instant end, String agentProfile) {
     List<Object[]> failedRows = logRecordRepository.aggregateFailedReadPathsInRange(
         tuningProperties.getToolEventName(),
         tuningProperties.getToolAttribute(),
         start,
         end,
-        FAILED_READ_PATH_LIMIT);
+        FAILED_READ_PATH_LIMIT,
+        agentProfile);
     if (failedRows.isEmpty()) {
       return List.of();
     }
@@ -1684,7 +1737,8 @@ public class LogService {
         tuningProperties.getToolAttribute(),
         start,
         end,
-        SUCCESSFUL_READ_PATH_LIMIT);
+        SUCCESSFUL_READ_PATH_LIMIT,
+        agentProfile);
 
     Map<String, List<String>> successfulPathsBySession = new HashMap<>();
     for (Object[] successfulRow : successfulRows) {
@@ -1717,7 +1771,8 @@ public class LogService {
     return nearMisses;
   }
 
-  public ToolCallTimeseries aggregateToolCallsTimeseries(int minutes, int topTools, String repositoryUrl) {
+  public ToolCallTimeseries aggregateToolCallsTimeseries(
+      int minutes, int topTools, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
 
@@ -1729,12 +1784,13 @@ public class LogService {
         tuningProperties.getMcpServerNameAttribute(),
         since,
         bucketSeconds,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return buildToolCallTimeseries(rawRows, bucketSeconds, topTools);
   }
 
   public ToolCallTimeseries aggregateToolCallsTimeseriesInRange(
-      Instant start, Instant end, int topTools, String repositoryUrl) {
+      Instant start, Instant end, int topTools, String repositoryUrl, String agentProfile) {
     long windowSeconds = Math.max(1L, Duration.between(start, end).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / TARGET_BUCKETS_PER_WINDOW);
 
@@ -1747,7 +1803,8 @@ public class LogService {
         start,
         end,
         bucketSeconds,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return buildToolCallTimeseries(rawRows, bucketSeconds, topTools);
   }
 
@@ -1853,7 +1910,8 @@ public class LogService {
         criteria.events(),
         criteria.tools(),
         criteria.fullTextQuery(),
-        criteria.repositoryUrl());
+        criteria.repositoryUrl(),
+        criteria.agentProfile());
 
     Map<Instant, Object[]> rowByBucket = new LinkedHashMap<>();
     for (Object[] row : rows) {
@@ -1902,7 +1960,8 @@ public class LogService {
         criteria.events(),
         criteria.tools(),
         criteria.fullTextQuery(),
-        criteria.repositoryUrl());
+        criteria.repositoryUrl(),
+        criteria.agentProfile());
 
     Map<String, Long> countsBySeverity = new HashMap<>();
     for (Object[] row : rows) {
@@ -1928,7 +1987,8 @@ public class LogService {
         criteria.tools(),
         criteria.fullTextQuery(),
         FACET_VALUE_CAP,
-        criteria.repositoryUrl());
+        criteria.repositoryUrl(),
+        criteria.agentProfile());
     return toFacetValues(rows);
   }
 
@@ -1941,7 +2001,8 @@ public class LogService {
         criteria.events(),
         criteria.fullTextQuery(),
         FACET_VALUE_CAP,
-        criteria.repositoryUrl());
+        criteria.repositoryUrl(),
+        criteria.agentProfile());
     return toFacetValues(rows);
   }
 
@@ -1986,7 +2047,8 @@ public class LogService {
         criteria.events(),
         criteria.tools(),
         criteria.fullTextQuery(),
-        criteria.repositoryUrl());
+        criteria.repositoryUrl(),
+        criteria.agentProfile());
 
     List<LogRecord> probeItems = logRecordMapper.toLogRecords(logRecordRepository.cursorFirst(
         criteria.startTimestamp(),
@@ -1997,7 +2059,8 @@ public class LogService {
         criteria.tools(),
         criteria.fullTextQuery(),
         resolvedLimit + 1,
-        criteria.repositoryUrl()));
+        criteria.repositoryUrl(),
+        criteria.agentProfile()));
 
     return buildCursorPage(probeItems, resolvedLimit, totalCount);
   }
@@ -2024,7 +2087,8 @@ public class LogService {
         criteria.tools(),
         criteria.fullTextQuery(),
         resolvedLimit + 1,
-        criteria.repositoryUrl()));
+        criteria.repositoryUrl(),
+        criteria.agentProfile()));
 
     return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
   }
@@ -2052,7 +2116,8 @@ public class LogService {
         criteria.tools(),
         criteria.fullTextQuery(),
         resolvedLimit + 1,
-        criteria.repositoryUrl()));
+        criteria.repositoryUrl(),
+        criteria.agentProfile()));
 
     return buildCursorPage(probeItems, resolvedLimit, PageBounds.CONTINUATION_PAGE_TOTAL_COUNT);
   }
@@ -2102,7 +2167,8 @@ public class LogService {
         criteria.events(),
         criteria.tools(),
         criteria.fullTextQuery(),
-        criteria.repositoryUrl());
+        criteria.repositoryUrl(),
+        criteria.agentProfile());
 
     int resolvedSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
     int resolvedPage = Math.max(0, page);
@@ -2117,7 +2183,8 @@ public class LogService {
         criteria.fullTextQuery(),
         resolvedSize,
         pageOffset,
-        criteria.repositoryUrl()));
+        criteria.repositoryUrl(),
+        criteria.agentProfile()));
 
     return new LogPage(items, totalCount);
   }

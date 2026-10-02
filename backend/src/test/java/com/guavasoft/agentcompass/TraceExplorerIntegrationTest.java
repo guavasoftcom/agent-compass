@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.Span;
 import com.guavasoft.agentcompass.model.TraceCursor;
@@ -293,7 +294,7 @@ class TraceExplorerIntegrationTest {
     private TraceQueryCriteria repositoryWindowCriteria(String repositoryUrl) {
         return TraceQueryCriteria.of(
                 repositoryWindowStart, repositoryWindowEnd,
-                null, null, null, null, null, null, repositoryUrl);
+                null, null, null, null, null, null, repositoryUrl, AgentProfiles.UNKNOWN);
     }
 
     @Test
@@ -351,6 +352,98 @@ class TraceExplorerIntegrationTest {
         long totalFromScopedFacets = facetsScoped.status().stream().mapToLong(FacetValue::count).sum();
         assertThat(totalFromAllFacets).isEqualTo(3);
         assertThat(totalFromScopedFacets).isEqualTo(1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Agent profile attribution (agent_profile, V37/V38) -- a hard partition, not a
+    // filter, unlike repositoryUrl above: an absent profile must mean ONE agent,
+    // never "every agent". Seeded in its own window so it never perturbs the shared
+    // four-trace window every other test in this class depends on.
+    // -------------------------------------------------------------------------
+
+    private static final String TRACE_AGENT_CLAUDE_CODE = "4444000000000000444400000000d001";
+    private static final String TRACE_AGENT_OTHER = "5555000000000000555500000000e001";
+    private static final String OTHER_AGENT_PROFILE = "some-other-agent";
+
+    private Instant agentProfileWindowStart;
+    private Instant agentProfileWindowEnd;
+
+    private void addAgentProfileAttributionFixture() {
+        agentProfileWindowStart = repositoryWindowEnd.plusSeconds(3600);
+        agentProfileWindowEnd = agentProfileWindowStart.plusSeconds(3600);
+
+        addTraceWithAgentProfile(TRACE_AGENT_CLAUDE_CODE, "session.turn",
+                agentProfileWindowStart.plusSeconds(60), agentProfileWindowStart.plusSeconds(61),
+                AgentProfiles.CLAUDE_CODE);
+        addTraceWithAgentProfile(TRACE_AGENT_OTHER, "session.turn",
+                agentProfileWindowStart.plusSeconds(120), agentProfileWindowStart.plusSeconds(121),
+                OTHER_AGENT_PROFILE);
+    }
+
+    /** Seeds one single-span trace stamped with the given agent_profile (a plain, non-generated column). */
+    private void addTraceWithAgentProfile(
+            String traceId, String rootSpanName, Instant start, Instant end, String agentProfile) {
+        SpanEntity rootSpan = new SpanEntity();
+        rootSpan.setTraceId(traceId);
+        rootSpan.setSpanId(traceId.substring(0, 16));
+        rootSpan.setParentSpanId(null);
+        rootSpan.setName(rootSpanName);
+        rootSpan.setKind("server");
+        rootSpan.setStartTimestamp(start);
+        rootSpan.setEndTimestamp(end);
+        rootSpan.setDurationNanos((end.toEpochMilli() - start.toEpochMilli()) * 1_000_000L);
+        rootSpan.setStatusCode("ok");
+        rootSpan.setAttributes(null);
+        rootSpan.setScopeAttributes(null);
+        rootSpan.setResourceAttributes(null);
+        rootSpan.setEvents(null);
+        rootSpan.setAgentProfile(agentProfile);
+        rootSpan.setReceivedAt(Instant.now());
+        spanRepository.save(rootSpan);
+    }
+
+    private static final String[] NO_STATUSES = new String[0];
+    private static final String[] NO_OPERATIONS = new String[0];
+    private static final String[] NO_SERVICES = new String[0];
+    private static final String[] NO_DURATIONS = new String[0];
+    private static final String[] NO_SESSIONS = new String[0];
+
+    @Test
+    void countFilteredTracesOnlyCountsTheRequestedAgentProfile() {
+        addAgentProfileAttributionFixture();
+
+        long claudeCodeCount = spanRepository.countFilteredTraces(
+                agentProfileWindowStart, agentProfileWindowEnd,
+                NO_STATUSES, NO_OPERATIONS, NO_SERVICES, NO_DURATIONS, NO_SESSIONS, "",
+                null, AgentProfiles.CLAUDE_CODE);
+        long otherAgentCount = spanRepository.countFilteredTraces(
+                agentProfileWindowStart, agentProfileWindowEnd,
+                NO_STATUSES, NO_OPERATIONS, NO_SERVICES, NO_DURATIONS, NO_SESSIONS, "",
+                null, OTHER_AGENT_PROFILE);
+
+        // Each profile's count reflects only its own trace -- never the other agent's, and never
+        // both summed together, which is the hard-partition guarantee V37/V38 exist to enforce.
+        assertThat(claudeCodeCount).isEqualTo(1L);
+        assertThat(otherAgentCount).isEqualTo(1L);
+    }
+
+    @Test
+    void traceListSortNewOnlyReturnsTracesCarryingTheRequestedAgentProfile() {
+        addAgentProfileAttributionFixture();
+
+        List<Object[]> claudeCodeRows = spanRepository.traceListSortNew(
+                agentProfileWindowStart, agentProfileWindowEnd,
+                NO_STATUSES, NO_OPERATIONS, NO_SERVICES, NO_DURATIONS, NO_SESSIONS, "",
+                null, AgentProfiles.CLAUDE_CODE, 60);
+        List<Object[]> otherAgentRows = spanRepository.traceListSortNew(
+                agentProfileWindowStart, agentProfileWindowEnd,
+                NO_STATUSES, NO_OPERATIONS, NO_SERVICES, NO_DURATIONS, NO_SESSIONS, "",
+                null, OTHER_AGENT_PROFILE, 60);
+
+        assertThat(claudeCodeRows).hasSize(1);
+        assertThat((String) claudeCodeRows.get(0)[0]).isEqualTo(TRACE_AGENT_CLAUDE_CODE);
+        assertThat(otherAgentRows).hasSize(1);
+        assertThat((String) otherAgentRows.get(0)[0]).isEqualTo(TRACE_AGENT_OTHER);
     }
 
     /**
@@ -470,7 +563,7 @@ class TraceExplorerIntegrationTest {
         // normalized to the same precision or every bucket comes back zero.
         TraceQueryCriteria subMicrosecondWindow = TraceQueryCriteria.of(
                 windowStart.plusNanos(SUB_MICROSECOND_NANOS), windowEnd,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, AgentProfiles.UNKNOWN);
         TraceHistogram histogram = service.histogram(subMicrosecondWindow, 48);
 
         long bucketSum = histogram.buckets().stream()
@@ -1519,19 +1612,19 @@ class TraceExplorerIntegrationTest {
     private TraceQueryCriteria fullWindowCriteria() {
         return TraceQueryCriteria.of(
                 windowStart, windowEnd,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, AgentProfiles.UNKNOWN);
     }
 
     private TraceQueryCriteria criteriaWithStatuses(List<String> statuses) {
         return TraceQueryCriteria.of(
                 windowStart, windowEnd,
-                statuses, null, null, null, null, null, null);
+                statuses, null, null, null, null, null, null, AgentProfiles.UNKNOWN);
     }
 
     private TraceQueryCriteria criteriaWithRepositoryUrl(String repositoryUrl) {
         return TraceQueryCriteria.of(
                 windowStart, windowEnd,
-                null, null, null, null, null, null, repositoryUrl);
+                null, null, null, null, null, null, repositoryUrl, AgentProfiles.UNKNOWN);
     }
 
     private static long durationCount(List<FacetValue> duration, String bucketId) {

@@ -93,36 +93,38 @@ public class TrendService {
   private final LogRecordRepository logRecordRepository;
   private final TuningProperties tuningProperties;
 
-  public TrendsResponse costTrends(int minutes, String repositoryUrl) {
-    return buildCostTrends(buildContextForMinutes(minutes), repositoryUrl);
+  public TrendsResponse costTrends(int minutes, String repositoryUrl, String agentProfile) {
+    return buildCostTrends(buildContextForMinutes(minutes), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse costTrendsInRange(Instant start, Instant end, String repositoryUrl) {
-    return buildCostTrends(buildContext(start, end), repositoryUrl);
+  public TrendsResponse costTrendsInRange(Instant start, Instant end, String repositoryUrl, String agentProfile) {
+    return buildCostTrends(buildContext(start, end), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse tokenEfficiencyTrends(int minutes, String repositoryUrl) {
-    return buildTokenEfficiencyTrends(buildContextForMinutes(minutes), repositoryUrl);
+  public TrendsResponse tokenEfficiencyTrends(int minutes, String repositoryUrl, String agentProfile) {
+    return buildTokenEfficiencyTrends(buildContextForMinutes(minutes), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse tokenEfficiencyTrendsInRange(Instant start, Instant end, String repositoryUrl) {
-    return buildTokenEfficiencyTrends(buildContext(start, end), repositoryUrl);
+  public TrendsResponse tokenEfficiencyTrendsInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
+    return buildTokenEfficiencyTrends(buildContext(start, end), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse reliabilityTrends(int minutes, String repositoryUrl) {
-    return buildReliabilityTrends(buildContextForMinutes(minutes), repositoryUrl);
+  public TrendsResponse reliabilityTrends(int minutes, String repositoryUrl, String agentProfile) {
+    return buildReliabilityTrends(buildContextForMinutes(minutes), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse reliabilityTrendsInRange(Instant start, Instant end, String repositoryUrl) {
-    return buildReliabilityTrends(buildContext(start, end), repositoryUrl);
+  public TrendsResponse reliabilityTrendsInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
+    return buildReliabilityTrends(buildContext(start, end), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse activityTrends(int minutes, String repositoryUrl) {
-    return buildActivityTrends(buildContextForMinutes(minutes), repositoryUrl);
+  public TrendsResponse activityTrends(int minutes, String repositoryUrl, String agentProfile) {
+    return buildActivityTrends(buildContextForMinutes(minutes), repositoryUrl, agentProfile);
   }
 
-  public TrendsResponse activityTrendsInRange(Instant start, Instant end, String repositoryUrl) {
-    return buildActivityTrends(buildContext(start, end), repositoryUrl);
+  public TrendsResponse activityTrendsInRange(Instant start, Instant end, String repositoryUrl, String agentProfile) {
+    return buildActivityTrends(buildContext(start, end), repositoryUrl, agentProfile);
   }
 
   // ---------------------------------------------------------------------------
@@ -164,18 +166,18 @@ public class TrendService {
   // Section builders
   // ---------------------------------------------------------------------------
 
-  private TrendsResponse buildCostTrends(TrendsContext context, String repositoryUrl) {
+  private TrendsResponse buildCostTrends(TrendsContext context, String repositoryUrl, String agentProfile) {
     CombinedTotals combinedTotals = queryMetricsTotalsCombined(
         context.costMetric(), context.tokenMetric(), context.tokenTypeAttribute(),
-        context.from(), context.to(), context.priorFrom(), repositoryUrl);
+        context.from(), context.to(), context.priorFrom(), repositoryUrl, agentProfile);
     CostAndTokenTotals costAndTokenTotals = combinedTotals.costAndTokenTotals();
     SessionTotals sessionTotals = querySessionTotals(
         context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.priorFrom(),
-        repositoryUrl);
+        repositoryUrl, agentProfile);
 
     CombinedMetricsSparklines combinedMetricsSparklines = queryMetricsSparklinesCombined(
         context.costMetric(), context.tokenMetric(), context.activeTimeMetric(),
-        context.from(), context.to(), context.priorFrom(), context.bucketSeconds(), repositoryUrl);
+        context.from(), context.to(), context.priorFrom(), context.bucketSeconds(), repositoryUrl, agentProfile);
     BucketSeries beforeCostAndTokens = combinedMetricsSparklines.before();
     BucketSeries afterCostAndTokens = combinedMetricsSparklines.after();
     SessionBucketSeries beforeSessions = combinedMetricsSparklines.beforeSessions();
@@ -206,26 +208,27 @@ public class TrendService {
         metrics);
   }
 
-  private TrendsResponse buildTokenEfficiencyTrends(TrendsContext context, String repositoryUrl) {
+  private TrendsResponse buildTokenEfficiencyTrends(
+      TrendsContext context, String repositoryUrl, String agentProfile) {
     CombinedTotals combinedTotals = queryMetricsTotalsCombined(
         context.costMetric(), context.tokenMetric(), context.tokenTypeAttribute(),
-        context.from(), context.to(), context.priorFrom(), repositoryUrl);
+        context.from(), context.to(), context.priorFrom(), repositoryUrl, agentProfile);
     CostAndTokenTotals costAndTokenTotals = combinedTotals.costAndTokenTotals();
     CacheReadRatioTotals cacheReadRatioTotals = combinedTotals.cacheReadRatioTotals();
     SessionTotals sessionTotals = querySessionTotals(
         context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.priorFrom(),
-        repositoryUrl);
+        repositoryUrl, agentProfile);
 
     CombinedMetricsSparklines combinedMetricsSparklines = queryMetricsSparklinesCombined(
         context.costMetric(), context.tokenMetric(), context.activeTimeMetric(),
-        context.from(), context.to(), context.priorFrom(), context.bucketSeconds(), repositoryUrl);
+        context.from(), context.to(), context.priorFrom(), context.bucketSeconds(), repositoryUrl, agentProfile);
     BucketSeries beforeCostAndTokens = combinedMetricsSparklines.before();
     BucketSeries afterCostAndTokens = combinedMetricsSparklines.after();
     SessionBucketSeries beforeSessions = combinedMetricsSparklines.beforeSessions();
     SessionBucketSeries afterSessions = combinedMetricsSparklines.afterSessions();
     CombinedCacheReadRatio combinedCacheReadRatio = queryCacheReadRatioTrendCombined(
         context.tokenMetric(), context.tokenTypeAttribute(),
-        context.from(), context.to(), context.priorFrom(), context.bucketSeconds(), repositoryUrl);
+        context.from(), context.to(), context.priorFrom(), context.bucketSeconds(), repositoryUrl, agentProfile);
     double[] beforeCacheReadRatio = combinedCacheReadRatio.before();
     double[] afterCacheReadRatio = combinedCacheReadRatio.after();
 
@@ -252,15 +255,15 @@ public class TrendService {
         metrics);
   }
 
-  private TrendsResponse buildReliabilityTrends(TrendsContext context, String repositoryUrl) {
+  private TrendsResponse buildReliabilityTrends(TrendsContext context, String repositoryUrl, String agentProfile) {
     ToolFailureTotals toolFailureTotals = queryToolFailureTotals(
         context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.priorFrom(),
-        repositoryUrl);
+        repositoryUrl, agentProfile);
     long sessionFailuresBefore;
     long sessionFailuresAfter;
     Object[] sessionFailureRow = firstRow(logRecordRepository.aggregateSessionFailuresCurrentAndPrior(
         context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.priorFrom(),
-        repositoryUrl));
+        repositoryUrl, agentProfile));
     if (sessionFailureRow == null) {
       sessionFailuresBefore = 0L;
       sessionFailuresAfter = 0L;
@@ -271,16 +274,16 @@ public class TrendService {
 
     ToolFailureBucketSeries beforeToolFailures = queryToolFailureTrend(
         context.toolEventName(), context.successAttribute(), context.priorFrom(), context.from(),
-        context.bucketSeconds(), repositoryUrl);
+        context.bucketSeconds(), repositoryUrl, agentProfile);
     ToolFailureBucketSeries afterToolFailures = queryToolFailureTrend(
         context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.bucketSeconds(),
-        repositoryUrl);
+        repositoryUrl, agentProfile);
     double[] beforeSessionFailures = queryLongBucketSeries(logRecordRepository.aggregateSessionFailuresTrend(
         context.toolEventName(), context.successAttribute(), context.priorFrom(), context.from(),
-        context.bucketSeconds(), repositoryUrl));
+        context.bucketSeconds(), repositoryUrl, agentProfile));
     double[] afterSessionFailures = queryLongBucketSeries(logRecordRepository.aggregateSessionFailuresTrend(
         context.toolEventName(), context.successAttribute(), context.from(), context.to(), context.bucketSeconds(),
-        repositoryUrl));
+        repositoryUrl, agentProfile));
 
     Map<String, TrendsResponse.MetricTrend> metrics = new LinkedHashMap<>();
 
@@ -303,17 +306,17 @@ public class TrendService {
         metrics);
   }
 
-  private TrendsResponse buildActivityTrends(TrendsContext context, String repositoryUrl) {
+  private TrendsResponse buildActivityTrends(TrendsContext context, String repositoryUrl, String agentProfile) {
     SessionTotals sessionTotals = querySessionTotals(
         context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.priorFrom(),
-        repositoryUrl);
+        repositoryUrl, agentProfile);
 
     SessionBucketSeries beforeSessions = querySessionBucketSeries(
         context.costMetric(), context.activeTimeMetric(), context.priorFrom(), context.from(),
-        context.bucketSeconds(), repositoryUrl);
+        context.bucketSeconds(), repositoryUrl, agentProfile);
     SessionBucketSeries afterSessions = querySessionBucketSeries(
         context.costMetric(), context.activeTimeMetric(), context.from(), context.to(), context.bucketSeconds(),
-        repositoryUrl);
+        repositoryUrl, agentProfile);
 
     Map<String, TrendsResponse.MetricTrend> metrics = new LinkedHashMap<>();
 
@@ -351,9 +354,9 @@ public class TrendService {
 
   private CombinedTotals queryMetricsTotalsCombined(
       String costMetric, String tokenMetric, String tokenTypeAttribute, Instant from, Instant to, Instant priorFrom,
-      String repositoryUrl) {
+      String repositoryUrl, String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateMetricsTotalsCombined(
-        costMetric, tokenMetric, tokenTypeAttribute, from, to, priorFrom, repositoryUrl);
+        costMetric, tokenMetric, tokenTypeAttribute, from, to, priorFrom, repositoryUrl, agentProfile);
     double costAfter = 0.0;
     double costBefore = 0.0;
     double tokensAfter = 0.0;
@@ -404,9 +407,10 @@ public class TrendService {
       double sessionsBefore, double sessionsAfter, double avgDurationSecondsBefore, double avgDurationSecondsAfter) {}
 
   private SessionTotals querySessionTotals(
-      String costMetric, String activeTimeMetric, Instant from, Instant to, Instant priorFrom, String repositoryUrl) {
+      String costMetric, String activeTimeMetric, Instant from, Instant to, Instant priorFrom, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateSessionCountAndDurationCurrentAndPrior(
-        costMetric, activeTimeMetric, from, to, priorFrom, repositoryUrl);
+        costMetric, activeTimeMetric, from, to, priorFrom, repositoryUrl, agentProfile);
     double sessionsBefore = 0.0;
     double sessionsAfter = 0.0;
     double avgDurationSecondsBefore = 0.0;
@@ -431,9 +435,9 @@ public class TrendService {
 
   private ToolFailureTotals queryToolFailureTotals(
       String toolEventName, String successAttribute, Instant from, Instant to, Instant priorFrom,
-      String repositoryUrl) {
+      String repositoryUrl, String agentProfile) {
     Object[] row = firstRow(logRecordRepository.aggregateToolFailureCurrentAndPriorTotals(
-        toolEventName, successAttribute, from, to, priorFrom, repositoryUrl));
+        toolEventName, successAttribute, from, to, priorFrom, repositoryUrl, agentProfile));
     if (row == null) {
       return new ToolFailureTotals(0.0, 0.0, 0.0, 0.0);
     }
@@ -467,9 +471,10 @@ public class TrendService {
 
   private CombinedMetricsSparklines queryMetricsSparklinesCombined(
       String costMetric, String tokenMetric, String activeTimeMetric,
-      Instant from, Instant to, Instant priorFrom, long bucketSeconds, String repositoryUrl) {
+      Instant from, Instant to, Instant priorFrom, long bucketSeconds, String repositoryUrl,
+      String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateMetricsSparklinesCombined(
-        costMetric, tokenMetric, activeTimeMetric, from, to, priorFrom, bucketSeconds, repositoryUrl);
+        costMetric, tokenMetric, activeTimeMetric, from, to, priorFrom, bucketSeconds, repositoryUrl, agentProfile);
     double[] beforeCosts = new double[SPARKLINE_POINTS];
     double[] afterCosts = new double[SPARKLINE_POINTS];
     double[] beforeTokens = new double[SPARKLINE_POINTS];
@@ -515,9 +520,9 @@ public class TrendService {
 
   private CombinedCacheReadRatio queryCacheReadRatioTrendCombined(
       String tokenMetric, String tokenTypeAttribute, Instant from, Instant to, Instant priorFrom, long bucketSeconds,
-      String repositoryUrl) {
+      String repositoryUrl, String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateTokenTypeSparklinesCombined(
-        tokenMetric, tokenTypeAttribute, from, to, priorFrom, bucketSeconds, repositoryUrl);
+        tokenMetric, tokenTypeAttribute, from, to, priorFrom, bucketSeconds, repositoryUrl, agentProfile);
     double[] beforeInput = new double[SPARKLINE_POINTS];
     double[] beforeCacheCreation = new double[SPARKLINE_POINTS];
     double[] beforeCacheRead = new double[SPARKLINE_POINTS];
@@ -565,9 +570,9 @@ public class TrendService {
 
   private ToolFailureBucketSeries queryToolFailureTrend(
       String toolEventName, String successAttribute, Instant start, Instant end, long bucketSeconds,
-      String repositoryUrl) {
+      String repositoryUrl, String agentProfile) {
     List<Object[]> rows = logRecordRepository.aggregateToolFailureTrend(
-        toolEventName, successAttribute, start, end, bucketSeconds, repositoryUrl);
+        toolEventName, successAttribute, start, end, bucketSeconds, repositoryUrl, agentProfile);
     double[] totalCalls = new double[SPARKLINE_POINTS];
     double[] failures = new double[SPARKLINE_POINTS];
     for (Object[] row : rows) {
@@ -586,9 +591,9 @@ public class TrendService {
   // and not the cost/token scan the combined query also pays for.
   private SessionBucketSeries querySessionBucketSeries(
       String costMetric, String activeTimeMetric, Instant start, Instant end, long bucketSeconds,
-      String repositoryUrl) {
+      String repositoryUrl, String agentProfile) {
     List<Object[]> rows = metricPointRepository.aggregateSessionCountAndDurationTrend(
-        costMetric, activeTimeMetric, start, end, bucketSeconds, repositoryUrl);
+        costMetric, activeTimeMetric, start, end, bucketSeconds, repositoryUrl, agentProfile);
     double[] sessionCounts = new double[SPARKLINE_POINTS];
     double[] avgDurationSeconds = new double[SPARKLINE_POINTS];
     for (Object[] row : rows) {

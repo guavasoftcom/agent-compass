@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.CostModelShare;
 import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -104,7 +105,7 @@ class CostSummaryQueryIntegrationTest {
   @Test
   void currentAndPriorTotalsMatchTheOldTwoQuerySemantics() {
     Object[] totalsRow = metricPointRepository.aggregateCostCurrentAndPriorTotals(
-        COST_METRIC, from, to, priorFrom, null).get(0);
+        COST_METRIC, from, to, priorFrom, null, AgentProfiles.UNKNOWN).get(0);
 
     assertThat(((Number) totalsRow[0]).doubleValue()).isEqualTo(40.0);
     assertThat(((Number) totalsRow[1]).doubleValue()).isEqualTo(10.0);
@@ -114,7 +115,7 @@ class CostSummaryQueryIntegrationTest {
   void groupingSetsGrandTotalEqualsSumOfPerModelRowsAndTheFilterQueryCurrentTotal() {
     long bucketSeconds = 257L;
     List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
-        COST_METRIC, from, to, bucketSeconds, null);
+        COST_METRIC, from, to, bucketSeconds, null, AgentProfiles.UNKNOWN);
 
     double grandTotal = breakdownRows.stream()
         .filter(row -> "total".equals(row[0]))
@@ -130,7 +131,7 @@ class CostSummaryQueryIntegrationTest {
         .sum();
 
     Object[] totalsRow = metricPointRepository.aggregateCostCurrentAndPriorTotals(
-        COST_METRIC, from, to, priorFrom, null).get(0);
+        COST_METRIC, from, to, priorFrom, null, AgentProfiles.UNKNOWN).get(0);
     double currentTotalFromFilterQuery = ((Number) totalsRow[0]).doubleValue();
 
     assertThat(grandTotal).isEqualTo(40.0);
@@ -149,7 +150,7 @@ class CostSummaryQueryIntegrationTest {
 
   @Test
   void aggregateCostSummaryReconcilesSpendDeltaAndByModelBreakdown() {
-    CostSummary summary = metricService.aggregateCostSummary(from, to);
+    CostSummary summary = metricService.aggregateCostSummary(from, to, AgentProfiles.UNKNOWN);
 
     assertThat(summary.spend24h()).isEqualTo("$40.00");
     // (40 - 10) / 10 * 100 = +300.0%

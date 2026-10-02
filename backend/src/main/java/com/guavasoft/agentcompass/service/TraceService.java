@@ -131,7 +131,24 @@ public class TraceService {
     return Optional.ofNullable(spanRepository.findLatestEndTimestampForTrace(traceId));
   }
 
-  public List<ToolLatency> aggregateToolLatency(int minutes, String repositoryUrl) {
+  /**
+   * The actual {@code agent_profile} every span in {@code traceId} carries -- resolved from the
+   * trace's own spans (every span in one trace shares the value; see
+   * {@link SpanRepository#findAgentProfileForTrace}), not guessed from the caller's selection.
+   * Falls back to the configured primary profile only when the trace has no spans at all.
+   *
+   * <p>Mirrors {@code TraceExplorerService#traceSummary}'s identical resolution, for the identical
+   * reason: a trace reached by id (here, {@code TraceAnalysisService}'s permalinked analysis flow)
+   * is not window-scoped and carries no caller-resolved profile of its own, so a downstream
+   * profile-gated lookup (e.g. the preceding-turn / dispatching-call queries scoped to the same
+   * session) needs the trace's real profile -- guessing the configured primary one would silently
+   * miss real rows whenever the trace actually belongs to a different profile.
+   */
+  public String agentProfileForTrace(String traceId) {
+    return spanRepository.findAgentProfileForTrace(traceId).orElse(tuningProperties.getPrimaryAgentProfile());
+  }
+
+  public List<ToolLatency> aggregateToolLatency(int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
     List<Object[]> rows = spanRepository.aggregateToolLatency(
         tuningProperties.getToolSpanScope(),
@@ -139,13 +156,15 @@ public class TraceService {
         tuningProperties.getToolAttribute(),
         tuningProperties.getMcpSpanToolPrefix(),
         since,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return rows.stream()
         .map(TraceService::toToolLatency)
         .toList();
   }
 
-  public List<ToolLatency> aggregateToolLatencyInRange(Instant start, Instant end, String repositoryUrl) {
+  public List<ToolLatency> aggregateToolLatencyInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> rows = spanRepository.aggregateToolLatencyInRange(
         tuningProperties.getToolSpanScope(),
         tuningProperties.getToolSpanName(),
@@ -153,7 +172,8 @@ public class TraceService {
         tuningProperties.getMcpSpanToolPrefix(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     return rows.stream()
         .map(TraceService::toToolLatency)
         .toList();

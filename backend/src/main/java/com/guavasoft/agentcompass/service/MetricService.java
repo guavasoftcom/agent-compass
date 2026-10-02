@@ -188,29 +188,32 @@ public class MetricService {
    * clamped {@code LIMIT}/{@code OFFSET} query, mirroring {@code LogService#offsetPage}.
    */
   public MetricPage recentEvents(
-      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, int page, int size) {
+      List<String> activeFilters, Instant startTimestamp, Instant endTimestamp, int page, int size,
+      String agentProfile) {
     String[] filters = toFilterArray(activeFilters);
-    long totalCount = metricPointRepository.countMatchingFilters(filters, startTimestamp, endTimestamp);
+    long totalCount =
+        metricPointRepository.countMatchingFilters(filters, startTimestamp, endTimestamp, agentProfile);
 
     int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
     int pageOffset = PageBounds.computeOffset(page, pageSize);
     List<MetricPointEntity> metricPointEntities = metricPointRepository.findPageMatchingFilters(
-        filters, startTimestamp, endTimestamp, pageSize, pageOffset);
+        filters, startTimestamp, endTimestamp, pageSize, pageOffset, agentProfile);
 
     return new MetricPage(metricPointMapper.toEventRows(metricPointEntities), totalCount);
   }
 
-  public TokenUsageSummary aggregateTokenUsage(int minutes, String repositoryUrl) {
+  public TokenUsageSummary aggregateTokenUsage(int minutes, String repositoryUrl, String agentProfile) {
     Instant end = Instant.now();
     Instant start = end.minus(Duration.ofMinutes(minutes));
     long bucketSeconds = bucketWidthSeconds(minutes);
-    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds, repositoryUrl);
+    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds, repositoryUrl, agentProfile);
   }
 
-  public TokenUsageSummary aggregateTokenUsageInRange(Instant start, Instant end, String repositoryUrl) {
+  public TokenUsageSummary aggregateTokenUsageInRange(
+      Instant start, Instant end, String repositoryUrl, String agentProfile) {
     long windowSeconds = Math.max(1L, Duration.between(start, end).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / TARGET_BUCKETS_PER_WINDOW);
-    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds, repositoryUrl);
+    return buildTokenUsageSummaryForWindow(start, end, bucketSeconds, repositoryUrl, agentProfile);
   }
 
   // Perf: aggregateTokenUsageBreakdown replaces what used to be three separate
@@ -232,7 +235,7 @@ public class MetricService {
   // and still backs GET /api/metrics/cost, which is the endpoint that actually
   // needs the trend.
   private TokenUsageSummary buildTokenUsageSummaryForWindow(
-      Instant start, Instant end, long bucketSeconds, String repositoryUrl) {
+      Instant start, Instant end, long bucketSeconds, String repositoryUrl, String agentProfile) {
     List<Object[]> breakdownRows = metricPointRepository.aggregateTokenUsageBreakdown(
         tuningProperties.getTokenUsageMetric(),
         tuningProperties.getTokenTypeAttribute(),
@@ -244,10 +247,11 @@ public class MetricService {
         start,
         end,
         bucketSeconds,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     List<ModelTokenShare> byModel = buildTokensByModel(breakdownRows);
     long totalTokens = extractTokenGrandTotal(breakdownRows);
-    CostSummary cost = aggregateCostTotalsAndByModel(start, end, totalTokens, repositoryUrl);
+    CostSummary cost = aggregateCostTotalsAndByModel(start, end, totalTokens, repositoryUrl, agentProfile);
     return buildTokenUsageSummary(breakdownRows, bucketSeconds, byModel, cost);
   }
 
@@ -368,34 +372,36 @@ public class MetricService {
   }
 
   public SessionSummaryPage sessionsSummary(
-      int minutes, String sortField, String sortDirection, int page, int size, String repositoryUrl) {
+      int minutes, String sortField, String sortDirection, int page, int size, String repositoryUrl,
+      String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    return querySessionsPage(since, null, sortField, sortDirection, page, size, repositoryUrl);
+    return querySessionsPage(since, null, sortField, sortDirection, page, size, repositoryUrl, agentProfile);
   }
 
   public SessionSummaryPage sessionsSummaryInRange(
       Instant start, Instant end, String sortField, String sortDirection, int page, int size,
-      String repositoryUrl) {
-    return querySessionsPage(start, end, sortField, sortDirection, page, size, repositoryUrl);
+      String repositoryUrl, String agentProfile) {
+    return querySessionsPage(start, end, sortField, sortDirection, page, size, repositoryUrl, agentProfile);
   }
 
-  public SessionKpis sessionsKpis(int minutes, String repositoryUrl) {
+  public SessionKpis sessionsKpis(int minutes, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    return buildSessionKpis(since, null, repositoryUrl);
+    return buildSessionKpis(since, null, repositoryUrl, agentProfile);
   }
 
-  public SessionKpis sessionsKpisInRange(Instant start, Instant end, String repositoryUrl) {
-    return buildSessionKpis(start, end, repositoryUrl);
+  public SessionKpis sessionsKpisInRange(Instant start, Instant end, String repositoryUrl, String agentProfile) {
+    return buildSessionKpis(start, end, repositoryUrl, agentProfile);
   }
 
-  public List<SessionCacheEfficiency> worstCacheEfficiencySessions(int minutes, int limit, String repositoryUrl) {
+  public List<SessionCacheEfficiency> worstCacheEfficiencySessions(
+      int minutes, int limit, String repositoryUrl, String agentProfile) {
     Instant since = Instant.now().minus(Duration.ofMinutes(minutes));
-    return buildWorstCacheEfficiencySessions(since, null, limit, repositoryUrl);
+    return buildWorstCacheEfficiencySessions(since, null, limit, repositoryUrl, agentProfile);
   }
 
   public List<SessionCacheEfficiency> worstCacheEfficiencySessionsInRange(
-      Instant start, Instant end, int limit, String repositoryUrl) {
-    return buildWorstCacheEfficiencySessions(start, end, limit, repositoryUrl);
+      Instant start, Instant end, int limit, String repositoryUrl, String agentProfile) {
+    return buildWorstCacheEfficiencySessions(start, end, limit, repositoryUrl, agentProfile);
   }
 
   // Sessions with the lowest share of input-side tokens served from cache, worst
@@ -405,7 +411,7 @@ public class MetricService {
   // to reach the SQL. The result limit goes through the same PageBounds clamp
   // every other list endpoint uses.
   private List<SessionCacheEfficiency> buildWorstCacheEfficiencySessions(
-      Instant start, Instant end, int limit, String repositoryUrl) {
+      Instant start, Instant end, int limit, String repositoryUrl, String agentProfile) {
     long minimumInputSideTokens =
         Math.max(MINIMUM_CACHE_EFFICIENCY_TOKEN_FLOOR, tuningProperties.getCacheEfficiencyMinimumInputTokens());
     List<Object[]> rows = metricPointRepository.aggregateWorstCacheEfficiencySessions(
@@ -421,7 +427,8 @@ public class MetricService {
         end,
         minimumInputSideTokens,
         PageBounds.clampPageSize(limit, DEFAULT_CACHE_EFFICIENCY_LIMIT),
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
 
     // A lookup keyed on the ranking's own session ids -- it already comes back one
     // row per session, so there is no second aggregation to write.
@@ -464,20 +471,21 @@ public class MetricService {
     return sessions;
   }
 
-  private SessionKpis buildSessionKpis(Instant start, Instant end, String repositoryUrl) {
+  private SessionKpis buildSessionKpis(Instant start, Instant end, String repositoryUrl, String agentProfile) {
     List<Object[]> kpiRows = metricPointRepository.aggregateSessionKpis(
         tuningProperties.getCostUsageMetric(),
         tuningProperties.getActiveTimeMetric(),
         start,
         end,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     // The trend needs a concrete upper bound for date_bin; the ?minutes= form leaves
     // end null, so close the window at "now".
     Instant trendEnd = end != null ? end : Instant.now();
     long windowSeconds = Math.max(1L, Duration.between(start, trendEnd).getSeconds());
     long bucketSeconds = Math.max(MIN_BUCKET_SECONDS, windowSeconds / SESSIONS_TREND_BUCKETS);
     List<Long> sessionsTrend =
-        buildSessionsTrend(start, trendEnd, windowSeconds, bucketSeconds, repositoryUrl);
+        buildSessionsTrend(start, trendEnd, windowSeconds, bucketSeconds, repositoryUrl, agentProfile);
     return mapSessionKpis(kpiRows, sessionsTrend);
   }
 
@@ -486,7 +494,8 @@ public class MetricService {
   // that fits in the window) and drop the rare boundary index == bucketCount for a
   // session landing exactly on the window's upper edge.
   private List<Long> buildSessionsTrend(
-      Instant start, Instant end, long windowSeconds, long bucketSeconds, String repositoryUrl) {
+      Instant start, Instant end, long windowSeconds, long bucketSeconds, String repositoryUrl,
+      String agentProfile) {
     int bucketCount = (int) Math.max(1L, (windowSeconds + bucketSeconds - 1) / bucketSeconds);
     long[] dense = new long[bucketCount];
     List<Object[]> trendRows = metricPointRepository.aggregateNewSessionsTrend(
@@ -495,7 +504,8 @@ public class MetricService {
         start,
         end,
         bucketSeconds,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     for (Object[] trendRow : trendRows) {
       int bucketIndex = ((Number) trendRow[0]).intValue();
       long newSessions = trendRow[1] == null ? 0L : ((Number) trendRow[1]).longValue();
@@ -512,7 +522,7 @@ public class MetricService {
 
   private SessionSummaryPage querySessionsPage(
       Instant start, Instant end, String sortField, String sortDirection, int page, int size,
-      String repositoryUrl) {
+      String repositoryUrl, String agentProfile) {
     int pageSize = PageBounds.clampPageSize(size, PageBounds.DEFAULT_OFFSET_PAGE_SIZE);
     int pageOffset = PageBounds.computeOffset(page, pageSize);
     List<Object[]> rows = metricPointRepository.aggregateSessionSummaries(
@@ -531,7 +541,8 @@ public class MetricService {
         normalizeSortDirection(sortDirection),
         pageSize,
         pageOffset,
-        repositoryUrl);
+        repositoryUrl,
+        agentProfile);
     long totalCount = rows.isEmpty() || rows.get(0)[SESSION_TOTAL_COUNT_INDEX] == null
         ? 0L
         : ((Number) rows.get(0)[SESSION_TOTAL_COUNT_INDEX]).longValue();
@@ -551,7 +562,8 @@ public class MetricService {
     // still be running right now, so this asks about EVERY row on the returned page rather
     // than filtering by the window's own start/end. See LogService#resolveRunningTurnIndex
     // for the identical single-session liveness definition this bulk query mirrors.
-    Set<String> inProgressSessionIds = sessionIds.isEmpty() ? Set.of() : resolveInProgressSessionIds(sessionIds);
+    Set<String> inProgressSessionIds =
+        sessionIds.isEmpty() ? Set.of() : resolveInProgressSessionIds(sessionIds, agentProfile);
     return new SessionSummaryPage(mapSessionSummaries(rows, countsBySessionId, inProgressSessionIds), totalCount);
   }
 
@@ -561,17 +573,19 @@ public class MetricService {
   // short <task-notification> as its newest turn while the real work bills to an older turn's
   // trace. Same two-part rule LogService#promptsForSession applies per turn, so a grid row and
   // the timeline cards inside its drawer never disagree about whether the session is live.
-  private Set<String> resolveInProgressSessionIds(List<String> sessionIds) {
+  private Set<String> resolveInProgressSessionIds(List<String> sessionIds, String agentProfile) {
     Set<String> inProgressSessionIds = new HashSet<>(logRecordRepository.findInProgressSessionIds(
         sessionIds,
         tuningProperties.getUserPromptEventName(),
         INTERACTION_ROOT_SPAN_NAME_PATTERN,
-        Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT)));
+        Instant.now().minus(LogService.IN_PROGRESS_STALENESS_LIMIT),
+        agentProfile));
     for (Object[] row : logRecordRepository.findBackgroundActiveTraces(
         sessionIds,
         INTERACTION_ROOT_SPAN_NAME_PATTERN,
         Instant.now().minus(LogService.BACKGROUND_ACTIVITY_WINDOW),
-        LogService.ROOT_SPAN_CLOSE_GRACE_SECONDS)) {
+        LogService.ROOT_SPAN_CLOSE_GRACE_SECONDS,
+        agentProfile)) {
       inProgressSessionIds.add((String) row[0]);
     }
     return inProgressSessionIds;
@@ -672,11 +686,12 @@ public class MetricService {
   // Metric catalog
   // ---------------------------------------------------------------------------
 
-  public List<CatalogMetric> aggregateMetricCatalog(Instant from, Instant to) {
-    List<Object[]> summaryRows = metricPointRepository.aggregateCatalogSummary(from, to);
+  public List<CatalogMetric> aggregateMetricCatalog(Instant from, Instant to, String agentProfile) {
+    List<Object[]> summaryRows = metricPointRepository.aggregateCatalogSummary(from, to, agentProfile);
     long windowSeconds = Math.max(1L, Duration.between(from, to).getSeconds());
     long bucketSeconds = Math.max(1L, windowSeconds / CATALOG_SPARK_BUCKETS);
-    List<Object[]> sparkRows = metricPointRepository.aggregateCatalogSparklines(from, to, bucketSeconds);
+    List<Object[]> sparkRows =
+        metricPointRepository.aggregateCatalogSparklines(from, to, bucketSeconds, agentProfile);
 
     Map<String, long[]> sparksByMetricName = buildSparkMap(sparkRows);
 
@@ -719,7 +734,7 @@ public class MetricService {
   // Cost summary
   // ---------------------------------------------------------------------------
 
-  public CostSummary aggregateCostSummary(Instant from, Instant to) {
+  public CostSummary aggregateCostSummary(Instant from, Instant to, String agentProfile) {
     double windowSeconds = Math.max(1.0, Duration.between(from, to).getSeconds());
     double windowHours = windowSeconds / SECONDS_PER_HOUR;
     Duration windowDuration = Duration.ofSeconds((long) windowSeconds);
@@ -727,7 +742,7 @@ public class MetricService {
     String costMetricName = tuningProperties.getCostUsageMetric();
     String tokenMetricName = tuningProperties.getTokenUsageMetric();
 
-    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart, null);
+    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart, null, agentProfile);
     double currentSpend = costTotals.currentTotal();
     double priorSpend = costTotals.priorTotal();
     double deltaPct = priorSpend == 0.0 ? 0.0 : (currentSpend - priorSpend) / priorSpend * 100.0;
@@ -735,12 +750,12 @@ public class MetricService {
     double burnRate = currentSpend / windowHours;
     double projected30d = burnRate * HOURS_PER_MONTH;
 
-    long totalTokens = queryTotalTokens(tokenMetricName, from, to);
+    long totalTokens = queryTotalTokens(tokenMetricName, from, to, agentProfile);
     double costPer1k = totalTokens == 0L ? 0.0 : currentSpend / (totalTokens / TOKENS_PER_COST_UNIT);
 
     long trendBucketSeconds = Math.max(1L, (long) windowSeconds / COST_TREND_BUCKETS);
     List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
-        costMetricName, from, to, trendBucketSeconds, null);
+        costMetricName, from, to, trendBucketSeconds, null, agentProfile);
     List<Double> trend = buildCostTrend(breakdownRows);
     List<CostModelShare> byModel = buildCostByModel(breakdownRows, currentSpend);
 
@@ -768,14 +783,15 @@ public class MetricService {
   // wrong, just not computed -- so this must never back an endpoint whose
   // caller reads it.
   private CostSummary aggregateCostTotalsAndByModel(
-      Instant from, Instant to, long totalTokens, String repositoryUrl) {
+      Instant from, Instant to, long totalTokens, String repositoryUrl, String agentProfile) {
     double windowSeconds = Math.max(1.0, Duration.between(from, to).getSeconds());
     double windowHours = windowSeconds / SECONDS_PER_HOUR;
     Duration windowDuration = Duration.ofSeconds((long) windowSeconds);
     Instant priorWindowStart = from.minus(windowDuration);
     String costMetricName = tuningProperties.getCostUsageMetric();
 
-    CostTotals costTotals = queryCostTotals(costMetricName, from, to, priorWindowStart, repositoryUrl);
+    CostTotals costTotals =
+        queryCostTotals(costMetricName, from, to, priorWindowStart, repositoryUrl, agentProfile);
     double currentSpend = costTotals.currentTotal();
     double priorSpend = costTotals.priorTotal();
     double deltaPct = priorSpend == 0.0 ? 0.0 : (currentSpend - priorSpend) / priorSpend * 100.0;
@@ -785,7 +801,7 @@ public class MetricService {
     double costPer1k = totalTokens == 0L ? 0.0 : currentSpend / (totalTokens / TOKENS_PER_COST_UNIT);
 
     List<Object[]> breakdownRows = metricPointRepository.aggregateCostBreakdown(
-        costMetricName, from, to, (long) windowSeconds, repositoryUrl);
+        costMetricName, from, to, (long) windowSeconds, repositoryUrl, agentProfile);
     List<CostModelShare> byModel = buildCostByModel(breakdownRows, currentSpend);
 
     return new CostSummary(
@@ -805,9 +821,9 @@ public class MetricService {
   // MetricPointRepository#aggregateCostCurrentAndPriorTotals's FILTER-based
   // query) instead of two.
   private CostTotals queryCostTotals(
-      String metricName, Instant from, Instant to, Instant priorFrom, String repositoryUrl) {
+      String metricName, Instant from, Instant to, Instant priorFrom, String repositoryUrl, String agentProfile) {
     Object[] totalsRow = firstRow(metricPointRepository.aggregateCostCurrentAndPriorTotals(
-        metricName, from, to, priorFrom, repositoryUrl));
+        metricName, from, to, priorFrom, repositoryUrl, agentProfile));
     if (totalsRow == null) {
       return new CostTotals(0.0, 0.0);
     }
@@ -818,8 +834,9 @@ public class MetricService {
     return new CostTotals(currentTotal, priorTotal);
   }
 
-  private long queryTotalTokens(String metricName, Instant start, Instant end) {
-    Number total = firstScalar(metricPointRepository.aggregateTotalTokens(metricName, start, end));
+  private long queryTotalTokens(String metricName, Instant start, Instant end, String agentProfile) {
+    Number total =
+        firstScalar(metricPointRepository.aggregateTotalTokens(metricName, start, end, agentProfile));
     return total == null ? 0L : total.longValue();
   }
 
@@ -947,7 +964,7 @@ public class MetricService {
    * @throws IllegalArgumentException for any other name (mapped to a 400)
    */
   public MetricDistribution aggregateMetricDistribution(
-      Instant from, Instant to, String repositoryUrl, String metric) {
+      Instant from, Instant to, String repositoryUrl, String metric, String agentProfile) {
     String eventName = tuningProperties.getApiRequestEventName();
     String tokenMetricName = tuningProperties.getTokenUsageMetric();
     String costMetricName = tuningProperties.getCostUsageMetric();
@@ -955,11 +972,11 @@ public class MetricService {
     if (tokenMetricName.equals(metric)) {
       newestFirstRows = logRecordRepository.findNewestTokenRequestPoints(
           from, to, repositoryUrl, eventName, tuningProperties.getRequestIdAttribute(),
-          DISTRIBUTION_REQUEST_LIMIT);
+          DISTRIBUTION_REQUEST_LIMIT, agentProfile);
     } else if (costMetricName.equals(metric)) {
       newestFirstRows = logRecordRepository.findNewestCostRequestPoints(
           from, to, repositoryUrl, eventName, tuningProperties.getApiRequestCostAttribute(),
-          tuningProperties.getRequestIdAttribute(), DISTRIBUTION_REQUEST_LIMIT);
+          tuningProperties.getRequestIdAttribute(), DISTRIBUTION_REQUEST_LIMIT, agentProfile);
     } else {
       throw new IllegalArgumentException("Unsupported metric '" + metric + "': expected '"
           + tokenMetricName + "' or '" + costMetricName + "'");

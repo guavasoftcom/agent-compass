@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.LogCursorPage;
 import com.guavasoft.agentcompass.model.LogFacets;
 import com.guavasoft.agentcompass.model.LogFilterParams;
@@ -59,6 +60,7 @@ public class LogsController {
     private static final int MAXIMUM_HISTOGRAM_BUCKETS = 500;
 
     private final LogService logService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     @GetMapping("/histogram")
     @Operation(
@@ -89,7 +91,8 @@ public class LogsController {
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
                 logFilterParams.getQ(),
-                timeWindowParams.repositoryUrl());
+                timeWindowParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
         return logService.histogram(criteria, buckets);
     }
 
@@ -120,7 +123,8 @@ public class LogsController {
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
                 logFilterParams.getQ(),
-                timeWindowParams.repositoryUrl());
+                timeWindowParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
         return logService.facets(criteria);
     }
 
@@ -163,7 +167,8 @@ public class LogsController {
                 logFilterParams.getEvent(),
                 logFilterParams.getTool(),
                 logFilterParams.getQ(),
-                timeWindowParams.repositoryUrl());
+                timeWindowParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
 
         if (logPaginationParams.isOffsetMode()) {
             LogPage logPage = logService.offsetPage(criteria, logPaginationParams.getPage(), logPaginationParams.getSize());
@@ -196,7 +201,8 @@ public class LogsController {
                 filter == null ? List.of() : filter,
                 timeWindowParams.startTimestamp(),
                 timeWindowParams.endTimestamp(),
-                timeWindowParams.repositoryUrl());
+                timeWindowParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
     }
 
     @GetMapping("/attribute-keys")
@@ -219,7 +225,8 @@ public class LogsController {
                 filter == null ? List.of() : filter,
                 timeWindowParams.startTimestamp(),
                 timeWindowParams.endTimestamp(),
-                timeWindowParams.repositoryUrl());
+                timeWindowParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
     }
 
     @GetMapping("/attribute-values")
@@ -243,6 +250,7 @@ public class LogsController {
                 filter == null ? List.of() : filter,
                 timeWindowParams.startTimestamp(),
                 timeWindowParams.endTimestamp(),
-                timeWindowParams.repositoryUrl());
+                timeWindowParams.repositoryUrl(),
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
     }
 }

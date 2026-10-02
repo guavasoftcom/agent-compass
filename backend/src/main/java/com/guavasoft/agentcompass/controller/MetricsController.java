@@ -34,6 +34,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.guavasoft.agentcompass.model.AgentProfileRequestResolver;
 import com.guavasoft.agentcompass.model.CatalogMetric;
 import com.guavasoft.agentcompass.model.CostSummary;
 import com.guavasoft.agentcompass.model.MetricAttributes;
@@ -61,6 +62,7 @@ public class MetricsController {
 
     private final MetricService metricService;
     private final MetricSeriesService metricSeriesService;
+    private final AgentProfileRequestResolver agentProfileRequestResolver;
 
     // The filter parameter is read off the request rather than bound as a List<String>: Spring splits a
     // SINGLE value of a collection-typed @RequestParam on commas, which would cut a value such as
@@ -106,6 +108,9 @@ public class MetricsController {
             @RequestParam Instant to,
             @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
             @RequestParam(required = false) String repositoryUrl,
+            @Parameter(description = "Agent profile to scope results to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile,
             @Parameter(description = "Id of the one metric the attribute filters apply to (a series id such as token); "
                     + "must be supplied together with filter", example = "token")
             @RequestParam(required = false) String filterMetricId,
@@ -122,7 +127,7 @@ public class MetricsController {
             @Parameter(hidden = true) HttpServletRequest request) {
         String[] filterValues = request.getParameterValues(FILTER_PARAMETER);
         return metricSeriesService.metricSeries(
-                from, to, repositoryUrl,
+                from, to, repositoryUrl, agentProfileRequestResolver.resolve(agentProfile),
                 MetricSeriesFilter.of(filterMetricId, filterValues == null ? List.of() : List.of(filterValues)),
                 MetricSeriesAggregation.of(aggMetricId, agg));
     }
@@ -155,7 +160,8 @@ public class MetricsController {
                 timeWindowParams.startTimestamp(),
                 timeWindowParams.endTimestamp(),
                 page,
-                size);
+                size,
+                agentProfileRequestResolver.resolve(timeWindowParams.agentProfile()));
     }
 
     @GetMapping("/catalog")
@@ -175,8 +181,11 @@ public class MetricsController {
             @Parameter(description = "Inclusive window start (ISO-8601)", example = "2026-05-01T00:00:00Z")
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
-            @RequestParam Instant to) {
-        return metricService.aggregateMetricCatalog(from, to);
+            @RequestParam Instant to,
+            @Parameter(description = "Agent profile to scope results to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile) {
+        return metricService.aggregateMetricCatalog(from, to, agentProfileRequestResolver.resolve(agentProfile));
     }
 
     @GetMapping("/cost")
@@ -196,8 +205,11 @@ public class MetricsController {
             @Parameter(description = "Inclusive window start (ISO-8601)", example = "2026-05-01T00:00:00Z")
             @RequestParam Instant from,
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
-            @RequestParam Instant to) {
-        return metricService.aggregateCostSummary(from, to);
+            @RequestParam Instant to,
+            @Parameter(description = "Agent profile to scope results to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile) {
+        return metricService.aggregateCostSummary(from, to, agentProfileRequestResolver.resolve(agentProfile));
     }
 
     @GetMapping("/distribution")
@@ -229,8 +241,12 @@ public class MetricsController {
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
             @RequestParam Instant to,
             @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
-            @RequestParam(required = false) String repositoryUrl) {
-        return metricService.aggregateMetricDistribution(from, to, repositoryUrl, metric);
+            @RequestParam(required = false) String repositoryUrl,
+            @Parameter(description = "Agent profile to scope results to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile) {
+        return metricService.aggregateMetricDistribution(
+                from, to, repositoryUrl, metric, agentProfileRequestResolver.resolve(agentProfile));
     }
 
     @GetMapping("/attributes")
@@ -257,7 +273,11 @@ public class MetricsController {
             @Parameter(description = "Inclusive window end (ISO-8601)", example = "2026-05-31T23:59:59Z")
             @RequestParam Instant to,
             @Parameter(description = "Restrict to one repository's telemetry (vcs.repository.url.full); omit for all repositories")
-            @RequestParam(required = false) String repositoryUrl) {
-        return metricSeriesService.metricAttributes(from, to, repositoryUrl, metric);
+            @RequestParam(required = false) String repositoryUrl,
+            @Parameter(description = "Agent profile to scope results to; omit to resolve to the configured "
+                    + "primary profile (default claude-code) -- there is no \"all agents\" option")
+            @RequestParam(required = false) String agentProfile) {
+        return metricSeriesService.metricAttributes(
+                from, to, repositoryUrl, agentProfileRequestResolver.resolve(agentProfile), metric);
     }
 }

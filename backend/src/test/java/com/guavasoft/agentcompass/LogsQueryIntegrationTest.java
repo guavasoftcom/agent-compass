@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.model.FacetValue;
 import com.guavasoft.agentcompass.model.LogCursor;
@@ -34,6 +35,7 @@ import com.guavasoft.agentcompass.model.LogHistogram;
 import com.guavasoft.agentcompass.model.LogPage;
 import com.guavasoft.agentcompass.model.LogQueryCriteria;
 import com.guavasoft.agentcompass.model.LogRecord;
+import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 import com.guavasoft.agentcompass.service.LogService;
@@ -608,6 +610,84 @@ class LogsQueryIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
+    // Agent profile attribution (V37/V38's agent_profile column; a hard partition, not a filter)
+    // -------------------------------------------------------------------------
+    //
+    // These three exercise the repository directly rather than through LogService, mirroring the
+    // shape SessionsQueryIntegrationTest/TraceExplorerIntegrationTest already use for
+    // MetricPointRepository/SpanRepository's own agent-profile tests -- a representative
+    // window-scoped query per call shape (cursor list, offset list, plain aggregate), seeded with
+    // two different agent_profile values' worth of rows, asserting each profile's query sees only
+    // its own rows.
+
+    private static final String OTHER_AGENT_PROFILE = "some-other-agent";
+
+    @Test
+    void cursorFirstOnlyReturnsRowsCarryingTheRequestedAgentProfile() {
+        saveLogWithAgentProfile(windowStart.plusSeconds(10), EVENT_API_REQUEST, "claude code row", AgentProfiles.CLAUDE_CODE);
+        saveLogWithAgentProfile(windowStart.plusSeconds(20), EVENT_API_REQUEST, "other agent row", OTHER_AGENT_PROFILE);
+
+        List<LogRecordEntity> claudeCodeRows = repository.cursorFirst(
+                windowStart, windowEnd, new String[0], new String[0], new String[0], new String[0], "",
+                10, null, AgentProfiles.CLAUDE_CODE);
+        List<LogRecordEntity> otherAgentRows = repository.cursorFirst(
+                windowStart, windowEnd, new String[0], new String[0], new String[0], new String[0], "",
+                10, null, OTHER_AGENT_PROFILE);
+
+        assertThat(claudeCodeRows).extracting(LogRecordEntity::getBody).containsExactly("claude code row");
+        assertThat(otherAgentRows).extracting(LogRecordEntity::getBody).containsExactly("other agent row");
+    }
+
+    @Test
+    void offsetPageOnlyReturnsRowsCarryingTheRequestedAgentProfile() {
+        saveLogWithAgentProfile(windowStart.plusSeconds(10), EVENT_API_REQUEST, "claude code row", AgentProfiles.CLAUDE_CODE);
+        saveLogWithAgentProfile(windowStart.plusSeconds(20), EVENT_API_REQUEST, "other agent row", OTHER_AGENT_PROFILE);
+
+        List<LogRecordEntity> claudeCodeRows = repository.offsetPage(
+                windowStart, windowEnd, new String[0], new String[0], new String[0], new String[0], "",
+                10, 0, null, AgentProfiles.CLAUDE_CODE);
+        List<LogRecordEntity> otherAgentRows = repository.offsetPage(
+                windowStart, windowEnd, new String[0], new String[0], new String[0], new String[0], "",
+                10, 0, null, OTHER_AGENT_PROFILE);
+
+        assertThat(claudeCodeRows).extracting(LogRecordEntity::getBody).containsExactly("claude code row");
+        assertThat(otherAgentRows).extracting(LogRecordEntity::getBody).containsExactly("other agent row");
+    }
+
+    @Test
+    void aggregateToolCallsOnlyCountsRowsCarryingTheRequestedAgentProfile() {
+        saveLogWithAgentProfile(windowStart.plusSeconds(10), EVENT_TOOL_RESULT, TOOL_READ, AgentProfiles.CLAUDE_CODE);
+        saveLogWithAgentProfile(windowStart.plusSeconds(20), EVENT_TOOL_RESULT, TOOL_BASH, OTHER_AGENT_PROFILE);
+        saveLogWithAgentProfile(windowStart.plusSeconds(30), EVENT_TOOL_RESULT, TOOL_BASH, OTHER_AGENT_PROFILE);
+
+        List<ToolCallCount> claudeCodeCalls = service.aggregateToolCalls(60, null, AgentProfiles.CLAUDE_CODE);
+        List<ToolCallCount> otherAgentCalls = service.aggregateToolCalls(60, null, OTHER_AGENT_PROFILE);
+
+        assertThat(claudeCodeCalls).extracting(ToolCallCount::getTool).containsExactly(TOOL_READ);
+        assertThat(otherAgentCalls).extracting(ToolCallCount::getTool).containsExactly(TOOL_BASH);
+        assertThat(otherAgentCalls.get(0).getCalls()).isEqualTo(2L);
+    }
+
+    // event.name, tool_name, decision, success and the rest of the WHERE-clause attributes these
+    // queries filter on are not exercised here on purpose -- the row has just enough attributes to
+    // match aggregateToolCalls' own event_name/tool_name columns, since this section verifies the
+    // agent_profile predicate, not the tool/event logic every other test in this file already covers.
+    private void saveLogWithAgentProfile(Instant timestamp, String eventName, String toolOrBody, String agentProfile) {
+        LogRecordEntity entity = new LogRecordEntity();
+        entity.setTimestamp(timestamp);
+        entity.setObservedTimestamp(timestamp);
+        entity.setReceivedAt(Instant.now());
+        entity.setScopeName("claude_code.tools");
+        entity.setBody(toolOrBody);
+        entity.setAgentProfile(agentProfile);
+        entity.setAttributes(Map.of(
+                ATTR_EVENT_NAME, eventName,
+                ATTR_TOOL_NAME, toolOrBody));
+        entity.setResourceAttributes(Map.of("service.name", "claude-code"));
+        repository.save(entity);
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -619,7 +699,7 @@ class LogsQueryIntegrationTest {
             String fullTextQuery) {
         return LogQueryCriteria.of(
                 windowStart, windowEnd,
-                filters, severities, events, tools, fullTextQuery, null);
+                filters, severities, events, tools, fullTextQuery, null, AgentProfiles.UNKNOWN);
     }
 
     private static long countForSeverity(LogFacets facets, String severityLabel) {

@@ -93,6 +93,13 @@ public class TraceFilterParams implements DateRangeBounds {
             example = "https://github.com/guavasoftcom/agent-compass")
     private String repositoryUrl;
 
+    @Parameter(
+            description = "Agent profile to scope results to; null resolves to the configured primary "
+                    + "profile (default claude-code) -- there is no \"all agents\" option, since two "
+                    + "agents' telemetry is not safely summable",
+            example = "claude-code")
+    private String agentProfile;
+
     /**
      * Normalizes the frontend's "Unattributed" sentinel to {@code null} — see
      * {@link RepositoryUrlFilter}. Replaces the Lombok-generated setter (excluded above)

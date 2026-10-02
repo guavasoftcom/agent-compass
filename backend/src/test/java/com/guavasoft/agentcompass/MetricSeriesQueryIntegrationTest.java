@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.model.AgentProfiles;
 import com.guavasoft.agentcompass.model.MetricAggregation;
 import com.guavasoft.agentcompass.model.MetricFacet;
 import com.guavasoft.agentcompass.model.MetricSeries;
@@ -160,7 +161,7 @@ class MetricSeriesQueryIntegrationTest {
 
   @Test
   void returnsEveryCuratedMetricEvenWhenUnseeded() {
-    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null);
+    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN);
     assertThat(series).extracting(MetricSeries::id)
         .containsExactly("token", "cost", "session", "active", "loc", "decision", "commit", "pull_request");
     // Metrics with no rows still return a well-formed zero series, no splits populated.
@@ -175,7 +176,7 @@ class MetricSeriesQueryIntegrationTest {
 
   @Test
   void onlyTokenAndCostAdvertiseADistribution() {
-    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null);
+    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN);
 
     assertThat(series).filteredOn(MetricSeries::hasDistribution)
         .extracting(MetricSeries::id)
@@ -189,7 +190,7 @@ class MetricSeriesQueryIntegrationTest {
     saveWithUnit("acme.agent.spend.total", "USD", 100.0, base.plusSeconds(60));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null);
+    List<MetricSeries> series = metricSeriesService.metricSeries(windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN);
 
     // Curated order is preserved and the unknown metric lands after it.
     assertThat(series).extracting(MetricSeries::id)
@@ -210,7 +211,7 @@ class MetricSeriesQueryIntegrationTest {
     saveWithUnit("acme.agent.legacy.count", "", 7.0, base.minus(90, ChronoUnit.DAYS));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    MetricSeries discovered = metricSeriesService.metricSeries(windowStart(), Instant.now(), null).stream()
+    MetricSeries discovered = metricSeriesService.metricSeries(windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN).stream()
         .filter(candidate -> "acme-agent-legacy-count".equals(candidate.id()))
         .findFirst()
         .orElseThrow();
@@ -226,8 +227,8 @@ class MetricSeriesQueryIntegrationTest {
   void anExplicitNoFilterIsIdenticalToTheUnfilteredOverload() {
     Instant to = Instant.now();
 
-    assertThat(metricSeriesService.metricSeries(windowStart(), to, null, MetricSeriesFilter.NONE))
-        .isEqualTo(metricSeriesService.metricSeries(windowStart(), to, null));
+    assertThat(metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE))
+        .isEqualTo(metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN));
   }
 
   @Test
@@ -235,9 +236,9 @@ class MetricSeriesQueryIntegrationTest {
     seedSessionCounter();
     Instant to = Instant.now();
 
-    List<MetricSeries> unfiltered = metricSeriesService.metricSeries(windowStart(), to, null);
+    List<MetricSeries> unfiltered = metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN);
     List<MetricSeries> filtered = metricSeriesService.metricSeries(
-        windowStart(), to, null, filterOn("token", "model:sonnet"));
+        windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet"));
 
     // Header total, trend, peak, Group-by breakdown and cardinality all describe model=sonnet:
     // input 200 -> 500 and cacheRead 3000 are its two streams, 3500 in all, in one bucket.
@@ -267,7 +268,7 @@ class MetricSeriesQueryIntegrationTest {
 
     MetricSeries decision = byId(
         metricSeriesService.metricSeries(
-            windowStart(), to, null, filterOn("decision", "decision:accept")),
+            windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("decision", "decision:accept")),
         "decision");
 
     assertThat(decision.sum()).isEqualTo("10");
@@ -281,7 +282,8 @@ class MetricSeriesQueryIntegrationTest {
 
     // model=sonnet leaves two streams (input, cacheRead); adding type=cacheRead leaves just one.
     MetricSeries sonnetCacheRead = byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "model:sonnet", "type:cacheRead")),
+        metricSeriesService.metricSeries(
+            windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet", "type:cacheRead")),
         "token");
     assertThat(sonnetCacheRead.sum()).isEqualTo("3K");
     assertThat(sonnetCacheRead.trend().stream().mapToDouble(Double::doubleValue).sum()).isEqualTo(3000.0);
@@ -290,13 +292,13 @@ class MetricSeriesQueryIntegrationTest {
 
     // The same two filters written in the other order are the same population.
     assertThat(byId(metricSeriesService.metricSeries(
-        windowStart(), to, null, filterOn("token", "type:cacheRead", "model:sonnet")), "token"))
+        windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "type:cacheRead", "model:sonnet")), "token"))
         .isEqualTo(sonnetCacheRead);
 
     // Each additional pair can only narrow: sonnet AND input is 200 -> 500 (500), not the 3000 of
     // sonnet's other stream and not opus/input's 1500.
     MetricSeries sonnetInput = byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "model:sonnet", "type:input")),
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet", "type:input")),
         "token");
     assertThat(sonnetInput.sum()).isEqualTo("500");
     assertThat(sonnetInput.cardinality()).isEqualTo(1L);
@@ -304,10 +306,10 @@ class MetricSeriesQueryIntegrationTest {
     // Two pairs no single row satisfies, and two pairs naming the SAME key with different values,
     // both match nothing (AND, never OR, and the second pair does not replace the first).
     assertThat(byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "model:opus", "type:cacheRead")),
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:opus", "type:cacheRead")),
         "token").sum()).isEqualTo("0");
     MetricSeries contradictory = byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "model:sonnet", "model:opus")),
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet", "model:opus")),
         "token");
     assertThat(contradictory.sum()).isEqualTo("0");
     assertThat(contradictory.cardinality()).isZero();
@@ -319,12 +321,12 @@ class MetricSeriesQueryIntegrationTest {
     for (MetricAggregation aggregation : List.of(MetricAggregation.COUNT, MetricAggregation.AVG, MetricAggregation.P95)) {
       List<Double> narrowed = byId(
           metricSeriesService.metricSeries(
-              windowStart(), windowEnd(), null, filterOn("token", "model:sonnet", "type:input"),
+              windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet", "type:input"),
               new MetricSeriesAggregation("token", aggregation)),
           "token").trend();
       List<Double> onlyOneFilter = byId(
           metricSeriesService.metricSeries(
-              windowStart(), windowEnd(), null, filterOn("token", "model:sonnet"),
+              windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet"),
               new MetricSeriesAggregation("token", aggregation)),
           "token").trend();
 
@@ -380,7 +382,7 @@ class MetricSeriesQueryIntegrationTest {
     seedSessionCounter();
 
     List<MetricSeries> filtered = metricSeriesService.metricSeries(
-        windowStart(), Instant.now(), null, filterOn("token", "model:no-such-model"));
+        windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("token", "model:no-such-model"));
 
     MetricSeries token = byId(filtered, "token");
     assertThat(token.sum()).isEqualTo("0");
@@ -396,11 +398,11 @@ class MetricSeriesQueryIntegrationTest {
 
     MetricSeries token = byId(
         metricSeriesService.metricSeries(
-            windowStart(), Instant.now(), null, filterOn("token", "model:" + injection)),
+            windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("token", "model:" + injection)),
         "token");
     MetricSeries tokenWithHostileKey = byId(
         metricSeriesService.metricSeries(
-            windowStart(), Instant.now(), null, filterOn("token", "model' OR '1'='1:sonnet")),
+            windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("token", "model' OR '1'='1:sonnet")),
         "token");
 
     assertThat(token.sum()).isEqualTo("0");
@@ -413,7 +415,7 @@ class MetricSeriesQueryIntegrationTest {
 
     MetricSeries wide = byId(
         metricSeriesService.metricSeries(
-            windowStart(), Instant.now(), null, filterOn("acme-wide-metric", "region:eu")),
+            windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("acme-wide-metric", "region:eu")),
         "acme-wide-metric");
 
     // 30 single-point streams, 15 in each region; each first point counts its full 1.0.
@@ -423,7 +425,7 @@ class MetricSeriesQueryIntegrationTest {
     // Two pairs on the same metric AND: region=eu AND tier=alpha is i even AND i >= 20, i.e. 5 streams.
     MetricSeries euAlpha = byId(
         metricSeriesService.metricSeries(
-            windowStart(), Instant.now(), null, filterOn("acme-wide-metric", "region:eu", "tier:alpha")),
+            windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("acme-wide-metric", "region:eu", "tier:alpha")),
         "acme-wide-metric");
     assertThat(euAlpha.sum()).isEqualTo("5");
     assertThat(euAlpha.cardinality()).isEqualTo(5L);
@@ -432,7 +434,7 @@ class MetricSeriesQueryIntegrationTest {
   @Test
   void aFilterForAnUnknownMetricIdIsRejected() {
     assertThatThrownBy(() -> metricSeriesService.metricSeries(
-        windowStart(), Instant.now(), null, filterOn("latency", "model:sonnet")))
+        windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("latency", "model:sonnet")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("latency");
   }
@@ -443,10 +445,10 @@ class MetricSeriesQueryIntegrationTest {
     Instant to = Instant.now();
 
     List<MetricSeries> sonnetInRepository = metricSeriesService.metricSeries(
-        windowStart(), to, REPOSITORY_A, filterOn("token", "model:sonnet"));
-    List<MetricSeries> unfilteredInRepository = metricSeriesService.metricSeries(windowStart(), to, REPOSITORY_A);
+        windowStart(), to, REPOSITORY_A, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet"));
+    List<MetricSeries> unfilteredInRepository = metricSeriesService.metricSeries(windowStart(), to, REPOSITORY_A, AgentProfiles.UNKNOWN);
     List<MetricSeries> haikuInRepository = metricSeriesService.metricSeries(
-        windowStart(), to, REPOSITORY_A, filterOn("token", "model:haiku"));
+        windowStart(), to, REPOSITORY_A, AgentProfiles.UNKNOWN, filterOn("token", "model:haiku"));
 
     // Only repository A's rows count: sonnet 100 -> 300 is 300 and haiku is 40; the seeded
     // repository-less sonnet/opus rows are out of scope, and so is everything they contribute.
@@ -536,7 +538,8 @@ class MetricSeriesQueryIntegrationTest {
     for (String modelValue : facetValues(attributesOf(TOKEN_METRIC, null), "model")) {
       String[] valueAndCount = modelValue.split(":");
       MetricSeries filtered = byId(
-          metricSeriesService.metricSeries(windowStart(), Instant.now(), null, filterOn("token", "model:" + valueAndCount[0])),
+          metricSeriesService.metricSeries(
+              windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN, filterOn("token", "model:" + valueAndCount[0])),
           "token");
       assertThat(filtered.cardinality()).isEqualTo(Long.parseLong(valueAndCount[1]));
     }
@@ -612,14 +615,14 @@ class MetricSeriesQueryIntegrationTest {
     seedAggregationMetric();
     Instant to = windowEnd();
 
-    List<MetricSeries> defaults = metricSeriesService.metricSeries(windowStart(), to, null);
+    List<MetricSeries> defaults = metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN);
 
     assertThat(metricSeriesService.metricSeries(
-        windowStart(), to, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE)).isEqualTo(defaults);
+        windowStart(), to, null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE)).isEqualTo(defaults);
     assertThat(metricSeriesService.metricSeries(
-        windowStart(), to, null, MetricSeriesFilter.NONE,
+        windowStart(), to, null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE,
         new MetricSeriesAggregation(AGGREGATION_METRIC_ID, MetricAggregation.SUM))).isEqualTo(defaults);
-    assertThat(metricSeriesService.metricSeries(windowStart(), to, null, MetricSeriesFilter.NONE))
+    assertThat(metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE))
         .isEqualTo(defaults);
   }
 
@@ -630,7 +633,7 @@ class MetricSeriesQueryIntegrationTest {
     // Filtering the aggregated metric to model=m1 drops stream two, so bucket 19 empties out.
     List<Double> filteredCount = byId(
         metricSeriesService.metricSeries(
-            windowStart(), windowEnd(), null,
+            windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN,
             filterOn(AGGREGATION_METRIC_ID, "model:m1"), aggregation(MetricAggregation.COUNT)),
         AGGREGATION_METRIC_ID).trend();
     assertThat(filteredCount.subList(16, 20)).containsExactly(3.0, 1.0, 0.0, 0.0);
@@ -638,7 +641,7 @@ class MetricSeriesQueryIntegrationTest {
     // A filter aimed at a different metric never narrows the aggregated one -- and still narrows its
     // own metric, so both are correct in the same response.
     List<MetricSeries> filteredElsewhere = metricSeriesService.metricSeries(
-        windowStart(), windowEnd(), null,
+        windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN,
         filterOn("token", "model:sonnet"), aggregation(MetricAggregation.COUNT));
     assertThat(byId(filteredElsewhere, AGGREGATION_METRIC_ID).trend().subList(16, 20))
         .containsExactly(3.0, 1.0, 0.0, 2.0);
@@ -657,13 +660,13 @@ class MetricSeriesQueryIntegrationTest {
     Instant end = start.plusSeconds(3_600);
 
     List<Double> sumTrend = byId(
-        metricSeriesService.metricSeries(start, end, null, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE),
+        metricSeriesService.metricSeries(start, end, null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE, MetricSeriesAggregation.NONE),
         AGGREGATION_METRIC_ID).trend();
     assertThat(sumTrend.subList(16, 20)).containsExactly(70.0, 30.0, 0.0, 9.0);
 
     List<Double> filteredCountTrend = byId(
         metricSeriesService.metricSeries(
-            start, end, null, filterOn(AGGREGATION_METRIC_ID, "model:m1"), aggregation(MetricAggregation.COUNT)),
+            start, end, null, AgentProfiles.UNKNOWN, filterOn(AGGREGATION_METRIC_ID, "model:m1"), aggregation(MetricAggregation.COUNT)),
         AGGREGATION_METRIC_ID).trend();
     assertThat(filteredCountTrend.subList(16, 20)).containsExactly(3.0, 1.0, 0.0, 0.0);
   }
@@ -672,7 +675,7 @@ class MetricSeriesQueryIntegrationTest {
   void aFilterAndAnAggregationOnTheSameMetricComposeWhileEveryOtherMetricStaysOnThePlainPath() {
     // Filtered header AND filtered agg trend for the one metric, with the plain path for the rest.
     List<MetricSeries> series = metricSeriesService.metricSeries(
-        windowStart(), windowEnd(), null,
+        windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN,
         filterOn("token", "model:sonnet", "type:input"), new MetricSeriesAggregation("token", MetricAggregation.COUNT));
 
     MetricSeries token = byId(series, "token");
@@ -687,11 +690,11 @@ class MetricSeriesQueryIntegrationTest {
   void aFilterMatchingEveryRowGivesTheSameSeriesThroughTheFilteredPathAsThroughThePlainPath() {
     Instant to = Instant.now();
 
-    List<MetricSeries> unfiltered = metricSeriesService.metricSeries(windowStart(), to, null);
+    List<MetricSeries> unfiltered = metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN);
     // Every seeded token row carries session.id=s1, so this filter is satisfied by all of them and the
     // single-metric ...Filtered queries must reproduce the plain batched queries exactly.
     List<MetricSeries> viaFilteredPath = metricSeriesService.metricSeries(
-        windowStart(), to, null, filterOn("token", "session.id:s1"));
+        windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "session.id:s1"));
 
     assertThat(byId(viaFilteredPath, "token")).isEqualTo(byId(unfiltered, "token"));
     assertThat(viaFilteredPath).isEqualTo(unfiltered);
@@ -708,22 +711,23 @@ class MetricSeriesQueryIntegrationTest {
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
     Instant to = Instant.now();
 
-    assertThat(byId(metricSeriesService.metricSeries(windowStart(), to, null), "token").cardinality())
+    assertThat(byId(metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN), "token").cardinality())
         .isEqualTo(3L);
 
     // The ghost-only stream is invisible under a filter that would otherwise select it ...
     MetricSeries haiku = byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "model:haiku")), "token");
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:haiku")), "token");
     assertThat(haiku.cardinality()).isZero();
     assertThat(haiku.sum()).isEqualTo("0");
     // ... and does not inflate a broader one: type=input selects sonnet/input and opus/input (active)
     // plus haiku/input (ghost), so 2 -- where counting the ghost would have said 3.
     MetricSeries input = byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "type:input")), "token");
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "type:input")), "token");
     assertThat(input.cardinality()).isEqualTo(2L);
     assertThat(input.sum()).isEqualTo("2K");
     // A metric the filter does not target is counted the same way (plain path), so the two paths agree.
-    assertThat(byId(metricSeriesService.metricSeries(windowStart(), to, null, filterOn("decision", "decision:accept")),
+    assertThat(byId(
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("decision", "decision:accept")),
         "token").cardinality()).isEqualTo(3L);
   }
 
@@ -736,7 +740,7 @@ class MetricSeriesQueryIntegrationTest {
     saveToken("haiku", "input", 100, base.plusSeconds(10));
     metricPointRepository.recomputeValueDeltas(seededMetricPointIds);
 
-    MetricSeries token = byId(metricSeriesService.metricSeries(windowStart(), Instant.now(), null), "token");
+    MetricSeries token = byId(metricSeriesService.metricSeries(windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN), "token");
 
     assertThat(token.splits().get("Model")).extracting(MetricSplitRow::label).doesNotContain("haiku");
     assertThat(token.sum()).isEqualTo("5K");
@@ -753,10 +757,10 @@ class MetricSeriesQueryIntegrationTest {
     Instant to = Instant.now();
 
     // Unfiltered: 5000 now vs 800 before. Filtered to sonnet: 3500 now vs 700 before.
-    assertThat(byId(metricSeriesService.metricSeries(windowStart(), to, null), "token").delta())
+    assertThat(byId(metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN), "token").delta())
         .isEqualTo("+525.0%");
     MetricSeries sonnet = byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn("token", "model:sonnet")), "token");
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn("token", "model:sonnet")), "token");
     assertThat(sonnet.sum()).isEqualTo("3.5K");
     assertThat(sonnet.delta()).isEqualTo("+400.0%");
     assertThat(sonnet.dir()).isEqualTo("up");
@@ -784,7 +788,7 @@ class MetricSeriesQueryIntegrationTest {
   @Test
   void anAggregationForAnUnknownMetricIdIsRejectedEvenForSum() {
     assertThatThrownBy(() -> metricSeriesService.metricSeries(
-        windowStart(), windowEnd(), null, MetricSeriesFilter.NONE,
+        windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE,
         new MetricSeriesAggregation("latency", MetricAggregation.SUM)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("latency");
@@ -820,7 +824,7 @@ class MetricSeriesQueryIntegrationTest {
 
   private List<MetricSeries> seriesInFixedWindow(MetricSeriesAggregation aggregation) {
     return metricSeriesService.metricSeries(
-        windowStart(), windowEnd(), null, MetricSeriesFilter.NONE, aggregation);
+        windowStart(), windowEnd(), null, AgentProfiles.UNKNOWN, MetricSeriesFilter.NONE, aggregation);
   }
 
   private static MetricSeriesAggregation aggregation(MetricAggregation aggregation) {
@@ -830,7 +834,7 @@ class MetricSeriesQueryIntegrationTest {
   private double tokenBucketSixteen(Instant to, MetricSeriesFilter filter, MetricAggregation aggregation) {
     return byId(
         metricSeriesService.metricSeries(
-            windowStart(), to, REPOSITORY_A, filter, new MetricSeriesAggregation("token", aggregation)),
+            windowStart(), to, REPOSITORY_A, AgentProfiles.UNKNOWN, filter, new MetricSeriesAggregation("token", aggregation)),
         "token").trend().get(16);
   }
 
@@ -876,7 +880,8 @@ class MetricSeriesQueryIntegrationTest {
   }
 
   private List<MetricFacet> attributesOf(String metricName, String repositoryUrl) {
-    return metricSeriesService.metricAttributes(windowStart(), Instant.now(), repositoryUrl, metricName).attributes();
+    return metricSeriesService.metricAttributes(
+        windowStart(), Instant.now(), repositoryUrl, AgentProfiles.UNKNOWN, metricName).attributes();
   }
 
   // A filter on the given series id from key:value strings, parsed exactly as the endpoint parses them.
@@ -912,7 +917,7 @@ class MetricSeriesQueryIntegrationTest {
 
   private double typedMetricSum(Instant to, String... keyValuePairs) {
     return byId(
-        metricSeriesService.metricSeries(windowStart(), to, null, filterOn(TYPED_METRIC_ID, keyValuePairs)),
+        metricSeriesService.metricSeries(windowStart(), to, null, AgentProfiles.UNKNOWN, filterOn(TYPED_METRIC_ID, keyValuePairs)),
         TYPED_METRIC_ID).trend().stream().mapToDouble(Double::doubleValue).sum();
   }
 
@@ -929,7 +934,7 @@ class MetricSeriesQueryIntegrationTest {
   }
 
   private MetricSeries seriesById(String id) {
-    return metricSeriesService.metricSeries(windowStart(), Instant.now(), null).stream()
+    return metricSeriesService.metricSeries(windowStart(), Instant.now(), null, AgentProfiles.UNKNOWN).stream()
         .filter(series -> id.equals(series.id()))
         .findFirst()
         .orElseThrow();

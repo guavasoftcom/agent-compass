@@ -31,7 +31,12 @@ public record TimeWindowParams(
         @Parameter(description = "Repository URL to scope the result to (see repository_url on spans / "
                 + "log_records / metric_points). Omitted or null means show every repository, "
                 + "including telemetry with no repository attribution.",
-                example = "https://github.com/guavasoftcom/agent-compass") String repositoryUrl)
+                example = "https://github.com/guavasoftcom/agent-compass") String repositoryUrl,
+        @Parameter(description = "Agent profile to scope the result to (see agent_profile on spans / "
+                + "log_records / metric_points). Omitted or null resolves to the configured primary "
+                + "profile (default claude-code) -- unlike repositoryUrl, there is no \"all agents\" "
+                + "option, since two agents' telemetry is not safely summable.",
+                example = "claude-code") String agentProfile)
         implements DateRangeBounds {
 
     /**
