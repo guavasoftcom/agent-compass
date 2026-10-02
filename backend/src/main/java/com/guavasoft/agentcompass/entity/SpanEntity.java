@@ -15,6 +15,8 @@
  */
 package com.guavasoft.agentcompass.entity;
 
+import com.guavasoft.agentcompass.model.AgentProfiles;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -96,6 +98,16 @@ public class SpanEntity {
 
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
+
+    // Which coding agent emitted this span (V37), resolved once per ResourceSpans block by
+    // AgentProfileResolver and written by ingest. This table has no per-record equivalent of the
+    // resource attribute the profile is resolved from, which is part of why resolution reads the
+    // resource block rather than `attributes`.
+    //
+    // Defaults to UNKNOWN rather than null so an insert path that forgets to resolve a profile is
+    // quarantined instead of mis-credited to Claude Code. See AgentProfiles#UNKNOWN.
+    @Column(name = "agent_profile", nullable = false)
+    private String agentProfile = AgentProfiles.UNKNOWN;
 
     // Cost is deliberately NOT mapped here. It used to be a @Formula that ran
     // one correlated subquery against span_costs per row (measured ~25ms of a

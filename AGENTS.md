@@ -76,6 +76,26 @@ the backend source tree.
   them compatible.
 - **Schema lives in Flyway migrations** (`backend/src/main/resources/db/migration/`); Hibernate runs
   with `ddl-auto=validate`. Every schema change is a new `V{n}__*.sql` migration.
+  **Never edit a migration file once it has been applied to any database, including your own dev one
+  — and that includes editing only its comments.** Flyway checksums the whole file, so rewording a
+  header block is enough to fail startup with `Validate failed: Migration checksum mismatch for
+  migration version N`, which is a confusing error for a change that touched no SQL. (Hit for real on
+  `V37`: a header comment was corrected after the migration had already run.) If it happens and the
+  SQL genuinely did not change, confirm the live schema still matches the file and then repair the
+  history rather than reverting the prose — there is no `flyway-maven-plugin` here, so use the CLI at
+  the version the build resolves (`./backend/mvnw -f backend/pom.xml dependency:list
+  -DincludeArtifactIds=flyway-core`):
+
+  ```sh
+  docker run --rm --network container:agent-compass-dev-postgres \
+    -v "$(pwd)/backend/src/main/resources/db/migration:/flyway/sql:ro" \
+    flyway/flyway:<version> -url=jdbc:postgresql://localhost:5432/coding_agent_tuning \
+    -user=postgres -password=postgres -cleanDisabled=true repair
+  ```
+
+  `--network container:` shares the Postgres container's network namespace, so `localhost:5432`
+  reaches it without `host.docker.internal`. If the SQL *did* change, repair is the wrong tool — the
+  history would then claim SQL that never ran; write a new migration instead.
 - **OpenAPI** is auto-derived. Annotate new endpoints with `@Tag` / `@Operation` so Swagger UI stays
   useful.
 - **Charts and tables are hand-built SVG/CSS** — no `@mui/x-charts` / `@mui/x-data-grid` /
@@ -111,9 +131,9 @@ is the authoritative per-property reference.
 The authoritative, machine-readable list of which properties are mirrored is
 [TuningPropertyCatalog.java](backend/src/main/java/com/guavasoft/agentcompass/config/TuningPropertyCatalog.java),
 surfaced at runtime by `GET /api/system/configuration` and on the dashboard's Settings page. It
-classifies all 63 properties three ways and a reflection test fails the build if a newly added
+classifies all 68 properties three ways and a reflection test fails the build if a newly added
 property is left unclassified. Prefer it over the prose below, which names the seven worst offenders
-but is not exhaustive: the real count is **17 across six migrations**, and it includes three
+but is not exhaustive: the real count is **20 across nine migrations**, and it includes three
 (`tool-decision-event-name`, `api-request-body-event-name`, `hook-execution-event-name`) whose
 defaults `V6` hardcodes for its own reasons — overriding those does not invalidate the SQL, but the
 property and the function then describe different events.
@@ -153,6 +173,38 @@ or the Logs page's tool facet/filter/histogram silently read the wrong attribute
 counters are cumulative per stream and ingest precomputes reset-aware increments into
 `metric_points.value_delta`, so every rollup is a plain `SUM(value_delta)` — details in
 [backend/CLAUDE.md](backend/CLAUDE.md).
+
+**Agent profiles are a hard partition, and that is the opposite of how `repository_url` behaves.**
+Every row on all three signal tables carries `agent_profile` (`V34`-style stored column but plain, not
+generated — ingest writes it; `V37`), resolved once per OTLP resource block by `AgentProfileResolver`
+from `service.name` through the `tuning.agent-profile-resolution` map. Groundwork for ingesting a
+second agent — see [.design-docs/copilot-telemetry-ingest-plan.md](.design-docs/copilot-telemetry-ingest-plan.md).
+Three rules fall out of it:
+
+- **`repositoryUrl == null` means "every repository"; an absent agent profile must mean ONE agent,
+  never all of them.** Two repositories' telemetry shares a vocabulary and a measurement pipeline, so
+  summing across them is meaningful. Two agents do not: Copilot emits no cost metric at all and
+  reports tokens as an OTLP histogram where Claude Code reports a cumulative counter read through
+  `value_delta`. A blended total would read one agent's figure and label it the sum of both — wrong,
+  not merely mixed. There is deliberately no "All agents" view.
+- **An unidentified resource is stamped `unknown`, never `claude-code`.** The resolution map is
+  many-to-one (`claude-code` *and* `claude-code-desktop` fold into one profile — the live database
+  holds both). The entities also default the field to `unknown` as a structural backstop, so no insert
+  path can mis-credit a second agent's rows; the column stays `NOT NULL` with no DB default so raw
+  SQL that omits it still fails loudly.
+- **`stream_id` now includes the profile and resource identity** (`V38`:
+  `md5(agent_profile || metric_name || resource_attributes ->> 'session.id' || attributes)`). The old
+  V11 expression had no resource identity, so two emitters of one counter interleaved into a single
+  stream and each row's `value_delta` was diffed against the other's — and that collides *within* one
+  agent, since Copilot carries `session.id` in the resource block. `stream-identity-resource-attribute`
+  is therefore `MIRRORED`: overriding it needs a new migration redefining that column.
+
+The read path is **not** scoped yet — no query filters on `agent_profile`, so every existing figure is
+unchanged and `unknown` rows are simply absent from aggregations. `AgentProfileCoverageTest` reflects
+over the three repositories and fails the build if a *newly added* window-scoped query omits an
+`agentProfile` parameter; the 140 pre-existing ones are listed in
+`backend/src/test/resources/agent-profile-coverage-debt.txt`, **a ratchet that may only shrink** —
+adding the parameter means deleting its line, and leaving the line behind fails the build too.
 
 Context-window footprint is aggregated **twice, on purpose**: `LogRecordRepository`'s
 `aggregateToolContextFootprintInRange` feeds the dashboard card and counts every tool, while

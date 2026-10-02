@@ -18,6 +18,8 @@ package com.guavasoft.agentcompass.config;
 import java.util.List;
 import java.util.Map;
 
+import com.guavasoft.agentcompass.model.AgentProfiles;
+
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -577,5 +579,78 @@ public class TuningProperties {
    * {@code success} rather than treating the event's presence as a completed pass.
    */
   private String compactionEventName = "compaction";
+
+  /**
+   * OTLP <em>resource</em>-attribute key whose value identifies which coding agent emitted a
+   * batch, resolved once per {@code ResourceLogs} / {@code ResourceMetrics} / {@code ResourceSpans}
+   * block and stamped onto every row as {@code agent_profile} ({@code V37}).
+   *
+   * <p>Read from the resource block rather than per-record {@code attributes} because the emitting
+   * agent is a property of the process, not of the datapoint — and because it must be resolvable
+   * for spans, which carry no per-record equivalent.
+   */
+  private String agentProfileResourceAttribute = "service.name";
+
+  /**
+   * Maps a {@link #agentProfileResourceAttribute} value to the agent profile it belongs to.
+   *
+   * <p>Deliberately many-to-one rather than an identity mapping: this database holds both
+   * {@code claude-code} and {@code claude-code-desktop} resources, which are the same agent and
+   * must fold into one profile. A value absent from this map resolves to
+   * {@link #unknownAgentProfile}, never to a default agent — see that property for why.
+   *
+   * <p>No Copilot entry is shipped yet on purpose. Its {@code service.name} is configurable through
+   * enterprise-managed settings and has not been confirmed against a real capture, and a guessed
+   * mapping would silently relabel another agent's telemetry. Until it is captured, Copilot
+   * telemetry lands under {@link #unknownAgentProfile}, which is visible but quarantined.
+   */
+  private Map<String, String> agentProfileResolution = Map.of(
+      "claude-code", AgentProfiles.CLAUDE_CODE,
+      "claude-code-desktop", AgentProfiles.CLAUDE_CODE);
+
+  /**
+   * Profile stamped at ingest on a resource whose {@link #agentProfileResourceAttribute} value
+   * matches no {@link #agentProfileResolution} entry.
+   *
+   * <p>Deliberately NOT {@link #primaryAgentProfile}. Defaulting unrecognized telemetry to Claude
+   * Code's profile would silently fold a second agent's figures into Claude Code's rollups, which
+   * is the exact blending the hard partition exists to prevent — and the numbers would be wrong
+   * rather than merely mixed, since the two agents measure cost and tokens incomparably. Stamping
+   * it {@code unknown} keeps it stored, queryable, and out of every existing aggregation.
+   *
+   * <p>Note this is the <em>configurable</em> ingest fallback, applied by the resolver. The entities
+   * additionally carry {@link AgentProfiles#UNKNOWN} as a compile-time field default, which is a
+   * separate structural backstop for an insert path that never consults the resolver at all.
+   */
+  private String unknownAgentProfile = AgentProfiles.UNKNOWN;
+
+  /**
+   * Profile a read resolves to when a request names none — the other half of the hard partition.
+   *
+   * <p>This is the opposite default from {@code repositoryUrl}, where a null means "every
+   * repository" because two repositories' telemetry is genuinely summable. An absent agent profile
+   * must mean one specific agent, never "all": Copilot reports no cost at all and reports tokens as
+   * an OTLP histogram where Claude Code reports a cumulative counter, so a blended total would read
+   * one agent's figure and label it the sum of both.
+   */
+  private String primaryAgentProfile = AgentProfiles.CLAUDE_CODE;
+
+  /**
+   * OTLP <em>resource</em>-attribute key that contributes per-emitter identity to a metric stream,
+   * alongside {@code agent_profile}, the metric name, and the datapoint attributes.
+   *
+   * <p>Exists because a stream's identity must separate two concurrent emitters of the same counter.
+   * Claude Code carries {@code session.id} in per-datapoint {@code attributes}, which stream
+   * identity already covered; Copilot carries it in the resource block, so without this two VS Code
+   * windows interleave into one stream and each row's {@code value_delta} is computed against the
+   * other window's counter.
+   *
+   * <p><b>Mirrored in SQL.</b> {@code V38} hardcodes this key inside the {@code stream_id} generated
+   * column, because a generated column cannot read Spring configuration. Overriding this property
+   * means a new migration redefining that column — otherwise ingest and the schema disagree about
+   * what a stream is, and the disagreement surfaces as a counter spiking by its whole lifetime
+   * total.
+   */
+  private String streamIdentityResourceAttribute = "session.id";
 
 }

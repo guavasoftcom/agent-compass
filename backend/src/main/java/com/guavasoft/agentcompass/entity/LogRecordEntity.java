@@ -15,6 +15,8 @@
  */
 package com.guavasoft.agentcompass.entity;
 
+import com.guavasoft.agentcompass.model.AgentProfiles;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -82,4 +84,17 @@ public class LogRecordEntity {
 
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
+
+    // Which coding agent emitted this row (V37), resolved once per OTLP resource block by
+    // AgentProfileResolver. Unlike the generated columns on this table (event_name, tool_name,
+    // session_id, derived_severity, repository_url — all deliberately unmapped and read only
+    // through native queries), this one is written by ingest, so it must be mapped.
+    //
+    // Defaults to UNKNOWN rather than being left null, because the one outcome this partition must
+    // never produce is mis-crediting one agent's rows to another: an insert path that forgets to
+    // resolve a profile lands in the quarantined bucket instead of silently reading as Claude
+    // Code's. The column itself is NOT NULL with no database default, so raw SQL that omits it
+    // still fails loudly. See AgentProfiles#UNKNOWN for the full reasoning.
+    @Column(name = "agent_profile", nullable = false)
+    private String agentProfile = AgentProfiles.UNKNOWN;
 }

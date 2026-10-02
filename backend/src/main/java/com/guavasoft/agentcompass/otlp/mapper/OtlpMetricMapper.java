@@ -20,10 +20,12 @@ import io.opentelemetry.proto.metrics.v1.Metric;
 import io.opentelemetry.proto.metrics.v1.NumberDataPoint;
 import io.opentelemetry.proto.metrics.v1.ResourceMetrics;
 import io.opentelemetry.proto.metrics.v1.ScopeMetrics;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.otlp.model.MetricValueKind;
+import com.guavasoft.agentcompass.otlp.model.ResourceContext;
 import com.guavasoft.agentcompass.otlp.util.OtlpAttributeUtils;
 
 import java.time.Instant;
@@ -32,7 +34,10 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 @Component
+@RequiredArgsConstructor
 public class OtlpMetricMapper {
+
+  private final AgentProfileResolver agentProfileResolver;
 
   public List<MetricPointEntity> toMetricPoints(ExportMetricsServiceRequest request, Instant receivedAt) {
     return request.getResourceMetricsList().stream()
@@ -44,29 +49,34 @@ public class OtlpMetricMapper {
       ResourceMetrics resourceMetrics, Instant receivedAt) {
     Map<String, Object> resourceAttributes = OtlpAttributeUtils
         .toMap(resourceMetrics.getResource().getAttributesList());
+    // Resolved once per resource block, not per datapoint. This matters more here than on the other
+    // two signals: a single export carries thousands of points, and the profile also feeds the
+    // stream_id generated column (V38), so it must be set before saveAll rather than patched after.
+    ResourceContext resourceContext =
+        new ResourceContext(resourceAttributes, agentProfileResolver.resolve(resourceAttributes));
     return resourceMetrics.getScopeMetricsList().stream()
-        .flatMap(scopeMetrics -> entitiesFromScopeMetrics(scopeMetrics, resourceAttributes, receivedAt));
+        .flatMap(scopeMetrics -> entitiesFromScopeMetrics(scopeMetrics, resourceContext, receivedAt));
   }
 
   private Stream<MetricPointEntity> entitiesFromScopeMetrics(
-      ScopeMetrics scopeMetrics, Map<String, Object> resourceAttributes, Instant receivedAt) {
+      ScopeMetrics scopeMetrics, ResourceContext resourceContext, Instant receivedAt) {
     String scopeName = scopeMetrics.getScope().getName();
     Map<String, Object> scopeAttributes = OtlpAttributeUtils.toMap(scopeMetrics.getScope().getAttributesList());
     return scopeMetrics.getMetricsList().stream()
         .flatMap(metric -> entitiesFromMetric(
-            metric, scopeName, resourceAttributes, scopeAttributes, receivedAt));
+            metric, scopeName, resourceContext, scopeAttributes, receivedAt));
   }
 
   private Stream<MetricPointEntity> entitiesFromMetric(
       Metric metric, String scopeName,
-      Map<String, Object> resourceAttributes, Map<String, Object> scopeAttributes, Instant receivedAt) {
+      ResourceContext resourceContext, Map<String, Object> scopeAttributes, Instant receivedAt) {
     return numberPointsOf(metric).stream()
         .map(numberDataPoint -> toEntity(
-            metric, numberDataPoint, scopeName, resourceAttributes, scopeAttributes, receivedAt));
+            metric, numberDataPoint, scopeName, resourceContext, scopeAttributes, receivedAt));
   }
 
   private MetricPointEntity toEntity(Metric metric, NumberDataPoint numberDataPoint, String scopeName,
-      Map<String, Object> resourceAttributes, Map<String, Object> scopeAttributes, Instant receivedAt) {
+      ResourceContext resourceContext, Map<String, Object> scopeAttributes, Instant receivedAt) {
     MetricPointEntity entity = new MetricPointEntity();
     entity.setMetricName(metric.getName());
     entity.setUnit(metric.getUnit());
@@ -88,9 +98,10 @@ public class OtlpMetricMapper {
       default -> entity.setValueKind(MetricValueKind.UNKNOWN.key());
     }
     entity.setAttributes(OtlpAttributeUtils.toMap(numberDataPoint.getAttributesList()));
-    entity.setResourceAttributes(resourceAttributes);
+    entity.setResourceAttributes(resourceContext.resourceAttributes());
     entity.setScopeAttributes(scopeAttributes);
     entity.setReceivedAt(receivedAt);
+    entity.setAgentProfile(resourceContext.agentProfile());
     return entity;
   }
 

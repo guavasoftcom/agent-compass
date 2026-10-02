@@ -152,7 +152,11 @@ class TuningPropertyCatalogTest {
                 "tuning.status-attribute",
                 "tuning.num-non-blocking-error-attribute",
                 "tuning.tool-call-id-attribute",
-                "tuning.tool-execution-span-name");
+                "tuning.tool-execution-span-name",
+                // V38 hardcodes this key inside the stream_id generated column, which cannot read
+                // Spring configuration. Overriding it without a migration makes ingest and the
+                // schema disagree about what a metric stream is.
+                "tuning.stream-identity-resource-attribute");
         assertThat(byMirroring.get(SqlMirroring.SHARED_LITERAL)).containsExactlyInAnyOrder(
                 "tuning.tool-decision-event-name",
                 "tuning.api-request-body-event-name",

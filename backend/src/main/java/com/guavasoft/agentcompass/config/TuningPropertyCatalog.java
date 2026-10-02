@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  * Describes every {@link TuningProperties} field for {@code GET /api/system/configuration}: which
  * group it belongs to, what it drives, and whether overriding it also requires a Flyway migration.
  *
- * <p><b>Why this is authored by hand.</b> Reflection can read the 63 values but not the three things
+ * <p><b>Why this is authored by hand.</b> Reflection can read the 68 values but not the three things
  * that make the endpoint worth having — the grouping, the one-line descriptions, and above all the
  * {@link SqlMirroring} flag, which is a fact about the migration history and cannot be derived from
  * the field. A hand-written list rots silently, so {@code TuningPropertyCatalogTest} reflects over
@@ -45,10 +45,13 @@ import java.util.stream.Collectors;
  * on an endpoint with no authentication in front of it.
  *
  * <p><b>On the mirrored set.</b> {@code AGENTS.md} names six mirrored properties; the real count is
- * 17 across six migrations, split three ways. {@link SqlMirroring#MIRRORED} properties have their
- * value duplicated as a literal in migration SQL — a generated column ({@code V16}, {@code V17}), a
+ * 20 across nine migrations, split three ways — 17 {@link SqlMirroring#MIRRORED} and 3
+ * {@link SqlMirroring#SHARED_LITERAL}. {@code MIRRORED} properties have their
+ * value duplicated as a literal in migration SQL — a generated column ({@code V16}, {@code V17},
+ * {@code V38}), a
  * view ({@code V14}, {@code V15}, {@code V19}), the {@code derive_log_severity()} function
- * ({@code V6}), or a partial index predicate ({@code V19}). {@link SqlMirroring#SHARED_LITERAL}
+ * ({@code V6}), or a partial index predicate ({@code V19}, {@code V20}).
+ * {@link SqlMirroring#SHARED_LITERAL}
  * properties merely happen to equal a literal that {@code V6} hardcodes for its own reasons: the
  * property is not that literal's source, so overriding it does not invalidate the function, but the
  * two then describe different events.
@@ -416,7 +419,41 @@ public class TuningPropertyCatalog {
               CatalogEntry.plain("externallyDeterminedTools",
                   "Tools whose latency and result size the agent cannot tune, excluded from the "
                       + "report's oversized and slow-and-large offender lists",
-                  TuningProperties::getExternallyDeterminedTools))));
+                  TuningProperties::getExternallyDeterminedTools))),
+
+      new CatalogGroup(
+          "Agent profiles",
+          "Which coding agent emitted a row, and how that partitions the data. Unlike the "
+              + "repository filter, an absent profile means one specific agent and never all of "
+              + "them -- two agents measure cost and tokens incomparably, so a blended total "
+              + "would read one agent's figure and label it the sum",
+          List.of(
+              CatalogEntry.plain("agentProfileResourceAttribute",
+                  "Resource attribute whose value identifies the emitting agent, resolved once per "
+                      + "OTLP resource block and stamped onto every row as agent_profile (V37)",
+                  TuningProperties::getAgentProfileResourceAttribute),
+              CatalogEntry.plain("agentProfileResolution",
+                  "Maps a resource-attribute value to its agent profile. Many-to-one on purpose: "
+                      + "claude-code and claude-code-desktop are one agent. An unmapped value "
+                      + "resolves to the unknown profile, never to a default agent.",
+                  TuningProperties::getAgentProfileResolution),
+              CatalogEntry.plain("unknownAgentProfile",
+                  "Profile stamped at ingest when no resolution entry matches. Deliberately not "
+                      + "the primary profile -- defaulting foreign telemetry into Claude Code's "
+                      + "rollups is the blending the partition exists to prevent.",
+                  TuningProperties::getUnknownAgentProfile),
+              CatalogEntry.plain("primaryAgentProfile",
+                  "Profile a read resolves to when a request names none. The opposite default from "
+                      + "repositoryUrl, where null means every repository.",
+                  TuningProperties::getPrimaryAgentProfile),
+              CatalogEntry.mirrored("streamIdentityResourceAttribute",
+                  "Resource attribute contributing per-emitter identity to a metric stream. "
+                      + "Hardcoded inside the stream_id generated column, which cannot read Spring "
+                      + "configuration -- overriding this without a new migration makes ingest and "
+                      + "the schema disagree about what a stream is, which surfaces as a counter "
+                      + "spiking by its whole lifetime total.",
+                  List.of("V38"),
+                  TuningProperties::getStreamIdentityResourceAttribute))));
 
   /** Renders the live values of every catalogued property, grouped and annotated. */
   public EffectiveConfiguration describe(TuningProperties activeProperties) {

@@ -22,7 +22,9 @@ import io.opentelemetry.proto.logs.v1.ScopeLogs;
 import io.opentelemetry.proto.logs.v1.SeverityNumber;
 import org.junit.jupiter.api.Test;
 
+import com.guavasoft.agentcompass.config.TuningProperties;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.otlp.mapper.AgentProfileResolver;
 import com.guavasoft.agentcompass.otlp.mapper.OtlpLogMapper;
 
 import java.time.Instant;
@@ -44,7 +46,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OtlpLogMapperTest {
 
   private static final long FIXED_TIMESTAMP_NANOS = 1_716_300_000_000_000_000L;
-  private final OtlpLogMapper mapper = new OtlpLogMapper();
+  // Compiled-in TuningProperties defaults are enough here: these fixtures carry no resource
+  // attributes at all, so every record resolves to the unknown profile, which is the correct
+  // outcome for a resource that does not identify its agent and is irrelevant to severity.
+  private final OtlpLogMapper mapper =
+      new OtlpLogMapper(new AgentProfileResolver(new TuningProperties()));
   private final Instant receivedAt = Instant.parse("2026-05-21T12:00:00Z");
 
   @Test

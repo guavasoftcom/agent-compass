@@ -20,9 +20,11 @@ import io.opentelemetry.proto.trace.v1.ResourceSpans;
 import io.opentelemetry.proto.trace.v1.ScopeSpans;
 import io.opentelemetry.proto.trace.v1.Span;
 import io.opentelemetry.proto.trace.v1.Status;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import com.guavasoft.agentcompass.entity.SpanEntity;
+import com.guavasoft.agentcompass.otlp.model.ResourceContext;
 import com.guavasoft.agentcompass.otlp.model.SpanEventField;
 import com.guavasoft.agentcompass.otlp.model.SpanKindLabel;
 import com.guavasoft.agentcompass.otlp.util.OtlpAttributeUtils;
@@ -33,7 +35,10 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 @Component
+@RequiredArgsConstructor
 public class OtlpTraceMapper {
+
+  private final AgentProfileResolver agentProfileResolver;
 
   public List<SpanEntity> toSpans(ExportTraceServiceRequest request, Instant receivedAt) {
     return request.getResourceSpansList().stream()
@@ -43,20 +48,24 @@ public class OtlpTraceMapper {
 
   private Stream<SpanEntity> entitiesFromResourceSpans(ResourceSpans resourceSpans, Instant receivedAt) {
     Map<String, Object> resourceAttributes = OtlpAttributeUtils.toMap(resourceSpans.getResource().getAttributesList());
+    // Resolved once per resource block, not per span. Spans carry no per-record equivalent of the
+    // identifying attribute, which is part of why resolution reads the resource block at all.
+    ResourceContext resourceContext =
+        new ResourceContext(resourceAttributes, agentProfileResolver.resolve(resourceAttributes));
     return resourceSpans.getScopeSpansList().stream()
-        .flatMap(scopeSpans -> entitiesFromScopeSpans(scopeSpans, resourceAttributes, receivedAt));
+        .flatMap(scopeSpans -> entitiesFromScopeSpans(scopeSpans, resourceContext, receivedAt));
   }
 
   private Stream<SpanEntity> entitiesFromScopeSpans(
-      ScopeSpans scopeSpans, Map<String, Object> resourceAttributes, Instant receivedAt) {
+      ScopeSpans scopeSpans, ResourceContext resourceContext, Instant receivedAt) {
     String scopeName = scopeSpans.getScope().getName();
     Map<String, Object> scopeAttributes = OtlpAttributeUtils.toMap(scopeSpans.getScope().getAttributesList());
     return scopeSpans.getSpansList().stream()
-        .map(span -> toEntity(span, scopeName, resourceAttributes, scopeAttributes, receivedAt));
+        .map(span -> toEntity(span, scopeName, resourceContext, scopeAttributes, receivedAt));
   }
 
   private SpanEntity toEntity(Span span, String scopeName,
-      Map<String, Object> resourceAttributes, Map<String, Object> scopeAttributes, Instant receivedAt) {
+      ResourceContext resourceContext, Map<String, Object> scopeAttributes, Instant receivedAt) {
     SpanEntity entity = new SpanEntity();
     entity.setTraceId(OtlpAttributeUtils.toHexOrNull(span.getTraceId()));
     entity.setSpanId(OtlpAttributeUtils.toHexOrNull(span.getSpanId()));
@@ -75,9 +84,10 @@ public class OtlpTraceMapper {
     entity.setScopeName(scopeName);
     entity.setAttributes(OtlpAttributeUtils.toMap(span.getAttributesList()));
     entity.setEvents(toEventList(span.getEventsList()));
-    entity.setResourceAttributes(resourceAttributes);
+    entity.setResourceAttributes(resourceContext.resourceAttributes());
     entity.setScopeAttributes(scopeAttributes);
     entity.setReceivedAt(receivedAt);
+    entity.setAgentProfile(resourceContext.agentProfile());
     return entity;
   }
 

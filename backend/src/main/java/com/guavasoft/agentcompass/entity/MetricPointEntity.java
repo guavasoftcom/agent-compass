@@ -15,6 +15,8 @@
  */
 package com.guavasoft.agentcompass.entity;
 
+import com.guavasoft.agentcompass.model.AgentProfiles;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -85,9 +87,22 @@ public class MetricPointEntity {
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
 
-    // Stored generated column (V11): md5(metric_name || '|' || attributes::text),
-    // the full stream identity. Computed by Postgres on insert — never written by
-    // Hibernate.
+    // Which coding agent emitted this point (V37), resolved once per ResourceMetrics block by
+    // AgentProfileResolver and written by ingest.
+    //
+    // Also a component of stream_id below, which is why it is set before saveAll rather than
+    // patched afterwards: the generated column is computed at insert time and cannot see a value
+    // written later.
+    //
+    // Defaults to UNKNOWN rather than null so an insert path that forgets to resolve a profile is
+    // quarantined instead of mis-credited to Claude Code — which here would also fold its rows into
+    // Claude Code's stream identities. See AgentProfiles#UNKNOWN.
+    @Column(name = "agent_profile", nullable = false)
+    private String agentProfile = AgentProfiles.UNKNOWN;
+
+    // Stored generated column (V11, redefined by V38): md5 over agent_profile, metric_name, the
+    // resource-level session id, and attributes::text — the full stream identity. Computed by
+    // Postgres on insert — never written by Hibernate.
     @Column(name = "stream_id", insertable = false, updatable = false)
     private String streamId;
 
