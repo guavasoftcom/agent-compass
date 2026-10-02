@@ -16,6 +16,7 @@
 package com.guavasoft.agentcompass.otlp.service;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
 import com.guavasoft.agentcompass.otlp.mapper.OtlpMetricMapper;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -39,7 +40,23 @@ public class OtlpMetricService {
 
   @Transactional
   public int ingestProtobuf(byte[] body) throws InvalidProtocolBufferException {
-    ExportMetricsServiceRequest request = ExportMetricsServiceRequest.parseFrom(body);
+    return ingest(ExportMetricsServiceRequest.parseFrom(body));
+  }
+
+  /**
+   * Same ingest path as {@link #ingestProtobuf}, for a sender whose {@code OTEL_EXPORTER_OTLP_PROTOCOL}
+   * is {@code http/json} rather than {@code http/protobuf} -- GitHub Copilot CLI's default. Reuses
+   * {@link InvalidProtocolBufferException} as its failure type: {@link JsonFormat.Parser#merge}
+   * throws it too, so the controller's existing malformed-payload handling needs no new catch clause.
+   */
+  @Transactional
+  public int ingestJson(String json) throws InvalidProtocolBufferException {
+    ExportMetricsServiceRequest.Builder builder = ExportMetricsServiceRequest.newBuilder();
+    JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
+    return ingest(builder.build());
+  }
+
+  private int ingest(ExportMetricsServiceRequest request) {
     List<MetricPointEntity> points = mapper.toMetricPoints(request, Instant.now());
     List<MetricPointEntity> savedPoints = repository.saveAll(points);
 
@@ -64,7 +81,7 @@ public class OtlpMetricService {
       repository.recomputeValueDeltas(metricPointIds);
     }
 
-    log.debug("Ingested {} metric data points from OTLP/HTTP protobuf", points.size());
+    log.debug("Ingested {} metric data points from OTLP/HTTP", points.size());
     return points.size();
   }
 }

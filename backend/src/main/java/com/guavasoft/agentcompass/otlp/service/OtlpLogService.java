@@ -16,6 +16,7 @@
 package com.guavasoft.agentcompass.otlp.service;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.otlp.mapper.OtlpLogMapper;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
@@ -39,11 +40,27 @@ public class OtlpLogService {
 
   @Transactional
   public int ingestProtobuf(byte[] body) throws InvalidProtocolBufferException {
-    ExportLogsServiceRequest request = ExportLogsServiceRequest.parseFrom(body);
+    return ingest(ExportLogsServiceRequest.parseFrom(body));
+  }
+
+  /**
+   * Same ingest path as {@link #ingestProtobuf}, for a sender whose {@code OTEL_EXPORTER_OTLP_PROTOCOL}
+   * is {@code http/json} rather than {@code http/protobuf} -- GitHub Copilot CLI's default. Reuses
+   * {@link InvalidProtocolBufferException} as its failure type: {@link JsonFormat.Parser#merge}
+   * throws it too, so the controller's existing malformed-payload handling needs no new catch clause.
+   */
+  @Transactional
+  public int ingestJson(String json) throws InvalidProtocolBufferException {
+    ExportLogsServiceRequest.Builder builder = ExportLogsServiceRequest.newBuilder();
+    JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
+    return ingest(builder.build());
+  }
+
+  private int ingest(ExportLogsServiceRequest request) {
     List<LogRecordEntity> records = mapper.toLogRecords(request, Instant.now());
     repository.saveAll(records);
 
-    log.debug("Ingested {} log records from OTLP/HTTP protobuf", records.size());
+    log.debug("Ingested {} log records from OTLP/HTTP", records.size());
     return records.size();
   }
 }

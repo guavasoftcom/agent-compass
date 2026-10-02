@@ -209,7 +209,8 @@ If you'd rather use an existing Postgres (no Docker), set `SPRING_DATASOURCE_URL
 
 ## Pointing your coding agent at the backend
 
-For any OTel-instrumented agent, set the standard OTLP env vars to send protobuf-over-HTTP to this backend:
+For any OTel-instrumented agent, set the standard OTLP env vars to send OTLP/HTTP to this backend —
+either protobuf or JSON encoding is accepted:
 
 ```sh
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
@@ -217,6 +218,12 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 # Optional: speed up debugging
 export OTEL_METRIC_EXPORT_INTERVAL=10000
 ```
+
+Set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` instead if your agent's default is JSON encoding — GitHub
+Copilot CLI's is, unlike VS Code's Copilot extension, which already defaults to `http/protobuf`. For
+the CLI specifically, also set `COPILOT_OTEL_EXPORTER_TYPE=otlp-http`: without it, Copilot CLI writes
+telemetry to a local file exporter and sends nothing over the network at all, which from the outside
+looks identical to a misconfigured endpoint.
 
 For Claude Code specifically, telemetry is off until you enable it, and metrics, logs, and traces each have their own exporter switch — [docs/local-docker-deployment.md](docs/local-docker-deployment.md#point-claude-code-at-it) has the full set (including the `~/.claude/settings.json` form), what each one feeds in the dashboard, and how to verify data is flowing.
 
@@ -231,7 +238,7 @@ tuning.tool-attribute=tool_name
 
 ### OTLP ingest
 
-- `POST /v1/logs`, `POST /v1/metrics`, `POST /v1/traces` — accept `application/x-protobuf` OTLP export requests and persist log records, metric data points, and spans into `log_records` / `metric_points` / `spans`.
+- `POST /v1/logs`, `POST /v1/metrics`, `POST /v1/traces` — accept `application/x-protobuf` or `application/json` OTLP export requests and persist log records, metric data points, and spans into `log_records` / `metric_points` / `spans`. The two variants are the same endpoint, same ingest behavior; `Content-Type` picks which wire encoding is parsed.
 
 ### Dashboard JSON
 

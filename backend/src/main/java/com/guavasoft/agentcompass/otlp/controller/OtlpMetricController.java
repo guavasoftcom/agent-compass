@@ -16,6 +16,8 @@
 package com.guavasoft.agentcompass.otlp.controller;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.MessageOrBuilder;
+import com.google.protobuf.util.JsonFormat;
 import com.guavasoft.agentcompass.otlp.service.OtlpMetricService;
 
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsPartialSuccess;
@@ -90,6 +92,54 @@ public class OtlpMetricController {
             return ResponseEntity.badRequest()
                     .contentType(MediaType.APPLICATION_PROTOBUF)
                     .body(response.toByteArray());
+        }
+    }
+
+    @PostMapping(
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(
+            summary = "Receive an OTLP ExportMetricsServiceRequest encoded as JSON and persist its data points",
+            description = "For a sender whose OTEL_EXPORTER_OTLP_PROTOCOL is http/json rather than "
+                    + "http/protobuf -- GitHub Copilot CLI's default. Functionally identical to the "
+                    + "protobuf endpoint above; only the wire encoding differs.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "OTLP ExportMetricsServiceRequest, JSON-encoded per the protobuf JSON mapping",
+                    required = true,
+                    content = @Content(mediaType = "application/json")))
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Ingestion succeeded"),
+            @ApiResponse(responseCode = "400", description = "Malformed JSON payload")
+    })
+    public ResponseEntity<String> receiveJson(@RequestBody String body) {
+        try {
+            otlpMetricService.ingestJson(body);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(toJson(ExportMetricsServiceResponse.newBuilder().build()));
+        } catch (InvalidProtocolBufferException e) {
+            log.warn("Rejected malformed OTLP metrics JSON payload", e);
+            ExportMetricsServiceResponse response = ExportMetricsServiceResponse.newBuilder()
+                    .setPartialSuccess(ExportMetricsPartialSuccess.newBuilder()
+                            .setErrorMessage("malformed JSON: " + e.getMessage())
+                            .build())
+                    .build();
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(toJson(response));
+        }
+    }
+
+    /**
+     * Renders an OTLP collector response as JSON. These response types carry no {@code Any} field,
+     * so {@link JsonFormat.Printer#print} printing them cannot actually fail; the checked exception
+     * it declares is wrapped rather than threaded onto this method's own signature.
+     */
+    private static String toJson(MessageOrBuilder message) {
+        try {
+            return JsonFormat.printer().print(message);
+        } catch (InvalidProtocolBufferException e) {
+            throw new IllegalStateException("failed to render OTLP response as JSON", e);
         }
     }
 }
