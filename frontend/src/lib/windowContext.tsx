@@ -37,6 +37,13 @@ export interface WindowContextValue {
    */
   repositoryUrl: string | null;
   setRepositoryUrl: (next: string | null) => void;
+  /**
+   * Agent profile every window-scoped page is scoped to. The opposite of
+   * `repositoryUrl`: `null` means "the server's primary profile", never "all
+   * agents". Set via `AgentProfileSelector`, rendered beside `RepositorySelector`.
+   */
+  agentProfile: string | null;
+  setAgentProfile: (next: string | null) => void;
 }
 
 const DEFAULT_SELECTION: WindowSelection = { kind: 'preset', minutes: 60 * 24 };
@@ -44,6 +51,7 @@ const DEFAULT_SELECTION: WindowSelection = { kind: 'preset', minutes: 60 * 24 };
 const SELECTION_STORAGE_KEY = 'ac-window-selection';
 const AUTO_REFRESH_STORAGE_KEY = 'ac-window-auto-refresh';
 const REPOSITORY_URL_STORAGE_KEY = 'ac-window-repository-url';
+const AGENT_PROFILE_STORAGE_KEY = 'ac-window-agent-profile';
 
 const isWindowSelection = (value: unknown): value is WindowSelection => {
   if (typeof value !== 'object' || value === null) {
@@ -89,6 +97,13 @@ const readInitialRepositoryUrl = (): string | null => {
   return window.localStorage?.getItem(REPOSITORY_URL_STORAGE_KEY) ?? null;
 };
 
+const readInitialAgentProfile = (): string | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage?.getItem(AGENT_PROFILE_STORAGE_KEY) ?? null;
+};
+
 const persistSelection = (selection: WindowSelection): void => {
   if (typeof window === 'undefined') {
     return;
@@ -127,6 +142,21 @@ const persistRepositoryUrl = (repositoryUrl: string | null): void => {
   }
 };
 
+const persistAgentProfile = (agentProfile: string | null): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (agentProfile === null) {
+      window.localStorage?.removeItem(AGENT_PROFILE_STORAGE_KEY);
+    } else {
+      window.localStorage?.setItem(AGENT_PROFILE_STORAGE_KEY, agentProfile);
+    }
+  } catch {
+    // ignore quota / disabled storage
+  }
+};
+
 const WindowContext = createContext<WindowContextValue>({
   selection: DEFAULT_SELECTION,
   setSelection: () => {},
@@ -134,6 +164,8 @@ const WindowContext = createContext<WindowContextValue>({
   setAutoRefresh: () => {},
   repositoryUrl: null,
   setRepositoryUrl: () => {},
+  agentProfile: null,
+  setAgentProfile: () => {},
 });
 
 export const useWindowContext = (): WindowContextValue =>
@@ -147,6 +179,7 @@ export const WindowProvider = ({ children }: WindowProviderProps) => {
   const [selection, setSelectionState] = useState<WindowSelection>(() => readInitialSelection());
   const [autoRefresh, setAutoRefreshState] = useState<boolean>(() => readInitialAutoRefresh());
   const [repositoryUrl, setRepositoryUrlState] = useState<string | null>(() => readInitialRepositoryUrl());
+  const [agentProfile, setAgentProfileState] = useState<string | null>(() => readInitialAgentProfile());
 
   const value = useMemo<WindowContextValue>(
     () => ({
@@ -165,8 +198,13 @@ export const WindowProvider = ({ children }: WindowProviderProps) => {
         persistRepositoryUrl(next);
         setRepositoryUrlState(next);
       },
+      agentProfile,
+      setAgentProfile: (next: string | null) => {
+        persistAgentProfile(next);
+        setAgentProfileState(next);
+      },
     }),
-    [selection, autoRefresh, repositoryUrl],
+    [selection, autoRefresh, repositoryUrl, agentProfile],
   );
 
   return (

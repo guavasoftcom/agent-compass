@@ -439,6 +439,37 @@ public interface SystemRepository extends Repository<LogRecordEntity, Long> {
   List<Object[]> findRepositoryUsage();
 
   /**
+   * Every agent profile seen in telemetry, unioned across all three signal tables and re-aggregated
+   * by {@code agent_profile}, newest first. Feeds the agent-profile picker; there is deliberately no
+   * synthetic "all agents" entry, since profiles are a hard partition.
+   *
+   * <p>Each leg is a plain {@code GROUP BY agent_profile} riding that table's
+   * {@code (agent_profile, ...)} index from V37. Returns {@code (agent_profile, last_seen,
+   * row_count)}, newest first.
+   */
+  @Query(value = """
+      SELECT agent_profile,
+             max(last_seen) AS last_seen,
+             sum(row_count) AS row_count
+      FROM (
+        SELECT agent_profile, max(start_timestamp) AS last_seen, count(*) AS row_count
+        FROM spans
+        GROUP BY agent_profile
+        UNION ALL
+        SELECT agent_profile, max(timestamp), count(*)
+        FROM log_records
+        GROUP BY agent_profile
+        UNION ALL
+        SELECT agent_profile, max(timestamp), count(*)
+        FROM metric_points
+        GROUP BY agent_profile
+      ) AS perTableUsage
+      GROUP BY agent_profile
+      ORDER BY last_seen DESC
+      """, nativeQuery = true)
+  List<Object[]> findAgentProfileUsage();
+
+  /**
    * Exact rows older than a cutoff, the rows a purge would nevertheless keep, and the totals needed
    * to turn all that into a proportional byte estimate.
    *

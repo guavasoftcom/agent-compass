@@ -80,6 +80,8 @@ export interface UsageCalendarDailyParams {
   timeZone: string;
   /** Repository scope; `null`/omitted = all repositories. */
   repositoryUrl?: string | null;
+  /** Agent profile scope; `null`/omitted = the server's primary profile (never all agents). */
+  agentProfile?: string | null;
   /**
    * `'hourly'` also fills each day's 24 hourly buckets — ask for it only over the range that draws them
    * (the week), since it costs the backend two more grouped queries. Omitted = `'daily'`.
@@ -101,6 +103,9 @@ export const fetchUsageCalendarDaily = async (
   });
   if (params.repositoryUrl) {
     query.set('repositoryUrl', params.repositoryUrl);
+  }
+  if (params.agentProfile) {
+    query.set('agentProfile', params.agentProfile);
   }
   if (params.granularity === 'hourly') {
     query.set('granularity', 'hourly');

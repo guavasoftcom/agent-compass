@@ -44,6 +44,8 @@ const TracesPageView = () => {
     isPolling,
     repositoryUrl,
     onRepositoryUrlChange,
+    agentProfile,
+    onAgentProfileChange,
     view,
     onViewChange,
     sort,
@@ -76,6 +78,7 @@ const TracesPageView = () => {
           isPolling={isPolling}
           autoRefreshDisabled={tailLocked}
           repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
+          agentProfileSelector={{ value: agentProfile, onChange: onAgentProfileChange }}
         />
       }
     >

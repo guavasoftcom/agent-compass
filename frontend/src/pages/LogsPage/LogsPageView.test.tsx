@@ -97,6 +97,8 @@ const baseProps = {
   isPolling: false,
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
 };
 
 // `renderWithProviders` nests its provider JSX directly, so its returned `rerender` would drop

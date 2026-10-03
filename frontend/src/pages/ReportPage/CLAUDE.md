@@ -59,7 +59,7 @@ generated on demand; polling it would be noisy and wasteful.
 This is the last page in the repository-attribution rollout (`.design-docs/repository-attribution-
 plan.md`, Phase 4) — `CostPage` is the template. `ReportPage` reads `repositoryUrl`/
 `setRepositoryUrl` from `useWindowContext()`, appends `:repository:<repositoryUrl ?? 'all'>` to
-`selectionKey`, and calls `fetchReportMarkdown({ ...selection, repositoryUrl })` — the
+`selectionKey`, and calls `fetchReportMarkdown({ ...selection, repositoryUrl, agentProfile })` — the
 `repositoryUrl` field lives on `WindowSelection` itself (`api/types.ts`), so `windowQueryParams`
 (shared by every fetcher, including `fetchReportMarkdown`'s `getText` call) stays the single choke
 point for turning it into a query param without a second fetcher argument. `repositoryUrl`/
@@ -67,3 +67,7 @@ point for turning it into a query param without a second fetcher argument. `repo
 `PageActions` so `RepositorySelector` renders beside `WindowSelector`. The backend's `GET
 /api/report` endpoint accepts the same `repositoryUrl` param the other windowed endpoints do, so a
 report generated with a repository selected reflects only that repository's telemetry.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

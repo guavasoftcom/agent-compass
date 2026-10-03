@@ -95,8 +95,8 @@ Fetchers live in `api/endpoints.ts` (the shared barrel), not a page-local module
 
 | Source                          | Query key                             | Fetcher → endpoint |
 |---------------------------------|---------------------------------------|--------------------|
-| `ToolReliabilityPage` (`useQuery`) | `['tool-failure-rates', selectionKey]` | `fetchToolFailureRates({ ...selection, repositoryUrl })` → `GET /api/tool-activity/failure-rates?…` |
-| `ToolReliabilityPage` (`useQuery`) | `['tool-repeats', selectionKey]`       | `fetchToolRepeats({ ...selection, repositoryUrl })` → `GET /api/tool-activity/repeats?…` |
+| `ToolReliabilityPage` (`useQuery`) | `['tool-failure-rates', selectionKey]` | `fetchToolFailureRates({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/failure-rates?…` |
+| `ToolReliabilityPage` (`useQuery`) | `['tool-repeats', selectionKey]`       | `fetchToolRepeats({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/repeats?…` |
 
 `selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'` — same pattern as every
 other page. Both queries share the same `refetchInterval` (60 s when `autoRefresh && kind
@@ -111,7 +111,7 @@ container.
   passes everything as typed props to `ToolReliabilityPageView`. The view is pure props in,
   JSX out.
 - **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
-  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl }` — the `CostPage`
+  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl, agentProfile }` — the `CostPage`
   Phase 4 template. The `RepositorySelector` renders once in `SectionLayoutView`, shared by all
   five Tool Usage tabs (see `ToolCallsPage/CLAUDE.md`'s note on that shared plumbing); this page
   never renders one itself.
@@ -223,3 +223,7 @@ container.
   `'tool-failure-rates'` and `'tool-repeats'` are listed in `QUERY_KEY_PREFIXES` inside
   `ToolActivitySection.tsx`. If you rename a query key here, update that list or the
   section-level Refresh button will silently miss these queries.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useSectionContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

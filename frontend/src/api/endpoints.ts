@@ -26,6 +26,7 @@ import type {
   ListResult,
   LogRow,
   McpServerUsageRow,
+  ProfilesResponse,
   RepositorySummary,
   SessionCacheEfficiencyRow,
   SessionKpis,
@@ -202,6 +203,10 @@ export const fetchCostBreakdown = (
 // regardless of the currently selected time range.
 export const fetchRepositories = (): Promise<RepositorySummary[]> =>
   getJson('/api/system/repositories');
+
+// Not window-scoped — lists every agent profile that has any telemetry.
+export const fetchProfiles = (): Promise<ProfilesResponse> =>
+  getJson('/api/system/profiles');
 
 export const fetchReportMarkdown = (
   selection: WindowSelection = { kind: 'preset', minutes: 1440 },

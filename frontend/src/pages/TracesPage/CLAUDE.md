@@ -352,3 +352,7 @@ read `filters`-derived data from context as before.
   shapes match the live endpoints.
 - `traceColors.ts` is also imported by `TraceDetailPage`; it's kept flat (a util, not a component).
 ```
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`TracesExplorerProvider`, which passes it into `useTracesExplorer`; it joins `TracesFilters.agentProfile` (so it is in `filtersKey` and resets the stream like a repository change) and `buildTracesQuery` serializes `agentProfile` when non-null; `TracesExplorerContextValue` exposes `agentProfile`/`onAgentProfileChange`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

@@ -51,7 +51,8 @@ import UsageCalendarPageView from './UsageCalendarPageView';
 const TODAY_TICK_INTERVAL_MS = MS_PER_MINUTE;
 
 export default function UsageCalendarPage() {
-  const { setSelection, repositoryUrl, setRepositoryUrl } = useWindowContext();
+  const { setSelection, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
+    useWindowContext();
   const navigate = useNavigate();
 
   const [view, setView] = useState<CalendarView>('month');
@@ -80,6 +81,7 @@ export default function UsageCalendarPage() {
       periodRangeToFetch.endExclusive.toISOString(),
       timeZone,
       repositoryUrl ?? 'all',
+      agentProfile ?? 'primary',
       granularity,
     ],
     queryFn: () =>
@@ -88,6 +90,7 @@ export default function UsageCalendarPage() {
         to: periodRangeToFetch.endExclusive.toISOString(),
         timeZone,
         repositoryUrl,
+        agentProfile,
         granularity,
       }),
   });
@@ -114,11 +117,12 @@ export default function UsageCalendarPage() {
             startTimestamp: startOfLocalDay(selectedDate).toISOString(),
             endTimestamp: endOfLocalDay(selectedDate).toISOString(),
             repositoryUrl,
+            agentProfile,
           }
         : null,
-    [selectedDate, repositoryUrl],
+    [selectedDate, repositoryUrl, agentProfile],
   );
-  const daySelectionKey = daySelection ? buildWindowSelectionKey(daySelection, repositoryUrl) : null;
+  const daySelectionKey = daySelection ? buildWindowSelectionKey(daySelection, repositoryUrl, agentProfile) : null;
 
   const skillUsageQuery = useQuery({
     queryKey: ['usage-calendar-day-skills', daySelectionKey],
@@ -159,8 +163,8 @@ export default function UsageCalendarPage() {
   };
 
   // The Metrics page reads the global window, so the hand-off is: set it to this day, then navigate.
-  // `repositoryUrl` is deliberately left off the selection — it lives beside it in the window
-  // context and is already what the calendar was filtered by.
+  // `repositoryUrl` and `agentProfile` are deliberately left off the selection — they live beside it
+  // in the window context and are already what the calendar was filtered by.
   const handleOpenInMetrics = (): void => {
     if (selectedDate == null) {
       return;
@@ -194,6 +198,8 @@ export default function UsageCalendarPage() {
       onColorByChange={setColorBy}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
       onReload={handleReload}
       today={today}
       gridDates={gridDates}

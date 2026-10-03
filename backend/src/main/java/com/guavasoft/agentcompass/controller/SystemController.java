@@ -44,6 +44,7 @@ import com.guavasoft.agentcompass.model.OllamaModelListResult;
 import com.guavasoft.agentcompass.model.OllamaSettingsRequest;
 import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
+import com.guavasoft.agentcompass.model.AgentProfilesResponse;
 import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.StorageOverview;
 import com.guavasoft.agentcompass.model.SystemBuild;
@@ -250,6 +251,20 @@ public class SystemController {
           content = @Content(schema = @Schema(implementation = RepositoryUsage.class))))
   public List<RepositoryUsage> repositories() {
     return systemService.repositoryUsage();
+  }
+
+  @GetMapping("/profiles")
+  @Operation(
+          summary = "Every agent profile seen in telemetry, for the agent-profile picker",
+          description = "Distinct agent_profile values unioned across spans, log_records, and "
+                  + "metric_points, each with its newest timestamp and total row count, newest first, "
+                  + "plus primaryAgentProfile -- the profile a request resolves to when it names none. "
+                  + "Takes no time window. There is deliberately no 'all agents' entry: profiles are a "
+                  + "hard partition and two agents' telemetry is not safely summable.")
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "Agent profiles seen in telemetry",
+          content = @Content(schema = @Schema(implementation = AgentProfilesResponse.class))))
+  public AgentProfilesResponse agentProfiles() {
+    return systemService.agentProfiles();
   }
 
   @GetMapping("/ollama-settings")

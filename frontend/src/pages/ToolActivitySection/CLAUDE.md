@@ -63,7 +63,7 @@ rollout (`.design-docs/repository-attribution-plan.md` Phase 4) — `SectionLayo
 `setRepositoryUrl` goes straight to `SectionLayoutView`'s `PageActions`, rendering one
 `RepositorySelector` beside the `WindowSelector` shared by all five tabs. Every child page's
 `selectionKey` appends `:repository:<repositoryUrl ?? 'all'>` and spreads
-`{ ...selection, repositoryUrl }` into its fetchers — see each child page's own CLAUDE.md.
+`{ ...selection, repositoryUrl, agentProfile }` into its fetchers — see each child page's own CLAUDE.md.
 
 Legacy redirects in `App.tsx` preserve old paths:
 `/tool-calls`, `/tool-reliability`, `/skills-agents` each redirect to their
@@ -103,3 +103,7 @@ queries are invisible to section reload.
   (assembling `context`) and `SectionLayoutView.tsx` (props in, `Outlet context={context}`
   out) — both live in `components/SectionLayout/`, not this folder — or a child page reading
   it via `useSectionContext()` gets `undefined` at runtime despite typechecking.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useSectionContext()` (`SectionContextValue` gains `agentProfile`); `SectionLayoutView` renders the selector via `PageActions`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

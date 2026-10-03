@@ -301,7 +301,7 @@ trace link for those rows, not a disabled placeholder.
 - **Repository attribution (2026-09).** Applying the `CostPage` template
   (`.design-docs/repository-attribution-plan.md`, Phase 4, slice 2): `selectionKey` appends
   `:repository:<repositoryUrl ?? 'all'>` so TanStack Query never serves cross-repo stale data,
-  and `fetchSessionsSummary`/`fetchSessions` are both called with `{ ...selection, repositoryUrl }`
+  and `fetchSessionsSummary`/`fetchSessions` are both called with `{ ...selection, repositoryUrl, agentProfile }`
   (the field lives on `WindowSelection` itself — see `api/types.ts` — so `windowQueryParams` stays
   the single choke point without a second fetcher argument). `SessionsPageView` threads
   `repositoryUrl`/`onRepositoryUrlChange` through to `PageActions`, which renders
@@ -701,3 +701,7 @@ trace link for those rows, not a disabled placeholder.
   guarded render-phase-setState pattern as `SpanInspectorDrawer` (compared by session id, since
   the view resolves a fresh row object out of the query result every render), cleared on
   `onExited`.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

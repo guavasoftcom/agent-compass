@@ -114,6 +114,7 @@ export const resolveTrendReportSelection = (selection: WindowSelection): WindowS
       startTimestamp: start.toISOString(),
       endTimestamp: end.toISOString(),
       repositoryUrl: selection.repositoryUrl,
+      agentProfile: selection.agentProfile,
     };
   }
 
@@ -127,6 +128,7 @@ export const resolveTrendReportSelection = (selection: WindowSelection): WindowS
     startTimestamp: startOfLocalDay(start).toISOString(),
     endTimestamp: endOfLocalDay(end).toISOString(),
     repositoryUrl: selection.repositoryUrl,
+    agentProfile: selection.agentProfile,
   };
 };
 

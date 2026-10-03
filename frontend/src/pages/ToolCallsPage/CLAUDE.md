@@ -88,9 +88,9 @@ All three fetchers live in the shared `api/` barrel (`from '../../api'`).
 
 | Source                      | Query key                             | Fetcher → endpoint |
 |-----------------------------|---------------------------------------|--------------------|
-| `ToolCallsPage` (`useQuery`) | `['tool-calls', selectionKey]`       | `fetchToolCalls({ ...selection, repositoryUrl })` → `GET /api/tool-activity/calls?…` |
-| `ToolCallsPage` (`useQuery`) | `['tool-calls-timeseries', selectionKey]` | `fetchToolCallsTimeseries({ ...selection, repositoryUrl })` → `GET /api/tool-activity/calls/timeseries?…` |
-| `ToolCallsPage` (`useQuery`) | `['tool-calls-latency', selectionKey]`  | `fetchToolCallLatency({ ...selection, repositoryUrl })` → `GET /api/tool-activity/calls/latency?…` |
+| `ToolCallsPage` (`useQuery`) | `['tool-calls', selectionKey]`       | `fetchToolCalls({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/calls?…` |
+| `ToolCallsPage` (`useQuery`) | `['tool-calls-timeseries', selectionKey]` | `fetchToolCallsTimeseries({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/calls/timeseries?…` |
+| `ToolCallsPage` (`useQuery`) | `['tool-calls-latency', selectionKey]`  | `fetchToolCallLatency({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/calls/latency?…` |
 
 `selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'`. All three queries share
 the same key suffix, so section-level reload (which invalidates by prefix) covers all of them.
@@ -106,7 +106,7 @@ they receive already-fetched data as props from the container or the view.
   state.
 - **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
   'all'>` so TanStack Query never serves cross-repo stale data, and all three fetchers are
-  called with `{ ...selection, repositoryUrl }` (`CostPage`'s Phase 4 template — see that
+  called with `{ ...selection, repositoryUrl, agentProfile }` (`CostPage`'s Phase 4 template — see that
   page's CLAUDE.md). The `RepositorySelector` itself is **not** rendered by this page: it lives
   in `SectionLayoutView` (`components/SectionLayout/`), which reads `repositoryUrl`/
   `setRepositoryUrl` off `useWindowContext()` and renders one `RepositorySelector` beside the
@@ -150,3 +150,7 @@ they receive already-fetched data as props from the container or the view.
 - `PageLayout` on this page has no `title` prop — the section's `SectionLayout` chrome
   already renders the page heading and the `PageActions` (window selector, refresh,
   auto-refresh). Don't add a redundant title or actions slot here.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useSectionContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

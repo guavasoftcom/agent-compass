@@ -21,7 +21,7 @@ import { useWindowContext } from '../../lib/windowContext';
 import LogsPageView from './LogsPageView';
 
 export default function LogsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
     useWindowContext();
   const queryClient = useQueryClient();
 
@@ -59,6 +59,8 @@ export default function LogsPage() {
       isPolling={false}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
     />
   );
 }

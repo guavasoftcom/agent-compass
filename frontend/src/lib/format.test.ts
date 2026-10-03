@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 see <https://www.gnu.org/licenses/>.
 */
 import { describe, expect, it } from 'vitest';
-import { formatBytes, shortModelName, shortRepositoryLabel } from './format';
+import { agentProfileLabel, formatBytes, shortModelName, shortRepositoryLabel } from './format';
 
 describe('formatBytes', () => {
   it('renders raw bytes without decimals', () => {
@@ -67,5 +67,25 @@ describe('shortRepositoryLabel', () => {
 
   it('falls back to the raw URL when it has no owner/repo pair', () => {
     expect(shortRepositoryLabel('not-a-url')).toBe('not-a-url');
+  });
+});
+
+describe('agentProfileLabel', () => {
+  it('labels claude-code as Claude Code', () => {
+    expect(agentProfileLabel('claude-code', null)).toBe('Claude Code');
+  });
+
+  it('spells out the unknown bucket', () => {
+    expect(agentProfileLabel('unknown', 'claude-code')).toBe('Unknown (unrecognized agent)');
+  });
+
+  it('shows any other profile verbatim', () => {
+    expect(agentProfileLabel('copilot', 'claude-code')).toBe('copilot');
+  });
+
+  it('marks only the primary profile as the default', () => {
+    expect(agentProfileLabel('claude-code', 'claude-code')).toBe('Claude Code (default)');
+    expect(agentProfileLabel('unknown', 'unknown')).toBe('Unknown (unrecognized agent) (default)');
+    expect(agentProfileLabel('copilot', 'claude-code')).not.toContain('(default)');
   });
 });

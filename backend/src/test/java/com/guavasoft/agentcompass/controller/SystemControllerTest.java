@@ -33,6 +33,8 @@ import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
 import com.guavasoft.agentcompass.model.PurgeTableResult;
+import com.guavasoft.agentcompass.model.AgentProfileUsage;
+import com.guavasoft.agentcompass.model.AgentProfilesResponse;
 import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.SchemaMigration;
 import com.guavasoft.agentcompass.model.SignalIngest;
@@ -138,6 +140,24 @@ class SystemControllerTest {
                 .andExpect(jsonPath("$[1].count").value(52L));
 
         verify(systemService).repositoryUsage();
+    }
+
+    @Test
+    void profilesReturnsPrimaryAndProfileUsageNewestFirst() throws Exception {
+        when(systemService.agentProfiles()).thenReturn(new AgentProfilesResponse("claude-code", List.of(
+                new AgentProfileUsage("claude-code", MEASURED_AT, 18420L),
+                new AgentProfileUsage("unknown", CUTOFF, 392L))));
+
+        mockMvc.perform(get("/api/system/profiles"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.primaryAgentProfile").value("claude-code"))
+                .andExpect(jsonPath("$.profiles", hasSize(2)))
+                .andExpect(jsonPath("$.profiles[0].agentProfile").value("claude-code"))
+                .andExpect(jsonPath("$.profiles[0].count").value(18420L))
+                .andExpect(jsonPath("$.profiles[1].agentProfile").value("unknown"))
+                .andExpect(jsonPath("$.profiles[1].count").value(392L));
+
+        verify(systemService).agentProfiles();
     }
 
     @Test

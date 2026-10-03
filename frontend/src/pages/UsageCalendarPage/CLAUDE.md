@@ -160,3 +160,7 @@ new exists server-side for the drawer's lists.
   counts as elapsed. Passing the real `today` there would treat all of it as future and return zeros.
 - **The active-days card's bars use a 0.08 floor for a quiet day** (as the mockup does) so it still reads as a day
   rather than a gap; that value is a drawing height, not a metric.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()`; the daily query key gains `agentProfile ?? 'primary'` after the repository segment, `fetchUsageCalendarDaily` sends `agentProfile` when non-null, and the one-day drawer `WindowSelection` carries it. `AgentProfileSelector` is composed into `PageActionsView` right after `RepositorySelector`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

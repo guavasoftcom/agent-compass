@@ -13,7 +13,7 @@ General Public License for more details.
 You should have received a copy of the GNU General Public License along with this program. If not,
 see <https://www.gnu.org/licenses/>.
 */
-// Shared React Query cache-key fragment for a window + repository selection.
+// Shared React Query cache-key fragment for a window + repository + agent profile selection.
 // Every window-scoped page folds its `WindowSelection` and the current
 // `repositoryUrl` (from `lib/windowContext.tsx`) into a single string that
 // goes straight into a `useQuery` key, so a stale cache entry from a
@@ -26,8 +26,10 @@ import type { WindowSelection } from '../api';
 export const buildWindowSelectionKey = (
   selection: WindowSelection,
   repositoryUrl: string | null,
+  agentProfile: string | null,
 ): string =>
   (selection.kind === 'preset'
     ? `preset:${selection.minutes}`
     : `custom:${selection.startTimestamp}:${selection.endTimestamp}`) +
-  `:repository:${repositoryUrl ?? 'all'}`;
+  `:repository:${repositoryUrl ?? 'all'}` +
+  `:profile:${agentProfile ?? 'primary'}`;

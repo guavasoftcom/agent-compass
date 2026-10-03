@@ -56,7 +56,7 @@ const emptySummary: TokenUsageSummary = {
 };
 
 export default function TokensPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
     useWindowContext();
   const [activeTab, setActiveTab] = useState<TokensPageTab>('overview');
   // The clicked ranking row itself, not its id: the dialog shows only fields the
@@ -65,27 +65,27 @@ export default function TokensPage() {
   const [selectedCacheEfficiencyRow, setSelectedCacheEfficiencyRow] =
     useState<SessionCacheEfficiencyRow | null>(null);
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const summaryQuery = useQuery({
     queryKey: ['token-usage', selectionKey],
-    queryFn: () => fetchTokenUsage({ ...selection, repositoryUrl }),
+    queryFn: () => fetchTokenUsage({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
   const cacheEfficiencyQuery = useQuery({
     queryKey: ['session-cache-efficiency', selectionKey, CACHE_EFFICIENCY_ROW_LIMIT],
     queryFn: () =>
-      fetchSessionCacheEfficiency({ ...selection, repositoryUrl }, CACHE_EFFICIENCY_ROW_LIMIT),
+      fetchSessionCacheEfficiency({ ...selection, repositoryUrl, agentProfile }, CACHE_EFFICIENCY_ROW_LIMIT),
     refetchInterval,
   });
 
   const contextFootprintQuery = useQuery({
     queryKey: ['tool-context-footprint', selectionKey],
-    queryFn: () => fetchToolContextFootprint({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolContextFootprint({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
@@ -136,6 +136,8 @@ export default function TokensPage() {
       isPolling={isPolling}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
     />
   );
 }

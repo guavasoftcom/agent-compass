@@ -23,6 +23,7 @@ import { auroraColors, gradients } from '../../theme/colors';
 export interface PageActionsViewProps {
   windowSelector: ReactNode;
   repositorySelector?: ReactNode;
+  agentProfileSelector?: ReactNode;
   extraActions?: ReactNode;
   onReload: () => void;
   reloadDisabled: boolean;
@@ -37,6 +38,7 @@ export interface PageActionsViewProps {
 const PageActionsView = ({
   windowSelector,
   repositorySelector,
+  agentProfileSelector,
   extraActions,
   onReload,
   reloadDisabled,
@@ -59,6 +61,7 @@ const PageActionsView = ({
     >
       {windowSelector}
       {repositorySelector}
+      {agentProfileSelector}
       {extraActions}
       {!hideReload && (
         <Tooltip title="Refresh">

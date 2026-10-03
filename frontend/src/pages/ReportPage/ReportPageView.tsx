@@ -25,6 +25,8 @@ export interface ReportPageViewProps {
   onSelectionChange: (next: WindowSelection) => void;
   repositoryUrl?: string | null;
   onRepositoryUrlChange?: (next: string | null) => void;
+  agentProfile?: string | null;
+  onAgentProfileChange?: (next: string | null) => void;
   data: string | undefined;
   isLoading: boolean;
   error: Error | null;
@@ -38,6 +40,8 @@ export default function ReportPageView({
   onSelectionChange,
   repositoryUrl,
   onRepositoryUrlChange,
+  agentProfile,
+  onAgentProfileChange,
   data,
   isLoading,
   error,
@@ -58,6 +62,11 @@ export default function ReportPageView({
           repositorySelector={
             onRepositoryUrlChange != null
               ? { value: repositoryUrl ?? null, onChange: onRepositoryUrlChange }
+              : undefined
+          }
+          agentProfileSelector={
+            onAgentProfileChange != null
+              ? { value: agentProfile ?? null, onChange: onAgentProfileChange }
               : undefined
           }
           onReload={onReload}

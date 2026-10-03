@@ -137,9 +137,9 @@ TokensPage/
 
 | Source                   | Query key                         | Fetcher → endpoint |
 |--------------------------|-----------------------------------|--------------------|
-| `TokensPage` (`useQuery`) | `['token-usage', selectionKey]`   | `fetchTokenUsage({ ...selection, repositoryUrl })` → `GET /api/sessions/token-usage?…` |
-| `TokensPage` (`useQuery`) | `['session-cache-efficiency', selectionKey, limit]` | `fetchSessionCacheEfficiency({ ...selection, repositoryUrl }, 8)` → `GET /api/sessions/cache-efficiency?…&limit=8` |
-| `TokensPage` (`useQuery`) | `['tool-context-footprint', selectionKey]` | `fetchToolContextFootprint({ ...selection, repositoryUrl })` → `GET /api/tool-activity/context-footprint?…` |
+| `TokensPage` (`useQuery`) | `['token-usage', selectionKey]`   | `fetchTokenUsage({ ...selection, repositoryUrl, agentProfile })` → `GET /api/sessions/token-usage?…` |
+| `TokensPage` (`useQuery`) | `['session-cache-efficiency', selectionKey, limit]` | `fetchSessionCacheEfficiency({ ...selection, repositoryUrl, agentProfile }, 8)` → `GET /api/sessions/cache-efficiency?…&limit=8` |
+| `TokensPage` (`useQuery`) | `['tool-context-footprint', selectionKey]` | `fetchToolContextFootprint({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/context-footprint?…` |
 
 `selectionKey` is `'preset:<minutes>'` or `'custom:<start>:<end>'`. No sub-card fetches
 independently — the container owns all three queries and passes plain props down.
@@ -154,7 +154,7 @@ rollout (`.design-docs/repository-attribution-plan.md`) — its three backing en
 were already scoped by the Sessions and Tool Activity slices, but the page container itself never
 read `repositoryUrl` off `useWindowContext()` or passed it through. Fixed the same way as every
 other page: `selectionKey` appends `:repository:<repositoryUrl ?? 'all'>`, all three fetch calls
-spread `{ ...selection, repositoryUrl }`, and `TokensPageView` threads `repositoryUrl`/
+spread `{ ...selection, repositoryUrl, agentProfile }`, and `TokensPageView` threads `repositoryUrl`/
 `onRepositoryUrlChange` into `PageActions` so `RepositorySelector` renders beside `WindowSelector`.
 
 ## Data flow and semantics
@@ -457,3 +457,7 @@ spread `{ ...selection, repositoryUrl }`, and `TokensPageView` threads `reposito
 - **`TokenCompositionCard` calls `useTheme` directly** for the SVG track color and alpha.
   It is a presentational component that deviates minimally from the pure-props rule; it does not
   call any hook that performs I/O or owns state.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

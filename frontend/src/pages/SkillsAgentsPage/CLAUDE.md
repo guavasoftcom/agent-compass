@@ -72,8 +72,8 @@ Both fetchers live in `api/endpoints.ts` (the shared barrel, not a page-local mo
 
 | Container hook    | Query key                       | Fetcher → endpoint |
 |-------------------|---------------------------------|--------------------|
-| `useQuery`        | `['skill-usage', selectionKey]` | `fetchSkillUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/skill-usage?…` |
-| `useQuery`        | `['subagent-usage', selectionKey]` | `fetchSubagentUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/subagent-usage?…` |
+| `useQuery`        | `['skill-usage', selectionKey]` | `fetchSkillUsage({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/skill-usage?…` |
+| `useQuery`        | `['subagent-usage', selectionKey]` | `fetchSubagentUsage({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/subagent-usage?…` |
 
 Both return `IdentifierUsageRow[]` (imported from `../../api`). The `tool` field on each row
 carries the skill or subagent identifier; `calls` is the invocation count; `byModel` maps model
@@ -90,7 +90,7 @@ no third query.
   `RepositorySelector`, reload button, and auto-refresh toggle all live in `SectionLayout`'s
   `PageActions`; this page renders no chrome of its own.
 - **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
-  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl }` — the `CostPage`
+  'all'>` and both fetchers are called with `{ ...selection, repositoryUrl, agentProfile }` — the `CostPage`
   Phase 4 template, applied here through the section's shared `useSectionContext()` rather than
   `useWindowContext()` directly (see `ToolCallsPage/CLAUDE.md`'s note on the `SectionLayout`
   plumbing this required).
@@ -200,3 +200,7 @@ no third query.
   thousands-separated count and `"<count> calls"` respectively) but this page no longer passes
   them — it always renders raw call counts. They remain generic, optional props on the shared
   component in case a future caller needs a different unit.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useSectionContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

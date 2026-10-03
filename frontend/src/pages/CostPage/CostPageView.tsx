@@ -50,6 +50,8 @@ export interface CostPageViewProps {
   windows: readonly WindowOption[];
   repositoryUrl: string | null;
   onRepositoryUrlChange: (repositoryUrl: string | null) => void;
+  agentProfile: string | null;
+  onAgentProfileChange: (next: string | null) => void;
   breakdown: CostBreakdown;
   /** Backs the Skill mix donut's per-row calls/avg-cost-per-run tooltip — same
    *  `/skill-usage` response the Skills & Subagents page renders as calls. */
@@ -134,6 +136,8 @@ const CostPageView = ({
   windows,
   repositoryUrl,
   onRepositoryUrlChange,
+  agentProfile,
+  onAgentProfileChange,
   breakdown,
   skillUsage,
   subagentUsage,
@@ -200,6 +204,7 @@ const CostPageView = ({
           onSelectionChange={onSelectionChange}
           windows={windows}
           repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
+          agentProfileSelector={{ value: agentProfile, onChange: onAgentProfileChange }}
           onReload={onReload}
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}

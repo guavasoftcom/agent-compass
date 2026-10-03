@@ -72,7 +72,7 @@ The fetcher lives in `api/endpoints.ts` (the shared barrel, not a page-local mod
 
 | Container hook | Query key                    | Fetcher → endpoint |
 |-----------------|-------------------------------|---------------------|
-| `useQuery`      | `['mcp-usage', selectionKey]` | `fetchMcpServerUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/mcp-usage?…` |
+| `useQuery`      | `['mcp-usage', selectionKey]` | `fetchMcpServerUsage({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/mcp-usage?…` |
 
 Returns `McpServerUsageRow[]` (imported from `../../api`) — one row per **(server, tool)**
 pair, not per server. `server`/`tool` identify the MCP server (e.g. `playwright`) and the
@@ -88,7 +88,7 @@ single response feeds every card on the page — there is no second query.
   `RepositorySelector`, reload button, and auto-refresh toggle all live in `SectionLayout`'s
   `PageActions`; this page renders no chrome of its own.
 - **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
-  'all'>` and `fetchMcpServerUsage` is called with `{ ...selection, repositoryUrl }` — the
+  'all'>` and `fetchMcpServerUsage` is called with `{ ...selection, repositoryUrl, agentProfile }` — the
   `CostPage` Phase 4 template. See `ToolCallsPage/CLAUDE.md` for the note on the `SectionLayout`
   plumbing that renders the shared `RepositorySelector` for all five Tool Usage tabs.
 - **`selectionKey`** is built in the container: `preset:<minutes>` or
@@ -186,3 +186,7 @@ single response feeds every card on the page — there is no second query.
   aggregate to `mcpDerivations.ts`, check whether it needs the same treatment (recompute from
   summed numerator/denominator) rather than a naive average of the per-tool `McpServerUsageRow`
   values — an average silently misweights a low-volume tool against a high-volume one.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useSectionContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

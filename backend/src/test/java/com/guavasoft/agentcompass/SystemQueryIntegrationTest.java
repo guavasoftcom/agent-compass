@@ -24,6 +24,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.guavasoft.agentcompass.entity.LogRecordEntity;
+import com.guavasoft.agentcompass.model.AgentProfileUsage;
+import com.guavasoft.agentcompass.model.AgentProfiles;
+import com.guavasoft.agentcompass.model.AgentProfilesResponse;
 import com.guavasoft.agentcompass.model.IngestHealth;
 import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
@@ -111,6 +114,36 @@ class SystemQueryIntegrationTest {
         assertThat(logRecords.rowsLastSevenDays()).isEqualTo(SEEDED_RECENT_LOGS);
         assertThat(logRecords.oldestTimestamp()).isBeforeOrEqualTo(logRecords.newestTimestamp());
         assertThat(logRecords.estimatedBytesPerDay()).isPositive();
+    }
+
+    @Test
+    void agentProfilesListsEachSeenProfileOnceWithItsRowCountAndNoAllEntry() {
+        // The container is shared across this class's tests, so assert on the delta this test adds
+        // rather than on absolute counts that depend on which sibling ran first.
+        long claudeCodeBefore = profileCount(systemService.agentProfiles(), AgentProfiles.CLAUDE_CODE);
+        long unknownBefore = profileCount(systemService.agentProfiles(), AgentProfiles.UNKNOWN);
+
+        LogRecordEntity claudeCode = logRecord(Instant.now().minus(1, ChronoUnit.HOURS));
+        claudeCode.setAgentProfile(AgentProfiles.CLAUDE_CODE);
+        logRecordRepository.save(claudeCode);
+        logRecordRepository.save(logRecord(Instant.now().minus(2, ChronoUnit.HOURS)));
+        logRecordRepository.save(logRecord(Instant.now().minus(3, ChronoUnit.HOURS)));
+
+        AgentProfilesResponse response = systemService.agentProfiles();
+
+        assertThat(response.primaryAgentProfile()).isEqualTo(AgentProfiles.CLAUDE_CODE);
+        assertThat(profileCount(response, AgentProfiles.CLAUDE_CODE)).isEqualTo(claudeCodeBefore + 1);
+        assertThat(profileCount(response, AgentProfiles.UNKNOWN)).isEqualTo(unknownBefore + 2);
+        assertThat(response.profiles()).extracting(AgentProfileUsage::agentProfile)
+                .doesNotHaveDuplicates()
+                .containsOnly(AgentProfiles.CLAUDE_CODE, AgentProfiles.UNKNOWN);
+    }
+
+    private static long profileCount(AgentProfilesResponse response, String agentProfile) {
+        return response.profiles().stream()
+                .filter(profile -> profile.agentProfile().equals(agentProfile))
+                .mapToLong(AgentProfileUsage::count)
+                .sum();
     }
 
     /** An empty table must report a zero growth estimate, not divide by its zero row count. */

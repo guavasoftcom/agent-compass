@@ -30,7 +30,9 @@ import { WINDOWS } from '../../lib/constants';
 // fetcher rather than let it hit the network in jsdom.
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
-  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]),
+    fetchProfiles: vi.fn().mockResolvedValue({ primaryAgentProfile: 'claude-code', profiles: [] }),
+  };
 });
 
 const selection: WindowSelection = { kind: 'preset', minutes: 1440 };
@@ -95,6 +97,8 @@ const baseProps: TrendReportPageViewProps = {
   windows: WINDOWS,
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
   onReload: vi.fn(),
   autoRefresh: false,
   onAutoRefreshChange: vi.fn(),

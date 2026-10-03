@@ -514,3 +514,7 @@ split keys) as props from the view. The other `MetricsController` endpoints (`GE
   `windowParams` `useMemo` (which `params` extends, so it rides every query key with no separate `:repository:` suffix needed, unlike
   pages with a hand-built `selectionKey`), and passes both through to `MetricsPageView`, which threads
   them into `PageActions`.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()` into `windowParams` (`{ from, to, repositoryUrl, agentProfile }`, so it rides every query key); `metricsApi.toWindowQuery` sends `agentProfile` when set); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

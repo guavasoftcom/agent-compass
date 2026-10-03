@@ -95,6 +95,22 @@ export const shortRepositoryLabel = (repositoryUrl: string): string => {
   return segments.slice(-2).join('/');
 };
 
+// Display label for an agent profile. `claude-code` reads "Claude Code", the
+// `unknown` bucket (resources whose service.name no profile claims) is spelled
+// out, and any other value is shown verbatim. The primary profile gets a
+// "(default)" suffix, which is also what a null selection ("use primary") shows.
+export const agentProfileLabel = (profile: string, primaryAgentProfile: string | null): string => {
+  let base: string;
+  if (profile === 'claude-code') {
+    base = 'Claude Code';
+  } else if (profile === 'unknown') {
+    base = 'Unknown (unrecognized agent)';
+  } else {
+    base = profile;
+  }
+  return profile === primaryAgentProfile ? `${base} (default)` : base;
+};
+
 // Full locale timestamp, e.g. "5/27/2026, 1:07:15 AM" — shared by the Sessions
 // grid and the Tokens page's cache-efficiency rank card/dialog so a session's
 // absolute timestamp reads identically wherever it's shown. `sessionsFormat.ts`

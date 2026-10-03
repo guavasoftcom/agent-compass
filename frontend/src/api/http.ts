@@ -99,5 +99,10 @@ export const windowQueryParams = (
   if (selection.repositoryUrl != null) {
     params.set('repositoryUrl', selection.repositoryUrl);
   }
+  // Omitted/null means "the server's primary profile" (never "all agents"), so
+  // only an explicit profile sets the param. No sentinel mapping.
+  if (selection.agentProfile != null) {
+    params.set('agentProfile', selection.agentProfile);
+  }
   return params;
 };

@@ -30,7 +30,9 @@ import { WINDOWS } from '../../lib/constants';
 // fetcher rather than let it hit the network in jsdom.
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
-  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]),
+    fetchProfiles: vi.fn().mockResolvedValue({ primaryAgentProfile: 'claude-code', profiles: [] }),
+  };
 });
 
 const summary: TokenUsageSummary = {
@@ -117,6 +119,8 @@ const baseProps: TokensPageViewProps = {
   isPolling: false,
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
 };
 
 describe('TokensPageView', () => {

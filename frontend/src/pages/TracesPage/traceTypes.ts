@@ -44,6 +44,8 @@ export interface TracesFilters {
   q?: string;
   /** distinct repository to scope every explorer endpoint to, or null/omitted for "all repositories" */
   repositoryUrl?: string | null;
+  /** Agent profile scope; `null`/omitted = the server's primary profile (never all agents). */
+  agentProfile?: string | null;
 }
 
 export interface TraceHistogramBucket {

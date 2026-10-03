@@ -28,21 +28,21 @@ import ToolReliabilityPageView from './ToolReliabilityPageView';
 const MIN_CALLS_FOR_RANKING = 5;
 
 export default function ToolReliabilityPage() {
-  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl, agentProfile } = useSectionContext();
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const failureRatesQuery = useQuery({
     queryKey: ['tool-failure-rates', selectionKey],
-    queryFn: () => fetchToolFailureRates({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolFailureRates({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
   const repeatsQuery = useQuery({
     queryKey: ['tool-repeats', selectionKey],
-    queryFn: () => fetchToolRepeats({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolRepeats({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 

@@ -123,6 +123,8 @@ const buildContextValue = (
   isPolling: false,
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
 
   ...overrides,
 });

@@ -27,22 +27,22 @@ import { buildWindowSelectionKey } from '../../lib/queryKeys';
 import PermissionDenialsPageView from './PermissionDenialsPageView';
 
 export default function PermissionDenialsPage() {
-  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl, agentProfile } = useSectionContext();
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const denialsQuery = useQuery({
     queryKey: ['tool-denials', selectionKey],
-    queryFn: () => fetchToolDenials({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolDenials({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
   const hooksQuery = useQuery({
     queryKey: ['hook-executions', selectionKey],
-    queryFn: () => fetchHookExecutions({ ...selection, repositoryUrl }),
+    queryFn: () => fetchHookExecutions({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 

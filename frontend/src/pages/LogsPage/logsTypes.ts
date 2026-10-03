@@ -45,6 +45,8 @@ export interface LogsFilters {
    * repository change the same way it already does on a window change.
    */
   repositoryUrl?: string | null;
+  /** Agent profile scope; `null`/omitted = the server's primary profile (never all agents). */
+  agentProfile?: string | null;
 }
 
 export interface HistogramBucket {

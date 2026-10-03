@@ -31,10 +31,10 @@ import type { TrendSectionState } from './TrendReportPageView';
  * rules-of-hooks.
  */
 export default function TrendReportPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
     useWindowContext();
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval: number | false =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
@@ -42,7 +42,7 @@ export default function TrendReportPage() {
   const sectionQueries = useQueries({
     queries: TREND_SECTIONS.map((section) => ({
       queryKey: ['trend-report', section.key, selectionKey],
-      queryFn: () => fetchTrendSection(section.key, { ...selection, repositoryUrl }),
+      queryFn: () => fetchTrendSection(section.key, { ...selection, repositoryUrl, agentProfile }),
       refetchInterval,
     })),
   });
@@ -73,6 +73,8 @@ export default function TrendReportPage() {
       windows={WINDOWS}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
       onReload={handleReload}
       autoRefresh={autoRefresh}
       onAutoRefreshChange={setAutoRefresh}

@@ -81,10 +81,10 @@ One `useQueries` call in the container builds one independent query per `TREND_S
 
 | Section | Query key | Fetcher → endpoint |
 |---|---|---|
-| Cost | `['trend-report', 'cost', selectionKey]` | `fetchTrendSection('cost', { ...selection, repositoryUrl })` → `GET /api/trends/cost?…` |
-| Token efficiency | `['trend-report', 'tokenEfficiency', selectionKey]` | `fetchTrendSection('tokenEfficiency', { ...selection, repositoryUrl })` → `GET /api/trends/token-efficiency?…` |
-| Reliability | `['trend-report', 'reliability', selectionKey]` | `fetchTrendSection('reliability', { ...selection, repositoryUrl })` → `GET /api/trends/reliability?…` |
-| Activity | `['trend-report', 'activity', selectionKey]` | `fetchTrendSection('activity', { ...selection, repositoryUrl })` → `GET /api/trends/activity?…` |
+| Cost | `['trend-report', 'cost', selectionKey]` | `fetchTrendSection('cost', { ...selection, repositoryUrl, agentProfile })` → `GET /api/trends/cost?…` |
+| Token efficiency | `['trend-report', 'tokenEfficiency', selectionKey]` | `fetchTrendSection('tokenEfficiency', { ...selection, repositoryUrl, agentProfile })` → `GET /api/trends/token-efficiency?…` |
+| Reliability | `['trend-report', 'reliability', selectionKey]` | `fetchTrendSection('reliability', { ...selection, repositoryUrl, agentProfile })` → `GET /api/trends/reliability?…` |
+| Activity | `['trend-report', 'activity', selectionKey]` | `fetchTrendSection('activity', { ...selection, repositoryUrl, agentProfile })` → `GET /api/trends/activity?…` |
 
 `selectionKey` follows the same `preset:<minutes>` / `custom:<start>:<end>` pattern as every other
 page (computed from the *raw* selection, not the day-snapped one below — see the gotcha), and is
@@ -156,7 +156,7 @@ fetch — the view derives each section's rows from that section's own resolved 
 - **Repository attribution (2026-09).** `selectionKey` appends `:repository:<repositoryUrl ??
   'all'>` so TanStack Query never serves cross-repo stale data across all four section query
   keys — same `CostPage`-template pattern as every other page in this rollout (see that page's
-  CLAUDE.md). `fetchTrendSection(section.key, { ...selection, repositoryUrl })` is called once
+  CLAUDE.md). `fetchTrendSection(section.key, { ...selection, repositoryUrl, agentProfile })` is called once
   per section from the container's `useQueries` map, so `repositoryUrl` rides the same
   `WindowSelection` object every other fetcher reads it from — no second argument was added to
   `fetchTrendSection`. `resolveTrendReportSelection`'s day-snapping (>24h windows) rebuilds a new
@@ -238,3 +238,7 @@ fetch — the view derives each section's rows from that section's own resolved 
   or that makes `onReload`/`isPolling` gate on all four resolving together instead of `some(...)
   isFetching`, would silently undo the independent-per-section behavior this page exists to
   provide.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()`; `trendReportApi`'s window widening carries `agentProfile` alongside `repositoryUrl`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

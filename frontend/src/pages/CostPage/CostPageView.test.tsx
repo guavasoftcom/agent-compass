@@ -27,7 +27,9 @@ import { WINDOWS } from '../../lib/constants';
 // fetcher rather than let it hit the network in jsdom.
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
-  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]),
+    fetchProfiles: vi.fn().mockResolvedValue({ primaryAgentProfile: 'claude-code', profiles: [] }),
+  };
 });
 
 const selection: WindowSelection = { kind: 'preset', minutes: 1440 };
@@ -136,6 +138,8 @@ const baseProps: CostPageViewProps = {
   windows: WINDOWS,
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
   breakdown,
   skillUsage,
   subagentUsage,
@@ -152,6 +156,12 @@ const baseProps: CostPageViewProps = {
 };
 
 describe('CostPageView', () => {
+  it('renders the agent profile selector beside the repository selector', async () => {
+    renderWithProviders(<CostPageView {...baseProps} />);
+
+    expect(await screen.findByRole('button', { name: /Claude Code \(default\)/ })).toBeInTheDocument();
+  });
+
   it('renders the "Where it went" tab KPIs and money map from props', () => {
     renderWithProviders(<CostPageView {...baseProps} />);
 

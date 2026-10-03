@@ -32,7 +32,9 @@ import {
 // hit the network in jsdom.
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
-  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]),
+    fetchProfiles: vi.fn().mockResolvedValue({ primaryAgentProfile: 'claude-code', profiles: [] }),
+  };
 });
 
 // 2026-09-20 is a Sunday: the month grid opens on Sun Aug 30.
@@ -130,6 +132,8 @@ const buildProps = (overrides: Partial<UsageCalendarPageViewProps> = {}): UsageC
   onColorByChange: vi.fn(),
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
   onReload: vi.fn(),
   today: TODAY,
   gridDates: monthGridDates(ANCHOR),

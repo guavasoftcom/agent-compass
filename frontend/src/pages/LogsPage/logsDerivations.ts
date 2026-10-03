@@ -40,6 +40,10 @@ export const buildLogsQuery = (f: LogsFilters): URLSearchParams => {
   if (f.repositoryUrl != null) {
     p.set('repositoryUrl', f.repositoryUrl);
   }
+  // Omitted/null means the server's primary profile, never all agents.
+  if (f.agentProfile != null) {
+    p.set('agentProfile', f.agentProfile);
+  }
   return p;
 };
 

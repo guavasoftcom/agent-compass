@@ -38,7 +38,7 @@ import {
  * pages; the simplified view does the rest.
  */
 export default function MetricsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
     useWindowContext();
   const navigate = useNavigate();
   // Lifted out of the view: the container needs the selected metric to decide whether
@@ -65,8 +65,8 @@ export default function MetricsPage() {
         ? selection.startTimestamp
         : new Date(nowMs - selection.minutes * MS_PER_MINUTE).toISOString();
     const to = selection.kind === 'custom' ? selection.endTimestamp : now;
-    return { from, to, repositoryUrl };
-  }, [selection, repositoryUrl]);
+    return { from, to, repositoryUrl, agentProfile };
+  }, [selection, repositoryUrl, agentProfile]);
 
   // The series query's params: the window, plus the metric-scoped filters / aggregation ONLY
   // while one is active, so a plain metric switch leaves the key (and the cache) untouched.
@@ -124,6 +124,7 @@ export default function MetricsPage() {
       windowParams.from,
       windowParams.to,
       windowParams.repositoryUrl,
+      windowParams.agentProfile,
     ],
     queryFn: () => fetchMetricFacets({ ...windowParams, metricName: selectedMetric!.name }),
     enabled: facetPickerOpen && Boolean(selectedMetric),
@@ -226,6 +227,8 @@ export default function MetricsPage() {
       exemplarErrorMessage={(exemplarSpansQuery.error as Error | null)?.message ?? null}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
       filters={attributeFilters}
       onFiltersChange={handleFiltersChange}
       facets={facetsQuery.data}

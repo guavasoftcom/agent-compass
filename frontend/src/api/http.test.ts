@@ -59,4 +59,15 @@ describe('windowQueryParams', () => {
     };
     expect(windowQueryParams(selection).get('repositoryUrl')).toBe(UNATTRIBUTED_REPOSITORY);
   });
+
+  it('omits agentProfile when null or absent — the server falls back to its primary profile', () => {
+    const selection: WindowSelection = { kind: 'preset', minutes: 1440 };
+    expect(windowQueryParams(selection).has('agentProfile')).toBe(false);
+    expect(windowQueryParams({ ...selection, agentProfile: null }).has('agentProfile')).toBe(false);
+  });
+
+  it('includes agentProfile verbatim when present, with no sentinel mapping', () => {
+    const selection: WindowSelection = { kind: 'preset', minutes: 1440, agentProfile: 'unknown' };
+    expect(windowQueryParams(selection).get('agentProfile')).toBe('unknown');
+  });
 });

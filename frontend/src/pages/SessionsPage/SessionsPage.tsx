@@ -66,7 +66,7 @@ const EMPTY_KPIS: SessionsKpis = {
 };
 
 export default function SessionsPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
     useWindowContext();
   const [paginationModel, setPaginationModel] = useState<PaginationModel>({
     page: 0,
@@ -98,7 +98,7 @@ export default function SessionsPage() {
     );
   }, [searchParams, setSearchParams]);
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const isPresetAutoRefresh = autoRefresh && selection.kind === 'preset';
   const refetchInterval = isPresetAutoRefresh ? AUTO_REFRESH_INTERVAL_MS : false;
@@ -107,7 +107,7 @@ export default function SessionsPage() {
   // cached summary instead of re-running the heavy percentile aggregation.
   const summaryQuery = useQuery({
     queryKey: ['sessions-summary', selectionKey],
-    queryFn: () => fetchSessionsSummary({ ...selection, repositoryUrl }),
+    queryFn: () => fetchSessionsSummary({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
@@ -121,7 +121,7 @@ export default function SessionsPage() {
       sortModel.direction,
     ],
     queryFn: () =>
-      fetchSessions({ ...selection, repositoryUrl }, { ...paginationModel, sort: sortModel }),
+      fetchSessions({ ...selection, repositoryUrl, agentProfile }, { ...paginationModel, sort: sortModel }),
     // Polls every RUNNING_TURN_POLL_INTERVAL_MS whenever the current page carries a running
     // row (SessionSummaryRow.inProgress) — UNCONDITIONALLY, not gated on isPresetAutoRefresh
     // like the plain interval below. autoRefresh defaults to false, so gating this on it (an
@@ -226,6 +226,8 @@ export default function SessionsPage() {
       windows={WINDOWS}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
       rows={rows}
       rowCount={sessionsQuery.data?.totalCount ?? summaryQuery.data?.totalSessions ?? 0}
       paginationModel={paginationModel}

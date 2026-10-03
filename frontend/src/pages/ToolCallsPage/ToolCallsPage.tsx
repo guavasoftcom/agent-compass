@@ -28,26 +28,26 @@ import ToolCallsPageView, {
 } from './ToolCallsPageView';
 
 export default function ToolCallsPage() {
-  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl, agentProfile } = useSectionContext();
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const toolCallsQuery = useQuery({
     queryKey: ['tool-calls', selectionKey],
-    queryFn: () => fetchToolCalls({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolCalls({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
   const timeseriesQuery = useQuery({
     queryKey: ['tool-calls-timeseries', selectionKey],
-    queryFn: () => fetchToolCallsTimeseries({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolCallsTimeseries({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
   const latencyQuery = useQuery({
     queryKey: ['tool-calls-latency', selectionKey],
-    queryFn: () => fetchToolCallLatency({ ...selection, repositoryUrl }),
+    queryFn: () => fetchToolCallLatency({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 

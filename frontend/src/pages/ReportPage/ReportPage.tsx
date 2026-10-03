@@ -23,14 +23,15 @@ import ReportPageView from './ReportPageView';
 const COPIED_TIMEOUT_MS = 1500;
 
 export default function ReportPage() {
-  const { selection, setSelection, repositoryUrl, setRepositoryUrl } = useWindowContext();
+  const { selection, setSelection, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
+    useWindowContext();
   const [copied, setCopied] = useState<boolean>(false);
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const reportQuery = useQuery({
     queryKey: ['report', selectionKey],
-    queryFn: () => fetchReportMarkdown({ ...selection, repositoryUrl }),
+    queryFn: () => fetchReportMarkdown({ ...selection, repositoryUrl, agentProfile }),
   });
   const { data, isLoading, error } = reportQuery;
 
@@ -49,6 +50,8 @@ export default function ReportPage() {
       onSelectionChange={setSelection}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
       data={data}
       isLoading={isLoading}
       error={error as Error | null}

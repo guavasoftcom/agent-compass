@@ -28,16 +28,16 @@ import {
 } from './mcpDerivations';
 
 export default function McpServersPage() {
-  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl, agentProfile } = useSectionContext();
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const mcpUsageQuery = useQuery({
     queryKey: ['mcp-usage', selectionKey],
-    queryFn: () => fetchMcpServerUsage({ ...selection, repositoryUrl }),
+    queryFn: () => fetchMcpServerUsage({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 

@@ -29,7 +29,9 @@ import { WINDOWS } from '../../lib/constants';
 // fetcher rather than let it hit the network in jsdom.
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
-  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]) };
+  return { ...actual, fetchRepositories: vi.fn().mockResolvedValue([]),
+    fetchProfiles: vi.fn().mockResolvedValue({ primaryAgentProfile: 'claude-code', profiles: [] }),
+  };
 });
 
 const rows: SessionSummaryRow[] = [
@@ -75,6 +77,8 @@ const baseProps: SessionsPageViewProps = {
   windows: WINDOWS,
   repositoryUrl: null,
   onRepositoryUrlChange: vi.fn(),
+  agentProfile: null,
+  onAgentProfileChange: vi.fn(),
   rows,
   rowCount: 1,
   paginationModel: { page: 0, pageSize: 25 },

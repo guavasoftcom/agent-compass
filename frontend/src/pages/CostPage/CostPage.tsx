@@ -46,7 +46,7 @@ const emptyBreakdown: CostBreakdown = {
 };
 
 export default function CostPage() {
-  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl } =
+  const { selection, setSelection, autoRefresh, setAutoRefresh, repositoryUrl, setRepositoryUrl, agentProfile, setAgentProfile } =
     useWindowContext();
   const [activeTab, setActiveTab] = useState<CostPageTab>('overview');
   // The clicked "Most expensive sessions" row itself, not its id: the dialog
@@ -54,14 +54,14 @@ export default function CostPage() {
   // same idiom as TokensPage's selectedCacheEfficiencyRow.
   const [selectedSession, setSelectedSession] = useState<CostSessionShare | null>(null);
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const breakdownQuery = useQuery({
     queryKey: ['cost-breakdown', selectionKey],
-    queryFn: () => fetchCostBreakdown({ ...selection, repositoryUrl }),
+    queryFn: () => fetchCostBreakdown({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
@@ -70,13 +70,13 @@ export default function CostPage() {
   // same idiom as the spine query's emptyBreakdown fallback.
   const skillUsageQuery = useQuery({
     queryKey: ['skill-usage', selectionKey],
-    queryFn: () => fetchSkillUsage({ ...selection, repositoryUrl }),
+    queryFn: () => fetchSkillUsage({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
   const subagentUsageQuery = useQuery({
     queryKey: ['subagent-usage', selectionKey],
-    queryFn: () => fetchSubagentUsage({ ...selection, repositoryUrl }),
+    queryFn: () => fetchSubagentUsage({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 
@@ -104,6 +104,8 @@ export default function CostPage() {
       windows={WINDOWS}
       repositoryUrl={repositoryUrl}
       onRepositoryUrlChange={setRepositoryUrl}
+      agentProfile={agentProfile}
+      onAgentProfileChange={setAgentProfile}
       breakdown={breakdownQuery.data ?? emptyBreakdown}
       skillUsage={skillUsageQuery.data ?? []}
       subagentUsage={subagentUsageQuery.data ?? []}

@@ -28,21 +28,21 @@ import {
 } from './skillsAgentsDerivations';
 
 export default function SkillsAgentsPage() {
-  const { selection, autoRefresh, repositoryUrl } = useSectionContext();
+  const { selection, autoRefresh, repositoryUrl, agentProfile } = useSectionContext();
 
-  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl);
+  const selectionKey = buildWindowSelectionKey(selection, repositoryUrl, agentProfile);
 
   const refetchInterval =
     autoRefresh && selection.kind === 'preset' ? AUTO_REFRESH_INTERVAL_MS : false;
 
   const skillsQuery = useQuery({
     queryKey: ['skill-usage', selectionKey],
-    queryFn: () => fetchSkillUsage({ ...selection, repositoryUrl }),
+    queryFn: () => fetchSkillUsage({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
   const subagentsQuery = useQuery({
     queryKey: ['subagent-usage', selectionKey],
-    queryFn: () => fetchSubagentUsage({ ...selection, repositoryUrl }),
+    queryFn: () => fetchSubagentUsage({ ...selection, repositoryUrl, agentProfile }),
     refetchInterval,
   });
 

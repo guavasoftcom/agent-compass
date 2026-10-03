@@ -109,9 +109,9 @@ CostPage/
 
 | Container hook | Query key | Fetcher → endpoint |
 |---|---|---|
-| `useQuery` | `['cost-breakdown', selectionKey]` | `fetchCostBreakdown({ ...selection, repositoryUrl })` → `GET /api/cost/breakdown?…` |
-| `useQuery` | `['skill-usage', selectionKey]` | `fetchSkillUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/skill-usage?…` (reused from Skills & Subagents) |
-| `useQuery` | `['subagent-usage', selectionKey]` | `fetchSubagentUsage({ ...selection, repositoryUrl })` → `GET /api/tool-activity/subagent-usage?…` (reused) |
+| `useQuery` | `['cost-breakdown', selectionKey]` | `fetchCostBreakdown({ ...selection, repositoryUrl, agentProfile })` → `GET /api/cost/breakdown?…` |
+| `useQuery` | `['skill-usage', selectionKey]` | `fetchSkillUsage({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/skill-usage?…` (reused from Skills & Subagents) |
+| `useQuery` | `['subagent-usage', selectionKey]` | `fetchSubagentUsage({ ...selection, repositoryUrl, agentProfile })` → `GET /api/tool-activity/subagent-usage?…` (reused) |
 
 `fetchCostBreakdown` is the page's spine — its error wins `PageLayout`'s error slot; the other
 two queries back the Skill mix / Subagent mix donuts' per-row hover detail (calls and average
@@ -215,7 +215,7 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
 - **Repository attribution (2026-09).** This page is the proven template for the repository-
   attribution rollout (`.design-docs/repository-attribution-plan.md`, Phase 4): `selectionKey`
   appends `:repository:<repositoryUrl ?? 'all'>` so TanStack Query never serves cross-repo stale
-  data, `fetchCostBreakdown` is called with `{ ...selection, repositoryUrl }` (the `repositoryUrl`
+  data, `fetchCostBreakdown` is called with `{ ...selection, repositoryUrl, agentProfile }` (the `repositoryUrl`
   field lives on `WindowSelection` itself — see `api/types.ts` — so `windowQueryParams` stays the
   single choke point without a second fetcher argument), and `PageActions` renders
   `RepositorySelector` beside `WindowSelector` since both `repositoryUrl`/`onRepositoryUrlChange`
@@ -373,3 +373,7 @@ the Tokens page's `ContextFootprintCard` already covers MCP servers' context foo
     `TokenUsageIcon`'s glyph (`NavIcons.tsx`) changed from a wave/pulse squiggle to a simple
     document-with-lines glyph, so it reads distinctly at a glance next to the Cost icon (both are
     circular with a squiggle-in-circle motif otherwise).
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`useWindowContext()`); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

@@ -33,6 +33,8 @@ export interface SectionLayoutViewProps {
   onAutoRefreshChange: (value: boolean) => void;
   repositoryUrl: string | null;
   onRepositoryUrlChange: (repositoryUrl: string | null) => void;
+  agentProfile: string | null;
+  onAgentProfileChange: (next: string | null) => void;
   isPolling: boolean;
   onReload: () => void;
   activeTab: string;
@@ -50,6 +52,8 @@ export const SectionLayoutView = ({
   onAutoRefreshChange,
   repositoryUrl,
   onRepositoryUrlChange,
+  agentProfile,
+  onAgentProfileChange,
   isPolling,
   onReload,
   activeTab,
@@ -69,6 +73,7 @@ export const SectionLayoutView = ({
           autoRefresh={autoRefresh}
           onAutoRefreshChange={onAutoRefreshChange}
           repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
+          agentProfileSelector={{ value: agentProfile, onChange: onAgentProfileChange }}
           isPolling={isPolling}
         />
       }

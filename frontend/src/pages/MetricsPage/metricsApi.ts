@@ -63,6 +63,8 @@ export interface MetricsWindowParams {
   to: string;
   /** Restrict to one repository's telemetry; omit (or null) for all repositories. */
   repositoryUrl?: string | null;
+  /** Agent profile scope; omit (or null) for the server's primary profile (never all agents). */
+  agentProfile?: string | null;
 }
 
 /**
@@ -82,6 +84,9 @@ const toWindowQuery = (params: MetricsWindowParams): URLSearchParams => {
   const query = new URLSearchParams({ from: params.from, to: params.to });
   if (params.repositoryUrl) {
     query.set('repositoryUrl', params.repositoryUrl);
+  }
+  if (params.agentProfile) {
+    query.set('agentProfile', params.agentProfile);
   }
   return query;
 };

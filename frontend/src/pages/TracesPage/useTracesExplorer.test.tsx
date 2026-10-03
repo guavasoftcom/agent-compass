@@ -74,6 +74,7 @@ const baseParams = {
   autoRefresh: false,
   onAutoRefreshChange: vi.fn(),
   repositoryUrl: null as string | null,
+  agentProfile: null as string | null,
 };
 
 const buildWrapper = (queryClient: QueryClient) => {

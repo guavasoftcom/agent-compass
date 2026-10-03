@@ -201,7 +201,28 @@ export type WindowSelection = (
    * choke point — see `api/http.ts`.
    */
   repositoryUrl?: string | null;
+  /**
+   * Agent profile (e.g. `claude-code`) to scope every windowed fetcher to, sourced
+   * from `WindowContextValue.agentProfile`. The OPPOSITE of `repositoryUrl`:
+   * `null`/omitted means "the server's primary profile", never "all agents" —
+   * telemetry from different agents is a hard partition and there is no blended
+   * view. `windowQueryParams` sets the param only when non-null.
+   */
+  agentProfile?: string | null;
 };
+
+/** One agent profile seen in telemetry (`GET /api/system/profiles`). */
+export interface AgentProfileSummary {
+  agentProfile: string;
+  lastSeen: string;
+  count: number;
+}
+
+/** Response of `GET /api/system/profiles`: profiles with data, newest first. */
+export interface ProfilesResponse {
+  primaryAgentProfile: string;
+  profiles: AgentProfileSummary[];
+}
 
 /** One distinct repository seen in telemetry (`GET /api/system/repositories`). */
 export interface RepositorySummary {

@@ -255,3 +255,7 @@ presentational leaf that receives `rows`/`total`/`loading`/`hasMore` as props an
   toolbar chrome. Stream and Table view reserve slightly different amounts — `STREAM_BODY_CHROME_PX`
   (430) vs `TABLE_BODY_CHROME_PX` (420), the 10px being Stream's extra facet-rail header row. If
   you change the chrome height, retune those constants (top of `LogsPageView.tsx`) or the page scrolls.
+
+## Agent profile (2026-10)
+
+Opted in alongside the repository selector. `agentProfile`/`setAgentProfile` come from the same place `repositoryUrl` does (`LogsPage` via `useWindowContext()`, passed to `LogsPageView` as `agentProfile`/`onAgentProfileChange`; it joins `LogsFilters.agentProfile` (so it is in `filtersKey`) and `buildLogsQuery` serializes `agentProfile` when non-null); `selectionKey` is `buildWindowSelectionKey(selection, repositoryUrl, agentProfile)`, whose format now ends `:repository:<repositoryUrl ?? 'all'>:profile:<agentProfile ?? 'primary'>`; fetchers receive `{ ...selection, repositoryUrl, agentProfile }`; `AgentProfileSelector` renders right after `RepositorySelector`. Unlike `repositoryUrl`, `null` means the server's primary profile, never "all agents" - there is no all-agents view.

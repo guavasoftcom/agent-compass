@@ -18,6 +18,7 @@ import type { IdentifierUsageRow } from '../../api';
 import type { BreakdownRow } from '../../components/BreakdownList';
 import PageActionsView from '../../components/PageActions/PageActionsView';
 import PageLayout from '../../components/PageLayout';
+import AgentProfileSelector from '../../components/AgentProfileSelector';
 import RepositorySelector from '../../components/RepositorySelector';
 import { colorForIndex } from '../../theme/theme';
 import CalendarControlBar from './components/CalendarControlBar';
@@ -45,6 +46,8 @@ export interface UsageCalendarPageViewProps {
   onColorByChange: (next: ColorByMetric) => void;
   repositoryUrl: string | null;
   onRepositoryUrlChange: (next: string | null) => void;
+  agentProfile: string | null;
+  onAgentProfileChange: (next: string | null) => void;
   onReload: () => void;
   today: Date;
   /** The dates the grid draws: the 42 of a month grid, or the 7 of the week. */
@@ -94,6 +97,8 @@ const UsageCalendarPageView = ({
   onColorByChange,
   repositoryUrl,
   onRepositoryUrlChange,
+  agentProfile,
+  onAgentProfileChange,
   onReload,
   today,
   gridDates,
@@ -151,6 +156,7 @@ const UsageCalendarPageView = ({
               />
             }
             repositorySelector={<RepositorySelector value={repositoryUrl} onValueChange={onRepositoryUrlChange} />}
+            agentProfileSelector={<AgentProfileSelector value={agentProfile} onValueChange={onAgentProfileChange} />}
             onReload={onReload}
             reloadDisabled={false}
             autoRefreshActive={false}

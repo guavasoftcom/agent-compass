@@ -72,6 +72,8 @@ export interface MetricsPageViewProps {
   exemplarErrorMessage?: string | null;
   repositoryUrl: string | null;
   onRepositoryUrlChange: (next: string | null) => void;
+  agentProfile: string | null;
+  onAgentProfileChange: (next: string | null) => void;
   /**
    * The selected metric's attribute filters (ANDed, at most one per key), owned by the container,
    * which also clears them when the selected metric changes.
@@ -137,6 +139,8 @@ const MetricsPageView = ({
   exemplarErrorMessage = null,
   repositoryUrl,
   onRepositoryUrlChange,
+  agentProfile,
+  onAgentProfileChange,
   filters,
   onFiltersChange,
   facets,
@@ -223,6 +227,7 @@ const MetricsPageView = ({
           onAutoRefreshChange={onAutoRefreshChange}
           isPolling={isPolling}
           repositorySelector={{ value: repositoryUrl, onChange: onRepositoryUrlChange }}
+          agentProfileSelector={{ value: agentProfile, onChange: onAgentProfileChange }}
         />
       }
     >

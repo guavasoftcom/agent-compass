@@ -28,6 +28,8 @@ import com.guavasoft.agentcompass.model.PurgePreview;
 import com.guavasoft.agentcompass.model.PurgeResult;
 import com.guavasoft.agentcompass.model.PurgeTableEstimate;
 import com.guavasoft.agentcompass.model.PurgeTableResult;
+import com.guavasoft.agentcompass.model.AgentProfileUsage;
+import com.guavasoft.agentcompass.model.AgentProfilesResponse;
 import com.guavasoft.agentcompass.model.RepositoryUsage;
 import com.guavasoft.agentcompass.model.SchemaMigration;
 import com.guavasoft.agentcompass.model.SignalIngest;
@@ -289,6 +291,9 @@ public class SystemService {
   private static final int REPOSITORY_USAGE_URL_INDEX = 0;
   private static final int REPOSITORY_USAGE_LAST_SEEN_INDEX = 1;
   private static final int REPOSITORY_USAGE_COUNT_INDEX = 2;
+  private static final int AGENT_PROFILE_USAGE_NAME_INDEX = 0;
+  private static final int AGENT_PROFILE_USAGE_LAST_SEEN_INDEX = 1;
+  private static final int AGENT_PROFILE_USAGE_COUNT_INDEX = 2;
 
   private static final int MIGRATION_RANK_INDEX = 0;
   private static final int MIGRATION_VERSION_INDEX = 1;
@@ -374,6 +379,18 @@ public class SystemService {
     return systemRepository.findRepositoryUsage().stream()
         .map(SystemService::toRepositoryUsage)
         .toList();
+  }
+
+  /**
+   * Every agent profile seen in telemetry plus the profile a request resolves to when it names none.
+   * Feeds the agent-profile picker, which marks the primary as the default and offers no "all
+   * agents" choice.
+   */
+  public AgentProfilesResponse agentProfiles() {
+    List<AgentProfileUsage> profiles = systemRepository.findAgentProfileUsage().stream()
+        .map(SystemService::toAgentProfileUsage)
+        .toList();
+    return new AgentProfilesResponse(tuningProperties.getPrimaryAgentProfile(), profiles);
   }
 
   /**
@@ -554,6 +571,13 @@ public class SystemService {
         (String) row[REPOSITORY_USAGE_URL_INDEX],
         (Instant) row[REPOSITORY_USAGE_LAST_SEEN_INDEX],
         toLong(row[REPOSITORY_USAGE_COUNT_INDEX]));
+  }
+
+  private static AgentProfileUsage toAgentProfileUsage(Object[] row) {
+    return new AgentProfileUsage(
+        (String) row[AGENT_PROFILE_USAGE_NAME_INDEX],
+        (Instant) row[AGENT_PROFILE_USAGE_LAST_SEEN_INDEX],
+        toLong(row[AGENT_PROFILE_USAGE_COUNT_INDEX]));
   }
 
   private static SchemaMigration toSchemaMigration(Object[] row) {

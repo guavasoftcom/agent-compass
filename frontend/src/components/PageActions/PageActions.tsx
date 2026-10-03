@@ -16,6 +16,7 @@ see <https://www.gnu.org/licenses/>.
 import type { ReactNode } from 'react';
 import type { WindowSelection } from '../../api';
 import type { WindowOption } from '../../lib/constants';
+import AgentProfileSelector from '../AgentProfileSelector';
 import RepositorySelector from '../RepositorySelector';
 import WindowSelector from '../WindowSelector';
 import PageActionsView from './PageActionsView';
@@ -46,6 +47,16 @@ export interface PageActionsProps {
     value: string | null;
     onChange: (next: string | null) => void;
   };
+  /**
+   * `AgentProfileSelector`'s value + change handler, wired to
+   * `WindowContextValue.agentProfile`/`setAgentProfile`. Omit to hide. Pages that show
+   * the repository selector opt in alongside it so the two stay in lockstep. A `null`
+   * value means "the primary profile" (there is no "all agents").
+   */
+  agentProfileSelector?: {
+    value: string | null;
+    onChange: (next: string | null) => void;
+  };
 }
 
 const noop = () => {};
@@ -63,6 +74,7 @@ const PageActions = ({
   autoRefreshDisabled = false,
   extraActions,
   repositorySelector,
+  agentProfileSelector,
 }: PageActionsProps) => {
   // Both Refresh and Auto-refresh are tied to "preset" mode: a custom range has a fixed
   // end, so re-fetching can't surface new data and polling would be wasted requests.
@@ -83,6 +95,14 @@ const PageActions = ({
           <RepositorySelector
             value={repositorySelector.value}
             onValueChange={repositorySelector.onChange}
+          />
+        ) : undefined
+      }
+      agentProfileSelector={
+        agentProfileSelector != null ? (
+          <AgentProfileSelector
+            value={agentProfileSelector.value}
+            onValueChange={agentProfileSelector.onChange}
           />
         ) : undefined
       }
