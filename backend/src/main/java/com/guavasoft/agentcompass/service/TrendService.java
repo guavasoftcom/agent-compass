@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.guavasoft.agentcompass.config.TuningProperties;
+import com.guavasoft.agentcompass.model.TokenTypes;
 import com.guavasoft.agentcompass.model.TrendsResponse;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -63,9 +64,9 @@ public class TrendService {
   private static final String DIRECTION_DOWN = "down";
   private static final String DIRECTION_UP = "up";
 
-  private static final String TOKEN_TYPE_INPUT = "input";
-  private static final String TOKEN_TYPE_CACHE_CREATION = "cacheCreation";
-  private static final String TOKEN_TYPE_CACHE_READ = "cacheRead";
+  private static final String TOKEN_TYPE_INPUT = TokenTypes.INPUT;
+  private static final String TOKEN_TYPE_CACHE_CREATION = TokenTypes.CACHE_CREATION;
+  private static final String TOKEN_TYPE_CACHE_READ = TokenTypes.CACHE_READ;
 
   private static final double PERCENT_SCALE = 100.0;
   private static final double TOKENS_PER_BLENDED_RATE_UNIT = 1_000_000.0;

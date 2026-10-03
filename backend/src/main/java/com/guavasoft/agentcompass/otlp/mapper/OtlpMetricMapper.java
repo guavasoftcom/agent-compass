@@ -24,6 +24,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import com.guavasoft.agentcompass.entity.MetricPointEntity;
+import com.guavasoft.agentcompass.otlp.normalize.CopilotTelemetryNormalizer;
 import com.guavasoft.agentcompass.otlp.model.MetricValueKind;
 import com.guavasoft.agentcompass.otlp.model.ResourceContext;
 import com.guavasoft.agentcompass.otlp.util.OtlpAttributeUtils;
@@ -38,6 +39,7 @@ import java.util.stream.Stream;
 public class OtlpMetricMapper {
 
   private final AgentProfileResolver agentProfileResolver;
+  private final CopilotTelemetryNormalizer copilotTelemetryNormalizer;
 
   public List<MetricPointEntity> toMetricPoints(ExportMetricsServiceRequest request, Instant receivedAt) {
     return request.getResourceMetricsList().stream()
@@ -54,8 +56,16 @@ public class OtlpMetricMapper {
     // stream_id generated column (V38), so it must be set before saveAll rather than patched after.
     ResourceContext resourceContext =
         new ResourceContext(resourceAttributes, agentProfileResolver.resolve(resourceAttributes));
-    return resourceMetrics.getScopeMetricsList().stream()
-        .flatMap(scopeMetrics -> entitiesFromScopeMetrics(scopeMetrics, resourceContext, receivedAt));
+    List<MetricPointEntity> resourceBlockPoints = resourceMetrics.getScopeMetricsList().stream()
+        .flatMap(scopeMetrics -> entitiesFromScopeMetrics(scopeMetrics, resourceContext, receivedAt))
+        .toList();
+    // Canonical points are appended to the same output stream rather than saved separately, so they
+    // go through OtlpMetricService's lockStreamsForIngest / recomputeValueDeltas like every other
+    // row; saved on their own they would never receive a value_delta. A no-op for any resource that
+    // is not Copilot's, so every other agent's output is exactly the raw points.
+    List<MetricPointEntity> canonicalPoints =
+        copilotTelemetryNormalizer.canonicalTokenPointsFrom(resourceBlockPoints);
+    return Stream.concat(resourceBlockPoints.stream(), canonicalPoints.stream());
   }
 
   private Stream<MetricPointEntity> entitiesFromScopeMetrics(

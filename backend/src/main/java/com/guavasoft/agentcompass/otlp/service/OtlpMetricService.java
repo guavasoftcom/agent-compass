@@ -58,6 +58,21 @@ public class OtlpMetricService {
 
   private int ingest(ExportMetricsServiceRequest request) {
     List<MetricPointEntity> points = mapper.toMetricPoints(request, Instant.now());
+    persist(points);
+
+    log.debug("Ingested {} metric data points from OTLP/HTTP", points.size());
+    return points.size();
+  }
+
+  /**
+   * Saves {@code points} and computes their reset-aware {@code value_delta}, in the caller's
+   * transaction. This is the one place that sequence lives: any code that synthesizes metric points
+   * (the Copilot cost normalization runs while ingesting <em>traces</em>) must come through here, or
+   * its rows are stored with a null {@code value_delta} and every {@code SUM(value_delta)} rollup
+   * silently skips them.
+   */
+  @Transactional
+  public void persist(List<MetricPointEntity> points) {
     List<MetricPointEntity> savedPoints = repository.saveAll(points);
 
     // IDENTITY generation means every row above is already persisted, so the ids
@@ -80,8 +95,5 @@ public class OtlpMetricService {
       repository.lockStreamsForIngest(metricPointIds);
       repository.recomputeValueDeltas(metricPointIds);
     }
-
-    log.debug("Ingested {} metric data points from OTLP/HTTP", points.size());
-    return points.size();
   }
 }

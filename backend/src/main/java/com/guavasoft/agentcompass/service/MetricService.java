@@ -33,6 +33,7 @@ import com.guavasoft.agentcompass.model.SessionKpis;
 import com.guavasoft.agentcompass.model.SessionSummary;
 import com.guavasoft.agentcompass.model.SessionSummaryPage;
 import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
+import com.guavasoft.agentcompass.model.TokenTypes;
 import com.guavasoft.agentcompass.model.TokenUsageSummary;
 import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.MetricPointRepository;
@@ -56,10 +57,10 @@ import java.util.Set;
 @Transactional(readOnly = true)
 public class MetricService {
 
-  private static final String INPUT_TYPE = "input";
-  private static final String OUTPUT_TYPE = "output";
-  private static final String CACHE_CREATION_TYPE = "cacheCreation";
-  private static final String CACHE_READ_TYPE = "cacheRead";
+  private static final String INPUT_TYPE = TokenTypes.INPUT;
+  private static final String OUTPUT_TYPE = TokenTypes.OUTPUT;
+  private static final String CACHE_CREATION_TYPE = TokenTypes.CACHE_CREATION;
+  private static final String CACHE_READ_TYPE = TokenTypes.CACHE_READ;
 
   private static final long MIN_BUCKET_SECONDS = 60L;
   private static final int TARGET_BUCKETS_PER_WINDOW = 40;

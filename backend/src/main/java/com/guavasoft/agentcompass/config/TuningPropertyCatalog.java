@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  * Describes every {@link TuningProperties} field for {@code GET /api/system/configuration}: which
  * group it belongs to, what it drives, and whether overriding it also requires a Flyway migration.
  *
- * <p><b>Why this is authored by hand.</b> Reflection can read the 68 values but not the three things
+ * <p><b>Why this is authored by hand.</b> Reflection can read the 91 values but not the three things
  * that make the endpoint worth having — the grouping, the one-line descriptions, and above all the
  * {@link SqlMirroring} flag, which is a fact about the migration history and cannot be derived from
  * the field. A hand-written list rots silently, so {@code TuningPropertyCatalogTest} reflects over
@@ -453,7 +453,103 @@ public class TuningPropertyCatalog {
                       + "the schema disagree about what a stream is, which surfaces as a counter "
                       + "spiking by its whole lifetime total.",
                   List.of("V38"),
-                  TuningProperties::getStreamIdentityResourceAttribute))));
+                  TuningProperties::getStreamIdentityResourceAttribute))),
+
+      new CatalogGroup(
+          "Copilot normalization",
+          "Where GitHub Copilot's own telemetry vocabulary is read from, so ingest can add "
+              + "Claude-Code-shaped rows beside Copilot's raw ones. Nothing in SQL reads these "
+              + "names, so overriding any of them is a configuration change only",
+          List.of(
+              CatalogEntry.plain("copilotAgentProfile",
+                  "Agent profile whose telemetry is normalized at ingest. Every other profile is "
+                      + "left untouched, which keeps Claude Code ingest unchanged.",
+                  TuningProperties::getCopilotAgentProfile),
+              CatalogEntry.plain("copilotToolSpanNamePrefix",
+                  "Prefix of the span name recording one Copilot tool invocation; each such span "
+                      + "yields one tool_result log",
+                  TuningProperties::getCopilotToolSpanNamePrefix),
+              CatalogEntry.plain("copilotToolNameAttribute",
+                  "Span attribute naming the tool a Copilot tool span ran",
+                  TuningProperties::getCopilotToolNameAttribute),
+              CatalogEntry.plain("copilotToolCallIdAttribute",
+                  "Span attribute carrying Copilot's id for one tool call, becoming tool_use_id",
+                  TuningProperties::getCopilotToolCallIdAttribute),
+              CatalogEntry.plain("copilotConversationIdAttribute",
+                  "Span attribute carrying Copilot's conversation id, becoming session.id on the "
+                      + "synthesized log",
+                  TuningProperties::getCopilotConversationIdAttribute),
+              CatalogEntry.plain("copilotErrorTypeAttribute",
+                  "Span attribute describing why a Copilot tool span failed",
+                  TuningProperties::getCopilotErrorTypeAttribute),
+              CatalogEntry.plain("copilotResponseModelAttribute",
+                  "Token-counter attribute naming the model that served the request; preferred "
+                      + "over the request model",
+                  TuningProperties::getCopilotResponseModelAttribute),
+              CatalogEntry.plain("copilotRequestModelAttribute",
+                  "Token-counter attribute naming the requested model, used when no response "
+                      + "model is present",
+                  TuningProperties::getCopilotRequestModelAttribute),
+              CatalogEntry.plain("copilotInputTokensMetric",
+                  "Copilot's cumulative input-token counter. It includes cached tokens, so the "
+                      + "canonical input is this minus cache read and cache write.",
+                  TuningProperties::getCopilotInputTokensMetric),
+              CatalogEntry.plain("copilotOutputTokensMetric",
+                  "Copilot's cumulative output-token counter. Reasoning tokens are not mapped "
+                      + "because output already includes them.",
+                  TuningProperties::getCopilotOutputTokensMetric),
+              CatalogEntry.plain("copilotCacheReadTokensMetric",
+                  "Copilot's cumulative counter of input tokens read from the prompt cache",
+                  TuningProperties::getCopilotCacheReadTokensMetric),
+              CatalogEntry.plain("copilotCacheWriteTokensMetric",
+                  "Copilot's cumulative counter of input tokens written to the prompt cache",
+                  TuningProperties::getCopilotCacheWriteTokensMetric),
+              CatalogEntry.plain("copilotChatSpanNamePrefix",
+                  "Prefix of the span name recording one Copilot model call; each such span yields "
+                      + "one api_request log and one cost counter point. The invoke_agent span is a "
+                      + "rollup of its chat children and is never read, which would double count.",
+                  TuningProperties::getCopilotChatSpanNamePrefix),
+              CatalogEntry.plain("copilotNanoAiuAttributes",
+                  "Span attributes carrying a call's cost in nano AI credits, first one present "
+                      + "wins. github.copilot.cost is a premium-request multiplier, not money, and "
+                      + "is deliberately absent.",
+                  TuningProperties::getCopilotNanoAiuAttributes),
+              CatalogEntry.plain("copilotUsdPerNanoAiu",
+                  "USD per nano AI credit (1 AI credit = $0.01, so 1e-11). Gross list price. "
+                      + "Applied at ingest only: change it if GitHub reprices, and stored rows keep "
+                      + "the cost they were written with.",
+                  TuningProperties::getCopilotUsdPerNanoAiu),
+              CatalogEntry.plain("copilotUsageInputTokensAttribute",
+                  "Span attribute carrying a call's total input tokens, which include cached "
+                      + "tokens; a span without it synthesizes nothing",
+                  TuningProperties::getCopilotUsageInputTokensAttribute),
+              CatalogEntry.plain("copilotUsageOutputTokensAttribute",
+                  "Span attribute carrying a call's output tokens",
+                  TuningProperties::getCopilotUsageOutputTokensAttribute),
+              CatalogEntry.plain("copilotUsageCacheReadAttribute",
+                  "Span attribute carrying a call's input tokens served from the prompt cache",
+                  TuningProperties::getCopilotUsageCacheReadAttribute),
+              CatalogEntry.plain("copilotUsageCacheWriteAttribute",
+                  "Span attribute carrying a call's input tokens written to the prompt cache",
+                  TuningProperties::getCopilotUsageCacheWriteAttribute),
+              CatalogEntry.plain("copilotResponseIdAttribute",
+                  "Span attribute carrying the provider's response id, becoming request_id on the "
+                      + "synthesized api_request log and the per-call discriminator on the cost "
+                      + "counter point",
+                  TuningProperties::getCopilotResponseIdAttribute),
+              CatalogEntry.plain("copilotAgentHostServiceName",
+                  "service.name of Copilot's agent host. Its model calls count as main loop; calls "
+                      + "from any other Copilot service count as auxiliary.",
+                  TuningProperties::getCopilotAgentHostServiceName),
+              CatalogEntry.plain("copilotAuxiliaryQuerySource",
+                  "query_source stamped on synthesized api_request logs for non-agent-host Copilot "
+                      + "calls. Must be neither a main-loop source nor subagent-prefixed, or the "
+                      + "Cost page stops bucketing them as auxiliary.",
+                  TuningProperties::getCopilotAuxiliaryQuerySource),
+              CatalogEntry.plain("normalizedFromAttribute",
+                  "Attribute stamped on every synthesized row recording what it was derived from, "
+                      + "so a synthesized row can be told from a native one",
+                  TuningProperties::getNormalizedFromAttribute))));
 
   /** Renders the live values of every catalogued property, grouped and annotated. */
   public EffectiveConfiguration describe(TuningProperties activeProperties) {

@@ -658,4 +658,143 @@ public class TuningProperties {
    */
   private String streamIdentityResourceAttribute = "session.id";
 
+  /**
+   * The agent profile whose raw telemetry is normalized at ingest into Claude Code's vocabulary
+   * (see {@code CopilotTelemetryNormalizer}). Rows resolved to any other profile are never touched
+   * by the normalizer, which is what keeps Claude Code ingest byte-for-byte unchanged.
+   *
+   * <p>Compared against the profile the resolver already stamped, not against {@code service.name}:
+   * the resolution map folds both of Copilot's {@code service.name} values into this one profile.
+   */
+  private String copilotAgentProfile = AgentProfiles.GITHUB_COPILOT;
+
+  /**
+   * Prefix of the name of a Copilot span that records one tool invocation
+   * ({@code execute_tool <tool name>}). Matched with {@code startsWith}, never {@code LIKE}.
+   */
+  private String copilotToolSpanNamePrefix = "execute_tool";
+
+  /** Span attribute naming the tool a Copilot {@link #copilotToolSpanNamePrefix} span ran. */
+  private String copilotToolNameAttribute = "gen_ai.tool.name";
+
+  /**
+   * Span attribute carrying Copilot's id for one tool call. Becomes the canonical
+   * {@link #toolCallIdAttribute} on the synthesized {@code tool_result} log.
+   */
+  private String copilotToolCallIdAttribute = "gen_ai.tool.call.id";
+
+  /**
+   * Span attribute carrying Copilot's conversation id. It is the closest analogue of a Claude Code
+   * session (a VS Code window is not: one window hosts many conversations), so it becomes the
+   * canonical {@code session.id} on the synthesized log.
+   */
+  private String copilotConversationIdAttribute = "gen_ai.conversation.id";
+
+  /** Span attribute describing why a Copilot tool span failed; present only on errored spans. */
+  private String copilotErrorTypeAttribute = "error.type";
+
+  /**
+   * Data-point attribute naming the model that actually served a Copilot token counter. Preferred
+   * over {@link #copilotRequestModelAttribute} for the canonical {@link #modelAttribute}.
+   */
+  private String copilotResponseModelAttribute = "gen_ai.response.model";
+
+  /** Data-point attribute naming the requested model; the fallback when no response model is set. */
+  private String copilotRequestModelAttribute = "gen_ai.request.model";
+
+  /**
+   * Copilot's cumulative counter of input tokens. <b>It includes cached tokens</b> (read plus
+   * written), unlike Claude Code's {@code input}, so the normalizer subtracts both cache counters
+   * before emitting the canonical {@code input}.
+   */
+  private String copilotInputTokensMetric = "gen_ai.client.inference.usage.input_tokens";
+
+  /**
+   * Copilot's cumulative counter of output tokens. Reasoning tokens are deliberately not mapped: the
+   * GenAI semantic conventions already count them inside output, so adding them would double-count.
+   */
+  private String copilotOutputTokensMetric = "gen_ai.client.inference.usage.output_tokens";
+
+  /** Copilot's cumulative counter of input tokens served from the prompt cache. */
+  private String copilotCacheReadTokensMetric = "gen_ai.client.inference.usage.cache_read.input_tokens";
+
+  /** Copilot's cumulative counter of input tokens written to the prompt cache. */
+  private String copilotCacheWriteTokensMetric = "gen_ai.client.inference.usage.cache_write.input_tokens";
+
+  /**
+   * Prefix of the name of a Copilot span recording one model call ({@code chat <model>}). The only
+   * span kind the cost normalization reads: Copilot's {@code invoke_agent} span carries a
+   * <em>rollup</em> equal to the sum of its {@code chat} children, so reading both would count every
+   * dollar twice. Matched with {@code startsWith} plus a word boundary, never {@code LIKE}.
+   */
+  private String copilotChatSpanNamePrefix = "chat";
+
+  /**
+   * Span attributes carrying a Copilot call's cost in nano AI credits, tried in order; the first one
+   * the span carries wins. The agent host ({@code github-copilot}) writes the first, the VS Code
+   * extension ({@code copilot-chat}) the second, which has been 0 on every captured call.
+   *
+   * <p>{@code github.copilot.cost} is deliberately <b>not</b> in this list: GitHub documents it as
+   * the premium-request <em>multiplier</em> (1.0 for a premium model, absent otherwise), not money.
+   */
+  private List<String> copilotNanoAiuAttributes =
+      List.of("github.copilot.nano_aiu", "copilot_chat.copilot_usage_nano_aiu");
+
+  /**
+   * USD per nano AI credit, applied to {@link #copilotNanoAiuAttributes} to get the canonical
+   * {@code cost_usd}. One AI credit is $0.01 (GitHub's Copilot billing documentation) and a nano
+   * AI credit is 10<sup>-9</sup> of one, so the rate is 10<sup>-11</sup>. This is gross list price
+   * before a plan's included monthly credits, the same basis as Claude Code's {@code cost_usd}.
+   *
+   * <p>Change this if GitHub reprices AI credits. It is applied once, at ingest: a new rate affects
+   * only rows ingested after the change, and stored rows keep the cost they were written with.
+   */
+  private double copilotUsdPerNanoAiu = 1e-11;
+
+  /**
+   * Span attribute carrying a Copilot call's total input tokens. <b>It includes cached tokens</b>, so
+   * the normalizer subtracts {@link #copilotUsageCacheReadAttribute} and
+   * {@link #copilotUsageCacheWriteAttribute} to get the canonical {@code input_tokens}. A span
+   * without it is not a usage-bearing model call and synthesizes nothing.
+   */
+  private String copilotUsageInputTokensAttribute = "gen_ai.usage.input_tokens";
+
+  /** Span attribute carrying a Copilot call's output tokens (reasoning tokens are already inside). */
+  private String copilotUsageOutputTokensAttribute = "gen_ai.usage.output_tokens";
+
+  /** Span attribute carrying the input tokens a Copilot call served from the prompt cache. */
+  private String copilotUsageCacheReadAttribute = "gen_ai.usage.cache_read.input_tokens";
+
+  /** Span attribute carrying the input tokens a Copilot call wrote to the prompt cache. */
+  private String copilotUsageCacheWriteAttribute = "gen_ai.usage.cache_write.input_tokens";
+
+  /**
+   * Span attribute carrying the provider's id for one Copilot model response. Becomes the canonical
+   * {@link #requestIdAttribute} and, on the cost counter point, the per-call stream discriminator.
+   */
+  private String copilotResponseIdAttribute = "gen_ai.response.id";
+
+  /**
+   * {@code service.name} of Copilot's agent host, the process doing the user's actual work. Its
+   * {@code chat} calls count as main loop. A {@code chat} span from any other Copilot service (the
+   * VS Code extension's title generation, for example) is bucketed as auxiliary.
+   */
+  private String copilotAgentHostServiceName = "github-copilot";
+
+  /**
+   * {@link #querySourceAttribute} value stamped on synthesized {@code api_request} logs for Copilot
+   * calls that did not come from the agent host. Must be neither in {@link #mainLoopQuerySources}
+   * nor start with {@link #subagentQuerySourcePrefix}, or the Cost page would stop bucketing those
+   * calls as auxiliary.
+   */
+  private String copilotAuxiliaryQuerySource = "copilot_extension";
+
+  /**
+   * Attribute stamped on every row the normalizer synthesizes, carrying where it was derived from
+   * ({@code span:execute_tool} on a log, the source metric name on a token point). Lets a reader
+   * tell a synthesized row from a native one, and would expose a duplicate if Copilot ever emits
+   * real tool-result logs of its own.
+   */
+  private String normalizedFromAttribute = "agent_compass.normalized_from";
+
 }

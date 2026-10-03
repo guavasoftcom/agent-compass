@@ -17,8 +17,12 @@ package com.guavasoft.agentcompass.otlp.service;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
+import com.guavasoft.agentcompass.entity.LogRecordEntity;
 import com.guavasoft.agentcompass.entity.SpanEntity;
 import com.guavasoft.agentcompass.otlp.mapper.OtlpTraceMapper;
+import com.guavasoft.agentcompass.otlp.normalize.CopilotCostRows;
+import com.guavasoft.agentcompass.otlp.normalize.CopilotTelemetryNormalizer;
+import com.guavasoft.agentcompass.repository.LogRecordRepository;
 import com.guavasoft.agentcompass.repository.SpanRepository;
 
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
@@ -37,6 +41,9 @@ public class OtlpTraceService {
 
   private final OtlpTraceMapper mapper;
   private final SpanRepository repository;
+  private final LogRecordRepository logRecordRepository;
+  private final CopilotTelemetryNormalizer copilotTelemetryNormalizer;
+  private final OtlpMetricService metricService;
 
   @Transactional
   public int ingestProtobuf(byte[] body) throws InvalidProtocolBufferException {
@@ -60,7 +67,22 @@ public class OtlpTraceService {
     List<SpanEntity> spans = mapper.toSpans(request, Instant.now());
     repository.saveAll(spans);
 
-    log.debug("Ingested {} spans from OTLP/HTTP", spans.size());
+    // Copilot records a tool call as a span and never as a tool_result log, which is what every
+    // tool-activity query reads. The synthesized logs are saved in this same transaction, so a
+    // span is never stored without the log that makes it visible. Empty for any other agent.
+    List<LogRecordEntity> toolResultLogs = copilotTelemetryNormalizer.toolResultLogsFrom(spans);
+    logRecordRepository.saveAll(toolResultLogs);
+
+    // Copilot also reports each model call's cost on its chat span and nowhere else. Each call
+    // becomes an api_request log (the exact per-call pipeline) and a one-point cost counter stream
+    // (the counter pipeline). The points must go through the metric service so they get a
+    // value_delta; all of it commits with the spans, or none of it does.
+    CopilotCostRows costRows = copilotTelemetryNormalizer.costRowsFrom(spans);
+    logRecordRepository.saveAll(costRows.apiRequestLogs());
+    metricService.persist(costRows.costPoints());
+
+    log.debug("Ingested {} spans, {} synthesized tool results and {} synthesized model calls from OTLP/HTTP",
+        spans.size(), toolResultLogs.size(), costRows.apiRequestLogs().size());
     return spans.size();
   }
 }

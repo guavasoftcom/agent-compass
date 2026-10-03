@@ -131,7 +131,7 @@ is the authoritative per-property reference.
 The authoritative, machine-readable list of which properties are mirrored is
 [TuningPropertyCatalog.java](backend/src/main/java/com/guavasoft/agentcompass/config/TuningPropertyCatalog.java),
 surfaced at runtime by `GET /api/system/configuration` and on the dashboard's Settings page. It
-classifies all 68 properties three ways and a reflection test fails the build if a newly added
+classifies all 91 properties three ways and a reflection test fails the build if a newly added
 property is left unclassified. Prefer it over the prose below, which names the seven worst offenders
 but is not exhaustive: the real count is **20 across nine migrations**, and it includes three
 (`tool-decision-event-name`, `api-request-body-event-name`, `hook-execution-event-name`) whose

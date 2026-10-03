@@ -46,6 +46,7 @@ import com.guavasoft.agentcompass.model.SessionPrompt;
 import com.guavasoft.agentcompass.model.SessionPromptToolCount;
 import com.guavasoft.agentcompass.model.SessionTokenBreakdown;
 import com.guavasoft.agentcompass.model.SlowAndLargeCall;
+import com.guavasoft.agentcompass.model.TokenTypes;
 import com.guavasoft.agentcompass.model.ToolCallCount;
 import com.guavasoft.agentcompass.model.ToolCallTimeseries;
 import com.guavasoft.agentcompass.model.ToolContextFootprint;
@@ -127,10 +128,10 @@ public class LogService {
   // spellings Claude Code emits (camelCase, confirmed against MetricService's
   // existing token-usage-by-type switch), not the snake_case forms an earlier
   // draft of the API spec guessed at.
-  private static final String INPUT_TOKEN_TYPE = "input";
-  private static final String OUTPUT_TOKEN_TYPE = "output";
-  private static final String CACHE_CREATION_TOKEN_TYPE = "cacheCreation";
-  private static final String CACHE_READ_TOKEN_TYPE = "cacheRead";
+  private static final String INPUT_TOKEN_TYPE = TokenTypes.INPUT;
+  private static final String OUTPUT_TOKEN_TYPE = TokenTypes.OUTPUT;
+  private static final String CACHE_CREATION_TOKEN_TYPE = TokenTypes.CACHE_CREATION;
+  private static final String CACHE_READ_TOKEN_TYPE = TokenTypes.CACHE_READ;
   private static final int TOKEN_BREAKDOWN_KIND_COUNT = 4;
 
   // Matches a trace's root claude_code.interaction span for the own-vs-background
