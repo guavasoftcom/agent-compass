@@ -599,14 +599,19 @@ public class TuningProperties {
    * must fold into one profile. A value absent from this map resolves to
    * {@link #unknownAgentProfile}, never to a default agent — see that property for why.
    *
-   * <p>No Copilot entry is shipped yet on purpose. Its {@code service.name} is configurable through
-   * enterprise-managed settings and has not been confirmed against a real capture, and a guessed
-   * mapping would silently relabel another agent's telemetry. Until it is captured, Copilot
-   * telemetry lands under {@link #unknownAgentProfile}, which is visible but quarantined.
+   * <p>Copilot is two entries for the same reason: a real VS Code capture showed it emitting from
+   * {@code copilot-chat} (the extension: {@code chat} spans and log events) and {@code github-copilot}
+   * (the agent host: {@code invoke_agent} / {@code execute_tool} spans and every metric) within a
+   * single window. Mapping only one would quarantine half of Copilot's own telemetry. Both values are
+   * observed, not guessed, but enterprise-managed settings can override a Copilot
+   * {@code service.name}, so an operator with a custom value adds it here rather than finding it
+   * under {@link #unknownAgentProfile}.
    */
   private Map<String, String> agentProfileResolution = Map.of(
       "claude-code", AgentProfiles.CLAUDE_CODE,
-      "claude-code-desktop", AgentProfiles.CLAUDE_CODE);
+      "claude-code-desktop", AgentProfiles.CLAUDE_CODE,
+      "copilot-chat", AgentProfiles.GITHUB_COPILOT,
+      "github-copilot", AgentProfiles.GITHUB_COPILOT);
 
   /**
    * Profile stamped at ingest on a resource whose {@link #agentProfileResourceAttribute} value

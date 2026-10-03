@@ -56,8 +56,19 @@ class AgentProfileResolverTest {
   }
 
   @Test
-  void quarantinesAnUnconfiguredServiceName() {
+  void foldsBothCopilotServiceNamesIntoOneProfile() {
+    // A single VS Code window emits from both: the extension as copilot-chat, the agent host as
+    // github-copilot. Mapping only one would quarantine half of Copilot's own telemetry.
+    assertThat(resolver.resolve(Map.of(SERVICE_NAME, "copilot-chat")))
+        .isEqualTo(AgentProfiles.GITHUB_COPILOT);
     assertThat(resolver.resolve(Map.of(SERVICE_NAME, "github-copilot")))
+        .isEqualTo(AgentProfiles.GITHUB_COPILOT)
+        .isNotEqualTo(AgentProfiles.CLAUDE_CODE);
+  }
+
+  @Test
+  void quarantinesAnUnconfiguredServiceName() {
+    assertThat(resolver.resolve(Map.of(SERVICE_NAME, "some-future-agent")))
         .isEqualTo(AgentProfiles.UNKNOWN)
         .isNotEqualTo(AgentProfiles.CLAUDE_CODE);
   }

@@ -95,14 +95,16 @@ export const shortRepositoryLabel = (repositoryUrl: string): string => {
   return segments.slice(-2).join('/');
 };
 
-// Display label for an agent profile. `claude-code` reads "Claude Code", the
-// `unknown` bucket (resources whose service.name no profile claims) is spelled
+// Display label for an agent profile. `claude-code` reads "Claude Code",
+// `github-copilot` reads "GitHub Copilot", the `unknown` bucket (resources whose service.name no profile claims) is spelled
 // out, and any other value is shown verbatim. The primary profile gets a
 // "(default)" suffix, which is also what a null selection ("use primary") shows.
 export const agentProfileLabel = (profile: string, primaryAgentProfile: string | null): string => {
   let base: string;
   if (profile === 'claude-code') {
     base = 'Claude Code';
+  } else if (profile === 'github-copilot') {
+    base = 'GitHub Copilot';
   } else if (profile === 'unknown') {
     base = 'Unknown (unrecognized agent)';
   } else {

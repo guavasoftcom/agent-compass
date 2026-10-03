@@ -16,7 +16,7 @@
 package com.guavasoft.agentcompass.model;
 
 /**
- * The two agent-profile names this application has to name in code rather than read from
+ * The agent-profile names this application has to name in code rather than read from
  * configuration.
  *
  * <p>Profile names are otherwise operator-configurable (see {@code TuningProperties}' agent-profile
@@ -33,6 +33,14 @@ public final class AgentProfiles {
    * read resolves to when a request names none.
    */
   public static final String CLAUDE_CODE = "claude-code";
+
+  /**
+   * GitHub Copilot, which emits from two {@code service.name} values within one VS Code window
+   * ({@code copilot-chat} and {@code github-copilot}). Named here only because {@code V39}
+   * backfills the rows captured before the resolution map knew about it; the live mapping is the
+   * operator-overridable {@code tuning.agent-profile-resolution}.
+   */
+  public static final String GITHUB_COPILOT = "github-copilot";
 
   /**
    * Telemetry whose emitting agent could not be identified. Deliberately a real, queryable profile

@@ -75,17 +75,21 @@ describe('agentProfileLabel', () => {
     expect(agentProfileLabel('claude-code', null)).toBe('Claude Code');
   });
 
+  it('labels github-copilot as GitHub Copilot', () => {
+    expect(agentProfileLabel('github-copilot', 'claude-code')).toBe('GitHub Copilot');
+  });
+
   it('spells out the unknown bucket', () => {
     expect(agentProfileLabel('unknown', 'claude-code')).toBe('Unknown (unrecognized agent)');
   });
 
   it('shows any other profile verbatim', () => {
-    expect(agentProfileLabel('copilot', 'claude-code')).toBe('copilot');
+    expect(agentProfileLabel('some-future-agent', 'claude-code')).toBe('some-future-agent');
   });
 
   it('marks only the primary profile as the default', () => {
     expect(agentProfileLabel('claude-code', 'claude-code')).toBe('Claude Code (default)');
     expect(agentProfileLabel('unknown', 'unknown')).toBe('Unknown (unrecognized agent) (default)');
-    expect(agentProfileLabel('copilot', 'claude-code')).not.toContain('(default)');
+    expect(agentProfileLabel('github-copilot', 'claude-code')).not.toContain('(default)');
   });
 });
